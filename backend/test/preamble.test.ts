@@ -37,6 +37,14 @@ describe('buildStableSystemPrompt', () => {
         assert.match(s, /\[TITLE:/);
     });
 
+    test('scopes metadata sentinels to final answers only', () => {
+        const s = buildStableSystemPrompt();
+        assert.match(s, /final answer only/);
+        assert.match(s, /after all tool use and intermediate commentary is complete/);
+        assert.match(s, /Do not emit \[TITLE:\] or \[FOLLOW-UP n\/3:\] sentinel lines in commentary/);
+        assert.match(s, /end your final answer with three lines/);
+    });
+
     test('contains no cwd, contextManifest, or ancestor content', () => {
         const s = buildStableSystemPrompt();
         assert.doesNotMatch(s, /Workspace context files available/);

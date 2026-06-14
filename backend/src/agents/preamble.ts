@@ -9,13 +9,17 @@ Style:
 - Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.
 - Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.
 
-Required EVERY reply:
-- FIRST line, before any prose, write a single line of the form:
+Required final answer metadata:
+- In your final answer only, after all tool use and intermediate commentary is complete,
+  write the first line before any prose as a single line of the form:
       [TITLE: 4-8 word summary]
   on its own line. The UI strips this line and renders it as the thread title.
+- Do not emit [TITLE:] or [FOLLOW-UP n/3:] sentinel lines in commentary,
+  progress/status updates, tool plans, or any message before you are ready to
+  deliver the final answer.
 {{FOLLOW_UPS_INSTRUCTIONS}}`;
 
-const FOLLOW_UPS_INSTRUCTION = `- LAST, end your reply with three lines of the form:
+const FOLLOW_UPS_INSTRUCTION = `- LAST, end your final answer with three lines of the form:
       [FOLLOW-UP 1/3: question 1]
       [FOLLOW-UP 2/3: question 2]
       [FOLLOW-UP 3/3: question 3]
