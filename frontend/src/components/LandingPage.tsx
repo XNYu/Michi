@@ -31,8 +31,6 @@ export function LandingPage() {
 
     return (
         <main className="landing-root">
-            <LandingTopbar onSignIn={onSignIn} busy={busy} />
-
             <section className="landing-hero">
                 <div className="landing-paper" aria-hidden="true" />
 
@@ -79,24 +77,9 @@ export function LandingPage() {
                     </p>
                 )}
 
-                <div className="landing-credits" aria-label="meta">
-                    <span>
-                        Open source &middot; <b>MIT</b>
-                    </span>
-                    <span>
-                        ★ <b>4.2k</b> on GitHub
-                    </span>
-                    <span>
-                        Self-host or <b>cloud</b>
-                    </span>
-                    <span>
-                        <b>Free</b> &middot; bring your own keys
-                    </span>
-                </div>
             </section>
 
             <ChainViz />
-            <LandingFooter />
         </main>
     );
 }
@@ -165,21 +148,10 @@ function ChainViz() {
             className="landing-chain"
             aria-label="A typical michi conversation tree"
         >
-            <div className="landing-chain__title-row">
-                <span className="landing-chain__title">
-                    A conversation, one week in
-                </span>
-                <span className="landing-chain__hint">
-                    <span>scroll right</span>
-                    <span aria-hidden="true">→</span>
-                </span>
-            </div>
-
             <div className="landing-chain__canvas">
                 <svg
                     className="landing-chain__edges"
-                    viewBox="0 0 1480 360"
-                    preserveAspectRatio="none"
+                    viewBox="0 0 1200 680"
                     aria-hidden="true"
                 >
                     <defs>
@@ -191,42 +163,23 @@ function ChainViz() {
                             <stop offset="0%" stopColor="#1c1917" stopOpacity="0.18" />
                             <stop offset="100%" stopColor="#1c1917" stopOpacity="0.06" />
                         </linearGradient>
-                        <linearGradient id="landing-edge-end" x1="0" y1="0" x2="1" y2="0">
-                            <stop offset="0%" stopColor="#1c1917" stopOpacity="0.10" />
-                            <stop offset="100%" stopColor="#1c1917" stopOpacity="0.02" />
-                        </linearGradient>
                     </defs>
 
-                    {/* root → 3 mid branches */}
-                    <path d="M 280 195 C 310 195, 310 60,  340 60"  stroke="url(#landing-edge-grad)" strokeWidth="1.5"  fill="none" />
-                    <path d="M 280 195 C 310 195, 310 195, 340 195" stroke="url(#landing-edge-grad)" strokeWidth="1.75" fill="none" />
-                    <path d="M 280 195 C 310 195, 310 330, 340 330" stroke="url(#landing-edge-grad)" strokeWidth="1.5"  fill="none" />
+                    {/* A → B, C, D */}
+                    <path d="M 270 340 C 300 340, 300 100, 320 100" stroke="url(#landing-edge-grad)" strokeWidth="1.5"  fill="none" />
+                    <path d="M 270 340 C 300 340, 300 340, 320 340" stroke="url(#landing-edge-grad)" strokeWidth="1.75" fill="none" />
+                    <path d="M 270 340 C 300 340, 300 570, 320 570" stroke="url(#landing-edge-grad)" strokeWidth="1.5"  fill="none" />
 
-                    {/* mid → leaf */}
-                    <path d="M 580 60  C 610 60,  610 22,  640 22"  stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
-                    <path d="M 580 60  C 610 60,  610 102, 640 102" stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
-                    <path d="M 580 195 C 610 195, 610 195, 640 195" stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
-                    <path d="M 580 330 C 610 330, 610 290, 640 290" stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
-                    <path d="M 580 330 C 610 330, 610 360, 640 360" stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
+                    {/* B → E, F */}
+                    <path d="M 590 100 C 620 100, 620 80,  640 80"  stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
+                    <path d="M 590 100 C 620 100, 620 270, 640 270" stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
 
-                    {/* leaf → ghost */}
-                    <path d="M 860 22  C 890 22,  890 -5,  920 -5"  stroke="url(#landing-edge-end)" strokeWidth="1" fill="none" />
-                    <path d="M 860 22  C 890 22,  890 56,  920 56"  stroke="url(#landing-edge-end)" strokeWidth="1" fill="none" />
-                    <path d="M 860 102 C 890 102, 890 120, 920 120" stroke="url(#landing-edge-end)" strokeWidth="1" fill="none" />
-                    <path d="M 860 195 C 890 195, 890 180, 920 180" stroke="url(#landing-edge-end)" strokeWidth="1" fill="none" />
-                    <path d="M 860 195 C 890 195, 890 230, 920 230" stroke="url(#landing-edge-end)" strokeWidth="1" fill="none" />
-                    <path d="M 860 290 C 890 290, 890 290, 920 290" stroke="url(#landing-edge-end)" strokeWidth="1" fill="none" />
+                    {/* D → G */}
+                    <path d="M 590 570 C 620 570, 620 560, 640 560" stroke="url(#landing-edge-mid)" strokeWidth="1.25" fill="none" />
 
-                    {/* ghost continuation */}
-                    <path d="M 1140 56  C 1180 56,  1180 56,  1220 56"  stroke="url(#landing-edge-end)" strokeWidth="0.8" fill="none" />
-                    <path d="M 1140 120 C 1180 120, 1180 130, 1220 130" stroke="url(#landing-edge-end)" strokeWidth="0.8" fill="none" />
-                    <path d="M 1140 180 C 1180 180, 1180 180, 1220 180" stroke="url(#landing-edge-end)" strokeWidth="0.8" fill="none" />
-                    <path d="M 1140 230 C 1180 230, 1180 230, 1220 230" stroke="url(#landing-edge-end)" strokeWidth="0.8" fill="none" />
-                    <path d="M 1140 290 C 1180 290, 1180 300, 1220 300" stroke="url(#landing-edge-end)" strokeWidth="0.8" fill="none" />
-
-                    {/* dashed cross-thread digest reference */}
+                    {/* E+F+G → Digest (dashed) */}
                     <path
-                        d="M 740 132 C 760 160, 760 175, 740 178"
+                        d="M 900 270 C 930 270, 930 300, 950 300"
                         stroke="#2f6b4e"
                         strokeOpacity="0.35"
                         strokeWidth="1"
@@ -235,180 +188,156 @@ function ChainViz() {
                     />
                 </svg>
 
-                {/* root */}
+                {/* A — root */}
                 <Card
                     className="landing-nc--root"
-                    style={{ left: 40, top: 140, width: 240 }}
+                    style={{ left: 20, top: 260, width: 250 }}
                     role="user"
-                    id="n-001"
-                    body="Why did the Roman Republic collapse in the 1st century BCE? I keep hearing different answers — what's the real cause?"
+                    id=""
+                    body="3 days in Tokyo — help me plan. I like culture, food, and anime. What are my options?"
                     foot={
                         <>
                             <span className="landing-nc__chip">
                                 <span>⎇</span>3 branches
                             </span>
-                            <span>Mar 14</span>
                         </>
                     }
                 />
 
-                {/* col 2 */}
+                {/* B — Culture */}
                 <Card
-                    style={{ left: 340, top: 20, width: 240 }}
+                    style={{ left: 320, top: 20, width: 270 }}
                     role="michi"
-                    id="n-002 · sonnet"
+                    id=""
                     body={
                         <>
-                            Several causes overlap. The <em>Marian reforms</em> (107 BCE)
-                            turned legions into client armies loyal to generals, not the
-                            Senate. Soldiers expected land from their commanders…
+                            <strong>Culture &amp; History</strong>
+                            <br />
+                            Senso-ji at dawn → Meiji Shrine → Imperial Palace East
+                            Gardens → Ueno National Museum. A slow-paced walking
+                            itinerary with matcha stops and goshuin collecting along
+                            the way. End the day in Yanaka's temple district.
                         </>
                     }
                     foot={
                         <>
                             <span className="landing-nc__chip">⎇ 2</span>
-                            <span>military · structural</span>
                         </>
                     }
                 />
+                {/* C — Food */}
                 <Card
-                    style={{ left: 340, top: 155, width: 240 }}
+                    style={{ left: 320, top: 250, width: 270 }}
                     role="michi"
-                    id="n-003 · opus"
+                    id=""
                     body={
                         <>
-                            Land concentration is the structural answer — the{" "}
-                            <em>latifundia</em> displaced the smallholder class that had fed
-                            the legions. The Gracchi tried reform; the senate killed them.
+                            <strong>Food &amp; Izakaya</strong>
+                            <br />
+                            Tsukiji outer market breakfast → Shibuya ramen alley →
+                            Shinjuku Omoide Yokocho izakaya crawl → Shimokitazawa
+                            kissaten for dessert. Eat-first, sightsee-second. Budget
+                            roughly ¥5,000/day for the full experience.
                         </>
                     }
                     foot={
                         <>
                             <span className="landing-nc__chip">⎇ 1</span>
-                            <span>economic · class</span>
                         </>
                     }
                 />
+                {/* D — Anime/Pop */}
                 <Card
-                    style={{ left: 340, top: 290, width: 240 }}
+                    style={{ left: 320, top: 480, width: 270 }}
                     role="michi"
-                    id="n-004 · sonnet"
-                    body="Personality. Sulla, Pompey, Caesar — each used the army as a personal political tool. The institutions never recovered from the Sullan precedent of marching on Rome."
-                    foot={
-                        <>
-                            <span className="landing-nc__chip">⎇ 2</span>
-                            <span>great-men theory</span>
-                        </>
-                    }
-                />
-
-                {/* col 3 */}
-                <Card
-                    style={{ left: 640, top: -7, width: 220 }}
-                    role="user"
-                    id="n-005"
-                    body="Wait — what were the Marian reforms specifically? Spell it out."
-                    foot={<span>~14 messages</span>}
-                />
-                <Card
-                    className="landing-nc--digest"
-                    style={{ left: 640, top: 73, width: 220 }}
-                    role="digest"
-                    id="d-006"
-                    body={'Summary of "Sulla\'s march on Rome" thread — 4 sources, 23 turns. Precedent of using the legions against the city itself.'}
-                    foot={
-                        <span className="landing-nc__chip landing-nc__chip--digest">
-                            ⊕ 4 sources
-                        </span>
-                    }
-                />
-                <Card
-                    style={{ left: 640, top: 165, width: 220 }}
-                    role="user"
-                    id="n-007"
-                    body="How did the Senate actually respond to the Gracchi? Like, mechanically — who voted what?"
-                    foot={<span>~6 messages</span>}
-                />
-                <Card
-                    style={{ left: 640, top: 260, width: 220 }}
-                    role="user"
-                    id="n-008"
-                    body="Counterfactual: was civil war inevitable after Sulla, or did the Republic still have a chance?"
-                    foot={<span>~9 messages</span>}
-                />
-                <Card
-                    className="landing-nc--tool"
-                    style={{ left: 640, top: 330, width: 220 }}
-                    role="tool"
-                    roleLabel="tool · web"
-                    id="t-009"
+                    id=""
                     body={
                         <>
-                            → fetched 3 sources
+                            <strong>Anime &amp; Pop Culture</strong>
                             <br />
-                            brill.com · jstor · loeb
+                            Akihabara electric town → Nakano Broadway vintage figures →
+                            teamLab Borderless → Harajuku Takeshita Street. Heavy on
+                            shops and exhibits, best on weekdays to avoid weekend crowds.
                         </>
                     }
-                    foot={<span>2.4s · 312 tokens</span>}
+                    foot={
+                        <>
+                            <span className="landing-nc__chip">⎇ 1</span>
+                        </>
+                    }
                 />
 
-                {/* col 4 — ghost */}
+                {/* E from B */}
                 <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 920, top: -20, width: 200 }}
+                    style={{ left: 640, top: 10, width: 260 }}
                     role="michi"
-                    id="n-010"
-                    body='Marius reduced the property qualification for legionary service — the "head count" (capite censi) were now eligible…'
-                    foot={<span>⎇ 1</span>}
+                    id=""
+                    body={
+                        <>
+                            <em>Can I do Meiji Shrine and Senso-ji in one day?</em>
+                            <br />
+                            Yes — take the Ginza line from Asakusa to Omotesando
+                            (25 min). Do Senso-ji early morning when it's empty,
+                            then shrine after lunch. You'll have time for Harajuku
+                            in between.
+                        </>
+                    }
+                    foot={<span>~8 messages</span>}
                 />
+                {/* F from B */}
                 <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 920, top: 38, width: 200 }}
+                    style={{ left: 640, top: 210, width: 260 }}
                     role="michi"
-                    id="n-011"
-                    body="Soldiers no longer had a farm to return to, so they looked to their commander for land grants…"
-                    foot={<span>⎇ 0</span>}
+                    id=""
+                    body={
+                        <>
+                            <em>What else is near Ueno besides the museum?</em>
+                            <br />
+                            Ameyoko market (street food + bargain shopping), Ueno
+                            Park zoo, Shinobazu Pond, and Yanaka — an old-Tokyo
+                            neighborhood with quiet temples and famous cats.
+                        </>
+                    }
+                    foot={<span>~5 messages</span>}
                 />
+                {/* G from D */}
                 <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 920, top: 100, width: 200 }}
+                    style={{ left: 640, top: 470, width: 260 }}
                     role="michi"
-                    id="n-012"
-                    body="The Senate's reaction was procedural at first — they declared the lex Sempronia agraria unconstitutional…"
-                    foot={<span>⎇ 0</span>}
-                />
-                <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 920, top: 162, width: 200 }}
-                    role="user"
-                    id="n-013"
-                    body="Hold on. So who was on the senatorial faction?"
-                    foot={<span>~3 msg</span>}
-                />
-                <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 920, top: 212, width: 200 }}
-                    role="michi"
-                    id="n-014"
-                    body="The optimates — Scipio Nasica chief among them. He led the mob that killed Tiberius…"
-                    foot={<span>⎇ 0</span>}
-                />
-                <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 920, top: 272, width: 200 }}
-                    role="michi"
-                    id="n-015"
-                    body="Probably not inevitable. The Sertorian war in Spain offered an off-ramp, but Pompey foreclosed it…"
-                    foot={<span>⎇ 0</span>}
+                    id=""
+                    body={
+                        <>
+                            <em>Best shops for second-hand figures in Akihabara?</em>
+                            <br />
+                            Mandarake Complex (4F for figures), TRADERS Akihabara,
+                            and Surugaya — all within a 5-min walk of the station.
+                            Go on weekday mornings for the best selection.
+                        </>
+                    }
+                    foot={<span>~6 messages</span>}
                 />
 
-                {/* col 5 — single faded marker */}
+                {/* Digest */}
                 <Card
-                    className="landing-nc--ghost"
-                    style={{ left: 1220, top: 160, width: 160, opacity: 0.18 }}
-                    role="michi"
-                    id="…"
-                    body="…"
+                    className="landing-nc--digest"
+                    style={{ left: 950, top: 200, width: 230 }}
+                    role="digest"
+                    id=""
+                    body={
+                        <>
+                            <strong>Your 3-Day Tokyo Plan</strong>
+                            <br />
+                            Day 1: Asakusa + Ueno (culture + Ameyoko lunch).
+                            Day 2: Akihabara + Nakano + Harajuku.
+                            Day 3: Tsukiji breakfast → Shibuya → Shinjuku izakaya
+                            night. All connected by Yamanote line.
+                        </>
+                    }
+                    foot={
+                        <span className="landing-nc__chip landing-nc__chip--digest">
+                            ⊕ 3 branches merged
+                        </span>
+                    }
                 />
             </div>
 

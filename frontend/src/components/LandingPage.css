@@ -38,7 +38,7 @@
   --landing-t-ease: cubic-bezier(.2, 0, .6, 1);
 
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: 1fr auto;
   min-height: 100vh;
   background: var(--landing-bg);
   color: var(--landing-fg);
@@ -335,7 +335,7 @@
 .landing-chain {
   position: relative;
   width: 100%;
-  height: 420px;
+  height: 700px;
   overflow: hidden;
   border-top: 1px solid var(--landing-line);
   background:
@@ -379,9 +379,9 @@
 
 .landing-chain__canvas {
   position: relative;
-  height: 360px;
-  width: 1480px;
-  margin: 0 0 0 32px;
+  height: 680px;
+  width: 1200px;
+  margin: 10px auto 0;
 }
 .landing-chain__edges {
   position: absolute;
@@ -447,11 +447,11 @@
 }
 .landing-nc__body {
   font-family: var(--landing-serif);
-  font-size: 12.5px;
-  line-height: 1.42;
+  font-size: 13.5px;
+  line-height: 1.5;
   color: var(--landing-fg);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
