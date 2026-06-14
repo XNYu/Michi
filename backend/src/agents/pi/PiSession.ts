@@ -188,6 +188,9 @@ export class PiSession implements AgentSession {
                 seenPaths: this.seenPaths,
                 Type,
                 ownerUserId: this.ownerUserId,
+                // Stable closure: tools are built once, but activePush is rebound
+                // each turn. show_image routes its inline image through here.
+                emitImage: (ev) => this.activePush?.(ev),
             });
 
             // Per-workspace Instructions panel feeds the system prompt directly

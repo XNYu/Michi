@@ -13,6 +13,8 @@ import { executeFind } from "../tools/find";
 import { executeWrite } from "../tools/write";
 import { executeEdit } from "../tools/edit";
 import { executeBash } from "../tools/bash";
+import { resolveShowImage } from "../claude/showImage";
+import type { NormalizedEvent } from "../../services/chatEvents";
 
 /**
  * Build the AgentTool[] array fed to pi-agent-core.
@@ -50,6 +52,12 @@ export interface BuildPiToolsOpts {
      * Null / undefined on desktop — falls through to full process.env.
      */
     ownerUserId?: string | null;
+    /**
+     * Push a side-effect NormalizedEvent (e.g. an inline `image`) into the
+     * active turn's event queue. show_image uses this to render an image in the
+     * UI without feeding it into the LLM's context. No-op if no turn is active.
+     */
+    emitImage?: (ev: NormalizedEvent) => void;
 }
 
 function paramToTypebox(spec: ParamSpec, Type: any): any {
@@ -94,7 +102,7 @@ function fieldToTypebox(field: ParamField, Type: any): any {
 }
 
 export function buildPiTools(opts: BuildPiToolsOpts): any[] {
-    const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId } = opts;
+    const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId, emitImage } = opts;
 
     return BUILTIN_TOOLS.map((t): any => {
         const parameters = withPurposeField(t.parameters, Type);
@@ -168,6 +176,35 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                                 { type: "text", text: `Updated context: ${result.name}` },
                             ],
                             details: result,
+                        };
+                    },
+                };
+
+            case "show_image":
+                return {
+                    name: t.name,
+                    label: "Show image",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        const r = resolveShowImage(cwd, String(args?.path ?? ""));
+                        if (!r.ok) {
+                            return {
+                                content: [{ type: "text", text: `Error: ${r.error}` }],
+                                details: { error: r.error },
+                            };
+                        }
+                        const caption = typeof args?.caption === "string" ? args.caption : undefined;
+                        emitImage?.({
+                            kind: "image",
+                            path: r.relPath,
+                            caption,
+                            mimeType: r.mimeType,
+                            size: r.size,
+                        });
+                        return {
+                            content: [{ type: "text", text: `Displayed image to the user: ${r.relPath}` }],
+                            details: { relPath: r.relPath, mimeType: r.mimeType, size: r.size, caption },
                         };
                     },
                 };
