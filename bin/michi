@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# --- Resolve install directory (follows symlinks) ---
+SCRIPT="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "${BASH_SOURCE[0]}")"
+INSTALL_DIR="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+
+configure_build_node() {
+  PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -viE '(/Applications/.*\.app/|/Codex\.app/)' | paste -sd ':' - || true)"
+  export PATH
+  hash -r 2>/dev/null || true
+
+  node_can_load_native() {
+    local node_bin="$1"
+    [ -x "$node_bin" ] || return 1
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+      return 0
+    fi
+
+    local signature
+    signature="$(codesign -dv "$node_bin" 2>&1 || true)"
+    if ! printf '%s\n' "$signature" | grep -q 'flags=.*runtime'; then
+      return 0
+    fi
+
+    codesign -d --entitlements - "$node_bin" 2>&1 | \
+      grep -q 'com.apple.security.cs.disable-library-validation'
+  }
+
+  candidate_nodes() {
+    command -v node 2>/dev/null
+    [ -x /opt/homebrew/bin/node ] && printf '%s\n' /opt/homebrew/bin/node
+    [ -x /usr/local/bin/node ] && printf '%s\n' /usr/local/bin/node
+    if [ -d "${NVM_DIR:-$HOME/.nvm}/versions/node" ]; then
+      find "${NVM_DIR:-$HOME/.nvm}/versions/node" -path '*/bin/node' \( -type f -o -type l \) 2>/dev/null | sort -r
+    fi
+    if command -v mise >/dev/null 2>&1; then
+      mise where node 2>/dev/null | sed 's|$|/bin/node|'
+    fi
+    if [ -d "$HOME/.local/share/mise/installs/node" ]; then
+      find "$HOME/.local/share/mise/installs/node" -path '*/bin/node' \( -type f -o -type l \) 2>/dev/null | sort -r
+    fi
+  }
+
+  local node_bin=""
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    [ -x "$cand" ] || continue
+    local major
+    major="$("$cand" --version 2>/dev/null | sed 's/v\([0-9]*\).*/\1/')"
+    [ "${major:-0}" -ge 22 ] 2>/dev/null || continue
+    if node_can_load_native "$cand"; then
+      node_bin="$cand"
+      break
+    fi
+  done < <(candidate_nodes | awk '!seen[$0]++')
+
+  if [ -z "$node_bin" ]; then
+    echo "✖ Could not find a usable Node.js 22+ for building Michi."
+    echo "  Install one with: brew install node"
+    exit 1
+  fi
+
+  PATH="$(cd "$(dirname "$node_bin")" && pwd):$PATH"
+  export PATH
+  hash -r 2>/dev/null || true
+}
+
+# Mirror the built bundle into ~/Applications so Spotlight launches and
+# `bin/michi` resolve to the same .app path. Combined with the single-instance
+# lock in main.ts, this guarantees only one Michi process regardless of entry
+# point. Refreshes on every call when src is newer than dst (cheap mtime check).
+sync_app_bundle() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local src="${INSTALL_DIR}/dist-electron/mac-arm64/michi.app"
+  local dst="${HOME}/Applications/michi.app"
+  [ -d "$src" ] || return 0
+
+  if [ -d "$dst" ] && [ ! "$src" -nt "$dst" ]; then
+    return 0
+  fi
+
+  osascript -e 'tell application "michi" to quit' 2>/dev/null || true
+  mkdir -p "${HOME}/Applications"
+  rm -rf "$dst"
+  cp -R "$src" "$dst"
+  xattr -dr com.apple.quarantine "$dst" 2>/dev/null || true
+}
+
+case "${1:-}" in
+  --help|-h)
+    cat <<EOF
+Usage: michi [--help] [--version] [update]
+
+Commands:
+  update    Pull latest code and reinstall dependencies
+  (none)    Launch the Michi desktop app
+
+Flags:
+  --help    Show this help
+  --version Show version
+EOF
+    exit 0
+    ;;
+  --version|-v)
+    node -e "process.stdout.write(require('$INSTALL_DIR/package.json').version)" 2>/dev/null || echo "unknown"
+    echo
+    exit 0
+    ;;
+  update)
+    echo "🐰 Updating Michi…"
+    configure_build_node
+
+    # Track a conventional public release branch. This mirrors
+    # backend/src/routes/version.ts pickUpstream() + 3 safety guards.
+    FORCE=0
+    for arg in "${@:2}"; do
+      [[ "$arg" == "--force" || "$arg" == "-f" ]] && FORCE=1
+    done
+
+    REMOTE=""
+    REMOTE_BRANCH=""
+    for candidate in origin/main origin/master github/main github/master; do
+      if git -C "$INSTALL_DIR" rev-parse --verify "refs/remotes/$candidate" >/dev/null 2>&1; then
+        REMOTE="${candidate%%/*}"
+        REMOTE_BRANCH="$candidate"
+        break
+      fi
+    done
+
+    if [ -z "$REMOTE" ]; then
+      echo "✖ No supported release branch found."
+      echo "  Add a remote with origin/main or origin/master, then retry."
+      exit 1
+    fi
+    git -C "$INSTALL_DIR" fetch "$REMOTE" --quiet
+    if ! git -C "$INSTALL_DIR" rev-parse --verify "refs/remotes/$REMOTE_BRANCH" >/dev/null 2>&1; then
+      echo "✖ '$REMOTE_BRANCH' not found after fetch."
+      exit 1
+    fi
+
+    # Safety 1: refuse if HEAD is ahead of upstream (would silently drop local commits).
+    AHEAD="$(git -C "$INSTALL_DIR" rev-list --count "$REMOTE_BRANCH..HEAD" 2>/dev/null || echo 0)"
+    if [ "${AHEAD:-0}" -gt 0 ] && [ "$FORCE" -ne 1 ]; then
+      echo "✖ $AHEAD local commit(s) ahead of $REMOTE_BRANCH would be hard-reset away."
+      echo "  Back them up first, or re-run with: michi update --force"
+      exit 1
+    fi
+
+    # Safety 2: refuse if tracked files are dirty (untracked files survive reset).
+    DIRTY="$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no)"
+    if [ -n "$DIRTY" ] && [ "$FORCE" -ne 1 ]; then
+      echo "✖ Uncommitted changes in tracked files would be discarded by reset:"
+      printf '%s\n' "$DIRTY" | sed 's/^/    /'
+      echo "  Commit or stash them first, or re-run with: michi update --force"
+      exit 1
+    fi
+
+    # Safety 3: snapshot HEAD to a recoverable ref name (not just reflog).
+    TS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+    BACKUP_REF="refs/michi/pre-update/$TS"
+    HEAD_SHA="$(git -C "$INSTALL_DIR" rev-parse HEAD)"
+    git -C "$INSTALL_DIR" update-ref "$BACKUP_REF" "$HEAD_SHA"
+    echo "  ↳ backup: $BACKUP_REF → $HEAD_SHA"
+
+    git -C "$INSTALL_DIR" reset --hard "$REMOTE_BRANCH" --quiet
+    if [ -f "$INSTALL_DIR/package-lock.json" ]; then
+      (cd "$INSTALL_DIR" && npm ci --no-fund --no-audit --loglevel=error)
+    else
+      (cd "$INSTALL_DIR" && npm install --no-fund --no-audit --loglevel=error)
+    fi
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      find "$INSTALL_DIR/node_modules" -name '*.node' -print0 | \
+        xargs -0 -I{} codesign --force --sign - '{}' 2>/dev/null || true
+    fi
+    (cd "$INSTALL_DIR" && npm run electron:build)
+    sync_app_bundle
+    echo "✔ Updated to $(git -C "$INSTALL_DIR" log -1 --format='%h %s')"
+    exit 0
+    ;;
+esac
+
+USER_CWD="$(pwd)"
+
+cd "$INSTALL_DIR"
+
+# Read port from .env if it exists
+if [ -f "$INSTALL_DIR/.env" ]; then
+  # shellcheck disable=SC1091
+  source "$INSTALL_DIR/.env"
+fi
+export PORT="${PORT:-4649}"
+
+BUILT_APP="${INSTALL_DIR}/dist-electron/mac-arm64/michi.app"
+if [ ! -d "$BUILT_APP" ]; then
+  echo "🐰 App not built yet — building…"
+  configure_build_node
+  (cd "$INSTALL_DIR" && npm run electron:build)
+fi
+
+# Keep ~/Applications/michi.app in sync with the build, then prefer it as the
+# launch target so `michi` (CLI) and Spotlight both resolve to the same bundle.
+sync_app_bundle
+APP_PATH="${HOME}/Applications/michi.app"
+[ -d "$APP_PATH" ] || APP_PATH="$BUILT_APP"
+
+# `open` launches via launchctl and doesn't inherit the shell's cwd or
+# environment. Forward the user's shell pwd via --env so the picker can
+# default to it (B); falls back gracefully on older macOS where --env is
+# unsupported.
+exec open --env "MICHI_LAUNCH_CWD=$USER_CWD" "$APP_PATH"

@@ -1,0 +1,149 @@
+import type { NormalizedEvent } from "../../services/chatEvents";
+import type { SpawnedBranch } from "../toolBridge";
+
+/**
+ * Translate a single pi-agent-core AgentEvent into 0+ michi NormalizedEvents.
+ *
+ * pi-agent-core emits:
+ *   agent_start → agent_end (run-level)
+ *   turn_start → turn_end (one LLM call + its tool batch)
+ *   message_start / message_update / message_end (any message)
+ *   tool_execution_start / tool_execution_update / tool_execution_end
+ *
+ * michi expects:
+ *   chunk / thought (assistant text/reasoning streamed)
+ *   tool_call / tool_call_update (chips for tool calls)
+ *   spawn_branches / context_saved / context_updated (tool side effects with payload)
+ *   context_usage / usage_summary (one-shot at run end)
+ *   turn_end (closes SSE)
+ *
+ * Title and follow-ups are emitted as inline `[TITLE:]` / `[FOLLOW-UP n/3:]`
+ * sentinels in the assistant's text stream and parsed by the frontend; they
+ * do NOT come through tool calls. This mapper only cares about the two
+ * side-effect tools (spawn_branches, save_context, update_context).
+ */
+export interface MappedTurnUsage {
+    inputTokens: number;
+    outputTokens: number;
+    totalCost: number;
+}
+
+export interface MapperContext {
+    /** Mutated as turns accumulate within one Agent run. */
+    cumulative: MappedTurnUsage;
+    /** Provided by the caller; used for the run-end context_usage event. */
+    contextWindow?: number;
+    /** Wall-clock ms of when prompt() began. Set by the caller. */
+    runStartMs: number;
+}
+
+export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<NormalizedEvent> {
+    switch (event.type) {
+        case "message_update": {
+            // Only assistant message updates carry deltas.
+            const e = event.assistantMessageEvent;
+            if (!e) return;
+            if (e.type === "text_delta") {
+                yield { kind: "chunk", text: e.delta };
+            } else if (e.type === "thinking_delta") {
+                yield { kind: "thought", text: e.delta };
+            }
+            return;
+        }
+
+        case "message_end": {
+            const m = event.message;
+            if (m?.role === "assistant" && m.usage) {
+                ctx.cumulative.inputTokens += m.usage.input ?? 0;
+                ctx.cumulative.outputTokens += m.usage.output ?? 0;
+                ctx.cumulative.totalCost += m.usage.cost?.total ?? 0;
+            }
+            return;
+        }
+
+        case "tool_execution_start": {
+            const purpose = typeof event.args?.__tool_use_purpose === "string"
+                ? event.args.__tool_use_purpose
+                : undefined;
+            yield {
+                kind: "tool_call",
+                toolCallId: event.toolCallId,
+                title: event.toolName,
+                detail: purpose,
+                status: "pending",
+                kindType: "execute",
+            };
+            return;
+        }
+
+        case "tool_execution_end": {
+            const name: string = event.toolName;
+            const result = event.result;
+            const isError: boolean = !!event.isError;
+
+            // Side-effect events that carry tool payload.
+            if (name === "spawn_branches" && !isError) {
+                const created: SpawnedBranch[] = result?.details?.created ?? [];
+                yield { kind: "spawn_branches", topics: created };
+            } else if (name === "save_context" && !isError) {
+                const d = result?.details;
+                if (d?.name && d?.filePath) {
+                    yield {
+                        kind: "context_saved",
+                        name: d.name,
+                        filePath: d.filePath,
+                        size: d.size,
+                    };
+                }
+            } else if (name === "update_context" && !isError) {
+                const d = result?.details;
+                if (d?.name && d?.filePath) {
+                    yield {
+                        kind: "context_updated",
+                        name: d.name,
+                        filePath: d.filePath,
+                        size: d.size,
+                    };
+                }
+            }
+
+            yield {
+                kind: "tool_call_update",
+                toolCallId: event.toolCallId,
+                title: name,
+                status: isError ? "failed" : "completed",
+                detail: isError ? extractErrorText(result) : undefined,
+            };
+            return;
+        }
+
+        case "agent_end": {
+            // One-shot end-of-run summary, then the SSE-closing turn_end.
+            const ctxPct = ctx.contextWindow
+                ? ((ctx.cumulative.inputTokens + ctx.cumulative.outputTokens) / ctx.contextWindow) * 100
+                : 0;
+            yield { kind: "context_usage", contextUsagePercentage: ctxPct };
+            yield {
+                kind: "usage_summary",
+                contextUsagePercentage: ctxPct,
+                totalCredits: ctx.cumulative.totalCost,
+                turnDurationMs: Date.now() - ctx.runStartMs,
+            };
+            yield { kind: "turn_end" };
+            return;
+        }
+
+        // agent_start / turn_start / turn_end / message_start / tool_execution_update:
+        // intentionally not surfaced — michi has no SSE event for these and they
+        // would just be noise on the wire.
+        default:
+            return;
+    }
+}
+
+function extractErrorText(result: any): string | undefined {
+    if (!result) return undefined;
+    const c = result.content;
+    if (Array.isArray(c) && c.length > 0 && c[0]?.type === "text") return c[0].text;
+    return undefined;
+}

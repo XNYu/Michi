@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Typography Lab — long-form Markdown</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..800&family=Instrument+Serif:ital@0;1&family=EB+Garamond:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Serif:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Inter+Tight:wght@300..700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,300..700&family=Lora:wght@400..700&family=Source+Serif+4:opsz,wght@8..60,300..700&family=STIX+Two+Text:wght@400..700&family=Noto+Serif+SC:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&family=ZCOOL+XiaoWei&family=Ma+Shan+Zheng&family=Long+Cang&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
+
+<style>
+  /* ---------- App shell ---------- */
+  :root {
+    --shell-bg: #161613;
+    --shell-fg: #e8e6df;
+    --shell-muted: #8a877d;
+    --shell-line: #2a2924;
+    --shell-line-strong: #3a3933;
+    --accent: #c84e35;
+    --accent-soft: #e8a48e;
+    --paper: #faf7f2;
+    --ink: #1a1a18;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    background: var(--shell-bg);
+    color: var(--shell-fg);
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ---------- Preview pane (left) ---------- */
+  .preview-wrap {
+    overflow-y: auto;
+    background: var(--bg-color);
+    transition: background-color 200ms ease;
+  }
+  .preview-wrap::-webkit-scrollbar { width: 12px; }
+  .preview-wrap::-webkit-scrollbar-track { background: transparent; }
+  .preview-wrap::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 12px; border: 3px solid transparent; background-clip: padding-box; }
+
+  .preview {
+    /* === user-controllable variables (defaults) === */
+    --latin-font: 'Fraunces';
+    --cn-font: 'Noto Serif SC';
+    --cn-font-scale: 1;       /* CN glyph size relative to Latin */
+    --cn-letter-spacing: 0em; /* CN-specific tracking */
+    --body-font-family: var(--latin-font), var(--cn-font), Georgia, serif;
+    --body-font-size: 18px;
+    --body-font-weight: 400;
+    --body-line-height: 1.65;
+    --body-letter-spacing: 0em;
+
+    --paragraph-spacing: 1.05em;
+
+    --h1-scale: 2.6;
+    --h1-weight: 600;
+    --h1-mt: 0em;
+    --h1-mb: 0.4em;
+    --h1-line-height: 1.05;
+    --h1-letter-spacing: -0.025em;
+
+    --h2-scale: 1.55;
+    --h2-weight: 600;
+    --h2-mt: 2.2em;
+    --h2-mb: 0.55em;
+    --h2-line-height: 1.18;
+    --h2-letter-spacing: -0.015em;
+
+    --h3-scale: 1.18;
+    --h3-weight: 600;
+    --h3-mt: 1.6em;
+    --h3-mb: 0.4em;
+
+    --list-item-spacing: 0.45em;
+
+    --table-pad-y: 10px;
+    --table-pad-x: 14px;
+    --table-border-weight: 1px;
+    --table-header-weight: 600;
+    --table-font-scale: 0.95;
+
+    --code-font-family: 'JetBrains Mono', ui-monospace, monospace;
+    --code-font-scale: 0.9;
+    --code-line-height: 1.55;
+    --code-bg: #f0ebe1;
+
+    --measure: 68ch;
+    --page-padding: 72px;
+
+    --bg-color: var(--paper);
+    --text-color: var(--ink);
+    --muted-color: #6e6b62;
+    --rule-color: rgba(0,0,0,0.18);
+    --link-color: #9b2226;
+
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-family: var(--body-font-family);
+    font-size: var(--body-font-size);
+    font-weight: var(--body-font-weight);
+    line-height: var(--body-line-height);
+    letter-spacing: var(--body-letter-spacing);
+    font-feature-settings: "kern" 1, "liga" 1, "onum" 1;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+  .preview .article {
+    max-width: var(--measure);
+    margin: 0 auto;
+    padding: var(--page-padding) var(--page-padding) calc(var(--page-padding) * 2);
+  }
+
+  /* paper top mark */
+  .preview .doc-mark {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted-color);
+    margin-bottom: 3em;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 0.5px solid var(--rule-color);
+    padding-bottom: 0.8em;
+  }
+  .preview .doc-mark .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    display: inline-block; margin-right: 0.6em;
+    vertical-align: middle;
+  }
+
+  .preview h1, .preview h2, .preview h3 {
+    font-family: var(--body-font-family);
+    color: var(--text-color);
+    text-wrap: balance;
+  }
+
+  /* CN-specific tweaks: latin chars use Latin font via font-family fallback,
+     but CJK glyphs often need their own size + tracking — wrap CJK runs in <span class="cn"> */
+  .preview .cn {
+    font-family: var(--cn-font), var(--latin-font), serif;
+    font-size: calc(1em * var(--cn-font-scale));
+    letter-spacing: var(--cn-letter-spacing);
+  }
+  .preview h1 {
+    font-size: calc(var(--body-font-size) * var(--h1-scale));
+    font-weight: var(--h1-weight);
+    line-height: var(--h1-line-height);
+    letter-spacing: var(--h1-letter-spacing);
+    margin: var(--h1-mt) 0 var(--h1-mb);
+  }
+  .preview h2 {
+    font-size: calc(var(--body-font-size) * var(--h2-scale));
+    font-weight: var(--h2-weight);
+    line-height: var(--h2-line-height);
+    letter-spacing: var(--h2-letter-spacing);
+    margin: var(--h2-mt) 0 var(--h2-mb);
+  }
+  .preview h3 {
+    font-size: calc(var(--body-font-size) * var(--h3-scale));
+    font-weight: var(--h3-weight);
+    line-height: 1.3;
+    margin: var(--h3-mt) 0 var(--h3-mb);
+  }
+
+  .preview .lede {
+    font-style: italic;
+    color: var(--muted-color);
+    font-size: calc(var(--body-font-size) * 1.05);
+    margin: 0 0 calc(var(--paragraph-spacing) * 1.6);
+  }
+
+  .preview p {
+    margin: 0 0 var(--paragraph-spacing);
+  }
+
+  .preview a {
+    color: var(--link-color);
+    text-decoration-thickness: 0.5px;
+    text-underline-offset: 3px;
+  }
+
+  .preview ul, .preview ol {
+    margin: 0 0 var(--paragraph-spacing);
+    padding-left: 1.4em;
+  }
+  .preview li { margin-bottom: var(--list-item-spacing); }
+  .preview li:last-child { margin-bottom: 0; }
+  .preview li::marker { color: var(--accent); }
+
+  .preview blockquote {
+    margin: calc(var(--paragraph-spacing) * 1.2) 0;
+    padding: 0.2em 0 0.2em 1.4em;
+    border-left: 2px solid var(--accent);
+    font-style: italic;
+    color: var(--muted-color);
+  }
+
+  .preview strong { font-weight: 600; }
+  .preview em { font-style: italic; }
+
+  .preview code {
+    font-family: var(--code-font-family);
+    font-size: calc(var(--body-font-size) * var(--code-font-scale));
+    background: var(--code-bg);
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+  }
+  .preview pre {
+    font-family: var(--code-font-family);
+    font-size: calc(var(--body-font-size) * var(--code-font-scale));
+    line-height: var(--code-line-height);
+    background: var(--code-bg);
+    padding: 1.2em 1.4em;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0 0 var(--paragraph-spacing);
+  }
+  .preview pre code {
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    font-size: inherit;
+  }
+
+  .preview table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 var(--paragraph-spacing);
+    font-size: calc(var(--body-font-size) * var(--table-font-scale));
+  }
+  .preview th, .preview td {
+    padding: var(--table-pad-y) var(--table-pad-x);
+    text-align: left;
+    border-bottom: var(--table-border-weight) solid var(--rule-color);
+    vertical-align: top;
+  }
+  .preview th {
+    font-weight: var(--table-header-weight);
+    border-bottom-width: calc(var(--table-border-weight) * 2);
+    border-bottom-color: var(--text-color);
+  }
+
+  /* ---------- Control panel (right) ---------- */
+  .controls {
+    background: var(--shell-bg);
+    color: var(--shell-fg);
+    border-left: 1px solid var(--shell-line);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .controls::-webkit-scrollbar { width: 10px; }
+  .controls::-webkit-scrollbar-thumb { background: var(--shell-line-strong); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+  .ctrl-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--shell-bg);
+    border-bottom: 1px solid var(--shell-line);
+    padding: 18px 22px 16px;
+  }
+  .ctrl-title {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin: 0 0 2px;
+    color: var(--shell-fg);
+  }
+  .ctrl-title em {
+    font-style: italic;
+    color: var(--accent-soft);
+    font-weight: 400;
+  }
+  .ctrl-sub {
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--shell-muted);
+    margin: 0 0 14px;
+  }
+  .ctrl-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .btn {
+    appearance: none;
+    background: transparent;
+    color: var(--shell-fg);
+    border: 1px solid var(--shell-line-strong);
+    padding: 7px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent-soft); }
+  .btn.primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn.primary:hover { background: #b8412a; border-color: #b8412a; color: #fff; }
+  .btn.success {
+    background: #4a7c4a;
+    border-color: #4a7c4a;
+    color: #fff;
+  }
+
+  .ctrl-body { padding: 14px 22px 80px; }
+
+  .section {
+    border-top: 1px solid var(--shell-line);
+    padding: 14px 0 6px;
+  }
+  .section:first-child { border-top: none; padding-top: 6px; }
+  .section-title {
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--shell-muted);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--shell-line);
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .row .label {
+    flex: 0 0 auto;
+    width: 110px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--shell-fg);
+    line-height: 1.3;
+  }
+  .row .label .hint {
+    display: block;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--shell-muted);
+    margin-top: 2px;
+  }
+  .row input[type="range"] {
+    flex: 1;
+    min-width: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    height: 18px;
+  }
+  .row input[type="range"]::-webkit-slider-runnable-track {
+    height: 2px;
+    background: var(--shell-line-strong);
+    border-radius: 2px;
+  }
+  .row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--shell-bg);
+    margin-top: -5px;
+    cursor: grab;
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .row input[type="range"]::-moz-range-track {
+    height: 2px;
+    background: var(--shell-line-strong);
+    border-radius: 2px;
+  }
+  .row input[type="range"]::-moz-range-thumb {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--shell-bg);
+    cursor: grab;
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .row .value {
+    flex: 0 0 64px;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent-soft);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row.color .swatch {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    border: 1px solid var(--shell-line-strong);
+    padding: 4px;
+    cursor: pointer;
+  }
+  .row.color .chip {
+    width: 22px; height: 22px;
+    border-radius: 2px;
+    flex: 0 0 auto;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .row.color .hex {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--shell-fg);
+    flex: 1;
+  }
+  .row.color input[type="color"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    width: 0; height: 0;
+  }
+
+  .font-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .font-chip {
+    background: transparent;
+    border: 1px solid var(--shell-line-strong);
+    padding: 10px 12px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--shell-fg);
+    transition: all 120ms ease;
+    font-size: 16px;
+    line-height: 1.1;
+  }
+  .font-chip:hover { border-color: var(--accent-soft); }
+  .font-chip[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: rgba(200, 78, 53, 0.08);
+    color: var(--accent-soft);
+  }
+  .font-chip .name {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--shell-muted);
+    margin-top: 6px;
+  }
+
+  .preset-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .preset-btn {
+    border: 1px solid var(--shell-line-strong);
+    background: transparent;
+    color: var(--shell-fg);
+    padding: 10px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+  .preset-btn:hover { border-color: var(--accent); }
+  .preset-btn .swatch-pair {
+    display: flex;
+    width: 22px;
+    height: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .preset-btn .swatch-pair span { flex: 1; }
+
+  /* toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 424px;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 10px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 180ms ease, transform 180ms ease;
+    pointer-events: none;
+    z-index: 100;
+    border-left: 2px solid var(--accent);
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* CSS export modal */
+  .modal-bg {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: var(--shell-bg);
+    color: var(--shell-fg);
+    border: 1px solid var(--shell-line-strong);
+    width: min(640px, 90vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-head {
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--shell-line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .modal-head h3 {
+    margin: 0;
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 18px;
+  }
+  .modal-body {
+    padding: 16px 22px;
+    overflow: auto;
+  }
+  .modal pre {
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--accent-soft);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .modal-foot {
+    padding: 12px 22px;
+    border-top: 1px solid var(--shell-line);
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ PREVIEW (LEFT) ============ -->
+  <div class="preview-wrap">
+    <article class="preview">
+      <div class="article">
+        <div class="doc-mark">
+          <span><span class="dot"></span>Specimen / 001</span>
+          <span>Long-form Markdown</span>
+        </div>
+
+        <h1><span class="cn">地图投影</span>笔记 · Notes on map projections</h1>
+        <p class="lede"><span class="cn">关于制图者如何在不可能中妥协的一篇短文。</span> A short essay on how cartographers compromise.</p>
+
+        <p><span class="cn">每一张地球的平面地图都是一种谎言，但有些谎言是有用的。</span>The fundamental constraint is geometric, not technical: you cannot wrap a sphere onto a plane without cutting, stretching, or shearing it. <span class="cn">一张地图可以保留形状，</span><strong>or</strong><span class="cn"> 面积，</span><strong>or</strong><span class="cn"> 距离，</span><strong>or</strong><span class="cn"> 方向 —— 但永远不能同时保留所有这一切。</span>Choosing which to preserve is the first, and most consequential, decision in cartography.</p>
+
+        <h2><span class="cn">不可能的问题</span> · The impossible problem</h2>
+
+        <p><span class="cn">1569 年，</span>Gerardus Mercator<span class="cn"> 发表了一张革新航海的海图。通过将靠近两极的纬度拉伸，他得到了这样一张地图：任何罗盘航线都呈现为一条直线。水手们爱它，地理学家最终却不爱 ——</span>Greenland appears the size of Africa, though it is roughly fourteen times smaller (<span class="cn">实际上格陵兰只有非洲的十四分之一大小</span>).</p>
+
+        <blockquote><span class="cn">地图不是疆域。</span>But neither is any other description of it. <span class="cn">问题在于：我们愿意接受哪一种失真。</span></blockquote>
+
+        <p><span class="cn">这一权衡无法回避。正如制图学家</span> Arthur Robinson <span class="cn">所说：</span><em>"a map projection is a problem with no solution, only options."</em> <span class="cn">大致可以分为三类：</span></p>
+
+        <ul>
+          <li><strong><span class="cn">等角投影 (Conformal)</span></strong><span class="cn"> —— 保留角度和局部形状。</span>Mercator <span class="cn">是著名代表，但在边缘处面积失真严重。</span></li>
+          <li><strong><span class="cn">等积投影 (Equal-area)</span></strong><span class="cn"> —— 保留面积。</span>Gall–Peters <span class="cn">与</span> Mollweide <span class="cn">是经典；代价是形状有时严重变形。</span></li>
+          <li><strong><span class="cn">折中投影 (Compromise)</span></strong><span class="cn"> —— 哪一项都不完美保留，但把最严重的失真控制到最小。</span>Robinson <span class="cn">本人提出的投影曾被</span> <em>National Geographic</em> <span class="cn">使用数十年。</span></li>
+        </ul>
+
+        <h2><span class="cn">三个家族</span> · Three families</h2>
+
+        <p><span class="cn">在每个家族内部，投影所依附的几何曲面 —— 即球面被展开到的形状 —— 决定了投影的性格。</span></p>
+
+        <h3><span class="cn">圆柱投影</span> · Cylindrical</h3>
+        <p><span class="cn">球面被包入一个圆柱，再展开。经线变为竖直，纬线变为水平。</span>Mercator <span class="cn">与</span> Gall–Peters <span class="cn">都是圆柱投影，尽管外观完全不同：前者拉伸两极，后者压扁两极。</span></p>
+
+        <h3><span class="cn">圆锥投影</span> · Conic</h3>
+        <p><span class="cn">球面被包入一个与之相切于某一纬度的圆锥。圆锥投影非常适合中纬度地区 ——</span> Lambert Conformal Conic <span class="cn">是美国航空图的标准，因为大多数飞行发生在北纬</span> 30°–60° <span class="cn">之间。</span></p>
+
+        <h3><span class="cn">方位投影</span> · Azimuthal</h3>
+        <p><span class="cn">球面被投射到一个切于单点的平面上。失真从该点向外径向增长。</span>The U.N. logo <span class="cn">使用一个以北极为中心的方位投影 —— 一枚徽章，而非海图。</span></p>
+
+        <h2><span class="cn">经典对比</span> · Comparing the classics</h2>
+
+        <p><span class="cn">下面是你最常见到的几种投影的粗略对比：</span></p>
+
+        <table>
+          <thead>
+            <tr>
+              <th><span class="cn">投影</span> / Projection</th>
+              <th><span class="cn">家族</span> / Family</th>
+              <th><span class="cn">保留</span> / Preserves</th>
+              <th><span class="cn">最适合</span> / Best at</th>
+              <th><span class="cn">年代</span> / Year</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Mercator</td><td><span class="cn">圆柱</span></td><td><span class="cn">角度</span></td><td><span class="cn">航海</span></td><td>1569</td></tr>
+            <tr><td>Gall–Peters</td><td><span class="cn">圆柱</span></td><td><span class="cn">面积</span></td><td><span class="cn">公平话语</span></td><td>1855</td></tr>
+            <tr><td>Lambert Conic</td><td><span class="cn">圆锥</span></td><td><span class="cn">局部角度</span></td><td><span class="cn">中纬度</span></td><td>1772</td></tr>
+            <tr><td>Robinson</td><td><span class="cn">折中</span></td><td><span class="cn">皆不严格</span></td><td><span class="cn">世界地图</span></td><td>1963</td></tr>
+            <tr><td>Winkel Tripel</td><td><span class="cn">折中</span></td><td><span class="cn">皆不严格</span></td><td><span class="cn">世界地图</span></td><td>1921</td></tr>
+            <tr><td>Mollweide</td><td><span class="cn">伪圆柱</span></td><td><span class="cn">面积</span></td><td><span class="cn">主题图</span></td><td>1805</td></tr>
+          </tbody>
+        </table>
+
+        <h2><span class="cn">公式，简化</span> · A formula, distilled</h2>
+
+        <p><span class="cn">尽管承载着政治分量，</span>Mercator <span class="cn">投影的形式却很简单。对于半径为</span> <code>R</code><span class="cn"> 的球面，经度</span> <code>λ</code><span class="cn">、纬度</span> <code>φ</code>：</p>
+
+<pre><code>x = R · λ
+y = R · ln( tan(π/4 + φ/2) )</code></pre>
+
+        <p><span class="cn">对数函数是一切麻烦的根源：当</span> φ <span class="cn">趋近于</span> ±π/2<span class="cn"> 时，</span>y <span class="cn">发散到无穷。在实践中，地图通常在南北纬</span> 85° <span class="cn">附近截断，以保持画面有限。</span></p>
+
+        <h2><span class="cn">何时用什么</span> · What to use when</h2>
+
+        <p><span class="cn">一份务实的指南：</span></p>
+
+        <ol>
+          <li><strong><span class="cn">用罗盘导航？</span>Navigating with a compass?</strong> Mercator<span class="cn">。四个世纪以来海图一直如此使用，飞行员和水手都习惯了它。</span></li>
+          <li><strong><span class="cn">展示人口、</span>GDP <span class="cn">或其它主题数据？</span></strong><span class="cn">使用等积投影（</span>Mollweide<span class="cn">、</span>Eckert IV<span class="cn">、</span>Equal Earth<span class="cn">）。页面上的面积应与地球上的面积成比例。</span></li>
+          <li><strong><span class="cn">一张通用的世界地图？</span></strong>Winkel Tripel <span class="cn">或</span> Equal Earth<span class="cn">。两者都做了合理的折中；</span><em>National Geographic</em><span class="cn"> 于 1998 年从</span> Robinson <span class="cn">切换为</span> Winkel Tripel<span class="cn">。</span></li>
+          <li><strong><span class="cn">一个地区，而非整个世界？</span></strong><span class="cn">选择一种与该地区相切的投影 —— 中纬度用圆锥，狭窄的南北带状用横轴墨卡托，极地工作用方位投影。</span></li>
+        </ol>
+
+        <p><span class="cn">没有一张通用的地图，只有一张诚实承认自己在隐藏什么的地图。</span> There is no universal map. There is only the map that is honest about what it is hiding.</p>
+      </div>
+    </article>
+  </div>
+
+  <!-- ============ CONTROLS (RIGHT) ============ -->
+  <aside class="controls" id="controls">
+    <div class="ctrl-header">
+      <h1 class="ctrl-title">Typography <em>Lab</em></h1>
+      <p class="ctrl-sub">Specimen 001 · Live</p>
+      <div class="ctrl-actions">
+        <button class="btn primary" id="copyBtn">Copy CSS</button>
+        <button class="btn" id="exportBtn">View</button>
+        <button class="btn" id="resetBtn">Reset</button>
+      </div>
+    </div>
+
+    <div class="ctrl-body" id="ctrlBody"></div>
+  </aside>
+
+</div>
+
+<div class="toast" id="toast">Copied</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Exported CSS</h3>
+      <button class="btn" id="modalClose">Close</button>
+    </div>
+    <div class="modal-body"><pre id="modalCss"></pre></div>
+    <div class="modal-foot">
+      <button class="btn primary" id="modalCopy">Copy</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Config: every control is declared once here.
+   Each entry maps to a CSS variable on .preview
+   ============================================================ */
+
+const LATIN_FONT_OPTIONS = [
+  { id: 'sourceserif',label: 'Source Serif 4',   stack: "'Source Serif 4'" }, // closest free analogue to Tiempos Text
+  { id: 'stix',       label: 'STIX Two Text',    stack: "'STIX Two Text'" },
+  { id: 'fraunces',   label: 'Fraunces',         stack: "'Fraunces'" },
+  { id: 'instr',      label: 'Instrument Serif', stack: "'Instrument Serif'" },
+  { id: 'garamond',   label: 'EB Garamond',      stack: "'EB Garamond'" },
+  { id: 'plexserif',  label: 'IBM Plex Serif',   stack: "'IBM Plex Serif'" },
+  { id: 'newsreader', label: 'Newsreader',       stack: "'Newsreader'" },
+  { id: 'lora',       label: 'Lora',             stack: "'Lora'" },
+  { id: 'plexsans',   label: 'IBM Plex Sans',    stack: "'IBM Plex Sans'" },
+  { id: 'inter',      label: 'Inter Tight',      stack: "'Inter Tight'" },
+];
+
+const CN_FONT_OPTIONS = [
+  { id: 'noto-serif-sc',  label: '思源宋体 Noto Serif',   stack: "'Noto Serif SC'" },
+  { id: 'noto-sans-sc',   label: '思源黑体 Noto Sans',    stack: "'Noto Sans SC'" },
+  { id: 'lxgw',           label: '霞鹜文楷 LXGW WenKai',  stack: "'LXGW WenKai'" },
+  { id: 'zcool-xiaowei',  label: '站酷小薇 ZCOOL',         stack: "'ZCOOL XiaoWei'" },
+  { id: 'mashan',         label: '马善政 Ma Shan Zheng',   stack: "'Ma Shan Zheng'" },
+  { id: 'longcang',       label: '龙藏体 Long Cang',       stack: "'Long Cang'" },
+  { id: 'system-cn',      label: '系统字体 System CJK',    stack: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei'" },
+];
+
+const CODE_FONT_OPTIONS = [
+  { id: 'jetbrains', label: 'JetBrains Mono', stack: "'JetBrains Mono', ui-monospace, monospace" },
+  { id: 'plexmono',  label: 'IBM Plex Sans',  stack: "'IBM Plex Sans', system-ui, sans-serif" },
+  { id: 'system',    label: 'System Mono',    stack: "ui-monospace, 'SF Mono', Menlo, monospace" },
+];
+
+const PRESETS = {
+  paper:  { '--bg-color': '#faf7f2', '--text-color': '#1a1a18', '--muted-color': '#6e6b62', '--rule-color': 'rgba(0,0,0,0.18)', '--code-bg': '#f0ebe1', '--link-color': '#9b2226' },
+  ink:    { '--bg-color': '#171614', '--text-color': '#e8e6df', '--muted-color': '#9a978d', '--rule-color': 'rgba(255,255,255,0.18)', '--code-bg': '#23211d', '--link-color': '#e8a48e' },
+  cream:  { '--bg-color': '#f4ead7', '--text-color': '#2a2014', '--muted-color': '#7a6a4c', '--rule-color': 'rgba(0,0,0,0.18)', '--code-bg': '#e9dcc0', '--link-color': '#9b2226' },
+  slate:  { '--bg-color': '#1f2a33', '--text-color': '#e0e8ee', '--muted-color': '#94a3b0', '--rule-color': 'rgba(255,255,255,0.16)', '--code-bg': '#2a3540', '--link-color': '#f5b5a0' },
+};
+
+const SCHEMA = [
+  { section: 'Theme', kind: 'presets' },
+  { key: '--bg-color',     label: 'Background',  hint: 'Page',    type: 'color' },
+  { key: '--text-color',   label: 'Text',        hint: 'Body',    type: 'color' },
+  { key: '--muted-color',  label: 'Muted',       hint: 'Lede / quote', type: 'color' },
+  { key: '--rule-color',   label: 'Rule',        hint: 'Borders / dividers', type: 'color', rgba: true },
+  { key: '--link-color',   label: 'Link',        hint: 'Anchors', type: 'color' },
+
+  { section: 'Type · Latin' },
+  { key: '--latin-font',         label: 'Family',  hint: '西文 Latin', type: 'fontPicker', options: LATIN_FONT_OPTIONS },
+  { key: '--body-font-size',     label: 'Size',    hint: 'Body',  type: 'range', min: 12,  max: 28,  step: 0.5, unit: 'px' },
+  { key: '--body-font-weight',   label: 'Weight',  hint: 'Body',  type: 'range', min: 300, max: 700, step: 100, unit: '' },
+  { key: '--body-line-height',   label: 'Leading', hint: 'line-height', type: 'range', min: 1.0, max: 2.4, step: 0.025, unit: '' },
+  { key: '--body-letter-spacing',label: 'Tracking',hint: 'letter-spacing', type: 'range', min: -0.04, max: 0.10, step: 0.005, unit: 'em' },
+
+  { section: 'Type · 中文' },
+  { key: '--cn-font',            label: 'Family',  hint: 'CJK 中文',     type: 'fontPicker', options: CN_FONT_OPTIONS },
+  { key: '--cn-font-scale',      label: 'Scale',   hint: '× Latin',      type: 'range', min: 0.80, max: 1.30, step: 0.01,  unit: '×' },
+  { key: '--cn-letter-spacing',  label: 'Tracking',hint: 'CJK 字距',     type: 'range', min: -0.04, max: 0.20, step: 0.005, unit: 'em' },
+
+  { section: 'Headings · H1' },
+  { key: '--h1-scale',          label: 'Size',     hint: '× body',  type: 'range', min: 1.5, max: 5.0, step: 0.05, unit: '×' },
+  { key: '--h1-weight',         label: 'Weight',   hint: '',        type: 'range', min: 300, max: 800, step: 100, unit: '' },
+  { key: '--h1-line-height',    label: 'Leading',  hint: '',        type: 'range', min: 0.9, max: 1.6, step: 0.025, unit: '' },
+  { key: '--h1-letter-spacing', label: 'Tracking', hint: '',        type: 'range', min: -0.06, max: 0.04, step: 0.005, unit: 'em' },
+  { key: '--h1-mt',             label: 'Top mar.', hint: 'em',      type: 'range', min: 0,   max: 4.0, step: 0.05, unit: 'em' },
+  { key: '--h1-mb',             label: 'Btm mar.', hint: 'em',      type: 'range', min: 0,   max: 3.0, step: 0.05, unit: 'em' },
+
+  { section: 'Headings · H2' },
+  { key: '--h2-scale',          label: 'Size',     hint: '× body', type: 'range', min: 1.0, max: 3.0, step: 0.05, unit: '×' },
+  { key: '--h2-weight',         label: 'Weight',   hint: '',       type: 'range', min: 300, max: 800, step: 100, unit: '' },
+  { key: '--h2-line-height',    label: 'Leading',  hint: '',       type: 'range', min: 0.9, max: 1.8, step: 0.025, unit: '' },
+  { key: '--h2-letter-spacing', label: 'Tracking', hint: '',       type: 'range', min: -0.04, max: 0.04, step: 0.005, unit: 'em' },
+  { key: '--h2-mt',             label: 'Top mar.', hint: 'em',     type: 'range', min: 0, max: 4.0, step: 0.05, unit: 'em' },
+  { key: '--h2-mb',             label: 'Btm mar.', hint: 'em',     type: 'range', min: 0, max: 3.0, step: 0.05, unit: 'em' },
+
+  { section: 'Headings · H3' },
+  { key: '--h3-scale',          label: 'Size',     hint: '× body', type: 'range', min: 0.9, max: 2.0, step: 0.05, unit: '×' },
+  { key: '--h3-weight',         label: 'Weight',   hint: '',       type: 'range', min: 300, max: 800, step: 100, unit: '' },
+  { key: '--h3-mt',             label: 'Top mar.', hint: 'em',     type: 'range', min: 0, max: 3.0, step: 0.05, unit: 'em' },
+  { key: '--h3-mb',             label: 'Btm mar.', hint: 'em',     type: 'range', min: 0, max: 2.0, step: 0.05, unit: 'em' },
+
+  { section: 'Rhythm' },
+  { key: '--paragraph-spacing', label: 'Paragraph', hint: 'em',    type: 'range', min: 0, max: 3.0, step: 0.05, unit: 'em' },
+  { key: '--list-item-spacing', label: 'List item', hint: 'em',    type: 'range', min: 0, max: 2.0, step: 0.05, unit: 'em' },
+
+  { section: 'Tables' },
+  { key: '--table-pad-y',          label: 'Pad Y',     hint: 'cell vertical',   type: 'range', min: 0,    max: 28,  step: 1,    unit: 'px' },
+  { key: '--table-pad-x',          label: 'Pad X',     hint: 'cell horizontal', type: 'range', min: 0,    max: 36,  step: 1,    unit: 'px' },
+  { key: '--table-border-weight',  label: 'Border',    hint: 'rule weight',     type: 'range', min: 0,    max: 4,   step: 0.5,  unit: 'px' },
+  { key: '--table-header-weight',  label: 'Hdr weight',hint: 'th',              type: 'range', min: 300,  max: 800, step: 100,  unit: '' },
+  { key: '--table-font-scale',     label: 'Size',      hint: '× body',          type: 'range', min: 0.7,  max: 1.2, step: 0.025,unit: '×' },
+
+  { section: 'Code' },
+  { key: '--code-font-family',  label: 'Family',  hint: 'Mono', type: 'fontPicker', options: CODE_FONT_OPTIONS },
+  { key: '--code-font-scale',   label: 'Size',    hint: '× body', type: 'range', min: 0.7, max: 1.2, step: 0.025, unit: '×' },
+  { key: '--code-line-height',  label: 'Leading', hint: '',       type: 'range', min: 1.0, max: 2.2, step: 0.05, unit: '' },
+  { key: '--code-bg',           label: 'Surface', hint: 'tint',   type: 'color' },
+
+  { section: 'Canvas' },
+  { key: '--measure',      label: 'Measure', hint: 'max width', type: 'range', min: 40, max: 110, step: 1, unit: 'ch' },
+  { key: '--page-padding', label: 'Padding', hint: 'page edge', type: 'range', min: 16, max: 200, step: 4, unit: 'px' },
+];
+
+/* ============================================================
+   Defaults — captured from .preview's CSS variable defaults
+   ============================================================ */
+const DEFAULTS = {
+  '--latin-font':         "'Fraunces'",
+  '--cn-font':            "'Noto Serif SC'",
+  '--cn-font-scale':      '1',
+  '--cn-letter-spacing':  '0em',
+  '--body-font-size':     '18px',
+  '--body-font-weight':   '400',
+  '--body-line-height':   '1.65',
+  '--body-letter-spacing':'0em',
+  '--paragraph-spacing':  '1.05em',
+  '--h1-scale':           '2.6',
+  '--h1-weight':          '600',
+  '--h1-mt':              '0em',
+  '--h1-mb':              '0.4em',
+  '--h1-line-height':     '1.05',
+  '--h1-letter-spacing':  '-0.025em',
+  '--h2-scale':           '1.55',
+  '--h2-weight':          '600',
+  '--h2-mt':              '2.2em',
+  '--h2-mb':              '0.55em',
+  '--h2-line-height':     '1.18',
+  '--h2-letter-spacing':  '-0.015em',
+  '--h3-scale':           '1.18',
+  '--h3-weight':          '600',
+  '--h3-mt':              '1.6em',
+  '--h3-mb':              '0.4em',
+  '--list-item-spacing':  '0.45em',
+  '--table-pad-y':        '10px',
+  '--table-pad-x':        '14px',
+  '--table-border-weight':'1px',
+  '--table-header-weight':'600',
+  '--table-font-scale':   '0.95',
+  '--code-font-family':   "'JetBrains Mono', ui-monospace, monospace",
+  '--code-font-scale':    '0.9',
+  '--code-line-height':   '1.55',
+  '--code-bg':            '#f0ebe1',
+  '--measure':            '68ch',
+  '--page-padding':       '72px',
+  '--bg-color':           '#faf7f2',
+  '--text-color':         '#1a1a18',
+  '--muted-color':        '#6e6b62',
+  '--rule-color':         'rgba(0,0,0,0.18)',
+  '--link-color':         '#9b2226',
+};
+
+/* ============================================================
+   Storage + state
+   ============================================================ */
+const STORAGE_KEY = 'typography-lab.config.v1';
+const state = (() => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const stored = JSON.parse(raw);
+      // Only keep keys we still know about — drops stale keys (e.g. legacy --body-font-family)
+      // whose inline values would otherwise shadow new derived variables.
+      const filtered = {};
+      for (const k of Object.keys(DEFAULTS)) {
+        if (stored[k] !== undefined) filtered[k] = stored[k];
+      }
+      return { ...DEFAULTS, ...filtered };
+    }
+  } catch (_) {}
+  return { ...DEFAULTS };
+})();
+
+const previewEl = document.querySelector('.preview');
+const ctrlBody  = document.getElementById('ctrlBody');
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+function applyAll() {
+  for (const [k, v] of Object.entries(state)) {
+    previewEl.style.setProperty(k, v);
+  }
+}
+function set(key, value) {
+  state[key] = value;
+  previewEl.style.setProperty(key, value);
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
+}
+function parseNumeric(raw) {
+  if (raw == null) return 0;
+  const m = String(raw).match(/-?\d*\.?\d+/);
+  return m ? parseFloat(m[0]) : 0;
+}
+function formatValue(num, unit, step) {
+  const decimals = step >= 1 ? 0 : (step >= 0.1 ? 1 : (step >= 0.01 ? 2 : 3));
+  return `${num.toFixed(decimals)}${unit}`;
+}
+
+/* ============================================================
+   Render controls
+   ============================================================ */
+function render() {
+  ctrlBody.innerHTML = '';
+  let currentSection = null;
+
+  for (const item of SCHEMA) {
+    if (item.section !== undefined) {
+      currentSection = document.createElement('div');
+      currentSection.className = 'section';
+      const h = document.createElement('div');
+      h.className = 'section-title';
+      h.textContent = item.section;
+      currentSection.appendChild(h);
+      ctrlBody.appendChild(currentSection);
+
+      if (item.kind === 'presets') {
+        const grid = document.createElement('div');
+        grid.className = 'preset-row';
+        for (const [name, vars] of Object.entries(PRESETS)) {
+          const b = document.createElement('button');
+          b.className = 'preset-btn';
+          const sw = document.createElement('span');
+          sw.className = 'swatch-pair';
+          const a = document.createElement('span'); a.style.background = vars['--bg-color'];
+          const c = document.createElement('span'); c.style.background = vars['--text-color'];
+          sw.append(a, c);
+          b.append(sw, document.createTextNode(name));
+          b.addEventListener('click', () => {
+            for (const [k, v] of Object.entries(vars)) set(k, v);
+            render(); // re-render so color swatches refresh
+          });
+          grid.appendChild(b);
+        }
+        currentSection.appendChild(grid);
+      }
+      continue;
+    }
+
+    if (!currentSection) continue;
+    if (item.type === 'range')       currentSection.appendChild(renderRange(item));
+    if (item.type === 'color')       currentSection.appendChild(renderColor(item));
+    if (item.type === 'fontPicker')  currentSection.appendChild(renderFontPicker(item));
+  }
+}
+
+function renderRange(item) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `
+    <div class="label">${item.label}<span class="hint">${item.hint || ''}</span></div>
+    <input type="range" min="${item.min}" max="${item.max}" step="${item.step}">
+    <div class="value"></div>
+  `;
+  const slider = row.querySelector('input');
+  const out    = row.querySelector('.value');
+
+  const num = parseNumeric(state[item.key]);
+  slider.value = num;
+  out.textContent = formatValue(num, item.unit, item.step);
+
+  slider.addEventListener('input', () => {
+    const n = parseFloat(slider.value);
+    out.textContent = formatValue(n, item.unit, item.step);
+    set(item.key, `${n}${item.unit === '×' ? '' : item.unit}`);
+  });
+  return row;
+}
+
+function renderColor(item) {
+  const row = document.createElement('div');
+  row.className = 'row color';
+  const initial = state[item.key];
+  const isRgba  = String(initial).startsWith('rgba');
+
+  row.innerHTML = `
+    <div class="label">${item.label}<span class="hint">${item.hint || ''}</span></div>
+    <label class="swatch">
+      <span class="chip"></span>
+      <span class="hex"></span>
+      <input type="color">
+    </label>
+  `;
+  const chip   = row.querySelector('.chip');
+  const hexEl  = row.querySelector('.hex');
+  const input  = row.querySelector('input[type="color"]');
+
+  function paint(value) {
+    chip.style.background = value;
+    hexEl.textContent = value;
+    // map rgba/hex -> hex for color input (best effort)
+    const hex = toHex(value);
+    if (hex) input.value = hex;
+  }
+
+  paint(initial);
+
+  input.addEventListener('input', () => {
+    let value = input.value;
+    if (isRgba) {
+      // preserve alpha if previously rgba
+      const a = parseRgbaAlpha(initial) ?? 0.18;
+      value = hexToRgba(input.value, a);
+    }
+    paint(value);
+    set(item.key, value);
+  });
+
+  return row;
+}
+
+function renderFontPicker(item) {
+  const wrap = document.createElement('div');
+  const grid = document.createElement('div');
+  grid.className = 'font-grid';
+  for (const opt of item.options) {
+    const b = document.createElement('button');
+    b.className = 'font-chip';
+    b.style.fontFamily = opt.stack;
+    b.setAttribute('aria-pressed', state[item.key] === opt.stack ? 'true' : 'false');
+    b.innerHTML = `Aa Mg<span class="name">${opt.label}</span>`;
+    b.addEventListener('click', () => {
+      set(item.key, opt.stack);
+      grid.querySelectorAll('.font-chip').forEach(el => el.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
+    });
+    grid.appendChild(b);
+  }
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+/* ---------- Color helpers ---------- */
+function toHex(value) {
+  value = String(value).trim();
+  if (value.startsWith('#')) {
+    if (value.length === 4) {
+      return '#' + [...value.slice(1)].map(c => c + c).join('');
+    }
+    return value.slice(0, 7);
+  }
+  if (value.startsWith('rgb')) {
+    const m = value.match(/\d+(\.\d+)?/g);
+    if (!m) return null;
+    const [r, g, b] = m.map(Number);
+    return '#' + [r,g,b].map(n => n.toString(16).padStart(2,'0')).join('');
+  }
+  return null;
+}
+function parseRgbaAlpha(value) {
+  const m = String(value).match(/rgba?\([^)]+\)/);
+  if (!m) return null;
+  const nums = m[0].match(/-?\d+(\.\d+)?/g);
+  if (!nums || nums.length < 4) return null;
+  return parseFloat(nums[3]);
+}
+function hexToRgba(hex, alpha) {
+  hex = hex.replace('#','');
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  const r = parseInt(hex.slice(0,2), 16);
+  const g = parseInt(hex.slice(2,4), 16);
+  const b = parseInt(hex.slice(4,6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/* ============================================================
+   Actions: Copy / Reset / View export
+   ============================================================ */
+function buildCss() {
+  const lines = [':root {'];
+  for (const [k, v] of Object.entries(state)) {
+    lines.push(`  ${k}: ${v};`);
+  }
+  lines.push('}');
+  return lines.join('\n');
+}
+
+function showToast(text) {
+  const t = document.getElementById('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(showToast._id);
+  showToast._id = setTimeout(() => t.classList.remove('show'), 1400);
+}
+
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  const css = buildCss();
+  try {
+    await navigator.clipboard.writeText(css);
+    showToast('Copied · CSS variables');
+  } catch (_) {
+    showToast('Copy failed');
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (!confirm('Reset all values to defaults?')) return;
+  for (const k of Object.keys(state)) delete state[k];
+  Object.assign(state, DEFAULTS);
+  try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+  applyAll();
+  render();
+  showToast('Reset');
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  document.getElementById('modalCss').textContent = buildCss();
+  document.getElementById('modalBg').classList.add('show');
+});
+document.getElementById('modalClose').addEventListener('click', () => {
+  document.getElementById('modalBg').classList.remove('show');
+});
+document.getElementById('modalBg').addEventListener('click', (e) => {
+  if (e.target.id === 'modalBg') document.getElementById('modalBg').classList.remove('show');
+});
+document.getElementById('modalCopy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(buildCss());
+    showToast('Copied');
+  } catch (_) { showToast('Copy failed'); }
+});
+
+/* ============================================================
+   Boot
+   ============================================================ */
+applyAll();
+render();
+</script>
+
+</body>
+</html>

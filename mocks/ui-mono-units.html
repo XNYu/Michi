@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI font · kbd & badges — mono units vs unified</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&family=Inter+Tight:wght@300..700&family=Geist:wght@300..700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --shell-bg: #0c0d0e;
+  --m-bg: #111315;
+  --m-bg-muted: #0d0f10;
+  --m-surface: #15181a;
+  --m-fg: #e6e1d6;
+  --m-muted: #7d7a72;
+  --m-faint: #4a4843;
+  --m-line: #232628;
+  --m-line-strong: #2e3134;
+  --m-accent: #c84e35;
+  --m-accent-soft: rgba(200, 78, 53, 0.12);
+  --shell-fg: #e8e6df;
+  --shell-muted: #8a877d;
+  --accent-soft: #e8a48e;
+
+  /* Two competing variables — switched by toggle */
+  --ui-font: 'IBM Plex Mono', ui-monospace, monospace;
+  --kbd-font: 'IBM Plex Mono', ui-monospace, monospace; /* default mode A: identical */
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--shell-bg);
+  color: var(--shell-fg);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  padding: 28px;
+}
+
+.label-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.lab-title {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--shell-fg);
+}
+.lab-title em { font-style: italic; color: var(--accent-soft); font-weight: 400; }
+.lab-sub {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.toggles { display: flex; gap: 8px; margin: 20px 0 28px; flex-wrap: wrap; }
+.toggle {
+  background: transparent;
+  color: var(--shell-fg);
+  border: 1px solid var(--m-line-strong);
+  padding: 9px 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+.toggle:hover { border-color: var(--accent-soft); color: var(--accent-soft); }
+.toggle[aria-pressed="true"] {
+  background: var(--m-accent);
+  border-color: var(--m-accent);
+  color: #fff;
+}
+.toggle .swatch-label {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.5);
+  margin-top: 3px;
+  text-transform: none;
+}
+.toggle[aria-pressed="true"] .swatch-label { color: rgba(255,255,255,0.8); }
+
+.note {
+  margin-bottom: 22px;
+  font-size: 11px;
+  color: var(--shell-muted);
+  line-height: 1.6;
+  max-width: 720px;
+}
+.note code {
+  background: #1d1e20;
+  border: 1px solid var(--m-line-strong);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent-soft);
+  font-size: 10.5px;
+}
+
+/* Specimen window */
+.specimen {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  background: var(--m-bg);
+  border: 1px solid var(--m-line);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+}
+
+.sidebar {
+  background: var(--m-bg-muted);
+  border-right: 1px solid var(--m-line);
+  padding: 12px 0;
+  font-family: var(--ui-font);
+}
+.sidebar .head {
+  padding: 6px 14px 12px;
+  border-bottom: 1px solid var(--m-line);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.sidebar .head .brand {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-fg);
+}
+.sidebar .head .ver {
+  font-size: 9.5px;
+  color: var(--m-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--m-muted);
+}
+.row .icon {
+  width: 14px;
+  display: inline-block;
+  text-align: center;
+  font-family: var(--kbd-font);   /* glyph */
+  color: var(--m-faint);
+}
+.row.is-active {
+  background: var(--m-accent-soft);
+  color: var(--m-fg);
+  border-left: 2px solid var(--m-accent);
+  padding-left: 10px;
+}
+.row.is-active .icon { color: var(--m-accent); }
+.row .label-text { flex: 1; }
+.kbd {
+  font-family: var(--kbd-font);
+  font-size: 10.5px;
+  color: var(--m-faint);
+  letter-spacing: 0.04em;
+}
+.badge {
+  font-family: var(--kbd-font);
+  font-size: 10px;
+  color: var(--m-fg);
+  background: var(--m-surface);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--m-line);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Main pane */
+.main {
+  padding: 18px 22px;
+}
+.main h2 {
+  margin: 0 0 6px;
+  font-family: var(--ui-font);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--m-fg);
+  letter-spacing: 0.01em;
+}
+.main p {
+  margin: 0 0 14px;
+  font-family: var(--ui-font);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--m-muted);
+}
+
+/* Toolbar with kbd-tagged buttons */
+.toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--m-line-strong);
+  color: var(--m-fg);
+  padding: 6px 10px;
+  font-family: var(--ui-font);
+  font-size: 11.5px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.tb-btn .kbd-inline {
+  font-family: var(--kbd-font);
+  background: var(--m-surface);
+  padding: 1px 5px;
+  border: 1px solid var(--m-line);
+  border-radius: 2px;
+  font-size: 9.5px;
+  color: var(--m-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Status row */
+.status {
+  display: flex;
+  gap: 22px;
+  padding: 9px 12px;
+  background: var(--m-bg-muted);
+  border: 1px solid var(--m-line);
+  border-radius: 4px;
+  font-family: var(--ui-font);
+  font-size: 11.5px;
+  color: var(--m-muted);
+  margin-bottom: 18px;
+}
+.status .stat-num {
+  font-family: var(--kbd-font);
+  color: var(--m-fg);
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+/* Input field with placeholder + numeric counter */
+.input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--m-line);
+  background: var(--m-bg-muted);
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 18px;
+}
+.input-bar .ph {
+  flex: 1;
+  font-family: var(--ui-font);
+  font-size: 12.5px;
+  color: var(--m-faint);
+}
+.input-bar .counter {
+  font-family: var(--kbd-font);
+  font-size: 10.5px;
+  color: var(--m-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Table — heavy in numeric columns */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--ui-font);
+  font-size: 12px;
+  color: var(--m-fg);
+  margin-bottom: 14px;
+}
+th, td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--m-line);
+}
+th {
+  font-weight: 600;
+  color: var(--m-muted);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.col-num {
+  font-family: var(--kbd-font);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--m-fg);
+}
+
+/* Comparison row label */
+.callouts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.callouts .col {
+  border: 1px solid var(--m-line);
+  border-radius: 4px;
+  padding: 14px;
+  background: var(--m-bg-muted);
+}
+.callouts .col h3 {
+  margin: 0 0 6px;
+  font-family: var(--ui-font);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--m-muted);
+}
+.callouts .col p {
+  margin: 0;
+  font-family: var(--ui-font);
+  font-size: 12px;
+  color: var(--m-fg);
+  line-height: 1.55;
+}
+</style>
+</head>
+
+<body>
+
+<div class="label-bar">
+  <h1 class="lab-title">kbd & badges <em>· side-by-side</em></h1>
+  <span class="lab-sub">UI = IBM Plex Mono</span>
+</div>
+
+<p class="note">
+  The full UI is locked to <code>IBM Plex Mono</code>. Only the small "system" elements toggle:
+  keyboard hints (<code>⌘0</code>, <code>⌘K</code>), numeric badges (<code>3</code>, <code>12</code>, <code>27</code>),
+  table number columns, status counters, and inline glyphs.
+  <strong>Mode A</strong> keeps everything in IBM Plex Mono — perfectly unified.
+  <strong>Mode B</strong> swaps these "system" elements to a different mono with
+  better tabular numerals (Geist Mono) for visual contrast against the body text.
+</p>
+
+<div class="toggles">
+  <button class="toggle" id="modeA" aria-pressed="true">
+    Mode A · Unified
+    <span class="swatch-label">kbd / badges = IBM Plex Mono</span>
+  </button>
+  <button class="toggle" id="modeB" aria-pressed="false">
+    Mode B · Distinct
+    <span class="swatch-label">kbd / badges = Geist Mono</span>
+  </button>
+</div>
+
+<div class="specimen">
+
+  <!-- Sidebar — typical UI text mixed with kbd/badge tokens -->
+  <aside class="sidebar">
+    <div class="head">
+      <span class="brand">michi</span>
+      <span class="ver">v0.4.2</span>
+    </div>
+
+    <div class="row is-active"><span class="icon">◐</span><span class="label-text">Home</span><span class="kbd">⌘0</span></div>
+    <div class="row"><span class="icon">◨</span><span class="label-text">Dashboard</span><span class="kbd">⌘1</span></div>
+    <div class="row"><span class="icon">⎇</span><span class="label-text">Map</span><span class="kbd">⌘M</span></div>
+    <div class="row"><span class="icon">§</span><span class="label-text">Digest</span><span class="kbd">⌘D</span></div>
+    <div class="row"><span class="icon">⌕</span><span class="label-text">Search</span><span class="kbd">⌘K</span></div>
+    <div class="row"><span class="icon">▸</span><span class="label-text">workspace</span><span class="badge">12</span></div>
+    <div class="row"><span class="icon">▸</span><span class="label-text">reading-notes</span><span class="badge">3</span></div>
+    <div class="row"><span class="icon">▸</span><span class="label-text">Trash</span><span class="badge">27</span></div>
+  </aside>
+
+  <!-- Main: text-heavy with embedded numbers + kbd inline -->
+  <section class="main">
+    <h2>Notes on map projections</h2>
+    <p>
+      Every flat map of the Earth is a lie, but some lies are useful — the Mercator
+      projection still ships in 99% of nautical charts.
+    </p>
+
+    <div class="toolbar">
+      <button class="tb-btn">New thread <span class="kbd-inline">⌘T</span></button>
+      <button class="tb-btn">Search <span class="kbd-inline">⌘K</span></button>
+      <button class="tb-btn">Settings <span class="kbd-inline">⌘,</span></button>
+    </div>
+
+    <div class="input-bar">
+      <span class="ph">Reply or @mention a thread…</span>
+      <span class="counter">128 / 4096</span>
+    </div>
+
+    <div class="status">
+      <span><span class="stat-num">8</span>messages</span>
+      <span><span class="stat-num">0.42</span>credits</span>
+      <span><span class="stat-num">14%</span>context</span>
+      <span><span class="stat-num">02:14</span>elapsed</span>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Projection</th><th>Family</th><th class="col-num">Year</th><th class="col-num">Distortion</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Mercator</td><td>Cylindrical</td><td class="col-num">1569</td><td class="col-num">14.3</td></tr>
+        <tr><td>Gall–Peters</td><td>Cylindrical</td><td class="col-num">1855</td><td class="col-num">8.1</td></tr>
+        <tr><td>Robinson</td><td>Compromise</td><td class="col-num">1963</td><td class="col-num">2.0</td></tr>
+        <tr><td>Winkel Tripel</td><td>Compromise</td><td class="col-num">1921</td><td class="col-num">1.8</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callouts">
+      <div class="col">
+        <h3>What changes</h3>
+        <p>kbd hints, numeric badges, table number columns, status counters.</p>
+      </div>
+      <div class="col">
+        <h3>What never changes</h3>
+        <p>Body labels, button text, headings, prose. Always IBM Plex Mono.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const STORAGE_KEY = 'ui-mono-units.v1';
+const MODES = {
+  A: "'IBM Plex Mono', ui-monospace, monospace",
+  B: "'Geist Mono', ui-monospace, monospace"
+};
+
+let mode = (() => {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    return (v === 'A' || v === 'B') ? v : 'A';
+  } catch (_) { return 'A'; }
+})();
+
+function apply() {
+  document.documentElement.style.setProperty('--kbd-font', MODES[mode]);
+  document.getElementById('modeA').setAttribute('aria-pressed', mode === 'A' ? 'true' : 'false');
+  document.getElementById('modeB').setAttribute('aria-pressed', mode === 'B' ? 'true' : 'false');
+  try { localStorage.setItem(STORAGE_KEY, mode); } catch (_) {}
+}
+
+document.getElementById('modeA').addEventListener('click', () => { mode = 'A'; apply(); });
+document.getElementById('modeB').addEventListener('click', () => { mode = 'B'; apply(); });
+
+apply();
+</script>
+</body>
+</html>

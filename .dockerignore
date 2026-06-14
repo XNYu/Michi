@@ -1,0 +1,57 @@
+node_modules
+**/node_modules
+dist
+dist-electron
+**/dist
+backend/dist
+frontend/build
+.git
+.gitignore
+.github
+.worktrees
+.codegraph
+.omc
+.claude
+.kiro
+.vscode
+.idea
+.DS_Store
+
+# secrets / credentials
+.npmrc
+**/.npmrc
+.env
+.env.*
+**/.env
+**/.env.*
+# Re-include the production frontend env (last, so it isn't re-excluded
+# by **/.env.* above). Vite needs this file at build time to bake
+# VITE_API_URL=/api into the bundle; without it the bundle falls back
+# to http://localhost:3000/api and the deployed frontend can't talk
+# to its backend.
+!frontend/.env.production
+
+# tests / dev artifacts
+e2e
+test-results
+playwright-report
+coverage
+**/__tmp__
+**/__repro__
+
+# editor / scratch
+*.log
+*.swp
+
+# docs / images (not needed at runtime, keep image small)
+docs
+*.md
+!README.md
+
+# electron build outputs
+electron/dist
+
+# misc
+mocks
+ghostty
+design.png

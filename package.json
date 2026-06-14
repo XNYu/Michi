@@ -1,0 +1,82 @@
+{
+  "name": "michi-app",
+  "version": "1.0.0",
+  "private": true,
+  "main": "electron/dist/main.js",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "shared"
+  ],
+  "scripts": {
+    "shared:build": "cd shared && npm run build",
+    "backend:dev": "npm run shared:build && cd backend && npm run dev:raw",
+    "backend:build": "cd backend && npm run build",
+    "backend:start": "cd backend && npm start",
+    "frontend:dev": "npm run shared:build && cd frontend && npm run dev:raw",
+    "frontend:build": "cd frontend && npm run build",
+    "frontend:start": "cd frontend && npm start",
+    "predev": "node scripts/kill-stale-dev.mjs",
+    "dev": "npm run shared:build && concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw\"",
+    "build": "npm run frontend:build && npm run backend:build",
+    "build:artifact": "npm run build && npm run copy-frontend",
+    "start": "cd backend && npm start",
+    "server": "npm install && npm run build:artifact && node backend/dist/server.js",
+    "copy-frontend": "cp -r frontend/build backend/dist/frontend",
+    "electron:build-main": "tsc -p electron",
+    "preelectron:dev": "node scripts/kill-stale-dev.mjs",
+    "electron:dev": "npm run shared:build && concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw\" \"npm run electron:dev-wait\"",
+    "electron:dev-wait": "wait-on http://localhost:3001 && npm run electron:build-main && NODE_OPTIONS= ELECTRON_DEV=1 electron --remote-debugging-port=${ELECTRON_DEBUG_PORT:-9222} electron/dist/main.js",
+    "electron:build": "VITE_API_URL=/api npm run frontend:build && npm run backend:build && npm run electron:build-main && electron-builder --mac --arm64",
+    "postelectron:build": "node scripts/install-app.mjs",
+    "electron:install": "node scripts/install-app.mjs",
+    "startup:analyze": "node scripts/analyze-startup.mjs",
+    "metrics:analyze": "node scripts/analyze-metrics.mjs",
+    "test:e2e": "npm run shared:build && playwright test --config e2e/playwright.config.ts",
+    "test:e2e:ui": "npm run shared:build && playwright test --config e2e/playwright.config.ts --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "concurrently": "^8.0.0",
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1",
+    "electron-devtools-installer": "^4.0.0",
+    "wait-on": "^9.0.5"
+  },
+  "dependencies": {
+    "fix-path": "^5.0.0"
+  },
+  "overrides": {
+    "kysely": "0.28.17"
+  },
+  "build": {
+    "appId": "com.michi.app",
+    "productName": "michi",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/dist/**",
+      "frontend/build/**",
+      "backend/dist/**",
+      "!backend/dist/frontend/**",
+      "!**/*.map",
+      "!**/*.d.ts",
+      "!**/*.d.cts",
+      "!**/*.d.mts",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": {
+        "target": "dmg",
+        "arch": "arm64"
+      },
+      "icon": "assets/icons/icon.icns",
+      "category": "public.app-category.productivity",
+      "minimumSystemVersion": "12.0",
+      "identity": null
+    },
+    "asar": true
+  }
+}

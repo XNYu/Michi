@@ -1,0 +1,75 @@
+{
+  "name": "michi-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "michi-shared": "file:../shared",
+    "@better-auth/core": "^1.6.11",
+    "@dagrejs/dagre": "^1.1.4",
+    "@fontsource-variable/source-serif-4": "^5.0.19",
+    "@fontsource/geist": "^5.2.9",
+    "@fontsource/geist-mono": "^5.2.8",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@shikijs/langs": "^3.23.0",
+    "@shikijs/themes": "^3.23.0",
+    "@streamdown/cjk": "^1.0.3",
+    "@tiptap/extension-mention": "^3.24.0",
+    "@tiptap/pm": "^3.24.0",
+    "@tiptap/react": "^3.24.0",
+    "@tiptap/starter-kit": "^3.24.0",
+    "@tiptap/suggestion": "^3.24.0",
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "better-auth": "^1.6.11",
+    "marked": "^17.0.6",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^9.0.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^3.23.0",
+    "sonner": "^1.7.2",
+    "streamdown": "^2.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/typography": "^0.5.19",
+    "@tailwindcss/vite": "^4.2.4",
+    "@testing-library/react": "^14.3.1",
+    "@vitejs/plugin-react": "^5.1.0",
+    "eslint": "^10.4.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "jsdom": "^25.0.0",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.59.4",
+    "vite": "^7.1.0",
+    "vitest": "^4.1.5"
+  },
+  "scripts": {
+    "dev": "npm --prefix .. run shared:build && npm run dev:raw",
+    "dev:raw": "vite",
+    "build": "npm --prefix .. run shared:build && npm run build:raw",
+    "build:raw": "vite build",
+    "typecheck": "npm --prefix .. run shared:build && npm run typecheck:raw",
+    "typecheck:raw": "tsc --noEmit",
+    "lint": "eslint src",
+    "preview": "vite preview",
+    "test": "npm --prefix .. run shared:build && npm run test:raw --",
+    "test:raw": "vitest run",
+    "test:watch": "npm --prefix .. run shared:build && vitest"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

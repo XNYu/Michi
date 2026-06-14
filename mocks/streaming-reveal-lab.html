@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Streaming Reveal Lab</title>
+<style>
+  :root {
+    --bg: #0d0f0d;
+    --surface: #121612;
+    --surface-2: #171d17;
+    --line: #263126;
+    --line-strong: #3b4a3b;
+    --fg: #e8f2e8;
+    --muted: #8fa18f;
+    --faint: #586658;
+    --accent: #ffb800;
+    --accent-soft: rgba(255, 184, 0, 0.12);
+    --token-start-opacity: 0.28;
+    --token-fade-ms: 300ms;
+    --ui-font: "IBM Plex Mono", "SFMono-Regular", Menlo, ui-monospace, monospace;
+    --body-font: "Source Serif 4", "Songti SC", "PingFang SC", Georgia, serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--ui-font);
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    height: 100vh;
+  }
+
+  main {
+    min-width: 0;
+    padding: 42px 52px;
+    overflow: auto;
+  }
+
+  aside {
+    border-left: 1px solid var(--line);
+    background: var(--surface);
+    padding: 24px 22px;
+    overflow: auto;
+  }
+
+  .topline {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 14px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .meta {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .terminal {
+    max-width: 920px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 180px), var(--surface);
+    padding: 22px 24px 26px;
+    min-height: 620px;
+  }
+
+  .label {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    margin-bottom: 16px;
+  }
+
+  .answer {
+    color: var(--fg);
+    font-family: var(--body-font);
+    font-size: 22px;
+    line-height: 1.62;
+    letter-spacing: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-feature-settings: "kern" 1, "liga" 1;
+  }
+
+  .answer code {
+    font-family: var(--ui-font);
+    font-size: 0.86em;
+    color: var(--accent);
+  }
+
+  .stream-token {
+    opacity: var(--token-start-opacity);
+    animation: stream-token-reveal var(--token-fade-ms) ease-out forwards;
+    will-change: opacity;
+  }
+
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 1.08em;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: -0.12em;
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes stream-token-reveal {
+    from { opacity: var(--token-start-opacity); }
+    to { opacity: 1; }
+  }
+
+  @keyframes blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  .section {
+    border-top: 1px solid var(--line);
+    padding-top: 18px;
+    margin-top: 18px;
+  }
+
+  .section:first-child {
+    border-top: 0;
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  h2 {
+    margin: 0 0 14px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .row {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .value {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+
+  .buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  button {
+    border: 1px solid var(--line-strong);
+    background: transparent;
+    color: var(--fg);
+    font-family: var(--ui-font);
+    font-size: 11px;
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: var(--surface-2);
+    border-color: var(--accent);
+  }
+
+  button.primary {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .readout {
+    border: 1px solid var(--line);
+    background: var(--bg);
+    padding: 12px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+  }
+
+  .swatches {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .swatch {
+    min-height: 34px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stream-token {
+      animation: none;
+      opacity: 1;
+    }
+  }
+
+  @media (max-width: 860px) {
+    body { overflow: auto; }
+    .app {
+      display: block;
+      height: auto;
+    }
+    main {
+      padding: 24px 18px;
+    }
+    aside {
+      border-left: 0;
+      border-top: 1px solid var(--line);
+    }
+    .terminal {
+      min-height: 460px;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <main>
+      <div class="topline">
+        <h1>Streaming Reveal Lab</h1>
+        <div class="meta">mock answer stream + token color fade</div>
+      </div>
+
+      <section class="terminal" aria-label="streaming preview">
+        <div class="label">&gt; michi</div>
+        <div id="answer" class="answer" aria-live="polite"></div><span id="cursor" class="cursor"></span>
+      </section>
+    </main>
+
+    <aside>
+      <div class="section">
+        <h2>Playback</h2>
+        <div class="buttons">
+          <button id="replay" class="primary" type="button">Replay</button>
+          <button id="pause" type="button">Pause</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Timing</h2>
+        <label class="row">
+          <span class="row-head">
+            <span>Generate speed</span>
+            <span id="speedValue" class="value"></span>
+          </span>
+          <input id="speed" type="range" min="12" max="160" step="1" value="54">
+        </label>
+
+        <label class="row">
+          <span class="row-head">
+            <span>Fade duration</span>
+            <span id="fadeValue" class="value"></span>
+          </span>
+          <input id="fade" type="range" min="80" max="1800" step="20" value="100">
+        </label>
+
+        <label class="row">
+          <span class="row-head">
+            <span>Start opacity</span>
+            <span id="opacityValue" class="value"></span>
+          </span>
+          <input id="opacity" type="range" min="0.08" max="0.82" step="0.01" value="0.28">
+        </label>
+
+        <label class="row">
+          <span class="row-head">
+            <span>Batch size</span>
+            <span id="batchValue" class="value"></span>
+          </span>
+          <input id="batch" type="range" min="1" max="8" step="1" value="1">
+        </label>
+      </div>
+
+      <div class="section">
+        <h2>Presets</h2>
+        <div class="swatches">
+          <button class="swatch" type="button" data-preset="gentle">Gentle</button>
+          <button class="swatch" type="button" data-preset="crisp">Crisp</button>
+          <button class="swatch" type="button" data-preset="ink">Ink</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Current CSS</h2>
+        <div id="readout" class="readout"></div>
+      </div>
+    </aside>
+  </div>
+
+<script>
+  const sample = `可以，streaming 的字可以做成“先淡、再沉到正文颜色”的感觉。
+
+这个 mock 模拟的是前端已经收到 chunk 以后，按稳定节奏把文字释放到屏幕上。每个新字符都会先以较浅透明度出现，然后在一小段时间里变成正常颜色。
+
+你可以试试右侧的几个参数：
+- Generate speed 控制出字速度；
+- Fade duration 控制由浅到深需要多久；
+- Start opacity 控制新字一开始有多淡；
+- Batch size 模拟一次释放多个字符时的手感。
+
+const reveal = {
+  opacity: "from faint to full",
+  duration: "tunable"
+};
+
+我个人会从 500-800ms、0.25-0.35 初始透明度开始调。太快会像普通打字机；太慢会有拖影感。`;
+
+  const answer = document.querySelector("#answer");
+  const cursor = document.querySelector("#cursor");
+  const speed = document.querySelector("#speed");
+  const fade = document.querySelector("#fade");
+  const opacity = document.querySelector("#opacity");
+  const batch = document.querySelector("#batch");
+  const speedValue = document.querySelector("#speedValue");
+  const fadeValue = document.querySelector("#fadeValue");
+  const opacityValue = document.querySelector("#opacityValue");
+  const batchValue = document.querySelector("#batchValue");
+  const readout = document.querySelector("#readout");
+  const replay = document.querySelector("#replay");
+  const pause = document.querySelector("#pause");
+
+  let index = 0;
+  let running = true;
+  let timer = 0;
+
+  function setVars() {
+    document.documentElement.style.setProperty("--token-fade-ms", `${fade.value}ms`);
+    document.documentElement.style.setProperty("--token-start-opacity", opacity.value);
+    speedValue.textContent = `${speed.value} cps`;
+    fadeValue.textContent = `${fade.value} ms`;
+    opacityValue.textContent = Number(opacity.value).toFixed(2);
+    batchValue.textContent = `${batch.value} char`;
+    readout.textContent =
+      `.stream-token-reveal {\n` +
+      `  animation: t-stream-token-reveal ${fade.value}ms ease-out both;\n` +
+      `}\n\n` +
+      `@keyframes t-stream-token-reveal {\n` +
+      `  from { opacity: ${Number(opacity.value).toFixed(2)}; }\n` +
+      `  to { opacity: 1; }\n` +
+      `}`;
+  }
+
+  function appendChar(char) {
+    const span = document.createElement("span");
+    span.className = "stream-token";
+    span.textContent = char;
+    answer.appendChild(span);
+  }
+
+  function schedule() {
+    window.clearTimeout(timer);
+    if (!running) return;
+    if (index >= sample.length) {
+      cursor.style.display = "none";
+      return;
+    }
+
+    const count = Number(batch.value);
+    for (let i = 0; i < count && index < sample.length; i += 1) {
+      appendChar(sample[index]);
+      index += 1;
+    }
+
+    const cps = Number(speed.value);
+    const delay = Math.max(8, (1000 / cps) * count);
+    timer = window.setTimeout(schedule, delay);
+  }
+
+  function restart() {
+    window.clearTimeout(timer);
+    answer.textContent = "";
+    index = 0;
+    running = true;
+    pause.textContent = "Pause";
+    cursor.style.display = "inline-block";
+    schedule();
+  }
+
+  function togglePause() {
+    running = !running;
+    pause.textContent = running ? "Pause" : "Resume";
+    cursor.style.display = running ? "inline-block" : "none";
+    schedule();
+  }
+
+  function applyPreset(name) {
+    const presets = {
+      gentle: { speed: 48, fade: 820, opacity: 0.24, batch: 1 },
+      crisp: { speed: 76, fade: 360, opacity: 0.42, batch: 1 },
+      ink: { speed: 54, fade: 620, opacity: 0.18, batch: 2 },
+    };
+    const p = presets[name];
+    speed.value = p.speed;
+    fade.value = p.fade;
+    opacity.value = p.opacity;
+    batch.value = p.batch;
+    setVars();
+    restart();
+  }
+
+  [speed, fade, opacity, batch].forEach((input) => {
+    input.addEventListener("input", () => {
+      setVars();
+      if (input === speed || input === batch) schedule();
+    });
+  });
+
+  replay.addEventListener("click", restart);
+  pause.addEventListener("click", togglePause);
+  document.querySelectorAll("[data-preset]").forEach((button) => {
+    button.addEventListener("click", () => applyPreset(button.dataset.preset));
+  });
+
+  setVars();
+  schedule();
+</script>
+</body>
+</html>

@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI Font Lab — michi chrome</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Berkeley+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Source+Code+Pro:wght@400;500;600&family=Iosevka:wght@400;500;600&family=DM+Mono:wght@400;500&family=Inter+Tight:wght@300..700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Geist:wght@300..700&family=Helvetica+Neue&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   Lab shell (controls + frame)
+   ============================================================ */
+:root {
+  --shell-bg: #161613;
+  --shell-fg: #e8e6df;
+  --shell-muted: #8a877d;
+  --shell-line: #2a2924;
+  --shell-line-strong: #3a3933;
+  --accent: #c84e35;
+  --accent-soft: #e8a48e;
+
+  /* Fake michi palette — close to the 'michi' theme */
+  --m-bg: #111315;
+  --m-bg-muted: #0d0f10;
+  --m-surface: #15181a;
+  --m-fg: #e6e1d6;
+  --m-muted: #7d7a72;
+  --m-faint: #4a4843;
+  --m-line: #232628;
+  --m-line-strong: #2e3134;
+  --m-accent: #c84e35;
+  --m-accent-soft: rgba(200, 78, 53, 0.12);
+  --m-select: #ddc78f;
+
+  /* This is the variable the lab swaps. Default = JetBrains Mono. */
+  --ui-font: 'JetBrains Mono', ui-monospace, monospace;
+  --ui-letter-spacing: 0em;
+  --ui-size-scale: 1;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--shell-bg);
+  color: var(--shell-fg);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  overflow: hidden;
+}
+
+.app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+
+/* ============================================================
+   Stage (left) — fake michi window
+   ============================================================ */
+.stage-wrap {
+  background: #0a0b0c;
+  overflow: auto;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 28px;
+}
+.stage-wrap::-webkit-scrollbar { width: 10px; }
+.stage-wrap::-webkit-scrollbar-thumb { background: #1a1b1d; border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+.window {
+  flex: 1;
+  background: var(--m-bg);
+  color: var(--m-fg);
+  border: 1px solid var(--m-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-rows: 32px 1fr;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+  font-family: var(--ui-font);
+  letter-spacing: var(--ui-letter-spacing);
+}
+.window * { font-family: inherit; }
+
+/* macOS title bar */
+.titlebar {
+  background: linear-gradient(to bottom, #1f2122, #181a1b);
+  border-bottom: 1px solid var(--m-line);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; }
+.dot.r { background: #ff5f57; }
+.dot.y { background: #febc2e; }
+.dot.g { background: #28c840; }
+.titlebar .title {
+  flex: 1;
+  text-align: center;
+  font-size: calc(11px * var(--ui-size-scale));
+  color: var(--m-muted);
+}
+
+/* main: sidebar | content */
+.main { display: grid; grid-template-columns: 240px 1fr; min-height: 0; }
+
+/* ===== Sidebar ===== */
+.sidebar {
+  background: var(--m-bg-muted);
+  border-right: 1px solid var(--m-line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.side-head {
+  padding: 12px 14px 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--m-line);
+}
+.side-head .brand {
+  font-size: calc(13px * var(--ui-size-scale));
+  font-weight: 600;
+  color: var(--m-fg);
+}
+.side-head .ver {
+  font-size: calc(9.5px * var(--ui-size-scale));
+  color: var(--m-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.side-search {
+  margin: 8px 10px;
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: calc(11px * var(--ui-size-scale));
+  color: var(--m-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.side-search .kbd {
+  margin-left: auto;
+  font-size: calc(9.5px * var(--ui-size-scale));
+  color: var(--m-faint);
+  border: 1px solid var(--m-line-strong);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.tree { padding: 4px 4px 16px; flex: 1; overflow: auto; min-height: 0; }
+.tree::-webkit-scrollbar { width: 8px; }
+.tree::-webkit-scrollbar-thumb { background: #1f2123; border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+
+.tree-section {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px 4px;
+  font-size: calc(9.5px * var(--ui-size-scale));
+  color: var(--m-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+.tree-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 18px;
+  font-size: calc(11.5px * var(--ui-size-scale));
+  color: var(--m-fg);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.tree-row.deeper { padding-left: 30px; }
+.tree-row .glyph { color: var(--m-faint); width: 10px; text-align: center; }
+.tree-row.is-active {
+  background: var(--m-accent-soft);
+  border-left-color: var(--m-accent);
+  color: var(--m-fg);
+}
+.tree-row .badge {
+  margin-left: auto;
+  font-size: calc(9.5px * var(--ui-size-scale));
+  color: var(--m-muted);
+  background: var(--m-surface);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--m-line);
+}
+
+/* ===== Content ===== */
+.content { display: grid; grid-template-rows: 36px 1fr 56px; min-height: 0; }
+
+/* Topbar / tabs */
+.topbar {
+  border-bottom: 1px solid var(--m-line);
+  display: flex; align-items: stretch;
+  background: var(--m-bg);
+}
+.tab {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px;
+  font-size: calc(11px * var(--ui-size-scale));
+  color: var(--m-muted);
+  border-right: 1px solid var(--m-line);
+  cursor: pointer;
+  position: relative;
+}
+.tab .x {
+  opacity: 0.4;
+  font-size: calc(9px * var(--ui-size-scale));
+}
+.tab.is-active {
+  background: var(--m-bg);
+  color: var(--m-fg);
+  box-shadow: inset 0 -2px 0 var(--m-accent);
+}
+.tab.is-active::before {
+  content: '●';
+  color: var(--m-accent);
+  font-size: 7px;
+}
+.topbar .right {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  font-size: calc(10.5px * var(--ui-size-scale));
+  color: var(--m-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.topbar .right .btn {
+  border: 1px solid var(--m-line-strong);
+  padding: 3px 8px;
+  border-radius: 3px;
+  color: var(--m-muted);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+}
+
+/* Conversation pane */
+.conv {
+  overflow: auto;
+  padding: 18px 24px;
+  display: flex; flex-direction: column; gap: 14px;
+  min-height: 0;
+}
+.conv::-webkit-scrollbar { width: 10px; }
+.conv::-webkit-scrollbar-thumb { background: #1f2123; border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+.msg-label {
+  font-size: calc(9.5px * var(--ui-size-scale));
+  color: var(--m-faint);
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.msg-label.user { text-align: right; color: var(--m-accent); }
+
+.msg-user-row { display: flex; justify-content: flex-end; }
+.msg-user {
+  max-width: 70%;
+  background: var(--m-accent-soft);
+  padding: 6px 12px;
+  font-size: calc(13px * var(--ui-size-scale));
+  line-height: 1.55;
+  color: var(--m-fg);
+  border-radius: 0;
+  white-space: pre-wrap;
+}
+.msg-asst { color: var(--m-fg); font-size: calc(13px * var(--ui-size-scale)); line-height: 1.6; }
+.msg-asst .h { font-weight: 600; margin: 12px 0 4px; }
+.msg-asst code {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: calc(12px * var(--ui-size-scale));
+}
+
+/* Plan/tool footer */
+.tool-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 3px 0;
+  font-size: calc(10.5px * var(--ui-size-scale));
+  color: var(--m-muted);
+}
+.tool-row .verb { color: var(--m-accent); width: 64px; flex-shrink: 0; }
+.tool-row .arg { color: var(--m-fg); }
+
+/* Composer */
+.composer {
+  border-top: 1px solid var(--m-line);
+  padding: 8px 12px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--m-bg-muted);
+}
+.composer .pill {
+  border: 1px solid var(--m-line-strong);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: calc(10px * var(--ui-size-scale));
+  color: var(--m-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.composer .input {
+  flex: 1;
+  font-size: calc(12.5px * var(--ui-size-scale));
+  color: var(--m-fg);
+}
+.composer .input .ph { color: var(--m-faint); }
+.composer .input .caret {
+  display: inline-block; width: 7px; height: 14px;
+  background: var(--m-select); margin-left: 2px;
+  vertical-align: middle;
+  animation: blink 1s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.composer .send {
+  background: transparent;
+  color: var(--m-faint);
+  border: 1px solid var(--m-line-strong);
+  padding: 4px 10px;
+  font-size: calc(10px * var(--ui-size-scale));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-family: inherit;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* ============================================================
+   Controls (right)
+   ============================================================ */
+.controls {
+  background: var(--shell-bg);
+  color: var(--shell-fg);
+  border-left: 1px solid var(--shell-line);
+  overflow-y: auto;
+  padding: 18px 22px 80px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.controls::-webkit-scrollbar { width: 10px; }
+.controls::-webkit-scrollbar-thumb { background: var(--shell-line-strong); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+.ctrl-title {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  margin: 0 0 2px;
+  color: var(--shell-fg);
+}
+.ctrl-title em {
+  font-style: italic;
+  color: var(--accent-soft);
+  font-weight: 400;
+}
+.ctrl-sub {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+  margin: 0 0 18px;
+}
+
+.section {
+  border-top: 1px solid var(--shell-line);
+  padding: 14px 0 6px;
+}
+.section:first-of-type { border-top: none; padding-top: 0; }
+.section-title {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+  margin: 0 0 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section-title::after {
+  content: ''; flex: 1; height: 1px; background: var(--shell-line);
+}
+
+.font-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.font-chip {
+  background: transparent;
+  border: 1px solid var(--shell-line-strong);
+  padding: 11px 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--shell-fg);
+  transition: all 120ms ease;
+  font-size: 18px;
+  line-height: 1.1;
+}
+.font-chip:hover { border-color: var(--accent-soft); }
+.font-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(200, 78, 53, 0.08);
+  color: var(--accent-soft);
+}
+.font-chip .name {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+  margin-top: 7px;
+}
+.font-chip .kind {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--shell-muted);
+  margin-top: 1px;
+}
+
+.row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.row .label {
+  flex: 0 0 auto; width: 110px;
+  font-size: 11px;
+  color: var(--shell-fg);
+}
+.row .label .hint {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+  margin-top: 2px;
+}
+.row input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 18px;
+}
+.row input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px; background: var(--shell-line-strong); border-radius: 2px;
+}
+.row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--shell-bg);
+  margin-top: -5px;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.row .value {
+  flex: 0 0 60px; text-align: right;
+  font-size: 11px; color: var(--accent-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--shell-muted);
+  margin-top: 10px;
+}
+.note code {
+  background: #23211d;
+  border: 1px solid var(--shell-line-strong);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--accent-soft);
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+
+  <!-- ============== STAGE ============== -->
+  <div class="stage-wrap">
+    <div class="window">
+      <div class="titlebar">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="title">michi · Notes on map projections — Threads</span>
+      </div>
+
+      <div class="main">
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+          <div class="side-head">
+            <span class="brand">michi</span>
+            <span class="ver">v0.4.2</span>
+          </div>
+          <div class="side-search">
+            <span>⌕</span><span>Search threads</span><span class="kbd">⌘K</span>
+          </div>
+
+          <div class="tree">
+            <div class="tree-section">▾ Workspaces</div>
+            <div class="tree-row"><span class="glyph">▾</span> workspace <span class="badge">12</span></div>
+            <div class="tree-row deeper is-active"><span class="glyph">●</span> Map projections</div>
+            <div class="tree-row deeper"><span class="glyph">○</span> Mercator critique</div>
+            <div class="tree-row deeper"><span class="glyph">○</span> Equal-area survey</div>
+            <div class="tree-row"><span class="glyph">▸</span> dotfiles</div>
+            <div class="tree-row"><span class="glyph">▸</span> reading-notes <span class="badge">3</span></div>
+
+            <div class="tree-section" style="margin-top:14px">▾ Pinned</div>
+            <div class="tree-row"><span class="glyph">⚑</span> 中文测试 / CJK rendering</div>
+            <div class="tree-row"><span class="glyph">⚑</span> Settings</div>
+            <div class="tree-row"><span class="glyph">⚑</span> Trash</div>
+          </div>
+        </aside>
+
+        <!-- Content -->
+        <section class="content">
+
+          <!-- Topbar / tabs -->
+          <div class="topbar">
+            <div class="tab is-active">Map projections <span class="x">×</span></div>
+            <div class="tab">Mercator critique <span class="x">×</span></div>
+            <div class="tab">+ new</div>
+            <div class="right">
+              <button class="btn">⌘B</button>
+              <span>parchment</span>
+            </div>
+          </div>
+
+          <!-- Conversation -->
+          <div class="conv">
+
+            <!-- assistant message -->
+            <div>
+              <div class="msg-label">&gt; michi</div>
+              <div class="msg-asst">
+                <div>Every flat map of the Earth is a lie, but some lies are useful. The fundamental constraint is geometric, not technical.</div>
+                <div class="h">Three families of projections</div>
+                <div>Conformal projections preserve angles. Equal-area preserve area. Compromise projections minimise the worst distortion. The choice depends on whether you are <code>navigating</code>, mapping <code>thematic data</code>, or just illustrating.</div>
+              </div>
+            </div>
+
+            <!-- tool/plan footer -->
+            <div>
+              <div class="tool-row"><span class="verb">read</span><span class="arg">docs/projections/mercator.md  · 184 lines</span></div>
+              <div class="tool-row"><span class="verb">grep</span><span class="arg">"equal[- ]area"  ·  matched 6 files</span></div>
+              <div class="tool-row"><span class="verb">edit</span><span class="arg">notes/2026-05-08-mercator.md  · +24 -3</span></div>
+            </div>
+
+            <!-- user message -->
+            <div>
+              <div class="msg-label user">$ you</div>
+              <div class="msg-user-row">
+                <div class="msg-user">能简单解释一下 Winkel Tripel 为什么比 Robinson 更准确吗？ Compare on shape distortion.</div>
+              </div>
+            </div>
+
+            <!-- assistant short -->
+            <div>
+              <div class="msg-label">&gt; michi</div>
+              <div class="msg-asst">
+                <div>Winkel Tripel minimises three errors at once — area, direction, and distance — using an averaging trick over a Mollweide and an equirectangular projection. Robinson was tuned by eye, not by formula, so its trade-offs aren't reproducible mathematically.</div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Composer -->
+          <div class="composer">
+            <span class="pill">opus 4.7</span>
+            <div class="input">
+              <span class="ph">Reply or @mention a thread…</span><span class="caret"></span>
+            </div>
+            <button class="send">↩ send</button>
+          </div>
+
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== CONTROLS ============== -->
+  <aside class="controls">
+    <h1 class="ctrl-title">UI Font <em>Lab</em></h1>
+    <p class="ctrl-sub">Chrome typography · live</p>
+
+    <div class="section">
+      <h3 class="section-title">Pick a font</h3>
+      <div class="font-grid" id="fontGrid"></div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Tuning</h3>
+      <div class="row">
+        <div class="label">Tracking<span class="hint">letter-spacing</span></div>
+        <input id="trackInput" type="range" min="-0.04" max="0.10" step="0.005" value="0">
+        <div class="value" id="trackVal">0em</div>
+      </div>
+      <div class="row">
+        <div class="label">Size scale<span class="hint">× chrome</span></div>
+        <input id="scaleInput" type="range" min="0.85" max="1.20" step="0.01" value="1">
+        <div class="value" id="scaleVal">1.00×</div>
+      </div>
+      <div class="note">
+        The font you pick replaces the chrome typography only — sidebar, tabs, composer, tool footers, message body. Message <em>prose</em> (markdown content) keeps its own typography (already calibrated in <code>typography-lab.html</code>).
+      </div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+const FONTS = [
+  // === monos (terminal-style) ===
+  { id: 'jetbrains',  label: 'JetBrains Mono', kind: 'mono · default',  stack: "'JetBrains Mono', ui-monospace, monospace" },
+  { id: 'plexmono',   label: 'IBM Plex Mono',  kind: 'mono · IBM',      stack: "'IBM Plex Mono', ui-monospace, monospace" },
+  { id: 'berkeley',   label: 'Berkeley Mono',  kind: 'mono · paid',     stack: "'Berkeley Mono', ui-monospace, monospace" },
+  { id: 'firacode',   label: 'Fira Code',      kind: 'mono · ligatures',stack: "'Fira Code', ui-monospace, monospace" },
+  { id: 'geistmono',  label: 'Geist Mono',     kind: 'mono · vercel',   stack: "'Geist Mono', ui-monospace, monospace" },
+  { id: 'sourcecode', label: 'Source Code Pro',kind: 'mono · adobe',    stack: "'Source Code Pro', ui-monospace, monospace" },
+  { id: 'iosevka',    label: 'Iosevka',        kind: 'mono · narrow',   stack: "'Iosevka', ui-monospace, monospace" },
+  { id: 'dmmono',     label: 'DM Mono',        kind: 'mono · soft',     stack: "'DM Mono', ui-monospace, monospace" },
+  { id: 'sfmono',     label: 'SF Mono',        kind: 'mono · system',   stack: "ui-monospace, 'SF Mono', Menlo, monospace" },
+
+  // === sans (for comparison: are sans better than mono for chrome?) ===
+  { id: 'inter',      label: 'Inter Tight',    kind: 'sans',            stack: "'Inter Tight', system-ui, sans-serif" },
+  { id: 'plexsans',   label: 'IBM Plex Sans',  kind: 'sans · IBM',      stack: "'IBM Plex Sans', system-ui, sans-serif" },
+  { id: 'geist',      label: 'Geist',          kind: 'sans · vercel',   stack: "'Geist', system-ui, sans-serif" },
+  { id: 'helvetica',  label: 'Helvetica Neue', kind: 'sans · classic',  stack: "'Helvetica Neue', system-ui, sans-serif" },
+  { id: 'system',     label: 'System UI',      kind: 'sans · OS',       stack: "system-ui, -apple-system, 'Segoe UI', sans-serif" },
+];
+
+const STORAGE_KEY = 'ui-font-lab.v1';
+
+const state = (() => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (typeof v === 'object' && v) return { font: v.font || FONTS[0].stack, track: v.track ?? 0, scale: v.scale ?? 1 };
+    }
+  } catch (_) {}
+  return { font: FONTS[0].stack, track: 0, scale: 1 };
+})();
+
+function persist() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) {}
+}
+
+function apply() {
+  document.documentElement.style.setProperty('--ui-font', state.font);
+  document.documentElement.style.setProperty('--ui-letter-spacing', state.track + 'em');
+  document.documentElement.style.setProperty('--ui-size-scale', state.scale);
+  document.getElementById('trackInput').value = state.track;
+  document.getElementById('trackVal').textContent = (Number(state.track).toFixed(3)) + 'em';
+  document.getElementById('scaleInput').value = state.scale;
+  document.getElementById('scaleVal').textContent = (Number(state.scale).toFixed(2)) + '×';
+}
+
+const grid = document.getElementById('fontGrid');
+for (const f of FONTS) {
+  const b = document.createElement('button');
+  b.className = 'font-chip';
+  b.style.fontFamily = f.stack;
+  b.setAttribute('aria-pressed', state.font === f.stack ? 'true' : 'false');
+  b.innerHTML = `Aa Mg 中文<span class="name">${f.label}</span><span class="kind">${f.kind}</span>`;
+  b.addEventListener('click', () => {
+    state.font = f.stack;
+    grid.querySelectorAll('.font-chip').forEach(el => el.setAttribute('aria-pressed', 'false'));
+    b.setAttribute('aria-pressed', 'true');
+    apply();
+    persist();
+  });
+  grid.appendChild(b);
+}
+
+document.getElementById('trackInput').addEventListener('input', (e) => {
+  state.track = parseFloat(e.target.value);
+  apply(); persist();
+});
+document.getElementById('scaleInput').addEventListener('input', (e) => {
+  state.scale = parseFloat(e.target.value);
+  apply(); persist();
+});
+
+apply();
+</script>
+</body>
+</html>

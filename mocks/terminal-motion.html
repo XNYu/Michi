@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Terminal Motion Mock — Michi</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  /* ------------------------------------------------------------------ *
+   * Palette — PHOSPHOR by default (toggle BONE via the top-right pill) *
+   * Numbers copied verbatim from frontend/src/components/terminal/tokens.ts
+   * ------------------------------------------------------------------ */
+  :root[data-pal="phosphor"] {
+    --bg:#0a0e0a; --surface:#0e120e; --alt:#141a14; --alt2:#1a221a;
+    --line:#1e2a1e; --lineS:#2e402e;
+    --fg:#39ff66; --mid:#7fcc8a; --muted:#5a9a66; --faint:#3a6a44;
+    --accent:#ffb800; --accentF:#2a2010;
+    --select:#ffb800; --selectF:#2a2010;
+    --digest:#39ff66; --mauve:#c084fc; --danger:#ff5555;
+  }
+  :root[data-pal="bone"] {
+    --bg:#f6f5f1; --surface:#ffffff; --alt:#efece5; --alt2:#e8e4d8;
+    --line:#d8d2c4; --lineS:#b5ac98;
+    --fg:#1a1916; --mid:#5a544a; --muted:#8a8272; --faint:#b0a890;
+    --accent:#b8451f; --accentF:#f4dccf;
+    --select:#c48300; --selectF:#f8eccf;
+    --digest:#2f6b4e; --mauve:#6d4aa8; --danger:#a8261a;
+  }
+
+  /* Motion tokens — proposed --t-* tokens */
+  :root {
+    --t-instant: 60ms;
+    --t-quick:   60ms;
+    --t-soft:    100ms;
+    --t-decay:   360ms;
+    --ease-out:  cubic-bezier(.2, 0, .6, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "JetBrains Mono", "IBM Plex Mono", Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    padding: 32px 40px 80px;
+    min-height: 100vh;
+  }
+
+  /* ------------------------------------------------------------ *
+   * Page chrome                                                   *
+   * ------------------------------------------------------------ */
+  header {
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom: 1px solid var(--lineS);
+    padding-bottom: 14px; margin-bottom: 28px;
+  }
+  h1 {
+    margin:0; font-size: 14px; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--fg);
+  }
+  h1 .dim { color: var(--muted); font-weight: 400; }
+  .pill {
+    display:inline-flex; gap: 4px;
+    border: 1px solid var(--lineS);
+    border-radius: 999px; padding: 3px;
+    font-size: 10.5px;
+  }
+  .pill button {
+    background: transparent; color: var(--mid); border: 0;
+    padding: 4px 10px; cursor: pointer;
+    font-family: inherit; font-size: inherit;
+    border-radius: 999px;
+    transition: background var(--t-quick) var(--ease-out), color var(--t-quick) var(--ease-out);
+  }
+  .pill button[aria-pressed="true"] {
+    background: var(--alt); color: var(--fg);
+  }
+
+  section {
+    margin-bottom: 44px;
+    border-top: 1px dashed var(--line);
+    padding-top: 22px;
+  }
+  section:first-of-type { border-top: 0; padding-top: 0; }
+
+  .section-head {
+    display:flex; align-items:baseline; gap: 12px; margin-bottom: 6px;
+  }
+  .section-head .num {
+    color: var(--accent); font-weight: 600; font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+  .section-head h2 {
+    margin: 0; font-size: 14px; font-weight: 600;
+    color: var(--fg); letter-spacing: 0.02em;
+  }
+  .section-note {
+    color: var(--muted); margin: 0 0 18px; font-size: 11.5px;
+    max-width: 720px; line-height: 1.65;
+  }
+
+  .pair {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 16px;
+    min-height: 180px;
+    position: relative;
+  }
+  .card-label {
+    position:absolute; top: 8px; right: 10px;
+    font-size: 9.5px; letter-spacing: 0.12em;
+    color: var(--faint); text-transform: uppercase;
+  }
+  .card.before .card-label { color: var(--danger); opacity: 0.7; }
+  .card.after  .card-label { color: var(--digest); }
+
+  .controls {
+    display:flex; gap: 8px; margin-top: 12px;
+  }
+  .controls button {
+    background: transparent; color: var(--mid);
+    border: 1px solid var(--line);
+    padding: 5px 12px; cursor: pointer;
+    font-family: inherit; font-size: 11px;
+    transition: background var(--t-quick) var(--ease-out), color var(--t-quick) var(--ease-out), border-color var(--t-quick) var(--ease-out);
+  }
+  .controls button:hover {
+    background: var(--alt); color: var(--fg); border-color: var(--lineS);
+  }
+
+  /* ------------------------------------------------------------ *
+   * §1 hover transition                                          *
+   * ------------------------------------------------------------ */
+  .nav-list { display:flex; flex-direction:column; gap: 0; margin-top: 4px; }
+  .nav-item {
+    padding: 7px 10px; cursor: pointer;
+    color: var(--mid); font-size: 12px;
+    display:flex; align-items:center; gap: 8px;
+  }
+  .nav-item .glyph { color: var(--faint); width: 14px; }
+  .nav-item.bad:hover { background: var(--alt); color: var(--fg); }
+  .nav-item.good {
+    transition: background var(--t-quick) var(--ease-out),
+                color var(--t-quick) var(--ease-out);
+  }
+  .nav-item.good:hover { background: var(--alt); color: var(--fg); }
+  .nav-item.good:hover .glyph { color: var(--accent); }
+
+  /* ------------------------------------------------------------ *
+   * §2 Phosphor afterglow on focus / selection                   *
+   * ------------------------------------------------------------ */
+  .glow-row {
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    margin-bottom: 6px;
+    cursor: pointer;
+    color: var(--mid);
+    background: var(--surface);
+  }
+  .glow-row.bad.selected {
+    border: 1px solid var(--line);
+    border-bottom: 2px solid var(--fg);
+    color: var(--fg);
+  }
+  .glow-row.good {
+    transition: box-shadow var(--t-decay) var(--ease-out),
+                color var(--t-quick) var(--ease-out);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  .glow-row.good.selected {
+    color: var(--fg);
+    box-shadow: 0 0 0 1px var(--fg), 0 0 5px -2px var(--fg);
+    transition: box-shadow var(--t-soft) var(--ease-out),
+                color var(--t-quick) var(--ease-out);
+  }
+
+  /* ------------------------------------------------------------ *
+   * §3 streaming typewriter                                      *
+   * ------------------------------------------------------------ */
+  .stream-box {
+    background: var(--bg);
+    border-left: 2px solid var(--lineS);
+    padding: 10px 14px;
+    margin-top: 4px;
+    min-height: 90px;
+    color: var(--fg);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .cursor::after {
+    content: "▊";
+    color: var(--fg);
+    animation: tblink 1s step-end infinite;
+    margin-left: 1px;
+  }
+  @keyframes tblink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+  /* Smoothed-drain output: each emitted batch fades 0→1 in 180ms.
+     This is the Claude/ChatGPT "feel" — soft chunk edges, not hard drops. */
+  .tok {
+    opacity: 0;
+    animation: tokFade 180ms ease-out forwards;
+  }
+  @keyframes tokFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* ------------------------------------------------------------ *
+   * §4 Pane focus dim                                            *
+   * ------------------------------------------------------------ */
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .mini-pane {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    min-height: 110px;
+    padding: 10px 12px;
+    cursor: pointer;
+    color: var(--fg);
+  }
+  .mini-pane.bad.dim { opacity: 0.35; }
+  .mini-pane.good { transition: opacity var(--t-soft) var(--ease-out); }
+  .mini-pane.good.dim { opacity: 0.35; }
+  .mini-pane h4 {
+    margin: 0 0 6px; font-size: 11px; font-weight: 600;
+    color: var(--mid); letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .mini-pane p {
+    margin: 0; font-size: 11.5px; color: var(--mid);
+  }
+
+  /* ------------------------------------------------------------ *
+   * §5 Status dot pulse                                          *
+   * ------------------------------------------------------------ */
+  .dot-row { display:flex; gap: 24px; align-items:center; margin-top: 6px; }
+  .dot-cell { display:flex; flex-direction:column; gap: 6px; align-items:center; font-size: 10.5px; color: var(--muted); }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--mid);
+  }
+  .dot.streaming-bad { background: var(--select); }
+  .dot.streaming-good {
+    background: var(--select);
+    color: var(--select);
+    animation: termPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes termPulse {
+    0%, 100% { opacity: 0.4; box-shadow: 0 0 0 0 currentColor; }
+    50%      { opacity: 1;   box-shadow: 0 0 8px 0 currentColor; }
+  }
+
+  /* ------------------------------------------------------------ *
+   * §6 Box-drawing reveal                                        *
+   * ------------------------------------------------------------ */
+  .branch-row { display:flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; min-height: 70px; }
+  .branch-card {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    padding: 10px 14px; min-width: 130px;
+    color: var(--fg); font-size: 11.5px;
+  }
+  .branch-card.bad { /* pops in instantly */ }
+  .branch-card.good {
+    border: 1px solid transparent;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+    animation: borderFill 320ms steps(4, end) forwards,
+               textFade 240ms 80ms ease-out both;
+  }
+  @keyframes borderFill {
+    0%   { border-color: rgba(127,204,138,0.15); box-shadow: inset 0 0 0 1px rgba(127,204,138,0.15); }
+    33%  { border-color: rgba(127,204,138,0.35); box-shadow: inset 0 0 0 1px rgba(127,204,138,0.35); }
+    66%  { border-color: rgba(127,204,138,0.65); box-shadow: inset 0 0 0 1px rgba(127,204,138,0.65); }
+    100% { border-color: var(--lineS); box-shadow: inset 0 0 0 0 transparent; }
+  }
+  :root[data-pal="bone"] .branch-card.good {
+    animation: borderFillBone 320ms steps(4, end) forwards,
+               textFade 240ms 80ms ease-out both;
+  }
+  @keyframes borderFillBone {
+    0%   { border-color: rgba(90,84,74,0.15); }
+    33%  { border-color: rgba(90,84,74,0.35); }
+    66%  { border-color: rgba(90,84,74,0.65); }
+    100% { border-color: var(--lineS); }
+  }
+  @keyframes textFade {
+    from { color: transparent; }
+    to   { color: var(--fg); }
+  }
+
+  /* ------------------------------------------------------------ *
+   * §7 Magic decay on delete                                     *
+   * ------------------------------------------------------------ */
+  .del-list { display:flex; flex-direction:column; gap: 4px; margin-top: 4px; }
+  .del-row {
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 11.5px;
+  }
+  .del-row button {
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--line);
+    padding: 2px 8px; cursor: pointer; font: inherit; font-size: 10.5px;
+    transition: color var(--t-quick) var(--ease-out), border-color var(--t-quick) var(--ease-out);
+  }
+  .del-row button:hover { color: var(--danger); border-color: var(--danger); }
+  .del-row.removing-bad { display: none; }
+  .del-row.removing-good {
+    animation: phosphorDecay 340ms ease-out forwards;
+    overflow: hidden;
+  }
+  @keyframes phosphorDecay {
+    0%   { background: var(--surface); color: var(--fg); max-height: 40px; opacity: 1; }
+    35%  { background: #000; color: rgba(57,255,102,0.5); box-shadow: inset 0 0 14px rgba(57,255,102,0.4); max-height: 40px; opacity: 1; }
+    65%  { background: #000; color: transparent; box-shadow: inset 0 0 4px rgba(57,255,102,0.1); max-height: 40px; opacity: 1; padding-top: 7px; padding-bottom: 7px; border-color: transparent; }
+    100% { background: transparent; color: transparent; max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-color: transparent; }
+  }
+  :root[data-pal="bone"] .del-row.removing-good {
+    animation: phosphorDecayBone 340ms ease-out forwards;
+  }
+  @keyframes phosphorDecayBone {
+    0%   { background: var(--surface); color: var(--fg); max-height: 40px; opacity: 1; }
+    35%  { background: var(--alt2); color: var(--muted); max-height: 40px; opacity: 1; }
+    65%  { background: var(--alt2); color: transparent; max-height: 40px; opacity: 1; padding-top: 7px; padding-bottom: 7px; border-color: transparent; }
+    100% { background: transparent; color: transparent; max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-color: transparent; }
+  }
+
+  /* ------------------------------------------------------------ *
+   * Footer note                                                  *
+   * ------------------------------------------------------------ */
+  footer {
+    margin-top: 60px; padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--faint); font-size: 11px;
+  }
+
+  kbd {
+    border: 1px solid var(--line);
+    padding: 0 4px; border-radius: 2px;
+    color: var(--mid); font-size: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>terminal motion <span class="dim">/ before · after / 7 ideas</span></h1>
+  <div class="pill" role="tablist" aria-label="palette">
+    <button data-pal-btn="phosphor" aria-pressed="true">phosphor</button>
+    <button data-pal-btn="bone"     aria-pressed="false">bone</button>
+  </div>
+</header>
+
+<!-- ======================================================== §1 -->
+<section>
+  <div class="section-head"><span class="num">01</span><h2>Hover transition</h2></div>
+  <p class="section-note">Today: inline <code>onMouseEnter</code> mutates <code>e.currentTarget.style</code> — instant snap, feels broken.
+  Fix: CSS <code>:hover</code> + <code>transition: background 60ms ease-out</code>. The cheapest single change in the whole shell.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · snap</div>
+      <div class="nav-list">
+        <div class="nav-item bad"><span class="glyph">▸</span>dashboard</div>
+        <div class="nav-item bad"><span class="glyph">⎇</span>workspaces</div>
+        <div class="nav-item bad"><span class="glyph">§</span>digest</div>
+        <div class="nav-item bad"><span class="glyph">⌖</span>map</div>
+        <div class="nav-item bad"><span class="glyph">⚙</span>settings</div>
+      </div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · 60ms</div>
+      <div class="nav-list">
+        <div class="nav-item good"><span class="glyph">▸</span>dashboard</div>
+        <div class="nav-item good"><span class="glyph">⎇</span>workspaces</div>
+        <div class="nav-item good"><span class="glyph">§</span>digest</div>
+        <div class="nav-item good"><span class="glyph">⌖</span>map</div>
+        <div class="nav-item good"><span class="glyph">⚙</span>settings</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== §2 -->
+<section>
+  <div class="section-head"><span class="num">02</span><h2>Phosphor afterglow on selection</h2></div>
+  <p class="section-note">Today: hard <code>border-bottom: 2px solid</code>. Looks like a checkbox.
+  Fix: 1px ring + tight 5px glow that <em>fades in fast (100ms)</em> and <em>decays slow (360ms)</em> — CRT cells light up quicker than they fade. Click any row to see.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · 2px line</div>
+      <div data-glow="bad">
+        <div class="glow-row bad">thread · auth refactor</div>
+        <div class="glow-row bad">thread · welcome flow</div>
+        <div class="glow-row bad">thread · billing migration</div>
+      </div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · phosphor halo</div>
+      <div data-glow="good">
+        <div class="glow-row good">thread · auth refactor</div>
+        <div class="glow-row good">thread · welcome flow</div>
+        <div class="glow-row good">thread · billing migration</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== §3 -->
+<section>
+  <div class="section-head"><span class="num">03</span><h2>Streaming typewriter</h2></div>
+  <p class="section-note">Today: chunks land whole, the <code>tblink</code> cursor is the only thing alive — which actually <em>highlights</em> that the text is static.
+  Fix (mirrors <code>frontend/src/hooks/useSmooth.ts</code>): two layers — bursty network fills a buffer (5-60 char chunks, 30-400ms gaps), a 10ms drain emits 1-4 chars/tick into the DOM. Drain accelerates (1→2→3→4 chars) when buffer falls behind by 20/40/80. Each emitted batch fades 0→1 in 180ms. Same algorithm Vercel AI SDK's <code>smoothStream</code> ships and ChatGPT/Claude use. Press <kbd>stream</kbd>.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · chunk dump</div>
+      <div class="stream-box" id="stream-bad"></div>
+      <div class="controls"><button onclick="streamBad()">stream</button><button onclick="document.getElementById('stream-bad').innerHTML=''">clear</button></div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · typewriter</div>
+      <div class="stream-box" id="stream-good"></div>
+      <div class="controls"><button onclick="streamGood()">stream</button><button onclick="document.getElementById('stream-good').innerHTML=''">clear</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== §4 -->
+<section>
+  <div class="section-head"><span class="num">04</span><h2>Pane focus dim</h2></div>
+  <p class="section-note">Click a pane to focus it — the other dims. Today: instant. Fix: 100ms ease-out. Same logic Classic uses.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · snap</div>
+      <div class="panes" data-panes="bad">
+        <div class="mini-pane bad" data-pane><h4>pane · 1</h4><p>Drafting the migration plan…</p></div>
+        <div class="mini-pane bad dim" data-pane><h4>pane · 2</h4><p>Reviewing prior turn…</p></div>
+      </div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · 100ms dim</div>
+      <div class="panes" data-panes="good">
+        <div class="mini-pane good" data-pane><h4>pane · 1</h4><p>Drafting the migration plan…</p></div>
+        <div class="mini-pane good dim" data-pane><h4>pane · 2</h4><p>Reviewing prior turn…</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== §5 -->
+<section>
+  <div class="section-head"><span class="num">05</span><h2>Status dot — phosphor pulse</h2></div>
+  <p class="section-note">Streaming today is a static color swap. Fix: opacity + <code>box-shadow</code> halo on a 1.4s cycle. Note the difference from Classic's <code>pulse-glow</code>: <em>currentColor</em> halo (CRT phosphor), not soft material.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · static</div>
+      <div class="dot-row">
+        <div class="dot-cell"><div class="dot"></div>idle</div>
+        <div class="dot-cell"><div class="dot streaming-bad"></div>streaming</div>
+        <div class="dot-cell"><div class="dot streaming-bad"></div>streaming</div>
+      </div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · pulse 1.4s</div>
+      <div class="dot-row">
+        <div class="dot-cell"><div class="dot"></div>idle</div>
+        <div class="dot-cell"><div class="dot streaming-good"></div>streaming</div>
+        <div class="dot-cell"><div class="dot streaming-good" style="animation-delay:.7s"></div>streaming</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== §6 -->
+<section>
+  <div class="section-head"><span class="num">06</span><h2>Box-drawing reveal — <code>spawn_branches</code></h2></div>
+  <p class="section-note">Today: new branch panes pop in. Fix: border fills in 4 steps (░ ▒ ▓ █) over 320ms, text fades in 80ms behind it. Stagger by <code>i × 80ms</code> so the "fan out" is legible. Press <kbd>spawn 3</kbd>.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · pop</div>
+      <div class="branch-row" id="branch-bad"></div>
+      <div class="controls"><button onclick="spawnBad()">spawn 3</button><button onclick="document.getElementById('branch-bad').innerHTML=''">clear</button></div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · fill + stagger</div>
+      <div class="branch-row" id="branch-good"></div>
+      <div class="controls"><button onclick="spawnGood()">spawn 3</button><button onclick="document.getElementById('branch-good').innerHTML=''">clear</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================== §7 -->
+<section>
+  <div class="section-head"><span class="num">07</span><h2>Phosphor decay on delete</h2></div>
+  <p class="section-note">Today: row vanishes. Fix: 340ms keyframe — fade through black with a brief inner glow (CRT power-off), then collapse height to 0. The "glow before death" is the whole point.</p>
+  <div class="pair">
+    <div class="card before">
+      <div class="card-label">before · poof</div>
+      <div class="del-list" id="del-bad">
+        <div class="del-row">node · plan v3 <button onclick="delBad(this)">delete</button></div>
+        <div class="del-row">node · scratchpad <button onclick="delBad(this)">delete</button></div>
+        <div class="del-row">node · old branch <button onclick="delBad(this)">delete</button></div>
+        <div class="del-row">node · spike #2 <button onclick="delBad(this)">delete</button></div>
+      </div>
+      <div class="controls"><button onclick="resetDel('bad')">reset</button></div>
+    </div>
+    <div class="card after">
+      <div class="card-label">after · phosphor decay</div>
+      <div class="del-list" id="del-good">
+        <div class="del-row">node · plan v3 <button onclick="delGood(this)">delete</button></div>
+        <div class="del-row">node · scratchpad <button onclick="delGood(this)">delete</button></div>
+        <div class="del-row">node · old branch <button onclick="delGood(this)">delete</button></div>
+        <div class="del-row">node · spike #2 <button onclick="delGood(this)">delete</button></div>
+      </div>
+      <div class="controls"><button onclick="resetDel('good')">reset</button></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Mock · all numbers and palettes pulled from <code>frontend/src/components/terminal/tokens.ts</code>.
+  Motion tokens: <code>--t-quick 60ms</code>, <code>--t-soft 100ms</code>, <code>--t-decay 360ms</code>, ease <code>cubic-bezier(.2,0,.6,1)</code>.
+  No code in <code>frontend/</code> is touched by this file.
+</footer>
+
+<script>
+  // ---------- palette toggle ----------
+  const root = document.documentElement;
+  document.querySelectorAll('[data-pal-btn]').forEach(b => {
+    b.addEventListener('click', () => {
+      const pal = b.dataset.palBtn;
+      root.dataset.pal = pal;
+      document.querySelectorAll('[data-pal-btn]').forEach(x =>
+        x.setAttribute('aria-pressed', String(x.dataset.palBtn === pal))
+      );
+    });
+  });
+  root.dataset.pal = 'phosphor';
+
+  // ---------- §2 selection (single-select per group) ----------
+  document.querySelectorAll('[data-glow]').forEach(group => {
+    group.addEventListener('click', e => {
+      const row = e.target.closest('.glow-row');
+      if (!row) return;
+      group.querySelectorAll('.glow-row').forEach(r => r.classList.remove('selected'));
+      row.classList.add('selected');
+    });
+  });
+
+  // ---------- §3 streaming demo ----------
+  const TEXT = "Reading frontend/src/components/terminal/TPane.tsx — looking at how chunks are appended during streaming. The bottleneck is innerHTML+= which forces a full reflow per chunk. Switching to per-character fade keeps the cursor honest.";
+
+  function streamBad() {
+    const el = document.getElementById('stream-bad');
+    el.innerHTML = '<span class="cursor"></span>';
+    let i = 0;
+    const chunks = [38, 35, 30, 35, 30, 25];  // chunk sizes
+    const cursor = el.querySelector('.cursor');
+    const tick = () => {
+      if (i >= chunks.length) return;
+      const start = chunks.slice(0, i).reduce((a,b)=>a+b, 0);
+      const piece = TEXT.slice(start, start + chunks[i]);
+      cursor.insertAdjacentText('beforebegin', piece);  // chunk drops whole
+      i++;
+      setTimeout(tick, 220);
+    };
+    tick();
+  }
+
+  function streamGood() {
+    // ---------------------------------------------------------------- //
+    //  Two-layer model — matches frontend/src/hooks/useSmooth.ts       //
+    //  Layer 1: bursty network chunks fill `buf` at unpredictable rate //
+    //  Layer 2: 10ms drain emits 1-4 chars/tick into the DOM with fade //
+    // ---------------------------------------------------------------- //
+    const el = document.getElementById('stream-good');
+    el.innerHTML = '';
+
+    let buf = '';     // accumulated source (network)
+    let cursor = 0;   // how much we've shown
+    let networkDone = false;
+
+    // --- Layer 1: simulate bursty network arrival -------------------
+    // Real LLM responses arrive in bursts of 5-50 chars, separated by
+    // 30-400ms gaps (model latency between tokens, network jitter).
+    let netI = 0;
+    function netTick() {
+      if (netI >= TEXT.length) { networkDone = true; return; }
+      const chunkLen = 5 + Math.floor(Math.random() * 55);  // 5-60 chars
+      buf += TEXT.slice(netI, netI + chunkLen);
+      netI += chunkLen;
+      const gap = 30 + Math.random() * 370;  // 30-400ms
+      setTimeout(netTick, gap);
+    }
+    netTick();
+
+    // --- Layer 2: smooth drain -------------------------------------
+    // Constant ~100 cps baseline, accelerates when buffer falls behind
+    // (matches useSmooth.ts:46 step thresholds 20/40/80).
+    const drain = setInterval(() => {
+      if (cursor >= buf.length) {
+        if (networkDone) clearInterval(drain);
+        return;
+      }
+      const behind = buf.length - cursor;
+      const step = behind > 80 ? 4 : behind > 40 ? 3 : behind > 20 ? 2 : 1;
+      const piece = buf.slice(cursor, cursor + step);
+      cursor += step;
+
+      const span = document.createElement('span');
+      span.className = 'tok';
+      span.textContent = piece;
+      el.appendChild(span);
+    }, 10);
+  }
+
+  // ---------- §4 pane focus ----------
+  document.querySelectorAll('[data-panes]').forEach(group => {
+    group.addEventListener('click', e => {
+      const pane = e.target.closest('[data-pane]');
+      if (!pane) return;
+      group.querySelectorAll('[data-pane]').forEach(p => p.classList.add('dim'));
+      pane.classList.remove('dim');
+    });
+  });
+
+  // ---------- §6 spawn branches ----------
+  const BRANCH_LABELS = ['option · A', 'option · B', 'option · C'];
+  function spawnBad() {
+    const el = document.getElementById('branch-bad');
+    el.innerHTML = '';
+    BRANCH_LABELS.forEach(l => {
+      const c = document.createElement('div');
+      c.className = 'branch-card bad';
+      c.textContent = l;
+      el.appendChild(c);
+    });
+  }
+  function spawnGood() {
+    const el = document.getElementById('branch-good');
+    el.innerHTML = '';
+    BRANCH_LABELS.forEach((l, i) => {
+      const c = document.createElement('div');
+      c.className = 'branch-card good';
+      c.textContent = l;
+      c.style.animationDelay = (i * 80) + 'ms, ' + (i * 80) + 'ms';
+      el.appendChild(c);
+    });
+  }
+
+  // ---------- §7 delete decay ----------
+  function delBad(btn) {
+    const row = btn.closest('.del-row');
+    row.classList.add('removing-bad');
+  }
+  function delGood(btn) {
+    const row = btn.closest('.del-row');
+    row.classList.add('removing-good');
+    row.style.pointerEvents = 'none';
+  }
+  const DEL_SEED = [
+    'node · plan v3', 'node · scratchpad', 'node · old branch', 'node · spike #2'
+  ];
+  function resetDel(which) {
+    const el = document.getElementById('del-' + which);
+    el.innerHTML = '';
+    const handler = which === 'bad' ? 'delBad(this)' : 'delGood(this)';
+    DEL_SEED.forEach(label => {
+      const r = document.createElement('div');
+      r.className = 'del-row';
+      r.innerHTML = label + ' <button onclick="' + handler + '">delete</button>';
+      el.appendChild(r);
+    });
+  }
+</script>
+</body>
+</html>

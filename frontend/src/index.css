@@ -1,0 +1,2002 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@source "../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/@streamdown/cjk/dist/*.js";
+
+@theme {
+  --color-app: var(--app-bg);
+  --color-app-muted: var(--app-bg-muted);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-hover: var(--surface-hover);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-background: var(--surface);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--surface-muted);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--surface-muted);
+  --color-muted-foreground: var(--fg-muted);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
+  --color-sidebar: var(--surface-muted);
+
+  /* Font families */
+  --font-sans: var(--ui-font);
+  --font-mono: 'IBM Plex Mono', 'Fira Mono', ui-monospace, monospace;
+  --font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+}
+
+/* Two-font system:
+   - --ui-font     : every interface element (sidebar, tabs, dialogs, settings,
+                     buttons, inputs, kbd hints, badges, code blocks, …).
+                     Driven by prefs.uiFont via prefs.tsx.
+   - --message-*   : message body typography (assistant prose + user bubble).
+                     Defined in the message-typography block below.
+   Both Tailwind --font-sans and Tailwind --font-mono inherit from --ui-font
+   so prose-class defaults (which read --tw-font-mono via prose) follow suit. */
+:root {
+  --ui-font: 'Inter', system-ui, -apple-system, sans-serif, var(--ui-cjk-font);
+  --ui-cjk-font: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+                 'Source Han Sans SC', 'Noto Sans CJK SC', sans-serif;
+  --radius: 0.375rem;
+}
+
+:root:lang(ja) {
+  --ui-cjk-font: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP',
+                 'Yu Gothic', 'Meiryo', sans-serif;
+}
+
+:root:lang(ko) {
+  --ui-cjk-font: 'Apple SD Gothic Neo', 'Noto Sans KR',
+                 'Malgun Gothic', sans-serif;
+}
+
+/* Tailwind 4 changed the default border color from gray-200 to currentColor.
+   Restore a subtle gray default by using --line. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-line, currentColor);
+  }
+}
+
+/* Configure the typography plugin's prose colors against our theme tokens. */
+@layer base {
+  .prose {
+    --tw-prose-body: var(--fg);
+    --tw-prose-headings: var(--fg);
+    --tw-prose-links: var(--accent);
+    --tw-prose-bold: var(--fg);
+    --tw-prose-quotes: var(--fg-muted);
+    --tw-prose-code: var(--fg);
+    --tw-prose-hr: var(--line);
+    --tw-prose-th-borders: var(--line);
+  }
+}
+
+/* Tighten prose vertical rhythm. Unlayered so they beat the typography
+   plugin's defaults (which live in a higher cascade layer). */
+.prose hr { margin-top: 1.25em; margin-bottom: 1.25em; }
+.prose table { margin-top: 1em; margin-bottom: 1em; }
+
+/* ----------------------------------------------------------------------------
+   Message typography (Michi messages + user bubbles).
+   Calibrated in mocks/typography-lab.html. Latin glyphs render in Source Serif 4;
+   CJK glyphs use the OS system font (PingFang on macOS, Microsoft YaHei on Windows,
+   Noto Sans CJK on Linux) via the standard stack — browser routes by Unicode
+   coverage automatically.
+
+   --message-body-size is read from the assistantFontSize pref (set on :root by
+   prefs.tsx). Both user and assistant messages share these values so they
+   render identically.
+   --------------------------------------------------------------------------- */
+:root {
+  --message-latin-font: 'Source Serif 4', Georgia, serif;
+  --message-cjk-font: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+                      'Source Han Sans SC', 'Noto Sans CJK SC', sans-serif;
+  /* Font for code inside messages (inline + fenced blocks). Always monospace
+     so ASCII art, box-drawing diagrams, tables, and indentation stay
+     column-aligned. Overridden by prefs.tsx per messageFont preset to pair
+     with the prose typeface; the no-JS / SSR default below is a safe mono
+     stack. */
+  --message-code-font: 'IBM Plex Mono', 'Fira Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Slider drives --message-body-size-base (prefs.tsx). Density-scoped rules
+     below derive --message-body-size from it, so the slider stays orthogonal
+     to density and composer chrome (outside .terminal-message-assistant)
+     reads the unscaled base. */
+  --message-body-size-base: 16.5px;
+  --message-body-size: var(--message-body-size-base);
+  --message-body-leading: 1.5;
+  --message-paragraph-spacing: 1.05em;
+  --message-list-item-spacing: 0.45em;
+  --message-h1-scale: 1.6;
+  --message-h2-scale: 1.32;
+  --message-h3-scale: 1.15;
+}
+
+:root:lang(ja) {
+  --message-cjk-font: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', sans-serif;
+}
+
+/* Density-scoped overrides for assistant prose. Density only adjusts
+   line-height and letter-spacing — font size stays driven exclusively by
+   the slider (--message-body-size-base) so the two controls don't fight. */
+.terminal-message[data-density='comfortable'] {
+  --message-body-leading: 1.6;
+  letter-spacing: 0.01em;
+}
+.terminal-message[data-density='compact'] {
+  --message-body-leading: 1.45;
+  letter-spacing: 0;
+}
+.terminal-message[data-density='dense'] {
+  --message-body-leading: 1.3;
+  letter-spacing: -0.005em;
+}
+
+/* Shared base used by both message bubbles' .prose and
+   .terminal-message-user. Applied via the .terminal-message class. */
+.terminal-message {
+  font-family: var(--message-latin-font), var(--message-cjk-font);
+  font-size: var(--message-body-size);
+  font-weight: 400;
+  line-height: var(--message-body-leading);
+  letter-spacing: 0;
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+
+/* Assistant prose: same base, plus markdown-element rhythm. */
+:is(.terminal-message-assistant, .terminal-message-user) .prose {
+  font-family: var(--message-latin-font), var(--message-cjk-font);
+  font-size: var(--message-body-size);
+  font-weight: 400;
+  line-height: var(--message-body-leading);
+  letter-spacing: 0;
+  font-feature-settings: "kern" 1, "liga" 1;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(p, ul, ol, blockquote, pre) {
+  margin-top: 0;
+  margin-bottom: var(--message-paragraph-spacing);
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(li) {
+  margin-top: 0;
+  margin-bottom: var(--message-list-item-spacing);
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h1, h2, h3) {
+  font-family: inherit;
+  font-weight: 600;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose h1 {
+  font-size: calc(var(--message-body-size) * var(--message-h1-scale));
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  margin-top: 0;
+  margin-bottom: 0.4em;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose h2 {
+  font-size: calc(var(--message-body-size) * var(--message-h2-scale));
+  line-height: 1.18;
+  letter-spacing: -0.015em;
+  margin-top: 2.2em;
+  margin-bottom: 0.55em;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose h3 {
+  font-size: calc(var(--message-body-size) * var(--message-h3-scale));
+  line-height: 1.3;
+  margin-top: 1.6em;
+  margin-bottom: 0.4em;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose table {
+  font-size: calc(var(--message-body-size) * 0.95);
+  width: 100%;
+  table-layout: fixed;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(th, td) {
+  padding: 5px 3px;
+  border-bottom-width: 1px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose th {
+  font-weight: 600;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(code, pre) {
+  font-family: var(--message-code-font);
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose pre {
+  font-size: calc(var(--message-body-size) * 0.9);
+  line-height: 1.55;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :not(pre) > code {
+  font-size: calc(var(--message-body-size) * 0.9);
+}
+
+.terminal-message-frame {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 128px;
+}
+
+.terminal-message-frame[data-streaming-tail="true"] {
+  content-visibility: visible;
+  contain-intrinsic-size: auto;
+}
+
+:is(.terminal-message-assistant, .terminal-message-user) .prose .michi-code-block,
+.prose .michi-code-block {
+  margin-top: var(--message-paragraph-spacing, 1em);
+  margin-bottom: var(--message-paragraph-spacing, 1em);
+}
+
+.prose pre:has(> .michi-code-block),
+.prose pre:has(> [data-streamdown="code-block"]) {
+  margin-top: var(--message-paragraph-spacing, 1em);
+  margin-bottom: var(--message-paragraph-spacing, 1em);
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.prose pre:has(> .michi-code-block) > .michi-code-block,
+.prose pre:has(> [data-streamdown="code-block"]) > [data-streamdown="code-block"] {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.michi-code-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+  overflow: hidden;
+  border: 1px solid var(--term-line, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--term-bg, var(--app-bg)) 82%, var(--term-surface, var(--surface)));
+  color: var(--term-fg, var(--fg));
+}
+
+.michi-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--term-line, var(--line));
+  background: color-mix(in srgb, var(--term-surface, var(--surface)) 72%, transparent);
+  font-family: var(--ui-font);
+}
+
+/* Streamdown shell keeps the accent language pill (it's behind a dev flag and
+   has its own chrome). The legacy `.michi-code-*` path is restyled below into
+   the two design variants. */
+.prose [data-streamdown="code-block-header"] span {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(60%, 220px);
+  overflow: hidden;
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--term-accent, var(--accent)) 22%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--term-accent, var(--accent)) 8%, transparent);
+  color: var(--term-accent, var(--accent));
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.michi-code-body {
+  position: relative;
+}
+
+.michi-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--term-line, var(--line));
+  border-radius: 5px;
+  background: var(--term-surface, var(--surface));
+  color: var(--term-muted, var(--fg-muted));
+  cursor: pointer;
+  font-family: var(--ui-font);
+  font-size: 14px;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: opacity var(--t-soft, 120ms) var(--t-ease, ease),
+    background var(--t-quick, 60ms) var(--t-ease, ease),
+    color var(--t-quick, 60ms) var(--t-ease, ease);
+}
+
+.michi-code-copy:hover {
+  background: var(--term-hover-bg, var(--term-alt, var(--line)));
+  color: var(--term-fg, var(--fg));
+}
+
+.michi-code-scroll {
+  overflow-x: auto;
+}
+
+.michi-code-pre {
+  min-width: max-content;
+  margin: 0 !important;
+  padding: 11px 12px !important;
+  border: 0;
+  background: transparent !important;
+  color: inherit;
+  font-family: var(--message-code-font);
+  font-size: calc(var(--message-body-size, 15px) * 0.9);
+  line-height: 1.55;
+}
+
+/* Tailwind typography's `.prose pre` rule sets a hard `color: var(--tw-prose-pre-code)`
+   (a near-white grey baked for dark surfaces). On our themed light backgrounds, plain
+   tokens — the ones shiki omits a `htmlStyle.color` for because they match the theme's
+   default foreground — inherit that grey and become invisible. Beat that rule with a
+   slightly more specific selector so plain text falls back to the themed `--fg`. */
+.prose pre.michi-code-pre,
+.prose [data-streamdown="code-block-body"] pre {
+  color: var(--term-fg, var(--fg));
+}
+
+.michi-code-pre code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.michi-code-line {
+  display: block;
+  min-height: 1.55em;
+  white-space: pre;
+}
+
+.michi-code-token {
+  color: var(--michi-code-token, inherit);
+  background-color: var(--michi-code-token-bg, transparent);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Assistant code-block chrome — design variants 01 Hairline / 02 Header rule.
+   Switched from Settings → Appearance → Code block, via the `data-code-block`
+   attribute on <html>. Both kill the GitHub-ish accent pill in favour of a
+   quiet mono label, square 3px corners, and copy-on-hover. Only the
+   legacy `.michi-code-*` path is themed here — streamdown keeps its own shell.
+   ─────────────────────────────────────────────────────────────────────── */
+.michi-code-block { border-radius: 3px; }
+
+/* base label = the header-variant treatment (also the no-attribute fallback). */
+.michi-code-language {
+  flex: 0 0 auto;
+  max-width: min(70%, 280px);
+  overflow: hidden;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--term-muted, var(--fg-muted));
+  text-overflow: ellipsis;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+/* Copy reveals on hover — pointer devices only; touch keeps it visible. */
+@media (hover: hover) {
+  .michi-code-copy {
+    opacity: 0;
+  }
+  .michi-code-body:hover .michi-code-copy,
+  .michi-code-copy:focus-visible,
+  .michi-code-copy.is-copied {
+    opacity: 1;
+  }
+}
+.michi-code-copy.is-copied { color: var(--ok, var(--term-accent, var(--accent))); }
+
+/* 01 Hairline pane (quietest): no header bar, no fill; just a hairline
+   border and a faint uppercase mono overline over the page background. */
+[data-code-block="hairline"] .michi-code-block {
+  background: transparent;
+}
+[data-code-block="hairline"] .michi-code-header {
+  min-height: 0;
+  /* left padding matches the code body's 14px so the overline and the first
+     code column share one left edge */
+  padding: 8px 8px 0 14px;
+  border-bottom: 0;
+  background: transparent;
+}
+[data-code-block="hairline"] .michi-code-language {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--term-faint, var(--fg-subtle));
+}
+[data-code-block="hairline"] .michi-code-pre { padding: 4px 14px 13px !important; }
+
+/* 02 Header rule (classic terminal): a 24px divider bar showing just
+   the language. */
+[data-code-block="header"] .michi-code-block {
+  background: var(--term-surface, var(--surface));
+}
+[data-code-block="header"] .michi-code-header {
+  min-height: 24px;
+  padding: 0 8px 0 13px;
+  border-bottom: 1px solid var(--term-line, var(--line));
+  background: color-mix(in srgb, var(--term-bg, var(--app-bg)) 55%, var(--term-surface, var(--surface)));
+}
+[data-code-block="header"] .michi-code-pre { padding: 11px 14px 12px !important; }
+
+.prose [data-streamdown="code-block"] {
+  gap: 0;
+  margin-top: var(--message-paragraph-spacing, 1em);
+  margin-bottom: var(--message-paragraph-spacing, 1em);
+  overflow: hidden;
+  border-color: var(--term-line, var(--line));
+  border-radius: 6px;
+  background: var(--term-surface, var(--surface));
+  color: var(--term-fg, var(--fg));
+  padding: 0;
+}
+
+.prose [data-streamdown="code-block-header"] {
+  min-height: 30px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--term-line, var(--line));
+  background: color-mix(in srgb, var(--term-surface, var(--surface)) 72%, transparent);
+  color: var(--term-muted, var(--fg-muted));
+}
+
+.prose [data-streamdown="code-block-header"] span {
+  margin-left: 0;
+}
+
+.prose [data-streamdown="code-block-body"] {
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: var(--term-surface, var(--surface));
+  color: var(--term-fg, var(--fg));
+  padding: 11px 12px;
+}
+
+.prose [data-streamdown="code-block-body"] pre {
+  margin: 0;
+  background: transparent !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Code wrap — Settings → Appearance → Code wrap, via `data-code-wrap` on
+   <html>. Default (off / attribute absent) keeps the horizontal-scroll
+   behaviour above. When on, long lines break at the container edge instead,
+   and long unbroken tokens (URLs, base64) break mid-word so nothing escapes
+   the box. Both render paths are covered: legacy `.michi-code-*` and the
+   streamdown shell.
+   ─────────────────────────────────────────────────────────────────────── */
+[data-code-wrap="on"] .michi-code-scroll {
+  overflow-x: hidden;
+}
+[data-code-wrap="on"] .michi-code-pre {
+  min-width: 0;
+}
+[data-code-wrap="on"] .michi-code-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[data-code-wrap="on"] .prose [data-streamdown="code-block-body"] {
+  overflow-x: hidden;
+}
+[data-code-wrap="on"] .prose [data-streamdown="code-block-body"] pre,
+[data-code-wrap="on"] .prose [data-streamdown="code-block-body"] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+[data-terminal-palette="monokai"] .michi-code-token,
+[data-terminal-palette="gruvbox"] .michi-code-token,
+.prose-invert .michi-code-token {
+  color: var(--shiki-dark, var(--michi-code-token, inherit));
+  background-color: var(--shiki-dark-bg, var(--michi-code-token-bg, transparent));
+}
+
+/* User bubble · paper card. The "$ you" affordance moves inside the card as
+   an ALL-CAPS overline; the bubble itself reads as a warm-paper card kissed
+   with a hint of accent (4% mix), with a 2px accent right rule and a warm
+   drop shadow tinted by the accent so the lift feels of-a-piece with the
+   rule instead of a neutral gray cast.
+   Typography uses the !important rules so they beat the density-driven
+   inline fontFamily/fontSize/lineHeight that MessageBlock sets. */
+.terminal-message-user {
+  font-family: var(--message-latin-font), var(--message-cjk-font) !important;
+  font-size: var(--message-body-size) !important;
+  line-height: var(--message-body-leading) !important;
+  position: relative;
+  max-width: 72%;
+  padding: 12px 16px 13px;
+  background: color-mix(in srgb, var(--term-accent) 4%, var(--term-surface));
+  border-right: 2px solid var(--term-accent);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--term-accent) 6%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 6px 18px -10px color-mix(in srgb, var(--term-accent) 22%, transparent);
+}
+.terminal-message-user[data-density='dense'] { padding: 9px 14px 10px; }
+.terminal-message-user[data-density='compact'] { padding: 11px 16px 12px; }
+
+/* Overline label inside the card: ALL-CAPS mono in accent. Replaces the
+   outer "$ you" header that the legacy bubble printed above itself. */
+.terminal-message-user .bubble-overline {
+  display: block;
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, Menlo, monospace);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  color: var(--term-accent);
+  font-weight: 500;
+  /* Reset the .terminal-message font/size/leading !important rule above so
+     the overline reads at its own small size. */
+  line-height: 1 !important;
+}
+.terminal-message-user .bubble-overline b {
+  color: var(--term-accent);
+  font-weight: 500;
+}
+
+/* Legacy --app-* / --surface* / --fg* / --line* / --accent* / --danger / --ok
+ * are now thin aliases of the active terminal palette (--term-*). The few
+ * remaining consumers (LandingPage, ApiKeyGate, Profile) don't need changes —
+ * they automatically follow whichever palette the user picks in Settings. */
+:root {
+  --app-bg: var(--term-bg);
+  --app-bg-muted: var(--term-page-bg);
+  --surface: var(--term-surface);
+  --surface-muted: var(--term-alt);
+  --surface-hover: var(--term-alt);
+  --surface-alt: var(--term-alt);
+  --fg: var(--term-fg);
+  --fg-muted: var(--term-mid);
+  --fg-subtle: var(--term-muted);
+  --line: var(--term-line);
+  --line-strong: var(--term-line-s);
+  --accent: var(--term-accent);
+  --accent-fg: var(--term-bg);
+  --accent-soft: var(--term-accentF);
+  --danger: var(--term-danger);
+  --ok: var(--term-digest);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-app text-fg;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Design-system variables consumed by the terminal shell's inline styles. */
+:root {
+  --term-shell-bg: var(--term-bg);
+  --term-shell-padding: 0px;
+  --term-shell-gap: 0px;
+  --term-content-gap: 0px;
+  --term-dashboard-padding: 0px;
+  --term-dashboard-gap: 0px;
+  --term-topbar-height: 40px;
+  --term-topbar-bg: var(--term-surface);
+  --term-topbar-border: 1px solid var(--term-line);
+  --term-topbar-outline: none;
+  --term-topbar-radius: 0px;
+  --term-sidebar-bg: var(--term-surface);
+  --term-sidebar-border: 1px solid var(--term-line);
+  --term-sidebar-outline: none;
+  --term-sidebar-radius: 0px;
+  --term-pane-bg: var(--term-surface);
+  --term-pane-border: none;
+  --term-pane-divider: 1px solid var(--term-line);
+  --term-pane-radius: 0px;
+  --term-pane-shadow: none;
+  --term-pane-header-bg: var(--term-alt);
+  --term-hover-bg: var(--term-alt);
+  --term-composer-bg: var(--term-bg);
+  --term-composer-bg-focus: var(--term-surface);
+  --term-composer-border: 1px solid var(--term-line-s);
+  --term-composer-border-focus: 1px solid var(--term-line-s);
+  --term-composer-radius: 0px;
+  --term-composer-shadow: 0 1px 0 rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.10);
+  --term-composer-shadow-muted: 0 1px 0 rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.06);
+  --term-message-radius: 0px;
+  --term-status-bg: var(--term-bg);
+  --term-status-fg: var(--term-mid);
+  --term-status-radius: 0px;
+  /* Branch rail tints — used by sidebar BranchRow at depths 1/2/3+. */
+  --term-rail-1: var(--term-line);
+  --term-rail-2: color-mix(in srgb, var(--term-line) 70%, var(--term-bg));
+  --term-rail-3: color-mix(in srgb, var(--term-line) 40%, var(--term-bg));
+}
+
+/* Overlay scrollbar thumb for TerminalDashboard's horizontal scroll.
+   Native scrollbar is hidden via .hide-sb on the strip; the thumb is a
+   sibling div positioned/animated by Dashboard.tsx. Visibility is
+   controlled by inline opacity on the element itself. */
+.dashboard-hscroll-thumb {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  pointer-events: none;
+  transition: opacity 220ms ease, background 160ms ease;
+  z-index: 10;
+}
+
+/* Static position variant — used by Home where the composer is centered
+   in normal flow rather than floating over a scroll area. */
+.terminal-composer.is-static {
+  position: static;
+}
+
+.terminal-composer:focus-within {
+  background: var(--term-composer-bg-focus, var(--term-surface)) !important;
+  border: var(--term-composer-border-focus, 1px solid var(--term-line-s)) !important;
+  box-shadow: var(--term-composer-shadow, 0 1px 0 rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.10)) !important;
+}
+
+/* Drag-hover outline — driven by ComposerShell's dragHover prop. */
+.terminal-composer.is-drag-hover {
+  outline: 1px dashed var(--term-accent);
+  outline-offset: -2px;
+}
+
+/* ===== Redesign animations ===== */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 35%, transparent); }
+  50%      { box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent) 6%, transparent); }
+}
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0); }
+  40%           { transform: translateY(-4px); }
+}
+
+/* Terminal shell — keyframes used by Dot pulse and cursor blink.
+   Opacity-only so it stays on the compositor: animating box-shadow here would
+   force a main-thread repaint every frame, which stutters (and drags the whole
+   sidebar) while streaming saturates the main thread. Callers that want the glow
+   set a *static* box-shadow on the element; the opacity pulse fades it in/out. */
+@keyframes tpulse {
+  0%, 100% { opacity: .4; }
+  50%      { opacity: 1; }
+}
+/* Pulse for shape-based status glyphs — uses opacity only so it composes
+   cleanly with rotation animations on the same element. */
+@keyframes tpulse-glyph {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1; }
+}
+@keyframes tspin {
+  to { transform: rotate(360deg); }
+}
+@keyframes tblink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+@keyframes t-stream-token-reveal {
+  from { opacity: .28; }
+  to { opacity: 1; }
+}
+@keyframes tdots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+.tdots-after::after {
+  content: '';
+  animation: tdots 1.5s steps(1) infinite;
+}
+.stream-token-reveal {
+  animation: t-stream-token-reveal var(--stream-token-reveal-duration, 300ms) ease-out both;
+}
+@keyframes sd-fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes sd-blurIn {
+  from { opacity: 0; filter: blur(4px); }
+  to { opacity: 1; filter: blur(0); }
+}
+@keyframes sd-slideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+[data-sd-animate] {
+  animation: var(--sd-animation, sd-fadeIn) var(--sd-duration, 150ms)
+    var(--sd-easing, ease) var(--sd-delay, 0ms) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-token-reveal {
+    animation: none;
+    opacity: 1;
+  }
+  [data-sd-animate] {
+    animation: none;
+    opacity: 1;
+  }
+}
+/* Typing-style three-dot placeholder used by ThinkingIndicator before the
+   assistant produces any blocks/text. Reuses bounce-dot keyframes (above).
+   Apply animation-delay inline (0 / .15s / .3s) to stagger the three dots. */
+.typing-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--term-muted);
+  margin-right: 4px;
+  vertical-align: middle;
+  animation: bounce-dot 1.2s infinite ease-in-out;
+}
+@keyframes tMapNodeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Spawn reveal — used when a new TPane is mounted by spawn_branches /
+   fanout / manual open. A brief inset box-shadow flash gives a CRT-style
+   "border drawn in" feel before fading to no outline. Stagger via
+   inline animation-delay = i * 80ms in the Dashboard mount loop. */
+@keyframes tSpawn {
+  0%   { opacity: 0; box-shadow: inset 0 0 0 0 var(--term-fg), inset 0 0 0 0 transparent; }
+  35%  { opacity: 1; box-shadow: inset 0 0 0 1px var(--term-fg), 0 0 8px -2px var(--term-fg); }
+  100% { opacity: 1; box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 transparent; }
+}
+
+/* Phosphor decay — apply via .t-decay-out then call the real delete after
+   ~340ms. Mid-keyframe, the element flashes a tighter ring before going
+   dark and collapsing. CRT power-off feel. */
+@keyframes tDecay {
+  0%   { opacity: 1; transform: scale(1);    box-shadow: 0 0 0 0 transparent; filter: brightness(1); }
+  35%  { opacity: 1; transform: scale(1);    box-shadow: inset 0 0 0 1px var(--term-fg), 0 0 6px -2px var(--term-fg); filter: brightness(1.4); }
+  70%  { opacity: 0.5; transform: scale(0.99); filter: brightness(0.4); }
+  100% { opacity: 0; transform: scale(0.985); filter: brightness(0); }
+}
+.t-decay-out {
+  animation: tDecay 340ms ease-out forwards;
+  pointer-events: none;
+}
+
+/* Hide scrollbars (used in terminal sidebar tree). */
+.hide-sb::-webkit-scrollbar { display: none; }
+.hide-sb { scrollbar-width: none; -ms-overflow-style: none; }
+
+/* Thin, terminal-themed scrollbar. Uses --term-* tokens so it adapts per theme. */
+.term-scrollbar { scrollbar-width: thin; scrollbar-color: var(--term-line) transparent; }
+.term-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.term-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.term-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--term-line);
+  border-radius: 6px;
+  border: 2px solid var(--term-bg);
+}
+.term-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--term-muted); }
+.term-scrollbar::-webkit-scrollbar-corner { background: transparent; }
+
+/* Terminal hover utilities — pair with --t-* motion tokens.
+   Replaces inline onMouseEnter style mutations with smooth CSS transitions. */
+.t-hover-bg-line {
+  transition: background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease);
+}
+.t-hover-bg-line:hover { background: var(--term-hover-bg, var(--term-alt)); color: var(--term-fg); }
+
+.t-hover-bg-alt {
+  transition: background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease);
+}
+.t-hover-bg-alt:hover { background: var(--term-hover-bg, var(--term-alt)); color: var(--term-fg); }
+
+.t-hover-fg {
+  transition: color var(--t-quick) var(--t-ease);
+}
+.t-hover-fg:hover { color: var(--term-fg); }
+
+/* Follow-up rows. The row text is the primary action ("continue in this
+   pane"); the right-hand branch button is the explicit "branch into new
+   pane" affordance. Branch button fades in on row hover (no horizontal
+   motion). On touch devices the branch button stays visible since there
+   is no hover. */
+.t-followup-row {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 4px;
+  border-left: 2px solid transparent;
+  background: transparent;
+  font-family: var(--ui-font);
+  font-size: 12.5px;
+  --followup-final-opacity: 1;
+  opacity: 0;
+  animation: t-followup-pop 240ms var(--t-ease) forwards;
+  animation-delay: var(--followup-delay, 0ms);
+  transition: background var(--t-quick) var(--t-ease),
+              border-left-color var(--t-quick) var(--t-ease),
+              transform var(--t-quick) var(--t-ease);
+}
+.t-followup-row[data-disabled='true'] {
+  --followup-final-opacity: 0.68;
+}
+.t-followup-row[data-disabled='true'] .t-followup-text,
+.t-followup-row[data-disabled='true'] .t-followup-branch {
+  cursor: default;
+}
+.t-followup-row:not([data-disabled='true']):hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  border-left-color: var(--term-accent);
+  transform: translateX(2px);
+}
+.t-followup-num {
+  color: var(--term-accent);
+  font-weight: 600;
+  padding: 8px 0 8px 10px;
+  align-self: center;
+  flex-shrink: 0;
+  font-family: var(--ui-font);
+  transition: color var(--t-quick) var(--t-ease),
+              text-shadow var(--t-quick) var(--t-ease);
+}
+.t-followup-row:not([data-disabled='true']):hover .t-followup-num {
+  color: var(--term-accent);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--term-accent) 35%, transparent);
+}
+.t-followup-text {
+  flex: 1;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  cursor: pointer;
+}
+.t-followup-text:focus-visible {
+  outline: 1px solid var(--term-accent);
+  outline-offset: -1px;
+}
+.t-followup-branch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 127px;
+  padding: 0 18px;
+  border: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--term-accent) 6%, transparent) 45%,
+    color-mix(in srgb, var(--term-accent) 14%, transparent) 100%
+  );
+  color: var(--term-accent);
+  font: inherit;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-quick) var(--t-ease),
+              background var(--t-quick) var(--t-ease);
+}
+.t-followup-row:not([data-disabled='true']):hover .t-followup-branch,
+.t-followup-branch:focus-visible {
+  opacity: 1;
+}
+.t-followup-branch:hover {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--term-accent) 14%, transparent) 35%,
+    color-mix(in srgb, var(--term-accent) 26%, transparent) 100%
+  );
+}
+.t-followup-branch:disabled,
+.t-followup-text:disabled {
+  color: var(--term-muted);
+}
+.t-followup-branch:disabled {
+  opacity: 0;
+}
+.t-followup-branch-glyph {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 14px;
+  line-height: 1;
+}
+@media (hover: none) {
+  .t-followup-branch {
+    opacity: 1;
+  }
+  .t-followup-branch:disabled {
+    opacity: 0;
+  }
+}
+@keyframes t-followup-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(7px) scale(0.985);
+    filter: brightness(1.2);
+  }
+  70% {
+    opacity: var(--followup-final-opacity);
+    transform: translateY(-1px) scale(1);
+    filter: brightness(1.08);
+  }
+  100% {
+    opacity: var(--followup-final-opacity);
+    transform: translateY(0) scale(1);
+    filter: brightness(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-followup-row {
+    opacity: var(--followup-final-opacity);
+    animation: none;
+  }
+}
+
+/* Follow-ups skeleton shown during kiro's `set_follow_ups` tool call
+   (between end-of-text and arrival of the actual follow-up list). A slow
+   pulse signals "the model is still working" so the 2-5s wait after
+   streaming ends doesn't look like the agent froze. */
+.t-followup-skeleton {
+  animation: t-followup-skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes t-followup-skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.9; }
+}
+.t-followup-dots {
+  display: inline-block;
+  margin-left: 4px;
+  animation: t-followup-dots-flicker 1s steps(3, end) infinite;
+}
+@keyframes t-followup-dots-flicker {
+  0%   { opacity: 0.3; }
+  50%  { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+
+/* Interactive utility classes. Used directly on inline-styled elements (legacy
+   call sites) and as the implementation for the Row/Tab/Chip/IconBtn/BorderBtn
+   primitives in primitives.tsx — both routes share the same CSS.
+   `cursor: pointer` is baked in so consumers don't need to re-set it inline.
+   `!important` on hover overrides the inline `background: 'transparent'` /
+   `color: 'var(--term-mid)'` patterns that would otherwise win the cascade. */
+
+/* Generic interactive row. Pair with `.is-active` to suppress hover on the
+   currently selected / focused state. */
+.t-row-hover {
+  cursor: pointer;
+  transition: background var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease);
+}
+.t-row-hover:not(.is-active):hover {
+  background: var(--term-hover-bg, var(--term-alt)) !important;
+  color: var(--term-fg) !important;
+}
+
+/* Tab — non-focused tabs only. */
+.t-tab-hover {
+  cursor: pointer;
+  transition: background var(--t-quick) var(--t-ease),
+              border-bottom-color var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease);
+}
+.t-tab-hover:not(.is-focused):hover {
+  background: var(--term-hover-bg, var(--term-alt)) !important;
+  border-bottom-color: var(--term-line) !important;
+}
+.t-tab-hover:not(.is-focused):hover .t-tab-title {
+  color: var(--term-fg) !important;
+}
+
+/* Chip — small bordered tag. */
+.t-chip-hover {
+  cursor: pointer;
+  transition: color var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease),
+              background var(--t-quick) var(--t-ease);
+  border-radius: 1px;
+}
+.t-chip-hover:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+
+/* Workspace "new chat" + button — no visible box: just the glyph. Muted at
+   rest, it lights up on hover with a text-shadow glow in its own current color
+   (currentColor — no accent), so the halo always matches the glyph. A little
+   transparent padding keeps the hit target slightly larger than the glyph. */
+.t-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+  font-family: var(--ui-font);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: text-shadow var(--t-quick) var(--t-ease),
+              transform var(--t-quick) var(--t-ease);
+}
+.t-add-btn:hover {
+  text-shadow: 0 0 6px currentColor;
+  transform: scale(1.15);
+}
+.t-add-btn:active {
+  transform: scale(0.92);
+}
+.t-add-btn:focus-visible {
+  outline: none;
+  text-shadow: 0 0 6px currentColor;
+}
+
+/* Composer pre-textarea blocks — unified visual language built on the
+   quote block's vocabulary. Every region (active quote, pending
+   comments, file attachments, future queue) shares:
+
+     - 2px coloured left rail, no panel background
+     - mono caption (`replying to selection`, `comment 1 · pending …`)
+     - sans body content
+     - bordered × button to dismiss
+
+   Rail tone is set per region via `.tone-*`:
+     accent — quote (you're actively replying)
+     select — comments / queue (your queued content)
+     muted  — attachments (low-importance metadata)
+     danger — error / paused state
+
+   Each block has either:
+     - a single body row (quote, queue), or
+     - two-line body (comments — quoted snippet on top, reply below), or
+     - a caption row + inline-chip row (attachments)
+*/
+.t-pre-block {
+  --tone: var(--term-accent);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 10px;
+  margin: 8px 12px 0;
+  border-left: 2px solid var(--tone);
+  animation: fadeIn 180ms ease-out;
+}
+.t-pre-block + .t-pre-block { margin-top: 4px; }
+.t-pre-block.tone-accent { --tone: var(--term-accent); }
+.t-pre-block.tone-select { --tone: var(--term-select); }
+.t-pre-block.tone-muted  { --tone: var(--term-line-s); }
+.t-pre-block.tone-danger { --tone: var(--term-danger); }
+.t-pre-block.tone-mauve  { --tone: var(--term-mauve); }
+
+.t-pre-block-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.t-pre-block-cap {
+  font-family: var(--ui-font);
+  font-size: 10px;
+  color: var(--term-muted);
+  letter-spacing: .08em;
+}
+.t-pre-block-cap b {
+  color: var(--term-fg);
+  font-weight: 600;
+}
+.t-pre-block-body {
+  font-family: var(--ui-font);
+  font-size: 12px;
+  color: var(--term-mid);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.t-pre-block-body.is-multi {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  word-break: break-word;
+}
+/* Comment-variant body — two-line: quoted snippet on top (muted), reply below (fg) */
+.t-pre-block-quoted {
+  font-family: var(--ui-font);
+  font-size: 11px;
+  color: var(--term-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.t-pre-block-reply {
+  font-family: var(--ui-font);
+  font-size: 12px;
+  color: var(--term-fg);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.t-pre-block-reply.is-editable {
+  cursor: text;
+  border-radius: 3px;
+  padding: 1px 3px;
+  margin: -1px -3px;
+}
+.t-pre-block-reply.is-editable:hover {
+  background: rgba(255,255,255,0.06);
+  outline: 1px solid var(--term-line);
+}
+.t-pre-block-edit-textarea {
+  font-family: var(--ui-font);
+  font-size: 12px;
+  color: var(--term-fg);
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--term-accent, var(--term-mauve));
+  border-radius: 3px;
+  padding: 4px 6px;
+  line-height: 1.4;
+  resize: vertical;
+  width: 100%;
+  outline: none;
+}
+
+.t-pre-block-x {
+  background: transparent;
+  border: 1px solid var(--term-line);
+  color: var(--term-muted);
+  font-family: var(--ui-font);
+  font-size: 11px;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+  border-radius: 2px;
+  transition: color var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease);
+}
+.t-pre-block-x:hover {
+  color: var(--term-danger);
+  border-color: var(--term-danger);
+}
+
+/* Attachment variant — caption on top, inline chips wrap below.
+   Block becomes a column container; chips themselves are transparent
+   with thin border so they read as light atomic tokens, not panels. */
+.t-pre-block.is-att {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+/* BranchAnchorRow — inline turn-marker between messages */
+.t-branch-anchor-title {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--term-fg);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--term-mauve);
+  text-underline-offset: 2px;
+}
+.t-branch-anchor-title:hover {
+  color: var(--term-mauve);
+}
+.t-branch-anchor-pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--term-mauve);
+  color: var(--term-mauve);
+  box-shadow: 0 0 6px 0 currentColor;
+  animation: tpulse 1.4s ease-in-out infinite;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* BranchQuoteUnderline — in-message dotted underline + portaled hover card */
+.t-branch-anchor-underline {
+  border-bottom: 1px dotted var(--term-mauve);
+  cursor: pointer;
+}
+
+.t-branch-anchor-card {
+  position: fixed;
+  z-index: 9998;
+  background: var(--term-surface);
+  border: 1px solid var(--term-line-s);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  font-family: var(--ui-font);
+  font-size: 11px;
+  padding: 6px 0;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.t-branch-anchor-card-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  color: var(--term-fg);
+}
+
+.t-branch-anchor-card-row .t-branch-anchor-time {
+  color: var(--term-mid);
+  margin-left: auto;
+}
+
+.t-att-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.t-att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--term-line);
+  border-radius: 2px;
+  font-family: var(--ui-font);
+  font-size: 11px;
+  color: var(--term-fg);
+  max-width: 280px;
+  transition: background var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease);
+}
+.t-att-chip:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  border-color: var(--term-line-s);
+}
+.t-att-chip-x {
+  color: var(--term-muted);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--ui-font);
+  font-size: 12px;
+  line-height: 1;
+}
+.t-att-chip-x:hover { color: var(--term-danger); }
+
+.t-upload-progress {
+  margin: 8px 12px 0;
+  padding: 7px 10px;
+  border-left: 2px solid var(--term-accent);
+  font-family: var(--ui-font);
+  animation: fadeIn 180ms ease-out;
+}
+.t-upload-progress.is-compact {
+  margin: 8px 12px;
+}
+.t-upload-progress__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--term-muted);
+}
+.t-upload-progress__label {
+  color: var(--term-accent);
+  flex-shrink: 0;
+}
+.t-upload-progress__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+  color: var(--term-fg);
+  font-size: 11px;
+}
+.t-upload-progress__pct {
+  flex-shrink: 0;
+  color: var(--term-mid);
+  font-variant-numeric: tabular-nums;
+}
+.t-upload-progress__track {
+  height: 2px;
+  margin-top: 6px;
+  background: var(--term-line);
+  overflow: hidden;
+}
+.t-upload-progress__bar {
+  height: 100%;
+  background: var(--term-accent);
+  transition: width 120ms ease-out;
+}
+
+/* Composer toolbar chip — borderless idle, bordered on hover. Used for
+   the +, @, agent, and model controls in the bottom toolbar so they all
+   share one visual rhythm. Labels clip with ellipsis instead of wrapping
+   so the right-side action buttons never get pushed off-screen. */
+.t-toolbar-chip {
+  /* Sizing tokens are CSS vars so Home (and any future hero composer) can
+     scale chips up — bigger font, tighter padding — without prop drilling
+     or a wider class. Defaults reproduce the historical hard-coded values. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--composer-chip-gap, 6px);
+  height: var(--composer-chip-height, 26px);
+  padding: 0 var(--composer-chip-h-pad, 12px);
+  font-family: var(--ui-font);
+  font-size: var(--composer-chip-size, 11px);
+  letter-spacing: var(--composer-chip-tracking, .04em);
+  color: var(--term-mid);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+  flex-shrink: 1;
+  transition: border-color var(--t-quick) var(--t-ease),
+              background var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease);
+}
+.t-toolbar-chip > .t-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.t-toolbar-chip:hover {
+  border-color: var(--term-line);
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.t-toolbar-chip[data-icononly="true"] {
+  padding: 0;
+  width: var(--composer-chip-height, 26px);
+  justify-content: center;
+  flex-shrink: 0;
+}
+.t-toolbar-chip[data-icononly="true"] > .t-chip-label {
+  display: none;
+}
+.t-toolbar-chip[aria-disabled="true"] {
+  cursor: not-allowed;
+  color: var(--term-faint);
+}
+.t-toolbar-chip[aria-disabled="true"]:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--term-faint);
+}
+
+/* Composer action buttons — square, icon-only, fixed size. Three roles:
+   primary (Send, accent fill), outline (Branch, neutral), and queue
+   (streaming-state Send: accent border + surface fill, no fill weight).
+   Hover reveals the kbd badge that lives inside the button. */
+.t-action-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--term-accent);
+  position: relative;
+  flex-shrink: 0;
+  transition: background var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease),
+              opacity var(--t-quick) var(--t-ease);
+}
+.t-action-btn:disabled,
+.t-action-btn[aria-disabled="true"] {
+  opacity: .4;
+  cursor: not-allowed;
+}
+.t-action-btn.is-outline {
+  border-color: var(--term-line);
+  color: var(--term-mid);
+}
+.t-action-btn.is-outline:hover {
+  border-color: var(--term-line);
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.t-action-btn.is-primary {
+  background: var(--term-accent);
+  color: var(--term-surface);
+}
+.t-action-btn.is-primary:hover {
+  background: color-mix(in srgb, var(--term-accent) 88%, black);
+}
+.t-action-btn.is-queue {
+  background: var(--term-surface);
+  color: var(--term-accent);
+  border-color: var(--term-accent);
+}
+.t-action-btn.is-queue:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  border-color: var(--term-accent);
+  color: var(--term-accent);
+}
+.t-action-btn .t-action-kbd {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--ui-font);
+  font-size: 10.5px;
+  letter-spacing: .03em;
+  color: var(--term-fg);
+  background: var(--term-surface);
+  border: 1px solid var(--term-line);
+  padding: 3px 7px;
+  border-radius: 2px;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 1;
+  box-shadow: 0 4px 14px -8px rgba(0,0,0,0.25);
+  transition: opacity var(--t-quick) var(--t-ease),
+              transform var(--t-quick) var(--t-ease);
+}
+.t-action-btn .t-action-kbd-key {
+  font-size: 9.5px;
+  padding: 0 4px;
+  border: 1px solid var(--term-line-s);
+  border-radius: 2px;
+  color: var(--term-mid);
+  line-height: 1.4;
+}
+.t-action-btn:hover .t-action-kbd,
+.t-action-btn:focus-visible .t-action-kbd {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Sidebar contexts row — show subtle background on hover so the row
+   reads as clickable. */
+.t-context-row-hover {
+  transition: background var(--t-quick) var(--t-ease);
+}
+.t-context-row-hover:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+
+/* Sidebar Search trigger — hover lifts background to alt, brightens text. */
+.t-search-trigger:hover {
+  background: var(--term-hover-bg, var(--term-alt)) !important;
+  color: var(--term-fg) !important;
+  border-color: var(--term-mid) !important;
+}
+
+/* Bordered button — map / digest, retry, reset. */
+.t-border-btn {
+  cursor: pointer;
+  transition: background var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease);
+}
+.t-border-btn:hover {
+  background: var(--term-hover-bg, var(--term-alt)) !important;
+}
+
+/* Inline icon button — color brightens, no background. */
+.t-icon-hover {
+  cursor: pointer;
+  transition: color var(--t-quick) var(--t-ease),
+              opacity var(--t-quick) var(--t-ease);
+}
+.t-icon-hover:hover {
+  color: var(--term-fg) !important;
+  opacity: 1 !important;
+}
+
+/* Hover-only kebab (⋯) overlay for sidebar rows. The wrapper is anchored to
+   the row's right edge and carries a gradient fader that bleeds the row's
+   hover background (--term-alt) leftward across ~28px, masking whatever
+   text/meta sits underneath. Shown on parent .t-row-hover:hover and pinned
+   when its own menu is open via `.row-kebab.is-open`. No transition: the
+   fader's solid --term-alt strip must appear in lockstep with the row's
+   own bg flip — a fade would expose a 1–2 frame "floating strip" desync.
+   Wrapper is pointer-events: none so the fade zone clicks fall through to
+   the row; only the inner button captures. */
+.row-kebab {
+  opacity: 0;
+  pointer-events: none;
+}
+.t-row-hover:hover .row-kebab,
+.row-kebab.is-open {
+  opacity: 1;
+}
+.row-kebab > button {
+  pointer-events: auto;
+}
+.row-kebab > button:hover {
+  color: var(--term-fg) !important;
+}
+
+/* Rows that host a kebab also drop the .t-row-hover 60ms bg/color fade
+   for the same lockstep reason. Active/inactive switches on these rows
+   become instant too — acceptable since clicks already feel immediate. */
+.t-row-hover:has(> .row-kebab) {
+  transition: none;
+}
+
+/* Close-button icon — on hover a soft square fill appears behind the glyph,
+   like a small tinted box. Used for × close buttons (tabs, panes, quotes).
+   The class name still says "danger" for legacy reasons; semantically it's
+   the close-button variant of IconBtn. */
+.t-icon-danger-hover {
+  cursor: pointer;
+  border-radius: 2px;
+  transition: color var(--t-quick) var(--t-ease),
+              background var(--t-quick) var(--t-ease);
+}
+.t-icon-danger-hover:hover {
+  background: var(--term-line);
+  color: var(--term-fg) !important;
+}
+
+/* Inline code: drop the typography plugin's literal backtick pseudo-elements
+   and render a subtle chip instead. Tinted off currentColor so it works across
+   terminal palettes. `:not(pre code)` keeps fenced blocks alone. */
+.prose :not(pre) > code {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  padding: 0.08em 0.35em;
+  border-radius: 3px;
+  font-size: 0.88em;
+  font-weight: 500;
+}
+.prose :not(pre) > code::before,
+.prose :not(pre) > code::after {
+  content: '' !important;
+}
+
+/* Brief flash to draw attention to a scrolled-to message (search nav). */
+.t-msg-flash {
+  animation: t-msg-flash-anim 600ms ease-out;
+}
+@keyframes t-msg-flash-anim {
+  0% {
+    background: var(--term-select-f, var(--term-alt));
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* Localized flash for ⌘F find prev/next: a fading box overlaid on just the
+   active match's text. Positioned each frame by TPane's flashMatchOverlay
+   (fixed coords from the match's client rect), so it tracks a smooth scroll.
+   Marks the single current hit instead of flashing the whole message. */
+.t-find-flash {
+  position: fixed;
+  pointer-events: none;
+  z-index: 60;
+  border-radius: 2px;
+  animation: t-find-flash-anim 600ms ease-out forwards;
+}
+@keyframes t-find-flash-anim {
+  0% {
+    background: color-mix(in srgb, var(--term-select, #ffd54f) 85%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--term-select, #ffd54f) 55%, transparent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
+.t-sidebar-toggle:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  border-color: color-mix(in srgb, var(--term-fg) 12%, transparent);
+}
+.t-sidebar-toggle[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--term-fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--term-fg) 14%, transparent);
+}
+
+/* Two-zone topbar: tab pill variants. The focused pill uses --term-bg
+   (the body color) so it visually merges with the content area below.
+   Background pills use --term-alt (one shade darker than the body). */
+.t-tab-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px 9px;
+  font-size: 11.5px;
+  font-family: var(--ui-font);
+  cursor: default;
+  min-width: 0;
+  max-width: 220px;
+  flex: 1 1 auto;
+  margin-top: 4px;
+  margin-right: 1px;
+  border-radius: 7px 7px 0 0;
+  position: relative;
+  transition: background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease);
+  -webkit-app-region: no-drag;
+}
+.t-tab-pill__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.t-tab-pill__close {
+  color: var(--term-faint);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity var(--t-quick) var(--t-ease);
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.t-tab-pill:hover .t-tab-pill__close { opacity: 0.9; }
+
+.t-tab-pill.is-focused {
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-weight: 600;
+  box-shadow: -1px -1px 0 var(--term-line), 1px -1px 0 var(--term-line);
+  z-index: 2;
+}
+/* Close the seam between the focused pill and the body below. */
+.t-tab-pill.is-focused::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--term-bg);
+}
+
+.t-tab-pill.is-bg {
+  background: var(--term-alt);
+  color: var(--term-mid);
+}
+.t-tab-pill.is-bg:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+
+/* Drag-and-drop reorder indicators. The ::before bar marks where the dragged
+   tab will land (left or right of this pill). z-index 3 so it sits above
+   focused-pill chrome. */
+.t-tab-pill.is-drag-left::before,
+.t-tab-pill.is-drag-right::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 0;
+  width: 2px;
+  background: var(--term-accent);
+  z-index: 3;
+  pointer-events: none;
+}
+.t-tab-pill.is-drag-left::before { left: -1px; }
+.t-tab-pill.is-drag-right::before { right: -1px; }
+
+/* Single-tab state: a left-aligned title with hover-revealed controls.
+   No tab chrome. Used when openPanes.length === 1. */
+.t-single-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--term-fg);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: default;
+  margin: auto 0 auto 14px;
+  transition: background var(--t-quick) var(--t-ease);
+  -webkit-app-region: no-drag;
+}
+.t-single-title:hover { background: var(--term-hover-bg, var(--term-alt)); }
+.t-single-title__more,
+.t-single-title__close {
+  color: var(--term-faint);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity var(--t-quick) var(--t-ease);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.t-single-title:hover .t-single-title__more,
+.t-single-title:hover .t-single-title__close { opacity: 0.9; }
+
+/* -----------------------------------------------------------------------
+   Popover surface tokens (used by components/ui/Popover.tsx)
+   Single source of truth for every floating panel: right-click menus,
+   slash/@ autocompletes, header dropdowns, side popovers, tooltips.
+   Before consolidation each callsite hard-coded its own radius/shadow,
+   which is why hover/click menus visibly differed across the app.
+   ----------------------------------------------------------------------- */
+:root {
+  --ui-popover-bg: var(--term-surface);
+  --ui-popover-border: 1px solid var(--term-line);
+  --ui-popover-radius: 4px;
+  --ui-popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+
+  --ui-tooltip-bg: var(--term-surface);
+  --ui-tooltip-border: 1px solid var(--term-line);
+  --ui-tooltip-radius: 3px;
+  --ui-tooltip-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* Shared menu/list row inside a PopoverSurface. CSS handles hover and
+   keyboard-active highlighting via data attributes so callers don't
+   sprinkle inline onMouseEnter mutations anymore. */
+.ui-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: var(--ui-font);
+  font-size: 11.5px;
+  color: var(--term-fg);
+  cursor: pointer;
+  list-style: none;
+  transition: background var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease);
+}
+.ui-menu-item:hover,
+.ui-menu-item[data-active='true'] {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.ui-menu-item[data-active='true'] {
+  color: var(--term-accent);
+}
+.ui-menu-item[data-danger='true'] {
+  color: var(--term-danger, #a8261a);
+}
+.ui-menu-item[data-disabled='true'] {
+  color: var(--term-faint);
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.boot-warm-failed {
+  padding: 8px 12px;
+  background: var(--color-error-bg, #fee);
+  color: var(--color-error-fg, #900);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.boot-warm-failed button {
+  margin-left: 8px;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+/* ── MentionEditor (TipTap composer) ─────────────────────────────────────────
+   Replaces the old transparent-textarea + overlay composer. The contenteditable
+   matches the message-body typography (you type in the same metrics as a rendered
+   message), caps at ~6 rows with a hidden scrollbar, and renders atomic @-mention
+   chips. Constants mirror what the old MentionTextarea set inline. */
+.mention-editor-host { position: relative; flex: 1; min-width: 0; }
+.mention-editor-host .ProseMirror {
+  outline: none;
+  min-height: calc(var(--message-body-size) * var(--message-body-leading) * 1.5);
+  max-height: calc(var(--message-body-size) * var(--message-body-leading) * 6);
+  overflow-y: auto;
+  box-sizing: border-box;
+  width: 100%;
+  font-family: var(--message-latin-font), var(--message-cjk-font);
+  font-size: var(--message-body-size);
+  line-height: var(--message-body-leading);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--term-fg);
+  transition: max-height 140ms ease-out;
+  /* Composer always hides its scrollbar — the card frame is the visual bound. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.mention-editor-host .ProseMirror::-webkit-scrollbar { display: none; }
+.mention-editor-host.has-expand-button .ProseMirror {
+  padding-right: 30px;
+}
+.mention-editor-host.is-expanded .ProseMirror {
+  max-height: min(50vh, calc(var(--message-body-size) * var(--message-body-leading) * 18));
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-line) transparent;
+}
+.mention-editor-host.is-expanded .ProseMirror::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+}
+.mention-editor-host.is-expanded .ProseMirror::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mention-editor-host.is-expanded .ProseMirror::-webkit-scrollbar-thumb {
+  background: var(--term-line);
+}
+.mention-editor-expand-button {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--term-faint);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease-out,
+    color 120ms ease-out,
+    background 120ms ease-out,
+    border-color 120ms ease-out;
+}
+.mention-editor-host:hover .mention-editor-expand-button,
+.mention-editor-expand-button:focus-visible {
+  opacity: 0.58;
+  pointer-events: auto;
+}
+.mention-editor-expand-button:hover,
+.mention-editor-expand-button:focus-visible {
+  opacity: 0.92;
+  color: var(--term-muted);
+  border-color: var(--term-line);
+  background: color-mix(in srgb, var(--term-composer-bg, var(--term-bg)) 94%, var(--term-fg));
+  outline: none;
+}
+.mention-editor-host .ProseMirror p { margin: 0; }
+/* Block markdown nodes inside the composer — compact WYSIWYG that matches the
+   rendered-message typography (code metrics mirror `.prose` / .michi-code-pre). */
+.mention-editor-host .ProseMirror code {
+  font-family: var(--message-code-font);
+  font-size: calc(var(--message-body-size) * 0.9);
+  background: color-mix(in srgb, var(--term-composer-bg, var(--term-bg)) 88%, var(--term-fg));
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.mention-editor-host .ProseMirror pre {
+  margin: 2px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--term-line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--term-composer-bg, var(--term-bg)) 94%, var(--term-fg));
+  font-family: var(--message-code-font);
+  font-size: calc(var(--message-body-size) * 0.9);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.mention-editor-host .ProseMirror pre code {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  font-size: inherit;
+}
+.mention-editor-host .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  line-height: var(--message-body-leading);
+}
+.mention-editor-host .ProseMirror h1 { font-size: 1.25em; }
+.mention-editor-host .ProseMirror h2 { font-size: 1.15em; }
+.mention-editor-host .ProseMirror h3 { font-size: 1.08em; }
+.mention-editor-host .ProseMirror :is(ul, ol) {
+  margin: 0;
+  padding-left: 1.4em;
+}
+.mention-editor-host .ProseMirror blockquote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--term-line);
+  color: var(--term-muted);
+}
+/* Atomic @-mention chip. box-shadow (not border) for the 1px frame so the chip
+   adds zero horizontal layout — matches the old overlay's byte-perfect chips. */
+.mention-chip {
+  background: var(--term-accent-f);
+  color: var(--term-accent);
+  box-shadow: inset 0 0 0 1px var(--term-line);
+  border-radius: 3px;
+  padding: 0 2px;
+  white-space: nowrap;
+}
+/* Multi-window observer hint — shown over the (disabled, empty) composer while
+   another window owns editing. Replaces the old observing placeholder; matches
+   the message-body metrics so it sits where typed text would start. */
+.composer-observing-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  color: var(--term-line-s);
+  font-family: var(--message-latin-font), var(--message-cjk-font);
+  font-size: var(--message-body-size);
+  line-height: var(--message-body-leading);
+  white-space: nowrap;
+}

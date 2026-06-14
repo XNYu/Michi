@@ -1,0 +1,42 @@
+{
+  "name": "michi-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "start:dev": "ts-node src/server.ts",
+    "dev": "npm --prefix .. run shared:build && npm run dev:raw",
+    "dev:raw": "nodemon src/server.ts",
+    "build": "npm --prefix .. run shared:build && npm run build:raw",
+    "build:raw": "tsc --noEmit && node scripts/build.mjs",
+    "test": "npm --prefix .. run shared:build && npm run test:raw --",
+    "test:raw": "node --require ts-node/register --test test/**/*.test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "michi-shared": "file:../shared",
+    "@earendil-works/pi-agent-core": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-auth": "^1.6.11",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.1",
+    "express": "^5.0.0",
+    "ignore": "^7.0.5",
+    "minimatch": "^10.2.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.28.0",
+    "drizzle-orm": "^0.36.0",
+    "esbuild": "^0.27.0",
+    "nodemon": "^3.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

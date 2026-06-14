@@ -1,0 +1,105 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript
+dist/
+*.tsbuildinfo
+
+# Environment — secret files stay ignored, but tracked templates are not.
+.env
+.env.local
+.env.*.local
+# Re-include committed templates (root + per-package). See docs/environment.md.
+!.env.example
+!**/.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Testing
+coverage/
+
+# Production build
+build/
+
+# Backend specific
+backend/dist/
+backend/node_modules/
+
+# Frontend specific
+frontend/build/
+frontend/node_modules/
+frontend/.env
+frontend/.env.local
+# `.env.development` / `.env.production` are tracked (public defaults only).
+# `.env.development.local` is covered by the `.env.*.local` rule above.
+
+# Electron
+electron/dist/
+dist-electron/
+
+# Superpowers brainstorming scratch
+.superpowers/
+.acp-capture/
+
+# AI / automation tool state
+.claude/
+.playwright-mcp/
+.sisyphus/
+.worktrees/
+.omc/
+backend/.omc/
+frontend/.omc/
+.contexts/
+
+# Design docs / archives (local-only) — historically gitignored to keep
+# private design notes out of the public repo. Specific docs that ARE
+# meant to be tracked are re-included below.
+#
+# Git negation rule: a file inside an ignored directory CAN'T be
+# re-included by a single `!path` — git never recurses into the
+# directory. To unignore one file we have to unignore the directory
+# itself first, then re-ignore everything in it, then unignore the
+# specific file.
+docs/
+
+# Local-only assets
+AGENTS.md
+CLAUDE.md
+ghostty
+design.png
+HapiGo_2026-04-22_02.20.52.png
+screenshots/
+.cdp-driver.js
+.cdp-inspect.js
+docs/screenshots/
+
+# Stray sqlite file from misconfigured runs (real db lives in ~/.michi/)
+/data.db
+
+# Playwright e2e artifacts
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/e2e/test-results/
+/e2e/playwright-report/
+
+# Serena MCP project metadata
+/.serena/
+
+# Codegraph index cache
+/.codegraph/

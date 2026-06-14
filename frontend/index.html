@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+
+    <!-- Primary Meta Tags -->
+    <title>Michi | Seek Knowledge</title>
+    <meta name="title" content="Michi | Seek Knowledge">
+    <meta name="description" content="🐰 Open Source Michi Explorer - Hop into a warren of knowledge! Chase fascinating ideas through AI-powered mind maps. Warning: Side effects may include uncontrollable curiosity and frequent 'aha!' moments. Built with 🥕 by the community.">
+    <meta name="keywords" content="open source, michi, mind map, AI research, knowledge explorer, deep learning, research tool, knowledge graph, curiosity, exploration">
+
+    <!-- App Meta -->
+    <meta name="application-name" content="Michi">
+    <meta name="apple-mobile-web-app-title" content="Michi">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="msapplication-TileColor" content="#000000">
+    <meta name="msapplication-tap-highlight" content="no">
+    <meta name="format-detection" content="telephone=no">
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Message typography (Source Serif 4 for chat body) + UI font presets.
+         Three sans presets the user can pick from Settings → Interface font:
+         IBM Plex Sans, Inter, Geist. IBM Plex Mono backs --font-mono for
+         every preset except Geist, which pairs with Geist Mono. -->
+
+<script>
+      // Sync theme + background BEFORE React mounts so the first paint matches
+      // the user's saved theme. Without this, dark-theme users see a parchment
+      // flash; everyone else sees a white flash while the bundle parses.
+      (function () {
+        var BG = {
+          parchment: '245 242 238', light: '245 242 238',
+          mist: '240 242 245', sage: '238 242 240',
+          night: '8 8 8', dark: '8 8 8', ember: '8 8 8',
+          abyss: '6 10 10',
+          dracula: '40 42 54', monokai: '39 40 34',
+          nord: '46 52 64', solarized: '0 43 54',
+          onedark: '40 44 52', gruvbox: '40 40 40'
+        };
+        var theme = 'parchment';
+        try {
+          var raw = localStorage.getItem('michi:v1:prefs');
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            if (parsed && typeof parsed.theme === 'string' && BG[parsed.theme]) theme = parsed.theme;
+          } else {
+            var legacy = localStorage.getItem('michi:theme');
+            if (legacy === 'dark') theme = 'night';
+          }
+        } catch (e) { /* ignore */ }
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.background = 'rgb(' + BG[theme] + ')';
+        document.documentElement.lang = navigator.language || 'en';
+      })();
+    </script>
+  </head>
+  <body style="background:rgb(245 242 238)">
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>

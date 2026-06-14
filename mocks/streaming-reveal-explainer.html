@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Streaming Reveal 方案解释</title>
+<style>
+  :root {
+    --bg: #101211;
+    --paper: #f7f3ea;
+    --ink: #1a1a17;
+    --muted: #6f6a5f;
+    --line: #ded6c8;
+    --line-strong: #b8ae9e;
+    --green: #226b54;
+    --green-soft: #dcebe3;
+    --amber: #b86a14;
+    --amber-soft: #f5e4c9;
+    --blue: #2f5d9f;
+    --blue-soft: #dfe8f5;
+    --red: #a33a2f;
+    --red-soft: #f1d8d4;
+    --code-bg: #151714;
+    --code-fg: #e8f2e8;
+    --ui: "IBM Plex Mono", "SFMono-Regular", Menlo, ui-monospace, monospace;
+    --body: "Source Serif 4", "PingFang SC", "Hiragino Sans GB", Georgia, serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    line-height: 1.65;
+  }
+
+  .page {
+    width: min(1180px, calc(100vw - 32px));
+    margin: 28px auto 52px;
+    background: var(--paper);
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 24px 80px rgba(0,0,0,0.38);
+  }
+
+  header {
+    padding: 42px 48px 30px;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 32px;
+    align-items: end;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(32px, 5vw, 58px);
+    line-height: 1.02;
+    letter-spacing: 0;
+    font-weight: 650;
+  }
+
+  .subtitle {
+    margin: 18px 0 0;
+    max-width: 760px;
+    color: var(--muted);
+    font-size: 18px;
+  }
+
+  .badge {
+    font-family: var(--ui);
+    border: 1px solid var(--line-strong);
+    padding: 14px;
+    font-size: 12px;
+    color: var(--muted);
+    background: rgba(255,255,255,0.38);
+  }
+
+  section {
+    padding: 36px 48px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  h2 {
+    margin: 0 0 18px;
+    font-family: var(--ui);
+    font-size: 14px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  h3 {
+    margin: 0 0 10px;
+    font-size: 21px;
+    line-height: 1.25;
+  }
+
+  p { margin: 0 0 14px; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.46);
+    padding: 18px;
+  }
+
+  .card.green { background: var(--green-soft); border-color: #b7d4c7; }
+  .card.amber { background: var(--amber-soft); border-color: #dfc397; }
+  .card.blue { background: var(--blue-soft); border-color: #b8cce8; }
+  .card.red { background: var(--red-soft); border-color: #dfb9b4; }
+
+  .small {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .mono {
+    font-family: var(--ui);
+    font-size: 12px;
+  }
+
+  pre {
+    margin: 12px 0 0;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 16px;
+    overflow: auto;
+    font-family: var(--ui);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  code {
+    font-family: var(--ui);
+    background: rgba(0,0,0,0.07);
+    padding: 0.12em 0.28em;
+  }
+
+  pre code {
+    background: transparent;
+    padding: 0;
+  }
+
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .flow-step {
+    border: 1px solid var(--line-strong);
+    background: #fffaf2;
+    padding: 14px;
+    min-height: 116px;
+    position: relative;
+  }
+
+  .flow-step::after {
+    content: "→";
+    position: absolute;
+    top: 50%;
+    right: -13px;
+    transform: translateY(-50%);
+    font-family: var(--ui);
+    color: var(--amber);
+    font-size: 18px;
+    z-index: 2;
+  }
+
+  .flow-step:last-child::after { content: ""; }
+
+  .flow-num {
+    font-family: var(--ui);
+    color: var(--amber);
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+
+  .timeline {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 12px 18px;
+    align-items: start;
+  }
+
+  .time-label {
+    font-family: var(--ui);
+    font-size: 12px;
+    color: var(--muted);
+    padding-top: 12px;
+  }
+
+  .render-row {
+    border: 1px solid var(--line);
+    background: #fffaf2;
+    padding: 12px;
+    min-height: 54px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .token {
+    display: inline-flex;
+    min-width: 22px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--line-strong);
+    background: white;
+    font-family: var(--ui);
+    font-size: 13px;
+  }
+
+  .token.old {
+    color: var(--ink);
+    border-color: #c8bca9;
+    background: #f7f3ea;
+  }
+
+  .token.new {
+    color: var(--green);
+    border-color: var(--green);
+    background: #eff8f3;
+    animation: demoReveal 300ms ease-out both;
+  }
+
+  @keyframes demoReveal {
+    from { opacity: 0.28; }
+    to { opacity: 1; }
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+    font-family: var(--ui);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .dot {
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--line-strong);
+    background: #f7f3ea;
+  }
+
+  .dot.new {
+    border-color: var(--green);
+    background: #eff8f3;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+
+  .dom-box {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 16px;
+    font-family: var(--ui);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow: auto;
+    min-height: 176px;
+  }
+
+  .bad-mark { color: #ffb4aa; }
+  .good-mark { color: #9ee4bc; }
+  .dim { color: #8d988d; }
+
+  .mini-browser {
+    border: 1px solid var(--line-strong);
+    background: #fffaf2;
+  }
+
+  .mini-top {
+    height: 28px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+  }
+
+  .mini-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--line-strong);
+  }
+
+  .mini-body {
+    padding: 18px;
+    min-height: 150px;
+    font-size: 18px;
+  }
+
+  .stream-token-reveal {
+    animation: explainReveal var(--stream-token-reveal-duration, 300ms) ease-out both;
+  }
+
+  @keyframes explainReveal {
+    from { opacity: 0.28; }
+    to { opacity: 1; }
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  button {
+    font-family: var(--ui);
+    border: 1px solid var(--line-strong);
+    background: white;
+    color: var(--ink);
+    padding: 8px 12px;
+    cursor: pointer;
+  }
+
+  button:hover {
+    border-color: var(--amber);
+    background: #fff6e5;
+  }
+
+  .callout {
+    border-left: 4px solid var(--green);
+    background: #eef7f2;
+    padding: 16px 18px;
+  }
+
+  .warning {
+    border-left-color: var(--amber);
+    background: #fff3dc;
+  }
+
+  .diagram-wrap {
+    border: 1px solid var(--line-strong);
+    background: #fffaf2;
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  .diagram-label {
+    font-family: var(--ui);
+    font-size: 12px;
+    fill: var(--muted);
+  }
+
+  .diagram-title {
+    font-family: var(--ui);
+    font-size: 15px;
+    font-weight: 700;
+    fill: var(--ink);
+  }
+
+  .diagram-small {
+    font-family: var(--ui);
+    font-size: 11px;
+    fill: var(--muted);
+  }
+
+  svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  @media (max-width: 900px) {
+    header,
+    .grid-2,
+    .grid-3,
+    .split {
+      grid-template-columns: 1fr;
+    }
+    header,
+    section {
+      padding-left: 24px;
+      padding-right: 24px;
+    }
+    .flow {
+      grid-template-columns: 1fr;
+    }
+    .flow-step::after {
+      content: "↓";
+      right: 50%;
+      top: auto;
+      bottom: -18px;
+      transform: translateX(50%);
+    }
+  }
+</style>
+</head>
+<body>
+<article class="page">
+  <header>
+    <div>
+      <h1>Streaming 渐入方案<br>现在是怎么做的</h1>
+      <p class="subtitle">
+        目标是让新出现的字从淡到深，同时避免旧字反复动画、React 节点来回替换、code block 灰块闪现。
+      </p>
+    </div>
+    <div class="badge">
+      当前参数<br>
+      duration: 300ms<br>
+      from opacity: 0.28<br>
+      结束 streaming 后回到普通 Markdown
+    </div>
+  </header>
+
+  <section>
+    <h2>一眼看懂</h2>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-num">01</div>
+        <strong>后端 chunk</strong>
+        <p class="small">后端持续追加文本，前端收到的是累计答案。</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">02</div>
+        <strong>useSmooth</strong>
+        <p class="small">把 bursty chunk 平滑释放成可见文本。</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">03</div>
+        <strong>streamingProjection</strong>
+        <p class="small">只负责告诉 MarkdownContent：这个 segment 正在 streaming。</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">04</div>
+        <strong>MarkdownContent</strong>
+        <p class="small">比较上一帧可见文本，只标记真正新增的字符。</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">05</div>
+        <strong>CSS 动画</strong>
+        <p class="small">旧字符 duration 为 0ms，新字符 duration 为 300ms。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>方案地图</h2>
+    <div class="diagram-wrap" aria-label="Streaming reveal data flow diagram">
+      <svg viewBox="0 0 1040 360" role="img" aria-labelledby="diagramTitle diagramDesc">
+        <title id="diagramTitle">Streaming reveal data flow</title>
+        <desc id="diagramDesc">The backend sends chunks, useSmooth releases visible text, MarkdownContent compares previous visible text and marks new spans, CSS animates only the new spans.</desc>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#b86a14"></path>
+          </marker>
+          <filter id="softShadow" x="-10%" y="-10%" width="120%" height="130%">
+            <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.12"></feDropShadow>
+          </filter>
+        </defs>
+
+        <rect x="20" y="38" width="160" height="96" fill="#f5e4c9" stroke="#dfc397" filter="url(#softShadow)"></rect>
+        <text x="42" y="73" class="diagram-title">后端 chunk</text>
+        <text x="42" y="100" class="diagram-small">SSE 不保证匀速</text>
+        <text x="42" y="119" class="diagram-small">可能一口气来一段</text>
+
+        <path d="M 180 86 H 246" stroke="#b86a14" stroke-width="2" marker-end="url(#arrow)"></path>
+
+        <rect x="250" y="38" width="170" height="96" fill="#dfe8f5" stroke="#b8cce8" filter="url(#softShadow)"></rect>
+        <text x="273" y="73" class="diagram-title">useSmooth</text>
+        <text x="273" y="100" class="diagram-small">把累计答案变成</text>
+        <text x="273" y="119" class="diagram-small">当前帧可见文本</text>
+
+        <path d="M 420 86 H 486" stroke="#b86a14" stroke-width="2" marker-end="url(#arrow)"></path>
+
+        <rect x="490" y="38" width="220" height="96" fill="#dcebe3" stroke="#b7d4c7" filter="url(#softShadow)"></rect>
+        <text x="513" y="73" class="diagram-title">MarkdownContent</text>
+        <text x="513" y="100" class="diagram-small">currentVisibleText</text>
+        <text x="513" y="119" class="diagram-small">对比 previousVisibleText</text>
+
+        <path d="M 710 86 H 776" stroke="#b86a14" stroke-width="2" marker-end="url(#arrow)"></path>
+
+        <rect x="780" y="38" width="230" height="96" fill="#eef7f2" stroke="#9cc9b4" filter="url(#softShadow)"></rect>
+        <text x="803" y="73" class="diagram-title">CSS reveal</text>
+        <text x="803" y="100" class="diagram-small">旧字: duration 0ms</text>
+        <text x="803" y="119" class="diagram-small">新字: duration 300ms</text>
+
+        <path d="M 600 134 V 194" stroke="#226b54" stroke-width="2" marker-end="url(#arrow)"></path>
+        <rect x="470" y="198" width="260" height="90" fill="#151714" stroke="#151714"></rect>
+        <text x="494" y="232" class="diagram-title" fill="#e8f2e8">commit 后记录</text>
+        <text x="494" y="258" class="diagram-small" fill="#b8c7b8">useLayoutEffect 读取真实 DOM</text>
+        <text x="494" y="277" class="diagram-small" fill="#b8c7b8">作为下一帧 previousVisibleText</text>
+
+        <path d="M 730 243 C 852 243, 895 199, 895 138" fill="none" stroke="#226b54" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#arrow)"></path>
+        <text x="765" y="229" class="diagram-label">下一帧继续比较</text>
+
+        <path d="M 895 134 V 210" stroke="#b86a14" stroke-width="2" marker-end="url(#arrow)"></path>
+        <rect x="780" y="214" width="230" height="74" fill="#f7f3ea" stroke="#ded6c8"></rect>
+        <text x="803" y="246" class="diagram-title">streaming 结束</text>
+        <text x="803" y="271" class="diagram-small">关闭 reveal，回到普通 Markdown</text>
+
+        <text x="26" y="324" class="diagram-label">关键点：动画范围不是由“尾部多少字”决定，而是由“上一帧真实可见文本”和“当前帧文本”的差异决定。</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>核心思想</h2>
+    <div class="grid-3">
+      <div class="card green">
+        <h3>不再猜“尾部 80 字”</h3>
+        <p>以前只能猜最后一段大概是新内容，所以旧字也会反复动画。现在记录上一帧可见文本，精确知道哪些字是新增的。</p>
+      </div>
+      <div class="card blue">
+        <h3>DOM 形态稳定</h3>
+        <p>streaming 期间，普通正文字符始终渲染成 span。旧字和新字节点类型一致，只是动画时长不同。</p>
+      </div>
+      <div class="card amber">
+        <h3>Code block 跳过</h3>
+        <p>代码块有背景和布局，不适合文字渐入。当前方案遇到 block code 会关闭 reveal，并压掉空 code shell。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>时间线</h2>
+    <p class="small">假设第一帧显示 “hello”，第二帧变成 “hello 世界”。只有 “世界” 是新增字符。</p>
+    <div class="timeline">
+      <div class="time-label">Frame A<br>commit 后记录</div>
+      <div class="render-row">
+        <span class="token old">h</span>
+        <span class="token old">e</span>
+        <span class="token old">l</span>
+        <span class="token old">l</span>
+        <span class="token old">o</span>
+      </div>
+
+      <div class="time-label">Frame B<br>render 时比较</div>
+      <div class="render-row">
+        <span class="token old">h</span>
+        <span class="token old">e</span>
+        <span class="token old">l</span>
+        <span class="token old">l</span>
+        <span class="token old">o</span>
+        <span class="token old">空格</span>
+        <span class="token new">世</span>
+        <span class="token new">界</span>
+      </div>
+
+      <div class="time-label">Frame B<br>CSS 结果</div>
+      <div class="render-row">
+        <span class="token old">旧字: 0ms</span>
+        <span class="token new">新增: 300ms</span>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="dot"></i>已经出现过的字符，保留 span，但不动画</span>
+      <span><i class="dot new"></i>本帧新增字符，执行 300ms 渐入</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>DOM 对比</h2>
+    <div class="split">
+      <div class="card red">
+        <h3>会闪的方向</h3>
+        <p class="small">旧字一会儿是 span，一会儿又变成普通 text node，React diff 时容易闪。</p>
+        <div class="dom-box">
+<span class="dim">Frame A</span>
+&lt;span class="<span class="bad-mark">stream-token-reveal</span>"&gt;h&lt;/span&gt;
+&lt;span class="<span class="bad-mark">stream-token-reveal</span>"&gt;e&lt;/span&gt;
+
+<span class="dim">Frame B</span>
+hello
+&lt;span class="<span class="bad-mark">stream-token-reveal</span>"&gt;世&lt;/span&gt;
+        </div>
+      </div>
+      <div class="card green">
+        <h3>现在的方向</h3>
+        <p class="small">旧字和新字都保持 span，区别只在 CSS duration。</p>
+        <div class="dom-box">
+<span class="dim">Frame B</span>
+&lt;span class="stream-token-reveal"
+      style="<span class="good-mark">--stream-token-reveal-duration:0ms</span>"&gt;h&lt;/span&gt;
+
+&lt;span class="stream-token-reveal"
+      <span class="good-mark">data-stream-token-new</span>&gt;世&lt;/span&gt;
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>React / StrictMode 为什么要注意</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h3>不要在 render 过程中写 previousText</h3>
+        <p>React dev mode 可能重复 render。若第一次 render 就把 previousText 写成当前文本，第二次 render 会误判“没有新增字”，渐入效果就消失。</p>
+      </div>
+      <div class="card green">
+        <h3>现在在 commit 后记录</h3>
+        <p>用 <code>useLayoutEffect</code> 从真实 DOM 读取可见文本。只有 DOM 确实更新后，才把它作为下一帧的 previousText。</p>
+      </div>
+    </div>
+    <pre><code>useLayoutEffect(() =&gt; {
+  previousText = revealEnabled &amp;&amp; rootRef.current
+    ? domRevealText(rootRef.current)
+    : "";
+}, [text, revealEnabled]);</code></pre>
+  </section>
+
+  <section>
+    <h2>Code block 特殊处理</h2>
+    <div class="grid-2">
+      <div class="card amber">
+        <h3>为什么跳过</h3>
+        <p>代码块不是普通正文。它有灰色背景、padding、pre/code 结构。若继续渐入，用户会看到一整块灰色容器先出现，再慢慢填实，很奇怪。</p>
+      </div>
+      <div class="card blue">
+        <h3>现在怎么做</h3>
+        <p>如果 HAST 里出现 <code>&lt;pre&gt;</code>，整段 reveal 插件直接退出。若只是空代码块 shell，也先删除这个空 <code>&lt;pre&gt;</code>。</p>
+      </div>
+    </div>
+    <pre><code>if (hasBlockCode(tree)) {
+  return;
+}
+
+if (pre is empty) {
+  drop it;
+}</code></pre>
+  </section>
+
+  <section>
+    <h2>小演示</h2>
+    <div class="grid-2">
+      <div>
+        <div class="mini-browser">
+          <div class="mini-top">
+            <i class="mini-dot"></i><i class="mini-dot"></i><i class="mini-dot"></i>
+          </div>
+          <div class="mini-body" id="demoText"></div>
+        </div>
+        <div class="controls">
+          <button id="stepBtn" type="button">下一帧</button>
+          <button id="resetBtn" type="button">重置</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>观察重点</h3>
+        <p>点击“下一帧”。旧字符仍然是 span，但动画时长为 0ms；新增字符会从透明度 0.28 到 1。</p>
+        <p class="small">这个演示是简化版，主程序里的 MarkdownContent 做的是同一件事，只是在 Markdown AST 层完成。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>当前方案的取舍</h2>
+    <div class="grid-3">
+      <div class="card green">
+        <h3>稳定性</h3>
+        <p>比“span 和 text node 来回切换”稳定。旧内容不会重复动画，DOM 类型也更一致。</p>
+      </div>
+      <div class="card amber">
+        <h3>性能</h3>
+        <p>streaming 期间会多一些 span 节点。结束后 reveal 关闭，重新回到普通 Markdown，历史消息不会一直带这些 span。</p>
+      </div>
+      <div class="card blue">
+        <h3>边界</h3>
+        <p>Markdown 结构大幅重排时仍可能有局部跳动，比如列表、表格、代码块识别状态变化。这是 streaming Markdown 的固有难点。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="callout">
+      <strong>一句话总结：</strong>
+      我们现在不是靠“最后一段字”猜动画范围，而是用上一帧真实可见文本来判断新增字符；同时保持 streaming 期间 DOM 节点形态稳定，用 CSS duration 控制旧字不动画、新字渐入。
+    </div>
+  </section>
+</article>
+
+<script>
+  const frames = ["你", "你好", "你好，世", "你好，世界"];
+  let frameIndex = 0;
+  let previous = "";
+  const demoText = document.querySelector("#demoText");
+  const stepBtn = document.querySelector("#stepBtn");
+  const resetBtn = document.querySelector("#resetBtn");
+
+  function renderFrame() {
+    const current = frames[frameIndex];
+    demoText.textContent = "";
+    Array.from(current).forEach((char, index) => {
+      if (/\s/.test(char)) {
+        demoText.append(document.createTextNode(char));
+        return;
+      }
+      const span = document.createElement("span");
+      span.className = "stream-token-reveal";
+      span.textContent = char;
+      if (index < Array.from(previous).length) {
+        span.style.setProperty("--stream-token-reveal-duration", "0ms");
+      } else {
+        span.dataset.streamTokenNew = "true";
+      }
+      demoText.append(span);
+    });
+    previous = current;
+  }
+
+  stepBtn.addEventListener("click", () => {
+    frameIndex = Math.min(frameIndex + 1, frames.length - 1);
+    renderFrame();
+  });
+
+  resetBtn.addEventListener("click", () => {
+    frameIndex = 0;
+    previous = "";
+    renderFrame();
+  });
+
+  renderFrame();
+</script>
+</body>
+</html>
