@@ -177,6 +177,9 @@
   margin-top: 0;
   margin-bottom: var(--message-paragraph-spacing);
 }
+.terminal-message-user .prose > :last-child {
+  margin-bottom: 0;
+}
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(li) {
   margin-top: 0;
   margin-bottom: var(--message-list-item-spacing);
@@ -232,7 +235,7 @@
 
 .terminal-message-frame {
   content-visibility: auto;
-  contain-intrinsic-size: auto 128px;
+  contain-intrinsic-size: auto 72px;
 }
 
 .terminal-message-frame[data-streaming-tail="true"] {
