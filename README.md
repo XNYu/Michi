@@ -22,7 +22,16 @@ sessions into summaries you can reuse or share.
 
 ## Quick Start
 
-Install Node.js 22 or newer, then run:
+On macOS, install the desktop app with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
+```
+
+The installer clones the repo into `~/Michi`, installs Node.js 22 locally if
+needed, builds the desktop app, and installs it to `~/Applications/michi.app`.
+
+For manual local development, install Node.js 22 or newer, then run:
 
 ```bash
 npm install
