@@ -348,7 +348,7 @@ export default function ChatScreen({ nodeId, onNavigateNode, onExit }: Props) {
           />
         )}
         <SpawnCard spawnedChildren={spawnedChildren} onPick={onNavigateNode} />
-        {prefs.enableFollowUps && node.followUps.length > 0 && (
+        {prefs.enableFollowUps && !streaming && node.followUps.length > 0 && (
           <div className="m-followups">
             <div className="m-followups-label">Follow ups</div>
             {node.followUps.map((q, i) => (
