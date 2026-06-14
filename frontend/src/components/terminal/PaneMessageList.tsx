@@ -352,7 +352,7 @@ function FollowUpsSection({
     );
   }
 
-  if (node.followUps.length === 0) return null;
+  if (node.status === 'streaming' || node.followUps.length === 0) return null;
 
   return (
     <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed var(--term-line)' }}>

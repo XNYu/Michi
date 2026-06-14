@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { PaneMessageList } from './PaneMessageList';
@@ -79,5 +79,20 @@ describe('PaneMessageList render performance', () => {
     expect(renderedTexts.filter((text) => text === 'stable answer')).toHaveLength(1);
     expect(renderedTexts).toContain('stream one');
     expect(renderedTexts).toContain('stream two');
+  });
+
+  it('does not show follow-ups while the turn is still streaming', () => {
+    const u1 = makeMsg('u1', 'user', 'question');
+    const a1 = makeMsg('a1', 'assistant', 'partial answer', true);
+    const node = {
+      ...makeNode([u1, a1]),
+      followUps: ['Which risk would most likely create a production incident?'],
+      status: 'streaming',
+    } as ChatNodeState;
+
+    render(renderList(node, vi.fn()));
+
+    expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
+    expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
   });
 });
