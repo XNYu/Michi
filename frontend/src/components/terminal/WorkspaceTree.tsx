@@ -463,6 +463,10 @@ export default function WorkspaceTree({
     const owningTree = project.trees.find((t) => t.id === owningTreeId);
     if (!owningTree) return;
 
+    // Rows of archived workspaces only render while the archived section is
+    // open — global search can land on them, so pop the section too.
+    if (project.archivedAt) setArchivedOpen(true);
+
     const parentOf = new Map<string, string>();
     for (const e of project.edges) {
       if (e.kind !== undefined && e.kind !== 'branch') continue;

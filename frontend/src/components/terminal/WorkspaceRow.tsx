@@ -215,9 +215,22 @@ export default function WorkspaceRow({
   const filteredLiveTrees = forceExpand && unreadTreeIds
     ? liveTrees.filter((t) => unreadTreeIds.has(t.id))
     : liveTrees;
+  // The active tree must stay visible even when its recency rank falls past
+  // the preview cap (opening a historical thread via search/palette does NOT
+  // bump lastActiveAt) — append it below the preview slice so the sidebar
+  // can reveal & scroll to it.
+  const previewTrees = filteredLiveTrees.slice(0, THREAD_PREVIEW_LIMIT);
+  const activeBeyondCap =
+    activeTreeId !== null && !previewTrees.some((t) => t.id === activeTreeId)
+      ? filteredLiveTrees.find((t) => t.id === activeTreeId)
+      : undefined;
   const displayedLiveTrees = forceExpand
     ? filteredLiveTrees
-    : (showAllThreads ? filteredLiveTrees : filteredLiveTrees.slice(0, THREAD_PREVIEW_LIMIT));
+    : showAllThreads
+      ? filteredLiveTrees
+      : activeBeyondCap
+        ? [...previewTrees, activeBeyondCap]
+        : previewTrees;
 
   const getNodeOpenState = useCallback(
     (id: string): OpenState =>
@@ -636,6 +649,15 @@ function ArchivedSection({
   moveTargets?: readonly { id: string; name: string }[];
 }) {
   const [open, setOpen] = React.useState(false);
+  // Pop the section open when the active tree lives inside it (e.g. a global
+  // search result landed on an archived thread) — its row only exists in the
+  // DOM while the section is open, so the sidebar reveal can't reach it
+  // otherwise. Keyed on activeTreeId so a manual collapse afterwards sticks.
+  const activeIsArchived = activeTreeId !== null && archivedTrees.some((t) => t.id === activeTreeId);
+  React.useEffect(() => {
+    if (activeIsArchived) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTreeId]);
   return (
     <div>
       <Row
