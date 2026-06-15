@@ -256,7 +256,7 @@ export default function WorkspaceRow({
       style={{
         position: 'relative',
         opacity: dnd?.isDragSource ? 0.5 : 1,
-        marginTop: 4,
+        marginTop: 6,
       }}
     >
       {dnd?.isDropTarget && (
@@ -296,8 +296,15 @@ export default function WorkspaceRow({
           position: 'relative',
           display: 'flex',
           alignItems: 'center',
-          gap: 5,
-          padding: '5px 10px 4px 8px',
+          // Lead-in math (keep in sync with WorkspaceIcon folder slot = 15px):
+          //   border 2 + paddingLeft 4 + folder 15 + gap 6 = 27px text offset,
+          //   which exactly matches the thread row below it
+          //   (border 2 + paddingLeft 8 + chevron 12 + gap 5 = 27px), so the
+          //   workspace name and its threads share one left edge. The folder
+          //   glyph lands at x[6,21] — centered between the sidebar edge and
+          //   the text.
+          gap: 6,
+          padding: '5px 10px 4px 4px',
           fontFamily: 'var(--ui-font)',
           background: menu ? 'var(--term-alt)' : undefined,
           borderLeft: isActiveWorkspaceAway
@@ -305,7 +312,11 @@ export default function WorkspaceRow({
             : '2px solid transparent',
         }}
       >
-        <WorkspaceIcon project={project} mode={modeForPalette(prefs.terminalPalette)} />
+        <WorkspaceIcon
+          project={project}
+          mode={modeForPalette(prefs.terminalPalette)}
+          active={project.id === activeProjectId}
+        />
         {renaming ? (
           <input
             ref={renameRef}
@@ -325,7 +336,7 @@ export default function WorkspaceRow({
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 14.5,
+              fontSize: 13.5,
               fontWeight: 600,
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
@@ -340,8 +351,13 @@ export default function WorkspaceRow({
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 14.5,
-              fontWeight: wsUnread ? 900 : 400,
+              fontSize: 13.5,
+              // Idle weight is unified at 450 across all three tree levels
+              // (workspace / thread / node) so the resting sidebar reads as one
+              // consistent typographic plane; hierarchy is carried by the folder
+              // icon + indentation, not by weight. Interaction states keep their
+              // own emphasis (unread 900).
+              fontWeight: wsUnread ? 900 : 450,
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
               overflow: 'hidden',
@@ -405,7 +421,7 @@ export default function WorkspaceRow({
       )}
 
       {(workspaceExpanded || forceExpand) && (
-        <div style={{ marginBottom: 4 }}>
+        <div style={{ marginTop: 4, marginBottom: 4 }}>
           {filteredLiveTrees.length === 0 && (
             <div
               style={{

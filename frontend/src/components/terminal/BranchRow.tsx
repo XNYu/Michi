@@ -111,7 +111,7 @@ export default function BranchRow({
             : focused ? '2px solid var(--term-accent)'
             : '2px solid transparent',
           color: focused || selected || menuOpen ? 'var(--term-fg)' : 'var(--term-mid)',
-          fontWeight: unread ? 900 : (focused || selected ? 600 : 500),
+          fontWeight: unread ? 900 : (focused || selected ? 600 : 450),
           fontSize: 13.5,
           fontFamily: 'var(--ui-font)',
         }}
