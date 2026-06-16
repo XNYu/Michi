@@ -31,6 +31,7 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules/react-dom')) return 'react-vendor';
+          if (id.includes('node_modules/katex')) return 'math';
           // Keep shiki langs/themes as separate Rollup-managed dynamic chunks.
           // Only bundle shiki core+engine into markdown-code so it ships once
           // alongside the first code block render.

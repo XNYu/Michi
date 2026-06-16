@@ -119,13 +119,17 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
   // back to mount-time if the field is somehow missing. The 1s setState
   // re-renders only this row — never the message list.
   const startRef = useRef<number>(node.streamingStartedAt ?? Date.now());
+  if (node.streamingStartedAt && node.streamingStartedAt !== startRef.current) {
+    startRef.current = node.streamingStartedAt;
+  }
   const [elapsedMs, setElapsedMs] = useState(() => Date.now() - startRef.current);
   useEffect(() => {
+    setElapsedMs(Date.now() - startRef.current);
     const id = window.setInterval(() => {
       setElapsedMs(Date.now() - startRef.current);
     }, 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [node.streamingStartedAt]);
 
   // Render nothing (but stay mounted, preserving the timer across label flips
   // within a turn) when there's no standalone activity to show.

@@ -1,5 +1,5 @@
 import type { AgentConfig } from "./agentConfig";
-import { resolveModel, resolveReasoning } from "./agentConfig";
+import { getBuiltinDefaultModel, getBuiltinDefaultReasoning } from "./agentConfig";
 import type { AgentReasoning, AgentRuntime } from "../agents/types";
 
 export type ResumeStrategy = "fresh" | "live" | "exact" | "compatible";
@@ -60,12 +60,18 @@ export function buildTargetResumeSignature(
   modelOverride?: string | null,
 ): ResumeSignature {
   const runtimeId = cfg.runtime;
-  const modelId = normalizeSignaturePart(modelOverride ?? resolveModel(runtimeId));
+  const modelId = normalizeSignaturePart(
+    modelOverride ??
+    cfg.modelByRuntime[runtimeId] ??
+    getBuiltinDefaultModel(runtimeId),
+  );
   return {
     runtimeId,
     providerId: runtime.capabilities.providerModels ? normalizeSignaturePart(cfg.provider) : null,
     modelId,
-    reasoning: runtime.capabilities.reasoning ? normalizeReasoning(resolveReasoning(runtimeId)) : null,
+    reasoning: runtime.capabilities.reasoning
+      ? normalizeReasoning(cfg.reasoningByRuntime[runtimeId] ?? getBuiltinDefaultReasoning(runtimeId))
+      : null,
   };
 }
 

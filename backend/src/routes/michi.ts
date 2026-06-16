@@ -22,8 +22,10 @@ import {
     listGrants,
     listMessages,
     revokePermission,
+    saveWorkspace,
     updateNodeResumeBinding,
 } from "../services/dbRepository";
+import type { WorkspaceRow } from "../services/dbRepository";
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import {
     buildCompatibleResumeContext,
@@ -44,6 +46,31 @@ function inferRuntimeId(row: ReturnType<typeof getNode> | null, nodeId: string):
     const sid = normalizeSignaturePart(row?.acp_session_id);
     if (!sid) return null;
     return sid === nodeId ? "pi" : "kiro";
+}
+
+function ensureCloudWorkspaceRow(userId: string | undefined, workspaceId: string | null | undefined): void {
+    if (process.env.MICHI_CLOUD !== "1" || !userId || !workspaceId) return;
+    try {
+        deriveSandboxCwd(userId, workspaceId);
+        return;
+    } catch (err) {
+        if (!(err instanceof NotFoundError)) throw err;
+    }
+
+    const now = Date.now();
+    const row: WorkspaceRow = {
+        id: workspaceId,
+        name: "Untitled",
+        cwd: null,
+        active_tree_id: null,
+        created_at: now,
+        updated_at: now,
+        settings: null,
+        deleted_at: null,
+        archived_at: null,
+        owner_user_id: userId,
+    };
+    saveWorkspace(row);
 }
 
 function readTranscriptMessages(input: unknown, nodeId: string, userId?: string): TranscriptMessage[] {
@@ -76,10 +103,10 @@ function readExistingSignature(
     nodeId: string,
 ): ResumeSignature | null {
     return normalizeResumeSignature({
-        runtimeId: body.runtimeId ?? row?.runtime_id ?? inferRuntimeId(row, nodeId),
-        providerId: body.providerId ?? row?.provider_id,
-        modelId: body.modelId ?? row?.model_id,
-        reasoning: body.reasoning ?? row?.reasoning,
+        runtimeId: row?.runtime_id ?? body.runtimeId ?? inferRuntimeId(row, nodeId),
+        providerId: row?.provider_id ?? body.providerId,
+        modelId: row?.model_id ?? body.modelId,
+        reasoning: row?.reasoning ?? body.reasoning,
     });
 }
 
@@ -299,7 +326,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             }
         }
 
-        const cfg = getAgentConfig();
+        const userIdForConfig: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
+        const cfg = getAgentConfig(userIdForConfig);
         const runtime = getRuntime(cfg.runtime);
         startupMark("warm_route_start", { cwd, runtime: cfg.runtime });
         if (!runtime?.capabilities.warmSessions) {
@@ -308,7 +336,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
 
         try {
-            await runtime.warm(cwd, { model: resolveModel(cfg.runtime) });
+            await runtime.warm(cwd, { model: resolveModel(cfg.runtime, userIdForConfig) });
             startupMark("warm_route_done", { cwd, runtime: cfg.runtime, durMs: Date.now() - routeStart });
             return res.json({ ok: true });
         } catch (err) {
@@ -448,7 +476,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 validatedSessionId = nodeId;
             }
 
-            const cfg = getAgentConfig();
+            const userIdForConfig: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
+            const cfg = getAgentConfig(userIdForConfig);
             const runtime = getRuntime(cfg.runtime);
             if (!runtime) {
                 return res.status(500).json({ error: `Unknown agent runtime: ${cfg.runtime}` });
@@ -485,9 +514,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 extraContexts: validatedExtraContexts,
                 contextManifest: validatedContextManifest,
                 enableFollowUps,
-                model: (model as string | undefined) ?? resolveModel(cfg.runtime),
+                model: (model as string | undefined) ?? resolveModel(cfg.runtime, userIdForConfig),
                 provider: cfg.provider,
-                reasoning: resolveReasoning(cfg.runtime),
+                reasoning: resolveReasoning(cfg.runtime, userIdForConfig),
                 sessionId: validatedSessionId,
                 workspaceId,
                 ownerUserId: req.user?.id ?? null,
@@ -539,7 +568,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 (row?.acp_session_id
                     ? row.acp_session_id === row.id ? "pi" : "kiro"
                     : undefined) ??
-                getAgentConfig().runtime;
+                getAgentConfig(process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined).runtime;
             const runtime = getRuntime(runtimeId);
             if (!runtime?.loadSession) {
                 return res.status(404).json({ error: `Runtime ${runtimeId} cannot load sessions` });
@@ -604,6 +633,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 getNodeWorkspaceId(nodeId);
             if (wsIdForCwd) {
                 try {
+                    ensureCloudWorkspaceRow(userId, wsIdForCwd);
                     cwd = deriveSandboxCwd(userId, wsIdForCwd);
                 } catch (err) {
                     if (err instanceof NotFoundError) {
@@ -699,7 +729,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
 
         try {
-            const cfg = getAgentConfig();
+            const michiUserId: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
+            const cfg = getAgentConfig(michiUserId);
             const runtime = getRuntime(cfg.runtime);
             if (!runtime) {
                 return res.status(500).json({ error: `Unknown agent runtime: ${cfg.runtime}` });
@@ -710,7 +741,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 typeof modelRaw === "string" ? modelRaw : undefined,
             );
             const row = getNode(nodeId);
-            const michiUserId: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
             const transcript = readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
             const currentFingerprint = computeTranscriptFingerprint(transcript);
             const storedFingerprint =
@@ -1039,8 +1069,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
     });
 
-    router.get("/modes", async (_req, res) => {
-        const cfg = getAgentConfig();
+    router.get("/modes", async (req, res) => {
+        const cfg = getAgentConfig(process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined);
         const runtime = getRuntime(cfg.runtime);
         if (!runtime?.capabilities.modes) {
             return res.json({ availableModes: [] });
