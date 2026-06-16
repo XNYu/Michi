@@ -93,6 +93,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     createBlankChild,
     deleteNode,
     trimNode,
+    archiveNode,
     createMergedChat,
     createDigest,
     archiveTree,
@@ -412,6 +413,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                   clearSelection,
                   deleteNode,
                   trimNode,
+                  archiveNode,
                   createMergedChat,
                   createDigest,
                   openExportPanel: () =>
@@ -839,6 +841,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               clearSelection,
               deleteNode,
               trimNode,
+              archiveNode,
               createMergedChat,
               createDigest,
               openExportPanel: () =>

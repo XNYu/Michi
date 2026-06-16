@@ -169,6 +169,10 @@ function SideNav({
             <span className="profile-sidenav__caret" />
             <TrashIcon /> <span>trash</span>
           </a>
+          <a className="profile-sidenav__item" href="#" onClick={(e) => { e.preventDefault(); onNav?.('archived'); }}>
+            <span className="profile-sidenav__caret" />
+            <span style={{ display: 'inline-flex', width: 16, justifyContent: 'center' }}>▣</span> <span>archived</span>
+          </a>
         </div>
       </div>
     </aside>

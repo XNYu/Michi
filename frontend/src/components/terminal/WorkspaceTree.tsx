@@ -87,6 +87,7 @@ export default function WorkspaceTree({
     clearSelection,
     deleteNode,
     trimNode,
+    archiveNode,
     createBlankChild,
     createMergedChat,
     createDigest,
@@ -540,6 +541,7 @@ export default function WorkspaceTree({
           clearSelection,
           deleteNode,
           trimNode,
+          archiveNode,
           createMergedChat,
           createDigest,
           openExportPanel: () =>

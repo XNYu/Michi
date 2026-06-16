@@ -12,6 +12,7 @@ import { selectUnreadTotal } from '../../state/sidebarSelectors';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
+import { isArchiveGroupId } from '../../state/trashActions';
 
 const TOPBAR_HEIGHT = 44;
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
@@ -220,7 +221,7 @@ export default function TerminalTopbar({
   };
 
   const showWorkspaceTitle =
-    page === 'workspaces' || page === 'trash' ||
+    page === 'workspaces' || page === 'trash' || page === 'archived' ||
     page === 'workspace-manage' ||
     (!!activeProject && (page === 'map' || page === 'digest'));
   // Home page body inherits --term-bg from the shell; the rest of the app
@@ -235,6 +236,7 @@ export default function TerminalTopbar({
     : page === 'digest' ? 'DIGEST'
     : page === 'workspaces' ? 'WORKSPACES'
     : page === 'trash' ? 'TRASH'
+    : page === 'archived' ? 'ARCHIVED'
     : '';
   // Trash title mirrors the Workspaces pattern: a single counts line in the
   // topbar so the page body can drop its in-page header. Combines deleted
@@ -242,11 +244,18 @@ export default function TerminalTopbar({
   const trashGroupCount = useStructuralSelector((nodesMap) => {
     const gids = new Set<string>();
     for (const n of Object.values(nodesMap)) {
-      if (n.deletionGroupId) gids.add(n.deletionGroupId);
+      if (n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId);
     }
     return gids.size;
   });
   const trashCount = trashGroupCount + projects.filter((p) => p.deletedAt).length;
+  const archivedCount = useStructuralSelector((nodesMap) => {
+    const gids = new Set<string>();
+    for (const n of Object.values(nodesMap)) {
+      if (isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId!);
+    }
+    return gids.size;
+  });
   const showBrowserBrand = getElectron() === null;
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
   // The right cluster sits over the rightmost pane in the grid — mirror its
@@ -523,6 +532,16 @@ export default function TerminalTopbar({
                 }}
               >
                 {trashCount} deletion{trashCount === 1 ? '' : 's'}
+              </span>
+            ) : page === 'archived' ? (
+              <span
+                style={{
+                  fontSize: 12,
+                  color: 'var(--term-mid)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {archivedCount} archived
               </span>
             ) : (
               <span

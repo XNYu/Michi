@@ -22,6 +22,7 @@ const TerminalSettings = React.lazy(() => import('./pages/Settings'));
 const TerminalWorkspaces = React.lazy(() => import('./pages/Workspaces'));
 const TerminalWorkspaceManage = React.lazy(() => import('./pages/WorkspaceManage'));
 const TerminalTrash = React.lazy(() => import('./pages/Trash'));
+const TerminalArchived = React.lazy(() => import('./pages/Archived'));
 const TerminalProfile = React.lazy(() => import('./pages/Profile'));
 const CommandPalette = React.lazy(() => import('./CommandPalette'));
 
@@ -438,6 +439,7 @@ export default function TerminalShell() {
             </LazyPage>
           )}
           {page === 'trash' && <LazyPage><TerminalTrash onNav={handleNav} /></LazyPage>}
+          {page === 'archived' && <LazyPage><TerminalArchived onNav={handleNav} /></LazyPage>}
           {page === 'profile' && PROFILE_PAGE_ENABLED && <LazyPage><TerminalProfile onNav={handleNav} /></LazyPage>}
         </div>
       </div>

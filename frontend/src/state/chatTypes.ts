@@ -643,6 +643,12 @@ export interface ChatContextValue {
    * via the trimSnapshot stamped on the node.
    */
   trimNode: (nodeId: string) => void;
+  /**
+   * Archive a single node. Same mechanics as {@link trimNode} (children
+   * reparent up, restorable via the trimSnapshot) but routed to the Archived
+   * surface instead of Trash and exempt from trash-only purge flows.
+   */
+  archiveNode: (nodeId: string) => void;
   /** Restore the most-recently-deleted group. Returns the root nodeId of the restored subtree, or null if nothing to restore. Cmd+Z binds to this. */
   restoreLastDeletion: () => string | null;
   /** Restore a specific deletion group. Returns the root nodeId, or null. */
@@ -850,6 +856,7 @@ export type ChatActionsValue = Pick<
   | 'isObserver'
   | 'deleteNode'
   | 'trimNode'
+  | 'archiveNode'
   | 'setMinimized'
   | 'setPaneWidth'
   | 'openPane'

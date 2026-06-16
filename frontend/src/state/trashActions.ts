@@ -9,6 +9,20 @@ import {
 type PaneUpdater<T> = T | ((prev: T) => T);
 type PaneSetter<T> = (updater: PaneUpdater<T>) => void;
 
+/**
+ * Prefix on a node's `deletionGroupId` marking it as *archived* rather than
+ * trashed. Archive reuses the entire single-node trim engine (soft-remove +
+ * reparent children up + `trimSnapshot`-driven restore); the only difference
+ * is this prefix, which routes the node to the Archived surface instead of
+ * Trash and exempts it from trash-only flows (TTL sweep, empty-trash, ⌘Z).
+ */
+export const ARCHIVE_GID_PREFIX = 'arch-';
+
+/** True iff a deletion group id belongs to the archived lane (vs trash). */
+export function isArchiveGroupId(gid: string | null | undefined): boolean {
+  return !!gid && gid.startsWith(ARCHIVE_GID_PREFIX);
+}
+
 interface UseTrashActionsArgs {
   projects: Project[];
   nodesRef: MutableRefObject<Record<string, ChatNodeState>>;
@@ -105,8 +119,11 @@ export function useTrashActions({
    * `rootNodeId` is updated in the same setProjects call.
    *
    * No-op when the node is unknown or already trashed (idempotent).
+   *
+   * `gidPrefix` decides the lane: `'trim'` → Trash, `'arch'` → Archived. Both
+   * lanes share this exact algorithm; see `ARCHIVE_GID_PREFIX`.
    */
-  const trimNode = useCallback((nodeId: string) => {
+  const pruneNode = useCallback((nodeId: string, gidPrefix: 'trim' | 'arch') => {
     const project = projects.find((p) => p.chatIds.includes(nodeId));
     if (!project) return;
     const x = nodesRef.current[nodeId];
@@ -129,7 +146,7 @@ export function useTrashActions({
       wasTreeRoot,
     };
 
-    const gid = `trim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const gid = `${gidPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const at = Date.now();
 
     // Resolve the new parent for the children.
@@ -252,6 +269,16 @@ export function useTrashActions({
     setProjects,
     setSelection,
   ]);
+
+  /** Send a single node to Trash, reparenting its children up. */
+  const trimNode = useCallback((nodeId: string) => pruneNode(nodeId, 'trim'), [pruneNode]);
+
+  /**
+   * Archive a single node. Identical mechanics to {@link trimNode} (children
+   * reparent up, restorable via the trimSnapshot) but routed to the Archived
+   * surface and exempt from trash-only purge flows.
+   */
+  const archiveNode = useCallback((nodeId: string) => pruneNode(nodeId, 'arch'), [pruneNode]);
 
   /**
    * Reverse a single-node trim using the trimSnapshot stored on the node.
@@ -427,6 +454,7 @@ export function useTrashActions({
     const gidToAt = new Map<string, number>();
     for (const n of Object.values(nodesRef.current)) {
       if (!n.deletionGroupId || !n.deletedAt) continue;
+      if (isArchiveGroupId(n.deletionGroupId)) continue; // ⌘Z is trash-only
       const cur = gidToAt.get(n.deletionGroupId);
       if (cur === undefined || n.deletedAt > cur) gidToAt.set(n.deletionGroupId, n.deletedAt);
     }
@@ -445,7 +473,7 @@ export function useTrashActions({
   const emptyTrash = useCallback(() => {
     const gids = new Set<string>();
     for (const n of Object.values(nodesRef.current)) {
-      if (n.deletionGroupId) gids.add(n.deletionGroupId);
+      if (n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId);
     }
     gids.forEach((g) => purgeDeletion(g));
   }, [nodesRef, purgeDeletion]);
@@ -494,7 +522,7 @@ export function useTrashActions({
     async (): Promise<{ purged: number }> => {
       const workspaceIds = new Set<string>();
       for (const n of Object.values(nodesRef.current)) {
-        if (n.deletionGroupId) workspaceIds.add(n.projectId);
+        if (n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) workspaceIds.add(n.projectId);
       }
       if (workspaceIds.size === 0) return { purged: 0 };
 
@@ -520,6 +548,7 @@ export function useTrashActions({
       const gidToOldest = new Map<string, number>();
       for (const n of Object.values(nodesRef.current)) {
         if (!n.deletionGroupId || !n.deletedAt) continue;
+        if (isArchiveGroupId(n.deletionGroupId)) continue; // archived lane never auto-purges
         const cur = gidToOldest.get(n.deletionGroupId);
         if (cur === undefined || n.deletedAt < cur) {
           gidToOldest.set(n.deletionGroupId, n.deletedAt);
@@ -537,6 +566,7 @@ export function useTrashActions({
   return {
     deleteNode,
     trimNode,
+    archiveNode,
     restoreDeletion,
     purgeDeletion,
     purgeDeletionAsync,

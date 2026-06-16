@@ -554,9 +554,13 @@ export function emptyWorkspaceTrash(workspaceId: string): number {
   const changed = runInTransaction(() => {
     const now = Date.now();
     const db = getDb();
+    // Archived nodes also carry deleted_at (archive reuses the trim engine),
+    // so they are explicitly excluded here — "empty trash" must never touch the
+    // archived lane. They are removed only via explicit purgeWorkspaceNodes.
     const result = db.prepare(
       `UPDATE nodes SET purged_at = ?
-       WHERE workspace_id = ? AND deleted_at IS NOT NULL AND purged_at IS NULL`,
+       WHERE workspace_id = ? AND deleted_at IS NOT NULL AND purged_at IS NULL
+         AND (deletion_group_id IS NULL OR deletion_group_id NOT LIKE 'arch-%')`,
     ).run(now, workspaceId);
     // Drop dependent rows for the just-tombstoned nodes. These are physically
     // deleted because a tombstoned node can never come back, so its messages /

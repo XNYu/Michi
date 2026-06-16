@@ -22,6 +22,7 @@ export type PageId =
   | 'workspaces'
   | 'workspace-manage'
   | 'trash'
+  | 'archived'
   | 'profile';
 
 export interface CommandContext {
@@ -59,6 +60,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
       { id: 'nav.digest',     group: 'nav', glyph: '§', label: 'Open workspace digest', keys: kbd('mod', 'D'), run: () => ctx.setPage('digest') },
       { id: 'nav.workspaces', group: 'nav', glyph: '▢', label: 'Switch workspace…',     keys: kbd('mod', 'O'), run: () => ctx.setPage('workspaces') },
       { id: 'nav.trash',      group: 'nav', glyph: '🗑', label: 'Open trash',            run: () => ctx.setPage('trash') },
+      { id: 'nav.archived',   group: 'nav', glyph: '▣', label: 'Open archived nodes',    run: () => ctx.setPage('archived') },
       { id: 'nav.settings',   group: 'nav', glyph: '⚙', label: 'Open settings',         keys: kbd('mod', ','), run: () => ctx.setPage('settings') },
     );
     if (PROFILE_PAGE_ENABLED) {

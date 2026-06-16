@@ -13,6 +13,9 @@ export interface TreeMenuActions {
   /** Trim a single node out of the conversation, reparenting its children up.
    *  See chatStore for semantics; restore reverses via the trimSnapshot. */
   trimNode: (id: string) => void;
+  /** Archive a single node (same mechanics as trim, routed to the Archived
+   *  surface instead of Trash). */
+  archiveNode: (id: string) => void;
   /** Merge ≥2 nodes into a new woven chat node. */
   createMergedChat: (sourceIds: string[]) => string;
   /** Create a digest covering the given chat nodes. */
@@ -116,6 +119,26 @@ export function buildTreeContextMenu({
                 },
               ]
             : []),
+          ...(allRoots
+            ? [] // all-roots is handled by "Archive N threads" above
+            : [
+                {
+                  // Archive each selected node out of the conversation
+                  // (children slide up). Active root is skipped — same
+                  // protection as bulk delete.
+                  id: 'archive-nodes',
+                  label: anyRoot
+                    ? `Archive ${scope.length} (root excluded)`
+                    : `Archive ${scope.length} nodes`,
+                  run: () => {
+                    for (const id of scope) {
+                      if (id === rootId) continue;
+                      actions.archiveNode(id);
+                    }
+                    actions.clearSelection();
+                  },
+                },
+              ]),
           {
             id: 'clear',
             label: 'Clear selection',
@@ -181,6 +204,14 @@ export function buildTreeContextMenu({
           label: 'Trim node',
           keys: 'T',
           run: () => actions.trimNode(targetId),
+        },
+        {
+          // "Archive" is trim that lands in the Archived surface (durable,
+          // restorable) instead of Trash. Children slide up either way.
+          id: 'archive',
+          label: 'Archive node',
+          keys: 'A',
+          run: () => actions.archiveNode(targetId),
         },
         {
           // "Delete" sends the whole subtree to trash. Root is protected

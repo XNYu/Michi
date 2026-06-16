@@ -5,6 +5,7 @@ import { usePrefs } from '../../../state/prefs';
 import type { PageId } from '../../../state/commands';
 import { workspaceAccent, initialOf } from '../workspaceAccent';
 import { kbd } from '../../../lib/platform';
+import { isArchiveGroupId } from '../../../state/trashActions';
 
 interface TrashGroup {
   id: string;
@@ -60,6 +61,7 @@ export default function TerminalTrash({ onNav }: { onNav?: (p: PageId) => void }
     const byGid = new Map<string, ChatNodeState[]>();
     for (const n of Object.values(nodesSnapshot)) {
       if (!n.deletionGroupId) continue;
+      if (isArchiveGroupId(n.deletionGroupId)) continue; // archived lane has its own page
       const arr = byGid.get(n.deletionGroupId) ?? [];
       arr.push(n);
       byGid.set(n.deletionGroupId, arr);

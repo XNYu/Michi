@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
 import { usePrefs, TerminalPalette, CodeBlockStyle } from '../../../state/prefs';
 import type { PageId } from '../../../state/commands';
+import { isArchiveGroupId } from '../../../state/trashActions';
 import {
   MARKDOWN_RENDERER_CHANGE_EVENT,
   readMarkdownRendererFlag,
@@ -43,11 +44,18 @@ export default function TerminalSettings({
   const trashGroupCount = useStructuralSelector((nodesMap) => {
     const gids = new Set<string>();
     for (const n of Object.values(nodesMap)) {
-      if (n.deletionGroupId) gids.add(n.deletionGroupId);
+      if (n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId);
     }
     return gids.size;
   });
   const trashCount = trashGroupCount + projects.filter((p) => p.deletedAt).length;
+  const archivedCount = useStructuralSelector((nodesMap) => {
+    const gids = new Set<string>();
+    for (const n of Object.values(nodesMap)) {
+      if (isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId!);
+    }
+    return gids.size;
+  });
 
   // The Account tab only renders when the user is signed in. In desktop /
   // Electron mode useSession().data is null and we hide it entirely.
@@ -65,6 +73,11 @@ export default function TerminalSettings({
   const openTrashPage = () => {
     onClose?.();
     onNav?.('trash');
+  };
+
+  const openArchivedPage = () => {
+    onClose?.();
+    onNav?.('archived');
   };
 
   return (
@@ -140,6 +153,39 @@ export default function TerminalSettings({
               }}
             >
               {trashCount}
+            </span>
+          )}
+        </Tab>
+        <Tab
+          focused={false}
+          onClick={openArchivedPage}
+          style={{
+            padding: '6px 7px',
+            fontSize: 11,
+            fontFamily: 'var(--ui-font)',
+            color: 'var(--term-mid)',
+            borderBottom: '2px solid transparent',
+            marginBottom: -1,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          Archived
+          {archivedCount > 0 && (
+            <span
+              style={{
+                fontFamily: 'var(--ui-font)',
+                fontSize: 9.5,
+                color: 'var(--term-surface)',
+                background: 'var(--term-muted)',
+                padding: '0 5px',
+                minWidth: 16,
+                textAlign: 'center',
+                fontWeight: 700,
+              }}
+            >
+              {archivedCount}
             </span>
           )}
         </Tab>
