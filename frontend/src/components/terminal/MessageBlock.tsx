@@ -165,10 +165,12 @@ function TermThoughtBlock({
   text,
   streaming,
   children,
+  toolCount,
 }: {
   text: string;
   streaming?: boolean;
   children?: React.ReactNode;
+  toolCount?: number;
 }) {
   // Default mode: tail while streaming, collapsed once finished.
   // User clicks cycle: tail/collapsed → expanded → (streaming ? tail : collapsed).
@@ -207,6 +209,11 @@ function TermThoughtBlock({
   };
 
   const marker = mode === 'expanded' ? '▾' : '▸';
+  const headerLabel = mode === 'expanded'
+    ? 'HIDE REASONING'
+    : toolCount && toolCount > 0
+      ? `WORKED THROUGH ${toolCount} ${toolCount === 1 ? 'STEP' : 'STEPS'}`
+      : 'THINKING';
 
   return (
     <div style={{ marginBottom: 8, fontSize: 11 }}>
@@ -221,7 +228,7 @@ function TermThoughtBlock({
           userSelect: 'none',
         }}
       >
-        {marker} THINKING
+        {marker} {headerLabel}
       </div>
       {mode === 'tail' && (
         <div
@@ -453,8 +460,9 @@ function ThinkingRunViewInner({ blocks, tools, streaming, subagents }: ThinkingR
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const text = useMemo(() => thinkingRunRawText(blocks), [blocks]);
   const groups = useMemo(() => thinkingToolGroups(blocks, toolsById), [blocks, toolsById]);
+  const toolCount = useMemo(() => groups.reduce((n, g) => n + g.length, 0), [groups]);
   return (
-    <TermThoughtBlock text={text} streaming={streaming}>
+    <TermThoughtBlock text={text} streaming={streaming} toolCount={toolCount}>
       {groups.length > 0
         ? groups.map((group) => (
             <ToolCallGroup

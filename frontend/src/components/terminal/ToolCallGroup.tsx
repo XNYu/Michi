@@ -188,37 +188,104 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
     return <SubagentSpineRow t={t} info={subagent} currentTool={owner?.currentTool} />;
   }
 
+  const hasPayload = !!(t.inputJson || t.output);
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'input' | 'output'>('input');
+
   const failed = isFailedStatus(t.status);
+  const accent = failed ? FAIL_COLOR : 'var(--term-mauve)';
+
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 8,
-        paddingLeft: 16,
-        color: failed ? FAIL_COLOR : 'var(--term-mauve)',
-      }}
-    >
-      <span style={{ opacity: 0.7, flexShrink: 0 }}>·</span>
-      <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-        {prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
-        {t.detail && (
-          <span
+    <div style={{ paddingLeft: 16, color: accent }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+          cursor: hasPayload ? 'pointer' : 'default',
+        }}
+        onClick={hasPayload ? () => setOpen((o) => !o) : undefined}
+      >
+        <span style={{ opacity: 0.7, flexShrink: 0 }}>{hasPayload ? (open ? '▾' : '▸') : '·'}</span>
+        <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+          {t.detail || prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
+          {t.detail && (
+            <span
+              style={{
+                display: 'block',
+                fontSize: 9.5,
+                color: 'var(--term-muted)',
+                fontStyle: 'normal',
+                marginTop: 1,
+              }}
+            >
+              {prettifyToolTitle(t.title)}
+            </span>
+          )}
+        </span>
+        <span style={{ color: 'var(--term-muted)', flexShrink: 0, marginLeft: 8 }}>
+          {t.status || 'running'}
+        </span>
+      </div>
+      {open && hasPayload && (
+        <div style={{ marginLeft: 18, marginTop: 4 }}>
+          <div style={{ display: 'flex', gap: 0, alignItems: 'center', marginBottom: 4 }}>
+            {t.inputJson && (
+              <button
+                type="button"
+                onClick={() => setTab('input')}
+                style={{
+                  fontSize: 10,
+                  padding: '1px 8px',
+                  border: '1px solid var(--term-line)',
+                  borderRight: t.output ? 'none' : undefined,
+                  background: tab === 'input' ? 'var(--term-mauve-f, var(--term-alt))' : 'transparent',
+                  color: tab === 'input' ? 'var(--term-mauve)' : 'var(--term-muted)',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--ui-font)',
+                }}
+              >
+                Input
+              </button>
+            )}
+            {t.output && (
+              <button
+                type="button"
+                onClick={() => setTab('output')}
+                style={{
+                  fontSize: 10,
+                  padding: '1px 8px',
+                  border: '1px solid var(--term-line)',
+                  background: tab === 'output' ? 'var(--term-mauve-f, var(--term-alt))' : 'transparent',
+                  color: tab === 'output' ? 'var(--term-mauve)' : 'var(--term-muted)',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--ui-font)',
+                }}
+              >
+                Output
+              </button>
+            )}
+          </div>
+          <pre
+            className="term-scrollbar"
             style={{
-              display: 'block',
-              fontSize: 9.5,
-              color: 'var(--term-muted)',
-              fontStyle: 'italic',
-              marginTop: 1,
+              fontSize: 10,
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              color: 'var(--term-mid)',
+              background: 'var(--term-alt)',
+              border: '1px solid var(--term-line)',
+              padding: '6px 8px',
+              maxHeight: 180,
+              overflowY: 'auto',
+              margin: 0,
             }}
           >
-            {t.detail}
-          </span>
-        )}
-      </span>
-      <span style={{ color: 'var(--term-muted)', flexShrink: 0, marginLeft: 8 }}>
-        {t.status || 'running'}
-      </span>
+            {tab === 'input' ? (t.inputJson ?? '') : (t.output ?? '')}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

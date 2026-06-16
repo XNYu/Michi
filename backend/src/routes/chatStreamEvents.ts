@@ -27,6 +27,7 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
                     status: ev.status,
                     kind: ev.kindType,
                     detail: ev.detail,
+                    inputJson: ev.inputJson,
                 },
             };
         case "tool_call_update":
@@ -38,6 +39,7 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
                     status: ev.status,
                     kind: ev.kindType,
                     detail: ev.detail,
+                    output: ev.output,
                 },
             };
         case "heartbeat":

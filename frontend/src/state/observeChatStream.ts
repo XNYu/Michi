@@ -20,6 +20,8 @@ function toolState(tool: Parameters<NonNullable<StreamHandlers['onToolCall']>>[0
     status: tool.status,
     kind: tool.kind,
     detail: tool.detail,
+    inputJson: tool.inputJson,
+    output: tool.output,
   };
 }
 

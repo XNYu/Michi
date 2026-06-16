@@ -22,6 +22,15 @@ import type { SpawnedBranch } from "../toolBridge";
  * do NOT come through tool calls. This mapper only cares about the two
  * side-effect tools (spawn_branches, save_context, update_context).
  */
+const MAX_TOOL_PAYLOAD = 16 * 1024;
+
+function truncatePayload(value: unknown): string | undefined {
+    if (value == null) return undefined;
+    const str = typeof value === "string" ? value : JSON.stringify(value);
+    if (!str) return undefined;
+    return str.length > MAX_TOOL_PAYLOAD ? str.slice(0, MAX_TOOL_PAYLOAD) : str;
+}
+
 export interface MappedTurnUsage {
     inputTokens: number;
     outputTokens: number;
@@ -62,9 +71,12 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
         }
 
         case "tool_execution_start": {
-            const purpose = typeof event.args?.__tool_use_purpose === "string"
-                ? event.args.__tool_use_purpose
-                : undefined;
+            const args = event.args;
+            const purpose = typeof args?.__tool_use_purpose === "string"
+                ? args.__tool_use_purpose
+                : typeof args?.description === "string"
+                    ? args.description
+                    : undefined;
             yield {
                 kind: "tool_call",
                 toolCallId: event.toolCallId,
@@ -72,6 +84,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 detail: purpose,
                 status: "pending",
                 kindType: "execute",
+                inputJson: truncatePayload(args),
             };
             return;
         }
@@ -113,6 +126,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 title: name,
                 status: isError ? "failed" : "completed",
                 detail: isError ? extractErrorText(result) : undefined,
+                output: truncatePayload(result),
             };
             return;
         }

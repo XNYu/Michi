@@ -35,6 +35,26 @@ function stringifyContent(content: unknown): string {
   return JSON.stringify(content);
 }
 
+const MAX_TOOL_PAYLOAD = 16 * 1024;
+
+function truncatePayload(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const str = typeof value === 'string' ? value : JSON.stringify(value);
+  if (!str) return undefined;
+  return str.length > MAX_TOOL_PAYLOAD ? str.slice(0, MAX_TOOL_PAYLOAD) : str;
+}
+
+function extractPurpose(toolName: string, input: Record<string, unknown>): string | undefined {
+  if (typeof input.__tool_use_purpose === 'string') return input.__tool_use_purpose;
+  if (typeof input.description === 'string') return input.description;
+  if (typeof input.file_path === 'string') return `${toolName}: ${input.file_path}`;
+  if (typeof input.pattern === 'string') {
+    const path = typeof input.path === 'string' ? ` in ${input.path}` : '';
+    return `grep: ${input.pattern}${path}`;
+  }
+  return undefined;
+}
+
 export interface TranslatorHandle {
   feed: (env: ClaudeEnvelope) => void;
   startTurn: () => void;
@@ -158,12 +178,11 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
         if (btype === 'tool_use') {
           const id = (b['id'] as string | undefined) ?? '';
           const name = (b['name'] as string | undefined) ?? '';
-          const input = b['input'] ?? {};
-          const detail = Array.from(JSON.stringify(input)).slice(0, 200).join('');
+          const input = (b['input'] ?? {}) as Record<string, unknown>;
+          const detail = extractPurpose(name, input)
+            ?? Array.from(JSON.stringify(input)).slice(0, 200).join('');
+          const inputJson = truncatePayload(input);
           if (streamedToolUseIds.has(id)) {
-            // Already announced inline via content_block_start; backfill the
-            // detail (which only the assistant envelope carries) without
-            // moving textOffset.
             emit({
               kind: 'tool_call_update',
               toolCallId: id,
@@ -171,11 +190,9 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
               status: 'in_progress',
               kindType: 'tool',
               detail,
+              inputJson,
             });
           } else {
-            // No partial start was seen — tool_use without a streaming
-            // entrypoint. Emit a full tool_call so the chip still renders
-            // (textOffset will land at end-of-text, same as before).
             emit({
               kind: 'tool_call',
               toolCallId: id,
@@ -183,6 +200,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
               status: 'in_progress',
               kindType: 'tool',
               detail,
+              inputJson,
             });
           }
         }
@@ -303,7 +321,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
             title: '',
             status: b['is_error'] ? 'failed' : 'completed',
             kindType: 'tool',
-            detail: Array.from(stringifyContent(resultContent)).slice(0, 200).join(''),
+            output: truncatePayload(resultContent),
           });
         }
       }

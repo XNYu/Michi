@@ -168,6 +168,7 @@ export function runChatStream({
           status: toolCall.status,
           kind: toolCall.kind,
           detail: toolCall.detail,
+          inputJson: toolCall.inputJson,
         },
       });
     },
@@ -182,6 +183,7 @@ export function runChatStream({
           status: toolCall.status,
           kind: toolCall.kind,
           detail: toolCall.detail,
+          output: toolCall.output,
         },
       });
     },

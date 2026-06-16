@@ -19,6 +19,10 @@ export interface ToolCallState {
   kind?: string;
   /** Agent's stated purpose for this tool call (from rawInput.__tool_use_purpose). */
   detail?: string;
+  /** JSON-stringified tool input (truncated to 16KB). */
+  inputJson?: string;
+  /** Tool output/result (truncated to 16KB). */
+  output?: string;
   /** Legacy/render hint. For block-first messages the tool block owns the
    *  section-local rawOffset; this field is kept for older projections and
    *  pre-block persisted data. */

@@ -13,6 +13,8 @@ export type NormalizedEvent =
           status: string;
           kindType?: string;
           detail?: string;
+          inputJson?: string;
+          output?: string;
       }
     | { kind: "heartbeat"; idleMs: number }
     | { kind: "spawn_branches"; topics: SpawnBranchTopic[] }

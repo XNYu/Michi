@@ -16,6 +16,8 @@ export interface ToolCallStreamPayload {
   status: string;
   kind?: string;
   detail?: string;
+  inputJson?: string;
+  output?: string;
 }
 
 export interface SpawnBranchTopic {
@@ -155,12 +157,16 @@ function parsePlanEntries(value: unknown): PlanEntry[] {
 function parseToolCall(value: Record<string, unknown>): ToolCallStreamPayload {
   const kind = optionalString(value.kind);
   const detail = optionalString(value.detail);
+  const inputJson = optionalString(value.inputJson);
+  const output = optionalString(value.output);
   return {
     toolCallId: stringOrEmpty(value.toolCallId),
     title: stringOrEmpty(value.title),
     status: stringOrEmpty(value.status),
     ...(kind ? { kind } : {}),
     ...(detail ? { detail } : {}),
+    ...(inputJson ? { inputJson } : {}),
+    ...(output ? { output } : {}),
   };
 }
 

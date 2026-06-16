@@ -456,6 +456,8 @@ export function reduceNodes(
           if (action.tool.status) merged.status = action.tool.status;
           if (action.tool.kind) merged.kind = action.tool.kind;
           if (action.tool.detail) merged.detail = action.tool.detail;
+          if (action.tool.inputJson) merged.inputJson = action.tool.inputJson;
+          if (action.tool.output) merged.output = action.tool.output;
           return merged;
         });
         const exists = tcs.some((t) => t.id === action.tool.id);

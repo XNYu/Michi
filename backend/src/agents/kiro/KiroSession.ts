@@ -120,15 +120,31 @@ export class KiroSession implements AgentSession {
                     })),
                 };
             } else if (kind === "tool_call" || kind === "tool_call_update") {
+                const rawInput = update.rawInput;
+                const toolTitle = update.title || "";
+                const purpose = typeof rawInput?.__tool_use_purpose === "string"
+                    ? rawInput.__tool_use_purpose
+                    : typeof rawInput?.description === "string"
+                        ? rawInput.description
+                        : typeof rawInput?.file_path === "string"
+                            ? `${toolTitle}: ${rawInput.file_path}`
+                            : undefined;
+                const inputStr = rawInput != null
+                    ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
+                    : undefined;
+                const outputStr = update.rawOutput != null
+                    ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
+                    : undefined;
+                const MAX_PAYLOAD = 16 * 1024;
                 yield {
                     kind,
                     toolCallId: update.toolCallId || "",
-                    title: update.title || "",
+                    title: toolTitle,
                     status: update.status || "",
                     kindType: update.kind || undefined,
-                    detail: typeof update.rawInput?.__tool_use_purpose === "string"
-                        ? update.rawInput.__tool_use_purpose
-                        : undefined,
+                    detail: purpose,
+                    inputJson: inputStr && inputStr.length > MAX_PAYLOAD ? inputStr.slice(0, MAX_PAYLOAD) : inputStr,
+                    output: outputStr && outputStr.length > MAX_PAYLOAD ? outputStr.slice(0, MAX_PAYLOAD) : outputStr,
                 };
             } else if (kind === "__heartbeat__") {
                 yield { kind: "heartbeat", idleMs: update.idleMs || 0 };

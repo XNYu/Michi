@@ -47,6 +47,28 @@ function safeJson(value: unknown): string {
   }
 }
 
+const MAX_TOOL_PAYLOAD = 16 * 1024;
+
+function truncatePayload(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const str = typeof value === 'string' ? value : safeJson(value);
+  if (!str) return undefined;
+  return str.length > MAX_TOOL_PAYLOAD ? str.slice(0, MAX_TOOL_PAYLOAD) : str;
+}
+
+function extractCodexPurpose(item: Record<string, unknown>): string | undefined {
+  const itemType = stringField(item, 'type') ?? '';
+  if (itemType === 'commandExecution') {
+    const cmd = stringField(item, 'command');
+    if (cmd) return cmd;
+  }
+  if (itemType === 'webSearch') {
+    const query = stringField(item, 'query');
+    if (query) return `Search: ${query}`;
+  }
+  return undefined;
+}
+
 function pathBasename(path: string | undefined): string | undefined {
   if (!path) return undefined;
   const parts = path.split(/[\\/]+/).filter(Boolean);
@@ -239,7 +261,8 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           title: presentation.title,
           status: 'in_progress',
           kindType: presentation.kindType,
-          detail: presentation.detail,
+          detail: extractCodexPurpose(item) ?? presentation.detail,
+          inputJson: truncatePayload(item),
         });
         break;
       }
@@ -252,15 +275,8 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
         const status = item['status'] === 'failed' ? 'failed' : 'completed';
         const presentation = toolPresentation(item);
         if (id) toolPresentations.set(id, presentation);
-        const detail = item['aggregatedOutput'] !== undefined
-          ? cap(item['aggregatedOutput'])
-          : item['output'] !== undefined
-            ? cap(item['output'])
-            : item['result'] !== undefined
-              ? cap(safeJson(item['result']))
-              : item['error'] !== undefined
-                ? cap(safeJson(item['error']))
-            : '';
+        const rawOutput = item['aggregatedOutput'] ?? item['output'] ?? item['result'] ?? item['error'];
+        const detail = rawOutput !== undefined ? cap(rawOutput) : '';
         emit({
           kind: 'tool_call_update',
           toolCallId: id,
@@ -268,6 +284,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           status,
           kindType: presentation.kindType,
           detail,
+          output: truncatePayload(rawOutput),
         });
         break;
       }
