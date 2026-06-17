@@ -27,6 +27,8 @@ interface Actions {
    *  to avoid stale-closure races between snapshotBeforeSwitch (which pins
    *  the outgoing/incoming visual state) and a follow-up toggle. */
   selectProject: (projectId: string, expanded?: boolean) => void;
+  /** Toggle expand/collapse in one click regardless of active state. */
+  toggleWorkspaceExpand: (projectId: string) => void;
   createThread: () => void;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
@@ -290,16 +292,7 @@ export default function WorkspaceRow({
       <Row
         onClick={() => {
           if (renaming) return;
-          // Unified expand rule for ws/thread-root/branch rows:
-          //   - Collapsed → always expand (regardless of prior highlight).
-          //   - Expanded + already highlighted → collapse.
-          //   - Expanded + not highlighted → just highlight, keep open.
-          const wasActive = project.id === activeProjectId;
-          let nextExpanded: boolean | undefined;
-          if (!workspaceExpanded) nextExpanded = true;
-          else if (wasActive) nextExpanded = false;
-          // (else: keep open — undefined leaves snapshot's pin intact)
-          actions.selectProject(project.id, nextExpanded);
+          actions.toggleWorkspaceExpand(project.id);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -360,41 +353,78 @@ export default function WorkspaceRow({
             }}
           />
         ) : (
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 13.5,
-              // Idle weight is unified at 450 across all three tree levels
-              // (workspace / thread / node) so the resting sidebar reads as one
-              // consistent typographic plane; hierarchy is carried by the folder
-              // icon + indentation, not by weight. Interaction states keep their
-              // own emphasis (unread 900).
-              fontWeight: wsUnread ? 900 : 450,
-              color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              maskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
-              WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
-            }}
-          >
-            {project.name}
-          </span>
+          <>
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13.5,
+                  fontWeight: wsUnread ? 900 : 450,
+                  color: 'var(--term-fg)',
+                  fontFamily: 'var(--ui-font)',
+                  overflow: 'hidden',
+                  whiteSpace: 'nowrap',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {project.name}
+              </span>
+              <span
+                className="ws-hover-chevron"
+                aria-hidden
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--term-muted)',
+                  flexShrink: 0,
+                  transition: 'transform 120ms ease-out',
+                  transform: workspaceExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                  ...(menu ? { opacity: 1, pointerEvents: 'auto' as const } : {}),
+                }}
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 3l5 5-5 5" />
+                </svg>
+              </span>
+            </span>
+            <span className="ws-hover-actions" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0, ...(menu ? { opacity: 1, pointerEvents: 'auto' as const } : {}) }}>
+              <button
+                type="button"
+                className="ws-action-btn"
+                aria-label="Workspace options"
+                title="Workspace options"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  setMenu({ x: rect.left, y: rect.bottom + 4 });
+                }}
+              >
+                ⋯
+              </button>
+              <button
+                type="button"
+                className="ws-action-btn"
+                aria-label="New chat in this workspace"
+                title="New chat in this workspace"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  actions.selectProject(project.id);
+                  window.dispatchEvent(new CustomEvent('michi:goto-home'));
+                }}
+              >
+                +
+              </button>
+            </span>
+          </>
         )}
-        <button
-          type="button"
-          className="t-add-btn"
-          aria-label="New chat in this workspace"
-          title="New chat in this workspace"
-          onClick={(e) => {
-            e.stopPropagation();
-            actions.selectProject(project.id);
-            window.dispatchEvent(new CustomEvent('michi:goto-home'));
-          }}
-        >
-          +
-        </button>
         {workspaceOpenState !== 'none' && (
           <span
             aria-hidden

@@ -1093,6 +1093,44 @@ body {
   text-shadow: 0 0 6px currentColor;
 }
 
+/* Workspace row hover actions — chevron + ⋯ + compose icon appear only on
+   hover; hidden at rest for a clean look. The chevron sits right of the name
+   and the action buttons at the row's trailing edge. */
+.ws-hover-chevron,
+.ws-hover-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease-out;
+}
+.t-row-hover:hover .ws-hover-chevron,
+.t-row-hover:hover .ws-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ws-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background 80ms ease-out, color 80ms ease-out;
+}
+.ws-action-btn:hover {
+  background: var(--term-line);
+  color: var(--term-fg);
+}
+.ws-action-btn:active {
+  transform: scale(0.9);
+}
+
 /* Composer pre-textarea blocks — unified visual language built on the
    quote block's vocabulary. Every region (active quote, pending
    comments, file attachments, future queue) shares:

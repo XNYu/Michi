@@ -610,6 +610,21 @@ export default function WorkspaceTree({
     [snapshotBeforeSwitch, activeProject, activeProjectId, prefs.sidebarExpanded, setPref, selectProject],
   );
 
+  const toggleWorkspaceExpand = useCallback(
+    (projectId: string) => {
+      const cur = isWorkspaceExpanded(prefs.sidebarExpanded, projectId, activeProjectId);
+      const next = {
+        ...prefs.sidebarExpanded,
+        workspaces: { ...prefs.sidebarExpanded.workspaces, [projectId]: !cur },
+      };
+      setPref('sidebarExpanded', next);
+      // Only switch active project when expanding — collapsing should not
+      // trigger the focusedPane reveal effect which would re-expand it.
+      if (!cur && projectId !== activeProjectId) selectProject(projectId);
+    },
+    [prefs.sidebarExpanded, activeProjectId, setPref, selectProject],
+  );
+
   const renderProject = (project: typeof projects[number], opts: { dnd?: ReturnType<typeof dndForProject> } = {}) => {
     const wsExpanded = isWorkspaceExpanded(
       prefs.sidebarExpanded,
@@ -659,6 +674,7 @@ export default function WorkspaceTree({
             toggleBranch,
             activateTree: (treeId) => activateTreeStable(treeId, project.id),
             selectProject: selectProjectStable,
+            toggleWorkspaceExpand,
             createThread: () => {
               createThread();
               onActivate?.();
