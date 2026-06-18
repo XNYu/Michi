@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatActions, useChatNode, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
 import type { ChatNodeState, ContextEntry, ProjectEdge } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
@@ -39,6 +39,53 @@ const sidebarAnimatingRef = { current: false };
 const animationEndCallbacks = new Set<() => void>();
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 800;
 const USER_SCROLL_INTENT_WINDOW_MS = 1200;
+
+// Persists scroll position across pane unmount/remount AND page refresh.
+// Backed by localStorage with an LRU cap so it doesn't grow unbounded.
+const SCROLL_CACHE_LS_KEY = 'michi:paneScrollPositions';
+const SCROLL_CACHE_MAX_ENTRIES = 200;
+
+const paneScrollCache = (() => {
+  const map = new Map<string, number>();
+
+  // Hydrate from localStorage on startup
+  try {
+    const raw = window.localStorage.getItem(SCROLL_CACHE_LS_KEY);
+    if (raw) {
+      const entries: [string, number][] = JSON.parse(raw);
+      for (const [k, v] of entries) map.set(k, v);
+    }
+  } catch { /* corrupt or missing — start fresh */ }
+
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flush() {
+    flushTimer = null;
+    // Keep only the most recent entries (Map iteration = insertion order)
+    const entries = [...map.entries()];
+    const trimmed = entries.slice(-SCROLL_CACHE_MAX_ENTRIES);
+    try {
+      window.localStorage.setItem(SCROLL_CACHE_LS_KEY, JSON.stringify(trimmed));
+    } catch { /* quota — non-critical */ }
+  }
+
+  function scheduleFlush() {
+    if (flushTimer == null) flushTimer = setTimeout(flush, 1000);
+  }
+
+  window.addEventListener('beforeunload', () => {
+    if (flushTimer != null) { clearTimeout(flushTimer); flush(); }
+  });
+
+  return {
+    get(key: string) { return map.get(key); },
+    set(key: string, value: number) {
+      map.delete(key); // reinsert at end for LRU ordering
+      map.set(key, value);
+      scheduleFlush();
+    },
+  };
+})();
 const PANE_PERF_SLOW_COMMIT_MS = 16;
 const EMPTY_CONTEXTS: ContextEntry[] = [];
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
@@ -553,6 +600,29 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }
     return null;
   })());
+  // Restore saved scroll position on mount (idle threads only — streaming
+  // threads are handled by follow mode). Save on unmount.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const shouldPin =
+      n?.status === 'streaming' ||
+      !!n?.followUpsGenerating ||
+      (n?.followUps.length ?? 0) > 0;
+    if (!shouldPin) {
+      const saved = paneScrollCache.get(nodeId);
+      if (saved != null) {
+        el.scrollTop = saved;
+        prevScrollTopRef.current = saved;
+        followRef.current = saved >= el.scrollHeight - el.clientHeight - 24;
+      }
+    }
+    return () => {
+      paneScrollCache.set(nodeId, el.scrollTop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // performance.now() timestamp until which follow-mode auto-pinning is
   // suppressed. Set when a user message lands so the smooth-scroll-to-30%
   // animation can complete before the assistant's first streamed token

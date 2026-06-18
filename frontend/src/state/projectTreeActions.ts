@@ -358,6 +358,28 @@ export function useTreeActions({
     [projects, setProjects],
   );
 
+  const pinProject = useCallback(
+    (projectId: string) => {
+      setProjects((prev) =>
+        prev.map((p) => (p.id === projectId ? { ...p, pinnedAt: Date.now() } : p)),
+      );
+    },
+    [setProjects],
+  );
+
+  const unpinProject = useCallback(
+    (projectId: string) => {
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== projectId) return p;
+          const { pinnedAt, ...rest } = p;
+          return rest as typeof p;
+        }),
+      );
+    },
+    [setProjects],
+  );
+
   const renameTree = useCallback(
     (treeId: string, name: string, targetProjectId?: string) => {
       const projectId = targetProjectId ?? activeProjectId;
@@ -548,6 +570,8 @@ export function useTreeActions({
     unarchiveTree,
     pinTree,
     unpinTree,
+    pinProject,
+    unpinProject,
     renameTree,
     activateTree,
     deleteTree,

@@ -15,6 +15,8 @@ export interface ContextMenuSection {
 export interface WorkspaceRowActions {
   archiveProject: (projectId: string) => void;
   unarchiveProject: (projectId: string) => void;
+  pinProject: (projectId: string) => void;
+  unpinProject: (projectId: string) => void;
   deleteProject: (projectId: string) => void;
   /** Flip the workspace row into inline-rename mode. Implemented by the UI. */
   beginInlineRename: (projectId: string) => void;
@@ -32,6 +34,7 @@ export function buildWorkspaceRowContextMenu(
 ): ContextMenuSection[] {
   const { project, actions } = args;
   const archived = !!project.archivedAt;
+  const pinned = !!project.pinnedAt;
   return [
     {
       items: [
@@ -49,6 +52,9 @@ export function buildWorkspaceRowContextMenu(
           keys: 'R',
           onSelect: () => actions.beginInlineRename(project.id),
         },
+        pinned
+          ? { label: 'Unpin', keys: 'P', onSelect: () => actions.unpinProject(project.id) }
+          : { label: 'Pin', keys: 'P', onSelect: () => actions.pinProject(project.id) },
         archived
           ? {
               label: 'Unarchive',

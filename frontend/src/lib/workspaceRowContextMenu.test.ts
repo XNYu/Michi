@@ -17,6 +17,8 @@ const mkProject = (overrides: Partial<Project> = {}): Project => ({
 const mkActions = () => ({
   archiveProject: vi.fn(),
   unarchiveProject: vi.fn(),
+  pinProject: vi.fn(),
+  unpinProject: vi.fn(),
   deleteProject: vi.fn(),
   beginInlineRename: vi.fn(),
   openManageWorkspace: vi.fn(),

@@ -65,6 +65,7 @@ export default function WorkspaceTree({
     focusedNodeId,
     focusedPane,
     selection,
+    treeSelection,
     unreadFilterOn,
   } = useChatProjects();
   const {
@@ -72,12 +73,16 @@ export default function WorkspaceTree({
     activateTree,
     archiveTree,
     unarchiveTree,
+    pinTree,
+    unpinTree,
     renameTree,
     deleteTree,
     moveTreeToWorkspace,
     renameProject,
     archiveProject,
     unarchiveProject,
+    pinProject,
+    unpinProject,
     deleteProject,
     createThread,
     setFocusedNodeId,
@@ -85,6 +90,8 @@ export default function WorkspaceTree({
     openPaneInTree,
     toggleSelection,
     clearSelection,
+    toggleTreeSelection,
+    clearTreeSelection,
     deleteNode,
     trimNode,
     archiveNode,
@@ -227,6 +234,7 @@ export default function WorkspaceTree({
   );
 
   const anchorRef = useRef<string | null>(null);
+  const treeAnchorRef = useRef<string | null>(null);
   const [menu, setMenu] = useState<
     { x: number; y: number; targetId: string; project: Project } | null
   >(null);
@@ -437,6 +445,36 @@ export default function WorkspaceTree({
       prefs.sidebarExpanded,
       setPref,
     ],
+  );
+
+  const selectThread = useCallback(
+    (treeId: string, project: Project, event: React.MouseEvent) => {
+      if (event.metaKey || event.ctrlKey) {
+        event.preventDefault();
+        toggleTreeSelection(treeId);
+        treeAnchorRef.current = treeId;
+        return;
+      }
+      if (event.shiftKey && treeAnchorRef.current) {
+        event.preventDefault();
+        const normalTrees = project.trees.filter((t) => t.kind !== 'merge');
+        const sorted = sortTrees(normalTrees, project.activeTreeId);
+        const visible = sorted.filter((t) => !t.archivedAt && isAlive(t.rootNodeId));
+        const ids = visible.map((t) => t.id);
+        const a = ids.indexOf(treeAnchorRef.current);
+        const b = ids.indexOf(treeId);
+        if (a === -1 || b === -1) return;
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const range = ids.slice(lo, hi + 1);
+        for (const rid of range) {
+          if (!treeSelection.has(rid)) toggleTreeSelection(rid);
+        }
+        return;
+      }
+      if (treeSelection.size > 0) clearTreeSelection();
+      treeAnchorRef.current = treeId;
+    },
+    [isAlive, treeSelection, toggleTreeSelection, clearTreeSelection],
   );
 
   // Reveal the focused pane in the sidebar: expand the owning workspace,
@@ -681,6 +719,8 @@ export default function WorkspaceTree({
             },
             archiveTree,
             unarchiveTree,
+            pinTree,
+            unpinTree,
             renameTree: (treeId, name) => renameTree(treeId, name, project.id),
             deleteTree,
             moveTreeToWorkspace: (treeId, targetProjectId) => {
@@ -691,10 +731,13 @@ export default function WorkspaceTree({
             renameProject,
             archiveProject,
             unarchiveProject,
+            pinProject,
+            unpinProject,
             deleteProject,
             selectBranch,
             branchContextMenu,
             selectThreadRoot,
+            selectThread,
           }}
         />
         {wsExpanded && mergeGroups.length > 0 && (

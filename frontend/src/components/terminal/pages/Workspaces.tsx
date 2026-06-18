@@ -216,6 +216,8 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
     renameProject,
     archiveProject,
     unarchiveProject,
+    pinProject,
+    unpinProject,
   } = useChatStore();
   const nodesSnapshot = useChatNodesSnapshot();
   const streamingIds = useStructuralSelector(
@@ -247,6 +249,8 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
         actions: {
           archiveProject,
           unarchiveProject,
+          pinProject,
+          unpinProject,
           deleteProject,
           beginInlineRename: (id) => setRenamingId(id),
           openManageWorkspace: (id) => {
@@ -256,7 +260,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
         },
       }),
     );
-  }, [menu, projects, archiveProject, unarchiveProject, deleteProject, onNav]);
+  }, [menu, projects, archiveProject, unarchiveProject, pinProject, unpinProject, deleteProject, onNav]);
 
   const [query, setQuery] = React.useState('');
 

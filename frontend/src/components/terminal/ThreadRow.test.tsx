@@ -35,6 +35,8 @@ function renderThreadRow(overrides: Partial<React.ComponentProps<typeof ThreadRo
     activateTree: vi.fn(),
     archiveTree: vi.fn(),
     unarchiveTree: vi.fn(),
+    pinTree: vi.fn(),
+    unpinTree: vi.fn(),
     renameTree: vi.fn(),
     deleteTree: vi.fn(),
   };

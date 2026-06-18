@@ -431,6 +431,8 @@ export interface Project {
   deletedAt?: number;
   /** Presence means archived. Hidden from main sidebar list, lives under a collapsed section. */
   archivedAt?: number;
+  /** Presence means pinned to top of sidebar. */
+  pinnedAt?: number;
   /** Per-workspace toggle for AI to use list_threads / search_messages / read_node tools. Default true. */
   aiGlobalContext?: boolean;
   /** Per-workspace system-prompt addendum. Edited via the manage page's
@@ -743,6 +745,8 @@ export interface ChatContextValue {
   unarchiveTree: (treeId: string) => void;
   pinTree: (treeId: string) => void;
   unpinTree: (treeId: string) => void;
+  pinProject: (projectId: string) => void;
+  unpinProject: (projectId: string) => void;
   renameTree: (treeId: string, name: string, targetProjectId?: string) => void;
   deleteTree: (treeId: string) => void;
   activateTree: (treeId: string, targetProjectId?: string) => void;
@@ -873,6 +877,10 @@ export type ChatActionsValue = Pick<
   | 'createThread'
   | 'archiveTree'
   | 'unarchiveTree'
+  | 'pinTree'
+  | 'unpinTree'
+  | 'pinProject'
+  | 'unpinProject'
   | 'renameTree'
   | 'deleteTree'
   | 'activateTree'

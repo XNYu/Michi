@@ -221,11 +221,12 @@ export function serializeWorkspaceRow(project: Project) {
     // /workspaces/:id/sync forwards settings straight to saveWorkspace, which
     // stores it as a TEXT column — pass a serialized JSON string (or null).
     settings: Object.keys(settings).length > 0 ? JSON.stringify(settings) : null,
-    // Soft-delete + archive timestamps live on the row so a "deleted"
+    // Soft-delete + archive + pin timestamps live on the row so a "deleted"
     // workspace stays in the trash across restarts. Always emit (number or
     // null) so restore clears the column instead of leaving stale state.
     deleted_at: project.deletedAt ?? null,
     archived_at: project.archivedAt ?? null,
+    pinned_at: project.pinnedAt ?? null,
   };
 }
 

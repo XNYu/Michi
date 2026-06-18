@@ -416,6 +416,7 @@ export function hydrateBackendWorkspaces(
       contexts,
       deletedAt: asOptionalNumber(workspace.deleted_at),
       archivedAt: asOptionalNumber(workspace.archived_at),
+      pinnedAt: asOptionalNumber(workspace.pinned_at),
       aiGlobalContext,
       instructions,
     };

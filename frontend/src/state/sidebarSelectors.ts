@@ -137,28 +137,32 @@ export function subtreeOpenState(
 /**
  * Sort live workspaces (not deleted, not archived) for the sidebar.
  *
- * Layout: projects not in `workspaceOrder` render first, sorted by
- * `createdAt` DESC (newest at top — so any freshly-created workspace
- * floats above the explicit drag-saved order). Projects present in
- * `workspaceOrder` render after, in the user's explicit drag order.
- * Stale IDs in `workspaceOrder` (referencing a deleted/archived/unknown
- * project) are ignored at sort time so the caller doesn't have to prune
- * them eagerly.
+ * Layout: pinned workspaces first (most recently pinned at top), then
+ * projects not in `workspaceOrder` sorted by `createdAt` DESC (newest at
+ * top — so any freshly-created workspace floats above the explicit
+ * drag-saved order). Projects present in `workspaceOrder` render after,
+ * in the user's explicit drag order. Stale IDs in `workspaceOrder`
+ * (referencing a deleted/archived/unknown project) are ignored at sort
+ * time so the caller doesn't have to prune them eagerly.
  */
 export function sortLiveProjects(
   projects: readonly Project[],
   workspaceOrder: readonly string[],
 ): Project[] {
   const live = projects.filter((p) => !p.deletedAt && !p.archivedAt);
+  const pinned = live
+    .filter((p) => !!p.pinnedAt)
+    .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
+  const unpinned = live.filter((p) => !p.pinnedAt);
   const orderIndex = new Map<string, number>();
   workspaceOrder.forEach((id, i) => orderIndex.set(id, i));
-  const unknown = live
+  const unknown = unpinned
     .filter((p) => !orderIndex.has(p.id))
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  const known = live
+  const known = unpinned
     .filter((p) => orderIndex.has(p.id))
     .sort((a, b) => orderIndex.get(a.id)! - orderIndex.get(b.id)!);
-  return [...unknown, ...known];
+  return [...pinned, ...unknown, ...known];
 }
 
 export interface MergeReferenceGroup {

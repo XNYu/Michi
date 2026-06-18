@@ -32,6 +32,8 @@ interface Actions {
   createThread: () => void;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
+  pinTree: (treeId: string) => void;
+  unpinTree: (treeId: string) => void;
   renameTree: (treeId: string, name: string) => void;
   deleteTree: (treeId: string) => void;
   moveTreeToWorkspace: (treeId: string, targetProjectId: string) => void;
@@ -39,6 +41,8 @@ interface Actions {
   archiveProject: (projectId: string) => void;
   unarchiveProject: (projectId: string) => void;
   deleteProject: (projectId: string) => void;
+  pinProject: (projectId: string) => void;
+  unpinProject: (projectId: string) => void;
   /** Plain click + modifier-aware click on a branch row. */
   selectBranch: (nodeId: string, event: React.MouseEvent) => void;
   /** Right-click on a branch row. */
@@ -46,6 +50,8 @@ interface Actions {
   /** Click on a thread row body — opens + focuses that thread's root node,
    *  with cross-thread/workspace routing equivalent to `selectBranch`. */
   selectThreadRoot: (tree: Tree, project: Project) => void;
+  /** Modifier-aware click on a thread row — handles ⌘/⇧ multi-selection. */
+  selectThread: (treeId: string, project: Project, event: React.MouseEvent) => void;
 }
 
 function toMenuSections(sections: ContextMenuSection[]): MenuSection[] {
@@ -161,6 +167,8 @@ export default function WorkspaceRow({
           actions: {
             archiveProject: actions.archiveProject,
             unarchiveProject: actions.unarchiveProject,
+            pinProject: actions.pinProject,
+            unpinProject: actions.unpinProject,
             deleteProject: actions.deleteProject,
             beginInlineRename: () => beginRename(),
             openManageWorkspace: (projectId) => {
@@ -376,6 +384,21 @@ export default function WorkspaceRow({
               >
                 {project.name}
               </span>
+              {project.pinnedAt && (
+                <svg
+                  aria-label="pinned"
+                  width="9"
+                  height="9"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                  style={{ color: 'var(--term-pin, #c48300)', flexShrink: 0 }}
+                >
+                  <path d="M8 1.5l1.9 4 4.4.5-3.3 3 .9 4.3L8 11.3 4.1 13.3 5 9 1.7 6l4.4-.5L8 1.5z" />
+                </svg>
+              )}
               <span
                 className="ws-hover-chevron"
                 aria-hidden
@@ -589,7 +612,12 @@ function renderThread(args: {
         hasBranches={hasBranches}
         expanded={threadOpen}
         openState={threadOpenStateValue}
-        onActivate={() => {
+        onActivate={(e?: React.MouseEvent) => {
+          // ⌘/⇧+click are pure selection ops — don't activate or toggle.
+          if (e && (e.metaKey || e.ctrlKey || e.shiftKey)) {
+            actions.selectThread(tree.id, project, e);
+            return;
+          }
           // Always route through selectThreadRoot so the root node is opened
           // and focused — even when this thread is already active. Without
           // this, after the sidebar focus has been moved to a branch via
@@ -611,6 +639,8 @@ function renderThread(args: {
           activateTree: actions.activateTree,
           archiveTree: actions.archiveTree,
           unarchiveTree: actions.unarchiveTree,
+          pinTree: actions.pinTree,
+          unpinTree: actions.unpinTree,
           renameTree: actions.renameTree,
           deleteTree: actions.deleteTree,
           moveTreeToWorkspace: actions.moveTreeToWorkspace,

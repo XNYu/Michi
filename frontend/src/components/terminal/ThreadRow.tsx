@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useChatActions, useChatNode, useChatProjects, useStructuralSelector } from '../../state/chatStore';
+import { useChatNode, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { Row, RowKebab } from './primitives';
 import ContextMenu from '../ContextMenu';
 import MoveThreadDialog from '../MoveThreadDialog';
@@ -28,6 +28,8 @@ interface Actions {
   activateTree: (treeId: string) => void;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
+  pinTree: (treeId: string) => void;
+  unpinTree: (treeId: string) => void;
   renameTree: (treeId: string, name: string) => void;
   deleteTree: (treeId: string) => void;
   /** Optional — wire only when there are other live workspaces to move to. */
@@ -46,8 +48,9 @@ interface Props {
   hasBranches: boolean;
   /** Whether the thread's branches are currently shown. */
   expanded: boolean;
-  /** Click on the row body — activates the thread (does not toggle). */
-  onActivate: () => void;
+  /** Click on the row body — activates the thread (does not toggle).
+   *  Receives the click event so the parent can inspect modifiers. */
+  onActivate: (e?: React.MouseEvent) => void;
   /** Click on the chevron — toggles expand (does not activate). */
   onToggleExpand: () => void;
   actions: Actions;
@@ -71,7 +74,6 @@ export default function ThreadRow({
   moveTargets,
 }: Props) {
   const { treeSelection, focusedNodeId, projects } = useChatProjects();
-  const { toggleTreeSelection } = useChatActions();
   const selected = treeSelection.has(tree.id);
   const n = useChatNode(tree.rootNodeId);
   const projectEdges = projects.find((p) => p.id === projectId)?.edges ?? [];
@@ -133,6 +135,8 @@ export default function ThreadRow({
             activateTree: actions.activateTree,
             archiveTree: actions.archiveTree,
             unarchiveTree: actions.unarchiveTree,
+            pinTree: actions.pinTree,
+            unpinTree: actions.unpinTree,
             renameTree: actions.renameTree,
             deleteTree: actions.deleteTree,
             exportTree,
@@ -156,12 +160,7 @@ export default function ThreadRow({
         active={isActive || selected}
         onClick={(e) => {
           if (renaming) return;
-          if (e.metaKey || e.ctrlKey) {
-            e.preventDefault();
-            toggleTreeSelection(tree.id);
-            return;
-          }
-          onActivate();
+          onActivate(e);
         }}
         onContextMenu={(e) => {
           e.preventDefault();

@@ -31,6 +31,7 @@ export interface WorkspaceRow {
    *  The route layer sets this to req.user.id on INSERT in cloud mode.
    *  Desktop mode: always null / ignored. */
   owner_user_id?: string | null;
+  pinned_at?: number | null;
   /** Tombstone — Unix ms when this workspace was permanently purged. Non-null
    *  rows are filtered out of reads and refused on write so a stale POST /sync
    *  from another tab cannot resurrect them. GC'd by `runTombstoneGc()` after
@@ -210,15 +211,15 @@ export function saveWorkspace(ws: WorkspaceRow): void {
   if (existing && existing.purged_at !== null) return;
 
   getDb().prepare(`
-    INSERT INTO workspaces (id, name, cwd, active_tree_id, created_at, updated_at, settings, deleted_at, archived_at, backend, owner_user_id)
-    VALUES (@id, @name, @cwd, @active_tree_id, @created_at, @updated_at, @settings, @deleted_at, @archived_at, @backend, @owner_user_id)
+    INSERT INTO workspaces (id, name, cwd, active_tree_id, created_at, updated_at, settings, deleted_at, archived_at, pinned_at, backend, owner_user_id)
+    VALUES (@id, @name, @cwd, @active_tree_id, @created_at, @updated_at, @settings, @deleted_at, @archived_at, @pinned_at, @backend, @owner_user_id)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, cwd=excluded.cwd,
       active_tree_id=excluded.active_tree_id, updated_at=excluded.updated_at, settings=excluded.settings,
-      deleted_at=excluded.deleted_at, archived_at=excluded.archived_at,
+      deleted_at=excluded.deleted_at, archived_at=excluded.archived_at, pinned_at=excluded.pinned_at,
       backend=excluded.backend,
       owner_user_id=COALESCE(excluded.owner_user_id, workspaces.owner_user_id)
-  `).run({ cwd: null, active_tree_id: null, settings: null, deleted_at: null, archived_at: null, backend: 'kiro', owner_user_id: null, ...ws });
+  `).run({ cwd: null, active_tree_id: null, settings: null, deleted_at: null, archived_at: null, pinned_at: null, backend: 'kiro', owner_user_id: null, ...ws });
 }
 
 /**
