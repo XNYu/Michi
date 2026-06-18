@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PALETTES } from '../components/terminal/tokens';
 
 export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
@@ -50,6 +50,8 @@ export interface Prefs {
   messageFont: MessageFont;
   /** Body text size for chat messages (user + assistant). Drives --message-body-size. */
   messageFontSize: number;
+  /** Font size for the composer input area. Drives --composer-body-size. */
+  composerFontSize: number;
   /** Assistant code-block chrome. Drives the `data-code-block` attribute on
    *  <html>; the visual treatment lives in index.css (`.michi-code-*`). */
   codeBlockStyle: CodeBlockStyle;
@@ -109,6 +111,7 @@ export const DEFAULT_PREFS: Prefs = {
   uiFont: 'Geist',
   messageFont: 'Source Serif 4',
   messageFontSize: 15,
+  composerFontSize: 15,
   codeBlockStyle: 'header',
   codeWrap: false,
   terminalDensity: 'dense',
@@ -182,6 +185,9 @@ function readInitial(): Prefs {
     if (typeof merged.messageFontSize !== 'number' || merged.messageFontSize < 11 || merged.messageFontSize > 28) {
       merged.messageFontSize = DEFAULT_PREFS.messageFontSize;
     }
+    if (typeof merged.composerFontSize !== 'number' || merged.composerFontSize < 11 || merged.composerFontSize > 28) {
+      merged.composerFontSize = DEFAULT_PREFS.composerFontSize;
+    }
     if (merged.codeBlockStyle !== 'hairline' && merged.codeBlockStyle !== 'header') {
       merged.codeBlockStyle = DEFAULT_PREFS.codeBlockStyle;
     }
@@ -234,6 +240,9 @@ const PrefsContext = createContext<PrefsContextValue | null>(null);
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState<Prefs>(readInitial);
 
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handle = setTimeout(() => {
@@ -248,6 +257,17 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const flush = () => {
+      try {
+        window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefsRef.current));
+      } catch { /* best-effort */ }
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     document.documentElement.setAttribute('data-terminal-palette', prefs.terminalPalette);
   }, [prefs.terminalPalette]);
 
@@ -255,6 +275,11 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined') return;
     document.documentElement.style.setProperty('--message-body-size-base', `${prefs.messageFontSize}px`);
   }, [prefs.messageFontSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    document.documentElement.style.setProperty('--composer-body-size', `${prefs.composerFontSize}px`);
+  }, [prefs.composerFontSize]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -332,6 +357,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       uiFont: DEFAULT_PREFS.uiFont,
       messageFont: DEFAULT_PREFS.messageFont,
       messageFontSize: DEFAULT_PREFS.messageFontSize,
+      composerFontSize: DEFAULT_PREFS.composerFontSize,
       codeBlockStyle: DEFAULT_PREFS.codeBlockStyle,
       codeWrap: DEFAULT_PREFS.codeWrap,
       terminalDensity: DEFAULT_PREFS.terminalDensity,

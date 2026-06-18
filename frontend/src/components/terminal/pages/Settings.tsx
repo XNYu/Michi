@@ -1374,6 +1374,23 @@ function AppearancePane() {
         </div>
       </Row>
 
+      <Row k="theme.composerFontSize" label="Composer size">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input
+            type="range"
+            min={12}
+            max={22}
+            step={0.5}
+            value={prefs.composerFontSize}
+            onChange={(e) => setPref('composerFontSize', Number(e.target.value))}
+            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+          />
+          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+            {prefs.composerFontSize}px
+          </span>
+        </div>
+      </Row>
+
       <Row k="theme.codeBlock" label="Code block">
         <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
           {CODE_BLOCK_OPTIONS.map((o, i) => {

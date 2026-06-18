@@ -1900,13 +1900,13 @@ body {
 .mention-editor-host { position: relative; flex: 1; min-width: 0; }
 .mention-editor-host .ProseMirror {
   outline: none;
-  min-height: calc(var(--message-body-size) * var(--message-body-leading) * 1.5);
-  max-height: calc(var(--message-body-size) * var(--message-body-leading) * 6);
+  min-height: calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 1.5);
+  max-height: calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 6);
   overflow-y: auto;
   box-sizing: border-box;
   width: 100%;
   font-family: var(--message-latin-font), var(--message-cjk-font);
-  font-size: var(--message-body-size);
+  font-size: var(--composer-body-size, var(--message-body-size));
   line-height: var(--message-body-leading);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1921,7 +1921,7 @@ body {
   padding-right: 30px;
 }
 .mention-editor-host.is-expanded .ProseMirror {
-  max-height: min(50vh, calc(var(--message-body-size) * var(--message-body-leading) * 18));
+  max-height: min(50vh, calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 18));
   scrollbar-width: thin;
   scrollbar-color: var(--term-line) transparent;
 }

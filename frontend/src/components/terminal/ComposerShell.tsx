@@ -149,7 +149,7 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
               color: 'var(--term-accent)',
               fontFamily:
                 'var(--message-latin-font, var(--ui-font)), var(--message-cjk-font, sans-serif)',
-              fontSize: 'var(--message-body-size, 12.5px)',
+              fontSize: 'var(--composer-body-size, var(--message-body-size, 12.5px))',
               lineHeight: 'var(--message-body-leading, 19px)',
               flexShrink: 0,
               userSelect: 'none',
