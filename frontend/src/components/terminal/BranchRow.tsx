@@ -4,6 +4,7 @@ import { Row, RowKebab } from './primitives';
 import { Chevron } from './ThreadRow';
 import type { TreeNode } from '../../state/tree';
 import { isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
+import { relativeTime } from '../../lib/relativeTime';
 
 interface Props {
   /** This branch node and its descendants. */
@@ -54,6 +55,7 @@ export default function BranchRow({
     n?.title ||
     n?.messages.find((m) => m.role === 'user')?.text.slice(0, 40) ||
     'Untitled';
+  const nodeUpdatedAt = n?.lastAssistantAt ?? n?.messages[n.messages.length - 1]?.createdAt ?? 0;
   const focused = isFocused(node.nodeId);
   const selected = isSelected(node.nodeId);
   const menuOpen = !!isMenuTarget?.(node.nodeId);
@@ -136,6 +138,11 @@ export default function BranchRow({
         >
           {title}
         </span>
+        {nodeUpdatedAt > 0 && (
+          <span style={{ color: 'var(--term-faint)', fontSize: 11, flexShrink: 0 }}>
+            {relativeTime(nodeUpdatedAt)}
+          </span>
+        )}
         {selected && (
           <span style={{ color: 'var(--term-select)', fontSize: 11, fontWeight: 700 }}>
             ✓
