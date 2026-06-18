@@ -48,7 +48,7 @@ function MessageActions({
   onCopy: () => void;
   onRetry?: () => void;
   onEdit?: () => void;
-  usageInfo?: { durationMs: number; credits: number; ctxPercent?: number } | null;
+  usageInfo?: { durationMs: number; credits: number } | null;
 }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
@@ -130,7 +130,6 @@ function MessageActions({
         <span style={{ fontSize: 10, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
           {(usageInfo.durationMs / 1000).toFixed(1)}s
           {usageInfo.credits > 0 && ` · ${usageInfo.credits.toFixed(2)} credits`}
-          {usageInfo.ctxPercent != null && ` · ctx ${usageInfo.ctxPercent.toFixed(0)}%`}
         </span>
       )}
     </div>
@@ -570,7 +569,7 @@ interface MessageBlockProps {
   showThoughts: boolean;
   fontFamily: string;
   density: TerminalDensity;
-  usageInfo?: { durationMs: number; credits: number; ctxPercent?: number } | null;
+  usageInfo?: { durationMs: number; credits: number } | null;
   isErrorTail?: boolean;
   errorMessage?: string;
   subagents?: readonly SubagentInfo[];
@@ -856,7 +855,7 @@ function usageEqual(
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
-  return a.durationMs === b.durationMs && a.credits === b.credits && a.ctxPercent === b.ctxPercent;
+  return a.durationMs === b.durationMs && a.credits === b.credits;
 }
 
 function childAnchorsEqual(

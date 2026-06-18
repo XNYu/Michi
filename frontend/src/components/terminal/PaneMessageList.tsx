@@ -138,7 +138,6 @@ function PaneMessageListInner({
                     ? {
                         durationMs: node.usageSummary.turnDurationMs,
                         credits: node.usageSummary.totalCredits,
-                        ctxPercent: node.contextUsagePercentage ?? undefined,
                       }
                     : undefined
                 }
