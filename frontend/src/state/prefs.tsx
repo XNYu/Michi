@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PALETTES } from '../components/terminal/tokens';
+import { fetchPrefs, savePrefs } from '../services/api';
 
 export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
@@ -239,9 +240,21 @@ const PrefsContext = createContext<PrefsContextValue | null>(null);
 
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState<Prefs>(readInitial);
+  const hydratedFromBackend = useRef(false);
 
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+
+  useEffect(() => {
+    if (hydratedFromBackend.current) return;
+    hydratedFromBackend.current = true;
+    const hadLocal = !!window.localStorage.getItem(PREFS_KEY);
+    fetchPrefs().then((remote) => {
+      if (!remote) return;
+      if (hadLocal) return;
+      setPrefs({ ...DEFAULT_PREFS, ...remote } as Prefs);
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -251,6 +264,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn('prefs persist failed:', err);
       }
+      savePrefs(prefs as unknown as Record<string, unknown>);
     }, 500);
     return () => clearTimeout(handle);
   }, [prefs]);

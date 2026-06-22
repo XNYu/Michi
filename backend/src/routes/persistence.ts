@@ -470,5 +470,28 @@ export function setupPersistenceRoutes(): express.Router {
     }
   });
 
+  // ── User preferences (survives port changes across restarts) ─────────────
+  router.get('/prefs', (req, res) => {
+    try {
+      const db = getDb();
+      const row = db.prepare("SELECT value FROM meta WHERE key = 'user_prefs'").get() as { value: string } | undefined;
+      if (!row) return res.json({ prefs: null });
+      res.json({ prefs: JSON.parse(row.value) });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.put('/prefs', (req, res) => {
+    try {
+      const db = getDb();
+      const json = JSON.stringify(req.body);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('user_prefs', ?)").run(json);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return router;
 }
