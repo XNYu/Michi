@@ -752,6 +752,7 @@ export default function WorkspaceTree({
             isAlive={isAlive}
             onSelectMergeNode={onSelectMergeNode}
             onSelectMergeSource={onSelectMergeSource}
+            onContextMenu={branchContextMenu}
           />
         )}
       </React.Fragment>
@@ -873,6 +874,7 @@ function MergedGroupsSection({
   isAlive,
   onSelectMergeNode,
   onSelectMergeSource,
+  onContextMenu,
 }: {
   project: Project;
   mergeGroups: MergeGroup[];
@@ -883,6 +885,7 @@ function MergedGroupsSection({
   isAlive: (nodeId: string) => boolean;
   onSelectMergeNode: (nodeId: string) => void;
   onSelectMergeSource: (nodeId: string) => void;
+  onContextMenu: (nodeId: string, event: React.MouseEvent) => void;
 }) {
   const [showAllMerged, setShowAllMerged] = useState(false);
   const visibleGroups = mergeGroups.filter((g) => nodesSnapshot[g.mergeNodeId]);
@@ -910,6 +913,7 @@ function MergedGroupsSection({
             <Row
               active={isFocused}
               onClick={() => onSelectMergeNode(g.mergeNodeId)}
+              onContextMenu={(e: React.MouseEvent) => onContextMenu(g.mergeNodeId, e)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -955,6 +959,7 @@ function MergedGroupsSection({
                   key={`src-${sid}`}
                   active={focused}
                   onClick={() => { if (!deleted) onSelectMergeSource(sid); }}
+                  onContextMenu={(e: React.MouseEvent) => { if (!deleted) onContextMenu(sid, e); }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -996,6 +1001,7 @@ function MergedGroupsSection({
                   key={`child-${cid}`}
                   active={focused}
                   onClick={() => onSelectMergeSource(cid)}
+                  onContextMenu={(e: React.MouseEvent) => onContextMenu(cid, e)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
