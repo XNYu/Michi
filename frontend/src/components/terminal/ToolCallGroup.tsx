@@ -282,12 +282,52 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
               margin: 0,
             }}
           >
-            {tab === 'input' ? (t.inputJson ?? '') : (t.output ?? '')}
+            {tab === 'input' ? formatToolPayload(t.inputJson ?? '') : formatToolPayload(t.output ?? '')}
           </pre>
         </div>
       )}
     </div>
   );
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function cleanJsonValues(obj: unknown): unknown {
+  if (typeof obj === 'string' && /<[a-z][\s\S]*>/i.test(obj)) {
+    return stripHtml(obj);
+  }
+  if (Array.isArray(obj)) return obj.map(cleanJsonValues);
+  if (obj && typeof obj === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = cleanJsonValues(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
+function formatToolPayload(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    const cleaned = cleanJsonValues(parsed);
+    return JSON.stringify(cleaned, null, 2);
+  } catch {
+    return raw;
+  }
 }
 
 function clampText(text: string | undefined, max: number): string | undefined {
