@@ -506,6 +506,7 @@ export type ChatAction =
   | { type: 'node-viewed'; nodeId: string; viewedAt: number }
   | { type: 'mark-all-read'; viewedAt: number }
   | { type: 'set-title'; nodeId: string; title: string }
+  | { type: 'rename-node'; nodeId: string; title: string }
   | { type: 'set-follow-ups'; nodeId: string; followUps: string[] }
   | { type: 'follow-ups-status'; nodeId: string; status: 'in_progress' | 'completed' | 'failed' }
   | { type: 'set-commands'; nodeId: string; commands: AgentCommand[] }
@@ -813,6 +814,7 @@ export interface ChatContextValue {
   /** Mark every unread chat thread as read in one pass (clears the unread
    *  filter list). Digest nodes keep their own read model and are untouched. */
   markAllRead: () => void;
+  renameNode: (nodeId: string, title: string) => void;
 }
 
 /** Projects + UI-state slice of the chat store — every field that is NOT
@@ -905,6 +907,7 @@ export type ChatActionsValue = Pick<
   | 'reorderPane'
   | 'setUnreadFilterOn'
   | 'markAllRead'
+  | 'renameNode'
 > & {
   /**
    * Synchronous node-state dispatcher — bypasses async session plumbing

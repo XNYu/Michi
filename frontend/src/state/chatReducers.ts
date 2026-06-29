@@ -776,6 +776,13 @@ export function reduceNodes(
       if (n.kind === 'chat' && n.title && n.title.trim().length > 0) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, title: next } };
     }
+    case 'rename-node': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      const next = action.title.trim();
+      if (!next || n.title === next) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, title: next } };
+    }
     case 'set-follow-ups': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;

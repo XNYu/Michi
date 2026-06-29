@@ -99,6 +99,7 @@ export default function WorkspaceTree({
     createMergedChat,
     createDigest,
     markAllRead,
+    renameNode,
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
   const nodesSnapshot = useChatNodesSnapshot();
@@ -112,6 +113,7 @@ export default function WorkspaceTree({
     [projects],
   );
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [dragSourceId, setDragSourceId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [collapsedMergeGroups, setCollapsedMergeGroups] = useState<ReadonlySet<string>>(() => new Set());
@@ -590,6 +592,10 @@ export default function WorkspaceTree({
             setFocusedNodeId(id);
             onActivate?.();
           },
+          beginInlineRename: (id) => {
+            setMenu(null);
+            setRenamingNodeId(id);
+          },
         },
       })
     : [];
@@ -739,6 +745,9 @@ export default function WorkspaceTree({
             selectThreadRoot,
             selectThread,
           }}
+          renamingNodeId={renamingNodeId}
+          onRenameNode={renameNode}
+          onRenameEnd={() => setRenamingNodeId(null)}
         />
         {wsExpanded && mergeGroups.length > 0 && (
           <MergedGroupsSection

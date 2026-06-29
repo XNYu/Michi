@@ -27,6 +27,8 @@ export interface TreeMenuActions {
   archiveTree: (treeId: string) => void;
   /** Open the pane for the given node (called after creating a digest). */
   focusOrOpen: (id: string) => void;
+  /** Begin inline rename for a node. */
+  beginInlineRename?: (id: string) => void;
 }
 
 /**
@@ -178,6 +180,12 @@ export function buildTreeContextMenu({
           label: 'Open in pane',
           keys: 'O',
           run: () => actions.openPane(targetId),
+        },
+        {
+          id: 'rename',
+          label: 'Rename…',
+          keys: 'R',
+          run: () => actions.beginInlineRename?.(targetId),
         },
         {
           id: 'branch',

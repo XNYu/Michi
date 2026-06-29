@@ -944,6 +944,15 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     dispatch({ type: 'mark-all-read', viewedAt: Date.now() });
   }, [dispatch]);
 
+  const renameNode = useCallback(
+    (nodeId: string, title: string) => {
+      const trimmed = title.trim();
+      if (!trimmed) return;
+      dispatch({ type: 'rename-node', nodeId, title: trimmed });
+    },
+    [dispatch],
+  );
+
   const newNodeId = useCallback(
     () => `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     [],
@@ -2171,6 +2180,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       unreadFilterOn,
       setUnreadFilterOn,
       markAllRead,
+      renameNode,
     }),
     [
       projects,
@@ -2274,6 +2284,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       unreadFilterOn,
       setUnreadFilterOn,
       markAllRead,
+      renameNode,
     ],
   );
 
@@ -2338,6 +2349,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       reorderPane,
       setUnreadFilterOn,
       markAllRead,
+      renameNode,
       dispatch,
     }),
     [
@@ -2400,6 +2412,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       reorderPane,
       setUnreadFilterOn,
       markAllRead,
+      renameNode,
       dispatch,
     ],
   );

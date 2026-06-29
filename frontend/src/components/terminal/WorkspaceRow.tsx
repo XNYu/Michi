@@ -101,6 +101,12 @@ interface Props {
   dnd?: WorkspaceRowDndProps;
   /** When true (filter mode), force-expand the workspace and show only unread threads. */
   forceExpand?: boolean;
+  /** The nodeId currently in inline-rename mode (or null). */
+  renamingNodeId?: string | null;
+  /** Commit a node rename. */
+  onRenameNode?: (nodeId: string, title: string) => void;
+  /** Clear the renaming state. */
+  onRenameEnd?: () => void;
 }
 
 export default function WorkspaceRow({
@@ -120,6 +126,9 @@ export default function WorkspaceRow({
   actions,
   dnd,
   forceExpand = false,
+  renamingNodeId,
+  onRenameNode,
+  onRenameEnd,
 }: Props) {
   const { prefs } = usePrefs();
   const accent = workspaceAccent(project.id);
@@ -516,6 +525,9 @@ export default function WorkspaceRow({
               actions,
               getNodeOpenState,
               getSubtreeOpenState,
+              renamingNodeId,
+              onRenameNode,
+              onRenameEnd,
             }),
           )}
           {!forceExpand && filteredLiveTrees.length > THREAD_PREVIEW_LIMIT && (
@@ -581,6 +593,9 @@ function renderThread(args: {
   getNodeOpenState: (nodeId: string) => OpenState;
   getSubtreeOpenState: (rootId: string) => OpenState;
   moveTargets?: readonly { id: string; name: string }[];
+  renamingNodeId?: string | null;
+  onRenameNode?: (nodeId: string, title: string) => void;
+  onRenameEnd?: () => void;
 }) {
   const {
     tree,
@@ -598,6 +613,9 @@ function renderThread(args: {
     getNodeOpenState,
     getSubtreeOpenState,
     moveTargets,
+    renamingNodeId,
+    onRenameNode,
+    onRenameEnd,
   } = args;
   const isActive = tree.id === activeTreeId && project.id === activeProjectId;
   const root = buildTree(tree.rootNodeId, edges, isNodeAlive);
@@ -664,6 +682,9 @@ function renderThread(args: {
               onContextMenu={actions.branchContextMenu}
               openState={getNodeOpenState(child.nodeId)}
               getOpenState={getNodeOpenState}
+              renamingNodeId={renamingNodeId}
+              onRenameNode={onRenameNode}
+              onRenameEnd={onRenameEnd}
             />
           ))}
         </div>

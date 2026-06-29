@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useChatNode, useChatProjects } from '../../state/chatStore';
 import { Row, RowKebab } from './primitives';
 import { Chevron } from './ThreadRow';
@@ -33,6 +33,12 @@ interface Props {
   openState: OpenState;
   /** Resolves openState for any descendant (called per child during recursion). */
   getOpenState: (nodeId: string) => OpenState;
+  /** The nodeId currently in inline-rename mode (or null). */
+  renamingNodeId?: string | null;
+  /** Commit a node rename. */
+  onRenameNode?: (nodeId: string, title: string) => void;
+  /** Clear the renaming state. */
+  onRenameEnd?: () => void;
 }
 
 export default function BranchRow({
@@ -48,6 +54,9 @@ export default function BranchRow({
   onContextMenu,
   openState,
   getOpenState,
+  renamingNodeId,
+  onRenameNode,
+  onRenameEnd,
 }: Props) {
   const n = useChatNode(node.nodeId);
   const hasChildren = node.children.length > 0;
@@ -61,6 +70,39 @@ export default function BranchRow({
   const menuOpen = !!isMenuTarget?.(node.nodeId);
   const { focusedNodeId } = useChatProjects();
   const unread = !!n && isNodeUnread(n, focusedNodeId);
+
+  const renaming = renamingNodeId === node.nodeId;
+  const [draftName, setDraftName] = useState('');
+  const renameRef = useRef<HTMLInputElement>(null);
+  const suppressBlurRef = useRef(false);
+
+  useEffect(() => {
+    if (!renaming) return;
+    setDraftName(title);
+    // Small delay so the input is mounted before focus
+    requestAnimationFrame(() => {
+      renameRef.current?.focus();
+      renameRef.current?.select();
+    });
+  }, [renaming]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitRename = () => {
+    if (suppressBlurRef.current) {
+      suppressBlurRef.current = false;
+      return;
+    }
+    const trimmed = draftName.trim();
+    if (trimmed && trimmed !== title) {
+      onRenameNode?.(node.nodeId, trimmed);
+    }
+    onRenameEnd?.();
+  };
+
+  const cancelRename = () => {
+    suppressBlurRef.current = true;
+    setDraftName(title);
+    onRenameEnd?.();
+  };
 
   const openMenuAt = (clientX: number, clientY: number) => {
     // Reuse the upstream branch context menu handler. It only reads
@@ -77,6 +119,7 @@ export default function BranchRow({
         data-sidebar-row={node.nodeId}
         active={focused || selected}
         onClick={(e) => {
+          if (renaming) return;
           // Capture focus state BEFORE selecting so the toggle decision
           // reflects the highlight state at click time, not after.
           const wasFocused = focused;
@@ -127,17 +170,43 @@ export default function BranchRow({
             onToggle(node.nodeId);
           }}
         />
-        <span
-          style={{
-            flex: 1,
-            overflow: 'hidden',
-            whiteSpace: 'nowrap',
-            maskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
-            WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
-          }}
-        >
-          {title}
-        </span>
+        {renaming ? (
+          <input
+            ref={renameRef}
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+            }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: '1px 4px',
+              fontSize: 13.5,
+              fontFamily: 'var(--ui-font)',
+              fontWeight: 500,
+              background: 'var(--term-surface)',
+              border: '1px solid var(--term-accent)',
+              borderRadius: 3,
+              color: 'var(--term-fg)',
+              outline: 'none',
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              flex: 1,
+              overflow: 'hidden',
+              whiteSpace: 'nowrap',
+              maskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
+              WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
+            }}
+          >
+            {title}
+          </span>
+        )}
         {nodeUpdatedAt > 0 && (
           <span style={{ color: 'var(--term-faint)', fontSize: 11, flexShrink: 0 }}>
             {relativeTime(nodeUpdatedAt)}
@@ -198,6 +267,9 @@ export default function BranchRow({
             onContextMenu={onContextMenu}
             openState={getOpenState(child.nodeId)}
             getOpenState={getOpenState}
+            renamingNodeId={renamingNodeId}
+            onRenameNode={onRenameNode}
+            onRenameEnd={onRenameEnd}
           />
         ))}
     </>
