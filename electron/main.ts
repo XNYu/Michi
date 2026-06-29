@@ -188,8 +188,33 @@ async function findAvailablePort(): Promise<number> {
   });
 }
 
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+const PORT_FILE = path.join(os.homedir(), '.michi', 'backend-port');
+
 async function chooseBackendPort(): Promise<number> {
-  return parsePort(process.env.MICHI_PORT) ?? parsePort(process.env.PORT) ?? findAvailablePort();
+  const envPort = parsePort(process.env.MICHI_PORT) ?? parsePort(process.env.PORT);
+  if (envPort) return envPort;
+
+  // Reuse the previously persisted port so the origin stays stable and
+  // localStorage (prefs, workspace state) survives across restarts.
+  try {
+    const saved = parsePort(fs.readFileSync(PORT_FILE, 'utf8').trim());
+    if (saved && await isPortAvailable(saved)) return saved;
+  } catch { /* no saved port or unreadable — pick a new one */ }
+
+  const port = await findAvailablePort();
+  try { fs.writeFileSync(PORT_FILE, String(port), 'utf8'); } catch { /* best-effort */ }
+  return port;
 }
 
 async function waitForBackend(port: number, timeoutMs = 15_000): Promise<void> {
