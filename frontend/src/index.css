@@ -2007,9 +2007,15 @@ body {
 .mention-editor-host .ProseMirror h1 { font-size: 1.25em; }
 .mention-editor-host .ProseMirror h2 { font-size: 1.15em; }
 .mention-editor-host .ProseMirror h3 { font-size: 1.08em; }
-.mention-editor-host .ProseMirror :is(ul, ol) {
+.mention-editor-host .ProseMirror ul {
   margin: 0;
   padding-left: 1.4em;
+  list-style-type: disc;
+}
+.mention-editor-host .ProseMirror ol {
+  margin: 0;
+  padding-left: 1.4em;
+  list-style-type: decimal;
 }
 .mention-editor-host .ProseMirror blockquote {
   margin: 0;
