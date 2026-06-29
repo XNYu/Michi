@@ -408,8 +408,20 @@ export function useTreeActions({
       );
       ensurePaneSlot(project.id, treeId, tree.rootNodeId);
       if (project.id === activeProjectId) setFocusedNodeId(tree.rootNodeId);
+
+      // Mark all nodes in the activated tree as read so the thread-level
+      // unread badge clears even when child branches completed while unfocused.
+      const now = Date.now();
+      const allIds = descendants(tree.rootNodeId, project.edges);
+      allIds.add(tree.rootNodeId);
+      for (const nid of allIds) {
+        const node = nodesRef.current[nid];
+        if (node && (node.lastAssistantAt ?? 0) > (node.viewedAt ?? 0)) {
+          dispatch({ type: 'node-viewed', nodeId: nid, viewedAt: now });
+        }
+      }
     },
-    [activeProjectId, ensurePaneSlot, projects, setFocusedNodeId, setProjects],
+    [activeProjectId, dispatch, ensurePaneSlot, nodesRef, projects, setFocusedNodeId, setProjects],
   );
 
   const deleteTree = useCallback(
