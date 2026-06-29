@@ -237,14 +237,18 @@ function TermThoughtBlock({
             borderLeft: '2px solid var(--term-line)',
             color: 'var(--term-muted)',
             fontStyle: 'italic',
-            whiteSpace: 'pre-wrap',
             lineHeight: 1.5,
             marginTop: 4,
             maxHeight: THOUGHT_TAIL_MAX_HEIGHT,
             overflow: 'hidden',
           }}
         >
-          {text}
+          <MarkdownContent
+            text={text}
+            size="xs"
+            style={thoughtProseVars}
+            className="[&_a]:underline"
+          />
           {children}
         </div>
       )}
@@ -256,12 +260,16 @@ function TermThoughtBlock({
             borderLeft: '2px solid var(--term-line)',
             color: 'var(--term-muted)',
             fontStyle: 'italic',
-            whiteSpace: 'pre-wrap',
             lineHeight: 1.5,
             marginTop: 4,
           }}
         >
-          {text}
+          <MarkdownContent
+            text={text}
+            size="xs"
+            style={thoughtProseVars}
+            className="[&_a]:underline"
+          />
           {children}
         </div>
       )}
@@ -324,6 +332,14 @@ const proseVars: React.CSSProperties = {
   '--tw-prose-links': 'var(--term-accent)',
   '--tw-prose-counters': 'var(--term-mid)',
   '--tw-prose-bullets': 'var(--term-mid)',
+} as React.CSSProperties;
+
+const thoughtProseVars: React.CSSProperties = {
+  '--tw-prose-body': 'inherit',
+  '--tw-prose-headings': 'inherit',
+  '--tw-prose-bold': 'inherit',
+  '--tw-prose-code': 'inherit',
+  '--tw-prose-links': 'var(--term-accent)',
 } as React.CSSProperties;
 
 function renderSegments(
