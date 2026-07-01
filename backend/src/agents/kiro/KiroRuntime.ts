@@ -672,6 +672,7 @@ export class KiroRuntime implements AgentRuntime {
         // return — so we explicitly resolve from opts.parentChatId.
         const ancestorChain: AgentSession[] = [];
         if (opts.parentChatId) {
+            sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
             const parent = sessionRegistry.getSession(opts.parentChatId);
             if (parent) {
                 ancestorChain.push(...sessionRegistry.getAncestors(opts.parentChatId), parent);

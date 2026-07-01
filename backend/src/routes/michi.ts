@@ -18,6 +18,7 @@ const { getSessionForUser } = sessionRegistry;
 import type { AgentSession } from "../agents/types";
 import {
     getNode,
+    getNodeSessionBinding,
     getNodeWorkspaceId,
     listGrants,
     listMessages,
@@ -797,8 +798,42 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     nodeId,
                     title: row?.title ?? null,
                 });
+
+                // Fallback: when branching and the parent session is dead in
+                // memory (or parentChatId was nulled during hydration), read
+                // the parent's transcript from SQLite and inject it as a merge
+                // context so the child still gets ancestor history.
+                let parentTranscriptContext: string | null = null;
+                const resolvedParentNodeId: string | null = (() => {
+                    if (parentChatId) {
+                        if (sessionRegistry.getSession(parentChatId)) return null; // live — runtime handles it
+                        const binding = getNodeSessionBinding(parentChatId, michiUserId);
+                        return binding?.nodeId ?? parentChatId;
+                    }
+                    // parentChatId absent (nulled on hydration) — look up via DB edge
+                    return row?.parent_node_id ?? null;
+                })();
+                if (resolvedParentNodeId) {
+                    const parentRow = getNode(resolvedParentNodeId);
+                    if (parentRow) {
+                        const parentMessages = listMessages(resolvedParentNodeId, michiUserId)
+                            .filter((m) => m.role === "user" || m.role === "assistant")
+                            .map((m) => ({
+                                role: m.role as "user" | "assistant",
+                                content: m.content,
+                            }));
+                        if (parentMessages.length > 0) {
+                            parentTranscriptContext = buildCompatibleResumeContext(parentMessages, {
+                                nodeId: resolvedParentNodeId,
+                                title: parentRow.title ?? null,
+                            });
+                        }
+                    }
+                }
+
                 const seededMergeContexts = [
                     ...(resumeContext ? [resumeContext] : []),
+                    ...(parentTranscriptContext ? [parentTranscriptContext] : []),
                     ...mergeContexts,
                 ];
                 session = await runtime.newSession({

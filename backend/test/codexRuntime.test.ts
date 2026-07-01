@@ -248,7 +248,7 @@ test('daemon exit marks sessions crashed and terminates in-flight drain', async 
 
   // Trigger the daemon exit — this should mark the session crashed
   assert.ok(capturedOnExit, 'onExit callback should have been registered');
-  capturedOnExit!();
+  (capturedOnExit as () => void)();
 
   // The drain should resolve with a turn_end (terminal safety invariant)
   const events = await drainPromise;

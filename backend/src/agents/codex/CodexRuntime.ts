@@ -162,6 +162,7 @@ export class CodexRuntime implements AgentRuntime {
     // Ancestor chain for preamble
     const ancestorChain: AgentSession[] = [];
     if (opts.parentChatId) {
+      sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
         ancestorChain.push(...sessionRegistry.getAncestors(opts.parentChatId), parent);

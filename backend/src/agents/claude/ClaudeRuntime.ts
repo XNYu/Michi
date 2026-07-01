@@ -110,6 +110,7 @@ export class ClaudeRuntime implements AgentRuntime {
     // hit vs cold spawn.
     const ancestorChain: AgentSession[] = [];
     if (opts.parentChatId) {
+      sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
         ancestorChain.push(...sessionRegistry.getAncestors(opts.parentChatId), parent);

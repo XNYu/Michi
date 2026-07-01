@@ -28,6 +28,7 @@ describe('chatStreamEvents route mapping', () => {
             status: 'in_progress',
             kind: 'read',
             detail: 'src/index.ts',
+            inputJson: undefined,
           },
         },
       },
