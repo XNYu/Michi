@@ -1,6 +1,6 @@
 import type { AgentSession, ChatMessage } from "./types";
 import type { NormalizedEvent } from "../services/chatEvents";
-import { getNode, listMessages } from "../services/dbRepository";
+import { getRuntimeDeps } from "./runtimeDeps";
 
 type Entry = { session: AgentSession; ownerUserId: string | null };
 
@@ -48,9 +48,10 @@ export function ensureAncestorChainLoaded(chatId: string): void {
             continue;
         }
         try {
-            const node = getNode(cursor);
+            const store = getRuntimeDeps().historyStore;
+            const node = store.getNode(cursor);
             if (!node) return;
-            const rows = listMessages(cursor);
+            const rows = store.listMessages(cursor);
             const history: ChatMessage[] = [];
             for (const row of rows) {
                 if (row.role !== "user" && row.role !== "assistant") continue;
