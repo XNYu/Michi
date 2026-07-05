@@ -5,7 +5,7 @@ import {
     type ParamObjectShape,
     type ParamSpec,
 } from "../builtinTools";
-import { listThreads, searchMessages, readNode } from "../../services/globalContext";
+import { getRuntimeDeps } from "../runtimeDeps";
 import { executeRead, type TurnImageQuota } from "../tools/read";
 import { executeLs } from "../tools/ls";
 import { executeGrep } from "../tools/grep";
@@ -209,14 +209,16 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     },
                 };
 
-            case "list_threads":
+            case "list_threads": {
+                const gc = getRuntimeDeps().globalContext;
+                if (!gc) return null;
                 return {
                     name: t.name,
                     label: "List threads",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
-                        const result = listThreads(
+                        const result = gc.listThreads(
                             workspaceId,
                             ownerUserId ?? null,
                             typeof args?.workspaceId === "string" ? args.workspaceId : undefined,
@@ -225,15 +227,18 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                         return { content: [{ type: "text", text: result.text }], details: result };
                     },
                 };
+            }
 
-            case "search_messages":
+            case "search_messages": {
+                const gc = getRuntimeDeps().globalContext;
+                if (!gc) return null;
                 return {
                     name: t.name,
                     label: "Search messages",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
-                        const result = searchMessages(
+                        const result = gc.searchMessages(
                             workspaceId,
                             ownerUserId ?? null,
                             String(args?.query ?? ""),
@@ -243,18 +248,22 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                         return { content: [{ type: "text", text: result.text }], details: result };
                     },
                 };
+            }
 
-            case "read_node":
+            case "read_node": {
+                const gc = getRuntimeDeps().globalContext;
+                if (!gc) return null;
                 return {
                     name: t.name,
                     label: "Read node",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
-                        const result = readNode(workspaceId, ownerUserId ?? null, String(args?.nodeId ?? ""));
+                        const result = gc.readNode(workspaceId, ownerUserId ?? null, String(args?.nodeId ?? ""));
                         return { content: [{ type: "text", text: result.text }], details: result };
                     },
                 };
+            }
 
             case "read":
                 return {
@@ -384,5 +393,5 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 };
         }
         throw new Error(`unknown builtin tool: ${(t as any).name}`);
-    });
+    }).filter(Boolean);
 }
