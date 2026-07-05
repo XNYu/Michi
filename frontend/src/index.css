@@ -719,6 +719,14 @@ html[data-vibrancy="on"],
   /* Drive the sidebar bg var itself so BOTH the sidebar body and the topbar
      Zone-1 spacer (which reads --term-sidebar-bg) share one uniform frost. */
   --term-sidebar-bg: var(--term-vibrancy-tint);
+  /* Reverse the elevation. Normally the sidebar casts a shadow RIGHTWARD onto
+     the main panel (sidebar reads higher). But under vibrancy the glass sidebar
+     shows the desktop through it and sits visually LOWER than the solid main
+     panel — so the main panel should cast onto the sidebar instead. An inset
+     shadow on the sidebar's right edge makes it read as recessed, with the main
+     panel floating above it. Both the sidebar and the topbar Zone-1 spacer read
+     this same var, so the recessed edge is continuous top-to-bottom. */
+  --term-sidebar-shadow: inset -8px 0 8px -8px rgba(0, 0, 0, 0.08);
 }
 [data-vibrancy="on"] .terminal-shell {
   /* Drop the accent/mauve wash — under vibrancy the "thing to blur" is the real
