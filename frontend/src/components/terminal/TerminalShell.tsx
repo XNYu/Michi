@@ -427,7 +427,7 @@ export default function TerminalShell() {
           narrowOverlayOpen={narrowOverlayOpen}
           onCloseOverlay={() => setNarrowOverlayOpen(false)}
         />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
+        <div className="terminal-content-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
           {page === 'home' && <TerminalHome onSubmitted={() => setPage('dashboard')} />}
           {page === 'dashboard' && <TerminalDashboard />}
           {page === 'map' && <LazyPage><TerminalMap onNav={handleNav} /></LazyPage>}

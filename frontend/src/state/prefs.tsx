@@ -68,6 +68,11 @@ export interface Prefs {
   paneRules: boolean;
   /** Width of the terminal shell's left sidebar, in CSS pixels. Resizable via drag handle. */
   terminalSidebarWidth: number;
+  /** Sidebar glass translucency, 0–100. 0 = solid surface (opaque), 100 = maximally
+   *  see-through. Under macOS window vibrancy this sets how much the desktop shows
+   *  through; without vibrancy it just controls the CSS-glass tint. Drives
+   *  --term-sidebar-translucency (a 0..1 alpha) on <html>. */
+  sidebarTranslucency: number;
   /** When true, the docked terminal sidebar is hidden and a hover popover replaces it.
    *  Toggled via ⌘B and the topbar icon. */
   sidebarCollapsed: boolean;
@@ -118,6 +123,7 @@ export const DEFAULT_PREFS: Prefs = {
   terminalDensity: 'dense',
   paneRules: true,
   terminalSidebarWidth: 232,
+  sidebarTranslucency: 58,
   sidebarCollapsed: false,
   trashTTLDays: 30,
   focusDim: 20,
@@ -197,6 +203,9 @@ function readInitial(): Prefs {
     }
     if (typeof merged.paneTopFadeHeight !== 'number' || merged.paneTopFadeHeight < 0 || merged.paneTopFadeHeight > 80) {
       merged.paneTopFadeHeight = DEFAULT_PREFS.paneTopFadeHeight;
+    }
+    if (typeof merged.sidebarTranslucency !== 'number' || merged.sidebarTranslucency < 0 || merged.sidebarTranslucency > 100) {
+      merged.sidebarTranslucency = DEFAULT_PREFS.sidebarTranslucency;
     }
     if (
       merged.singlePaneContentWidth !== null &&
@@ -294,6 +303,15 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined') return;
     document.documentElement.style.setProperty('--composer-body-size', `${prefs.composerFontSize}px`);
   }, [prefs.composerFontSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // 0..100 pref → 0..1 alpha. This is the sidebar's SOLIDNESS: higher pref =
+    // more see-through = LOWER surface alpha. index.css reads this for both the
+    // CSS-glass path and the native-vibrancy tint so one slider drives both.
+    const solidAlpha = (1 - prefs.sidebarTranslucency / 100).toFixed(3);
+    document.documentElement.style.setProperty('--term-sidebar-solid-alpha', solidAlpha);
+  }, [prefs.sidebarTranslucency]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

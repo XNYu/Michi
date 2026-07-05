@@ -18,6 +18,8 @@ export interface ElectronBridge {
   isPackaged?: boolean;
   /** Stable id injected by Electron main for per-window renderer state. */
   michiWindowId?: string;
+  /** True when the window uses native macOS vibrancy (see-through). Absent in older builds / web. */
+  hasVibrancy?: boolean;
   chooseFolder(): Promise<ChooseFolderResult>;
   /** Allocate a per-project scratch cwd outside TCC-protected dirs. Optional — absent in older builds. */
   resolveSkipCwd?(projectId: string): Promise<{ path: string }>;
@@ -26,6 +28,8 @@ export interface ElectronBridge {
   openPath?(absPath: string): Promise<{ ok: boolean; error?: string }>;
   /** Send an OS-level notification via Electron. Optional — absent in older builds. */
   showNotification?(title: string, body: string): void;
+  /** Sync the native vibrancy material light/dark to the palette. Absent in older builds / web. */
+  setDarkMaterial?(dark: boolean): void;
   /** Relaunch the app after self-update. Optional — absent in older builds. */
   relaunch?(): void;
   /** Open a multi-select OS file picker, returns absolute paths. Optional — absent in older builds. */

@@ -611,7 +611,17 @@ body {
 
 /* Design-system variables consumed by the terminal shell's inline styles. */
 :root {
-  --term-shell-bg: var(--term-bg);
+  /* Left-anchored wash so the glass sidebar (backdrop-filter) has something to
+     blur instead of a flat color — otherwise it reads as a plain translucent
+     block. The radials fade out well before screen center, so the main content
+     area (panes / Home) stays visually unchanged; the tint is only revealed
+     through the translucent sidebar. */
+  --term-shell-bg:
+    radial-gradient(680px 460px at -6% -12%,
+      color-mix(in srgb, var(--term-accent) 12%, transparent), transparent 60%),
+    radial-gradient(560px 520px at 8% 118%,
+      color-mix(in srgb, var(--term-mauve) 10%, transparent), transparent 62%),
+    var(--term-bg);
   --term-shell-padding: 0px;
   --term-shell-gap: 0px;
   --term-content-gap: 0px;
@@ -622,7 +632,11 @@ body {
   --term-topbar-border: 1px solid var(--term-line);
   --term-topbar-outline: none;
   --term-topbar-radius: 0px;
-  --term-sidebar-bg: var(--term-surface);
+  /* Sidebar solidity is driven by prefs.sidebarTranslucency via
+     --term-sidebar-solid-alpha (0..1; 1 = opaque). Fallback 0.72 keeps the
+     historical default if the pref effect hasn't run yet (SSR / first paint). */
+  --term-sidebar-solid-alpha: 0.72;
+  --term-sidebar-bg: color-mix(in srgb, var(--term-surface) calc(var(--term-sidebar-solid-alpha) * 100%), transparent);
   --term-sidebar-border: 1px solid var(--term-line);
   --term-sidebar-outline: none;
   --term-sidebar-radius: 0px;
@@ -648,6 +662,86 @@ body {
   --term-rail-1: var(--term-line);
   --term-rail-2: color-mix(in srgb, var(--term-line) 70%, var(--term-bg));
   --term-rail-3: color-mix(in srgb, var(--term-line) 40%, var(--term-bg));
+}
+
+/* ── Glass sidebar · proposal A (克制雾面玻璃) ──────────────────────────────
+   The <aside> already carries .terminal-sidebar and reads its background from
+   --term-sidebar-bg (now a translucent color-mix). backdrop-filter blurs the
+   left-anchored --term-shell-bg wash painted behind it. In wide mode the
+   sidebar is a flex sibling (never overlaps panes), so its backdrop is static
+   → the blur result is cached and stays cheap even while messages stream.
+   No inner highlight (dialed to 0); the existing right-edge shadow is the only
+   elevation. Desktop-only true window vibrancy (see-through to the OS / other
+   apps) will layer on top of this in a later pass, gated to Electron.
+   ------------------------------------------------------------------------- */
+.terminal-sidebar {
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  backdrop-filter: blur(26px) saturate(160%);
+}
+
+/* Respect users who ask the OS to reduce transparency: fall back to the solid
+   surface and drop the blur entirely. */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --term-sidebar-bg: var(--term-surface); }
+  .terminal-sidebar {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ── True window vibrancy · desktop only (see-through to OS / other apps) ────
+   Set by the Electron preload as data-vibrancy="on" on <html>, ONLY on macOS.
+   The window base is a native NSVisualEffectView (vibrancy:'sidebar'); the web
+   page paints on top of it. Wherever the DOM is transparent, that material —
+   which samples the real desktop and windows behind Michi — shows through.
+
+   So we punch a hole: the shell root, the content wash, and the sidebar go
+   transparent (→ real see-through glass). Everything that must stay readable —
+   the topbar, the whole main content column (panes / Home), and the status
+   line — keeps its opaque surface painted ON TOP of the material. Net effect:
+   only the sidebar is see-through; the reading area stays solid and quiet.
+   Web / Windows / Linux never get this attribute → CSS-glass "A" is unchanged.
+   ------------------------------------------------------------------------- */
+html[data-vibrancy="on"],
+[data-vibrancy="on"] body,
+[data-vibrancy="on"] #root {
+  background: transparent !important;
+}
+/* One tint knob for the whole see-through chrome frame. The native material is
+   the glass; this whisper of palette-surface sits over it so text keeps
+   contrast against a busy desktop AND carries the palette's hue (the material
+   itself is neutral). Single source → every chrome surface frosts identically,
+   so there's no top/bottom banding. */
+[data-vibrancy="on"] {
+  /* Tint = the same solidity slider, so ⇩ translucency ⇨ more desktop shows
+     through the native material. Uniform across the whole chrome frame. */
+  --term-vibrancy-tint: color-mix(in srgb, var(--term-surface) calc(var(--term-sidebar-solid-alpha) * 100%), transparent);
+  /* Drive the sidebar bg var itself so BOTH the sidebar body and the topbar
+     Zone-1 spacer (which reads --term-sidebar-bg) share one uniform frost. */
+  --term-sidebar-bg: var(--term-vibrancy-tint);
+}
+[data-vibrancy="on"] .terminal-shell {
+  /* Drop the accent/mauve wash — under vibrancy the "thing to blur" is the real
+     desktop, not a painted gradient. A transparent shell reveals the material. */
+  background: transparent !important;
+}
+/* Chrome frame — topbar, sidebar, status line — all frost with the SAME tint so
+   the left column and the top/bottom bars read as one continuous glass sheet.
+   The native material provides the blur; kill any CSS backdrop-filter so it
+   doesn't double-blur / muddy. */
+[data-vibrancy="on"] .terminal-topbar,
+[data-vibrancy="on"] .terminal-status-line {
+  background: var(--term-vibrancy-tint) !important;
+}
+[data-vibrancy="on"] .terminal-sidebar {
+  background: var(--term-vibrancy-tint) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* The main reading column (panes / Home) stays fully OPAQUE over the material —
+   only the chrome frame is see-through; the reading area is solid and quiet. */
+[data-vibrancy="on"] .terminal-content-col {
+  background: var(--term-bg);
 }
 
 /* Overlay scrollbar thumb for TerminalDashboard's horizontal scroll.

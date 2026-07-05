@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell, Notification as ElectronNotification } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, nativeTheme, Notification as ElectronNotification } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -28,6 +28,14 @@ import {
 })();
 
 const isDev = process.env.ELECTRON_DEV === '1';
+
+// True window vibrancy (see-through to desktop / other apps behind Michi) is a
+// native macOS NSVisualEffectView feature. Off on Windows/Linux (no equivalent)
+// and can be force-disabled with MICHI_NO_VIBRANCY=1 for debugging. The renderer
+// reads this over `app:vibrancy` (sync) so it can punch the sidebar hole only
+// when the window base is actually the vibrancy material — main authoritatively
+// owns the flag so the CSS never assumes see-through the window doesn't have.
+const VIBRANCY_ENABLED = process.platform === 'darwin' && process.env.MICHI_NO_VIBRANCY !== '1';
 
 // Capture once at load — Electron may not chdir, but be defensive.
 // `bin/michi` forwards the shell's pwd via `open --env MICHI_LAUNCH_CWD=…`
@@ -434,7 +442,19 @@ async function createWindow(backendPort: number | null): Promise<void> {
     minWidth: 360,
     minHeight: 480,
     show: false,
-    backgroundColor: '#F5F2EE',
+    // With vibrancy on: the NSVisualEffectView material IS the window base and
+    // provides its own alpha, so the desktop shows through wherever the DOM is
+    // transparent. Do NOT also set `transparent: true` — that makes a hard-alpha
+    // window that SUPPRESSES the material (looks flat/opaque). backgroundColor
+    // must be fully transparent so no solid layer paints over the material.
+    // Without vibrancy, keep the warm opaque background (web/Win/Linux path).
+    ...(VIBRANCY_ENABLED
+      ? {
+          vibrancy: 'sidebar' as const,
+          visualEffectState: 'active' as const,
+          backgroundColor: '#00000000',
+        }
+      : { backgroundColor: '#F5F2EE' }),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 16 },
     webPreferences: {
@@ -629,6 +649,26 @@ ipcMain.on('app:relaunch', () => {
 // render packaged-only UI (e.g. Update & Restart) without an async round trip.
 ipcMain.on('app:isPackaged', (ev) => {
   ev.returnValue = app.isPackaged;
+});
+
+// Synchronous so the renderer can set the see-through hole-punch on <html>
+// before first paint — otherwise the sidebar would flash opaque then turn
+// transparent. Only true on macOS Electron; the CSS reads this to switch the
+// sidebar from CSS-glass (blur its own wash) to real window vibrancy.
+ipcMain.on('app:vibrancy', (ev) => {
+  ev.returnValue = VIBRANCY_ENABLED;
+});
+
+// The NSVisualEffectView material's light/dark is chosen by the OS window
+// appearance, NOT by Michi's CSS palette. So a dark palette (monokai/gruvbox)
+// would otherwise get a LIGHT frost and read wrong. The renderer reports its
+// palette darkness here; we set themeSource so the material matches. Safe:
+// the frontend has zero `prefers-color-scheme` rules, so forcing the OS theme
+// source only affects the native chrome (traffic lights + vibrancy), not the
+// palette-token-driven UI. No-op off macOS.
+ipcMain.on('app:setDarkMaterial', (_ev, dark: boolean) => {
+  if (!VIBRANCY_ENABLED) return;
+  nativeTheme.themeSource = dark ? 'dark' : 'light';
 });
 
 async function installDevExtensions(): Promise<void> {
