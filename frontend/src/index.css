@@ -733,6 +733,17 @@ html[data-vibrancy="on"],
 [data-vibrancy="on"] .terminal-status-line {
   background: var(--term-vibrancy-tint) !important;
 }
+/* The topbar's Zone-1 spacer (the region above the sidebar holding the traffic
+   lights + icon strip) is a child of .terminal-topbar and paints its OWN
+   --term-sidebar-bg tint. Under vibrancy that stacks a SECOND translucent layer
+   on top of the topbar's tint → the top strip composites darker/whiter than the
+   single-layer sidebar body. Make it transparent so the topbar's one tint is
+   the only layer there, matching the sidebar. Its right border + shadow (set
+   as separate properties) are untouched, so the sidebar's edge line still runs
+   continuously through the topbar. */
+[data-vibrancy="on"] .terminal-topbar > div[aria-hidden] {
+  background: transparent !important;
+}
 [data-vibrancy="on"] .terminal-sidebar {
   background: var(--term-vibrancy-tint) !important;
   -webkit-backdrop-filter: none !important;
