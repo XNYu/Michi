@@ -18,9 +18,8 @@
 
 import path, { isAbsolute, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
-import { getMichiDataDir } from "../../services/dataDir";
 import fs from "node:fs";
-import { getWorkspace } from "../../services/dbRepository";
+import { getRuntimeDeps } from "../runtimeDeps";
 
 const UNICODE_SPACES = /[  -   　]/g;
 
@@ -97,7 +96,7 @@ export function resolveWithinCwd(filePath: string, cwd: string): string {
  * never called in practice because all callers gate on MICHI_CLOUD=1).
  */
 export function getUserSandboxRoot(userId: string): string {
-    return path.join(getMichiDataDir(), "user-cwds", userId);
+    return path.join(getRuntimeDeps().dataDir, "user-cwds", userId);
 }
 
 /**
@@ -137,7 +136,7 @@ export class NotFoundError extends Error {
  * trust the client-supplied cwd.
  */
 export function deriveSandboxCwd(userId: string, workspaceId: string): string {
-    const row = getWorkspace(workspaceId, userId);
+    const row = getRuntimeDeps().historyStore.getWorkspace(workspaceId, userId);
     if (!row || row.owner_user_id !== userId) {
         throw new NotFoundError(workspaceId);
     }
