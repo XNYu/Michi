@@ -56,4 +56,21 @@ describe('resolvePolicy', () => {
         assert.equal(resolvePolicy(null, 'mcp__probe__echo_tool', {}), 'allow');
         assert.equal(resolvePolicy(null, 'Read', {}), 'allow');
     });
+
+    test("a workspace grant flips ask→allow via the injected store", () => {
+        const { configureRuntimeDeps, __resetRuntimeDeps } = require("../src/agents/runtimeDeps");
+        configureRuntimeDeps({
+            historyStore: {
+                getNode: () => null, listMessages: () => [], getWorkspace: () => null,
+                getWorkspaceInstructions: () => null,
+                hasGrant: (ws: string, tool: string) => ws === "ws1" && tool === "bash",
+                grantPermission: () => {},
+            },
+            agentConfig: { getAgentConfig: () => ({ runtime: "pi", provider: "x", modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => "", resolveReasoning: () => undefined },
+            dataDir: "/tmp/agent-runtime-test",
+        });
+        assert.equal(resolvePolicy("ws1", "bash", {}), "allow");
+        assert.equal(resolvePolicy("ws2", "bash", {}), "ask");
+        __resetRuntimeDeps();
+    });
 });

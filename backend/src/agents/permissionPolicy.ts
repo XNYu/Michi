@@ -21,7 +21,7 @@
  *
  */
 
-import { hasGrant } from "../services/dbRepository";
+import { getRuntimeDeps } from "./runtimeDeps";
 import type { BuiltinToolName } from "./builtinTools";
 
 export type PermissionDecision = "allow" | "ask" | "deny";
@@ -54,8 +54,11 @@ export function resolvePolicy(
 ): PermissionDecision {
     const canonical = canonicalPermissionToolName(toolName);
     if (!ASK_TOOLS.has(canonical)) return "allow";
-    if (workspaceId && (hasGrant(workspaceId, canonical) || (canonical !== toolName && hasGrant(workspaceId, toolName)))) {
-        return "allow";
+    if (workspaceId) {
+        const store = getRuntimeDeps().historyStore;
+        if (store.hasGrant(workspaceId, canonical) || (canonical !== toolName && store.hasGrant(workspaceId, toolName))) {
+            return "allow";
+        }
     }
     return "ask";
 }
