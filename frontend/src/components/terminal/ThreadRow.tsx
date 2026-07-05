@@ -170,7 +170,7 @@ export default function ThreadRow({
           display: 'flex',
           alignItems: 'center',
           gap: 5,
-          padding: '4px 10px 4px 8px',
+          padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 8px',
           background: selected
             ? 'var(--term-select-f)'
             : isActive ? 'var(--term-alt)'
@@ -182,7 +182,7 @@ export default function ThreadRow({
             : '2px solid transparent',
           color: isActive || selected || menu ? 'var(--term-fg)' : 'var(--term-mid)',
           fontWeight: unread ? 900 : (isActive || selected ? 600 : 450),
-          fontSize: 13.5,
+          fontSize: 'var(--sb-fs, 13.5px)',
           fontFamily: 'var(--ui-font)',
           position: 'relative',
         }}
@@ -255,7 +255,7 @@ export default function ThreadRow({
             {label}
           </span>
         )}
-        <span style={{ color: 'var(--term-faint)', fontSize: 11 }}>
+        <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)' }}>
           {formatRelative(tree.lastActiveAt)}
         </span>
         {selected && (

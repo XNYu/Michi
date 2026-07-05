@@ -20,6 +20,18 @@ const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 232;
 
+/** Sidebar row density → the `--sb-*` CSS vars consumed by WorkspaceRow /
+ *  ThreadRow / BranchRow / merge rows / BottomNav. `compact` reproduces the
+ *  historical hardcoded values, so those live on as the var fallbacks too. */
+const SIDEBAR_DENSITY: Record<
+  'compact' | 'comfortable' | 'airy',
+  { fs: number; rowPy: number; wsGap: number; tsFs: number; navPy: number }
+> = {
+  compact: { fs: 13.5, rowPy: 4, wsGap: 6, tsFs: 11, navPy: 6 },
+  comfortable: { fs: 13.5, rowPy: 6, wsGap: 10, tsFs: 11, navPy: 7 },
+  airy: { fs: 14, rowPy: 8, wsGap: 14, tsFs: 11.5, navPy: 8 },
+};
+
 export default function TerminalSidebar({
   activePage,
   onNav,
@@ -76,12 +88,22 @@ export default function TerminalSidebar({
   // behaves like the previous unmounted state visually.
   const collapsed = !narrowMode && prefs.sidebarCollapsed;
 
+  const d = SIDEBAR_DENSITY[prefs.sidebarDensity];
+  const densityVars = {
+    '--sb-fs': `${d.fs}px`,
+    '--sb-row-py': `${d.rowPy}px`,
+    '--sb-ws-gap': `${d.wsGap}px`,
+    '--sb-ts-fs': `${d.tsFs}px`,
+    '--sb-nav-py': `${d.navPy}px`,
+  } as React.CSSProperties;
+
   const aside = (
     <aside
       ref={asideRef}
       className="terminal-sidebar"
       aria-hidden={collapsed || undefined}
       style={{
+        ...densityVars,
         width: overlayMode ? prefs.terminalSidebarWidth : (collapsed ? 0 : prefs.terminalSidebarWidth),
         flexShrink: 0,
         background: 'var(--term-sidebar-bg, var(--term-surface))',
@@ -218,7 +240,7 @@ function BottomNav({
           display: 'flex',
           alignItems: 'center',
           gap: 11,
-          padding: '6px 12px',
+          padding: 'var(--sb-nav-py, 6px) 12px',
           color: active ? 'var(--term-fg)' : 'var(--term-mid)',
           background: active ? 'var(--term-alt)' : 'transparent',
           fontSize: 14,

@@ -927,7 +927,7 @@ function MergedGroupsSection({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 5,
-                padding: '4px 10px 4px 8px',
+                padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 8px',
                 background: isFocused ? 'var(--term-alt)' : 'transparent',
                 borderLeft: isFocused
                   ? '2px solid var(--term-accent)'
@@ -973,7 +973,7 @@ function MergedGroupsSection({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    padding: '4px 10px 4px 28px',
+                    padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 28px',
                     background: focused ? 'var(--term-alt)' : undefined,
                     borderLeft: focused
                       ? '2px solid var(--term-accent)'
@@ -1015,7 +1015,7 @@ function MergedGroupsSection({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    padding: '4px 10px 4px 28px',
+                    padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 28px',
                     background: focused ? 'var(--term-alt)' : undefined,
                     borderLeft: focused
                       ? '2px solid var(--term-accent)'

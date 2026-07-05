@@ -4,6 +4,10 @@ import { fetchPrefs, savePrefs } from '../services/api';
 
 export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
+/** Vertical density of the LEFT SIDEBAR's rows only. Independent of
+ *  `terminalDensity` (which governs message/pane spacing) so the tree can
+ *  breathe without loosening chat messages. */
+export type SidebarDensity = 'compact' | 'comfortable' | 'airy';
 
 /** Assistant code-block chrome. Two design variants:
  *  - 'hairline' (01): no header bar - language sits as a faint mono overline,
@@ -68,6 +72,10 @@ export interface Prefs {
   paneRules: boolean;
   /** Width of the terminal shell's left sidebar, in CSS pixels. Resizable via drag handle. */
   terminalSidebarWidth: number;
+  /** Row density of the left sidebar (workspace / thread / branch rows + bottom
+   *  nav). Drives the `--sb-*` CSS vars (row padding, font size, workspace group
+   *  gap, timestamp size) set on the sidebar root in Sidebar.tsx. */
+  sidebarDensity: SidebarDensity;
   /** Sidebar glass translucency, 0–100. 0 = solid surface (opaque), 100 = maximally
    *  see-through. Under macOS window vibrancy this sets how much the desktop shows
    *  through; without vibrancy it just controls the CSS-glass tint. Drives
@@ -123,6 +131,7 @@ export const DEFAULT_PREFS: Prefs = {
   terminalDensity: 'dense',
   paneRules: true,
   terminalSidebarWidth: 232,
+  sidebarDensity: 'comfortable',
   sidebarTranslucency: 58,
   sidebarCollapsed: false,
   trashTTLDays: 30,
@@ -206,6 +215,13 @@ function readInitial(): Prefs {
     }
     if (typeof merged.sidebarTranslucency !== 'number' || merged.sidebarTranslucency < 0 || merged.sidebarTranslucency > 100) {
       merged.sidebarTranslucency = DEFAULT_PREFS.sidebarTranslucency;
+    }
+    if (
+      merged.sidebarDensity !== 'compact' &&
+      merged.sidebarDensity !== 'comfortable' &&
+      merged.sidebarDensity !== 'airy'
+    ) {
+      merged.sidebarDensity = DEFAULT_PREFS.sidebarDensity;
     }
     if (
       merged.singlePaneContentWidth !== null &&
@@ -395,6 +411,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       terminalDensity: DEFAULT_PREFS.terminalDensity,
       paneRules: DEFAULT_PREFS.paneRules,
       terminalSidebarWidth: DEFAULT_PREFS.terminalSidebarWidth,
+      sidebarDensity: DEFAULT_PREFS.sidebarDensity,
       paneTopFadeHeight: DEFAULT_PREFS.paneTopFadeHeight,
     }));
   }, []);

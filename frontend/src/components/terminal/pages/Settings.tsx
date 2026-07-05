@@ -1408,6 +1408,14 @@ function AppearancePane() {
         </div>
       </Row>
 
+      <Row k="theme.sidebarDensity" label="Sidebar density">
+        <Radio
+          opts={['compact', 'comfortable', 'airy']}
+          value={prefs.sidebarDensity}
+          onChange={(v) => setPref('sidebarDensity', v as any)}
+        />
+      </Row>
+
       <Row k="theme.codeBlock" label="Code block">
         <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
           {CODE_BLOCK_OPTIONS.map((o, i) => {

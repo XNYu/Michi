@@ -142,9 +142,9 @@ export default function BranchRow({
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          paddingTop: 4,
+          paddingTop: 'var(--sb-row-py, 4px)',
           paddingRight: 10,
-          paddingBottom: 4,
+          paddingBottom: 'var(--sb-row-py, 4px)',
           paddingLeft: 8 + depth * 10,
           background: selected
             ? 'var(--term-select-f)'
@@ -157,7 +157,7 @@ export default function BranchRow({
             : '2px solid transparent',
           color: focused || selected || menuOpen ? 'var(--term-fg)' : 'var(--term-mid)',
           fontWeight: unread ? 900 : (focused || selected ? 600 : 450),
-          fontSize: 13.5,
+          fontSize: 'var(--sb-fs, 13.5px)',
           fontFamily: 'var(--ui-font)',
         }}
       >
@@ -208,7 +208,7 @@ export default function BranchRow({
           </span>
         )}
         {nodeUpdatedAt > 0 && (
-          <span style={{ color: 'var(--term-faint)', fontSize: 11, flexShrink: 0 }}>
+          <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)', flexShrink: 0 }}>
             {relativeTime(nodeUpdatedAt)}
           </span>
         )}

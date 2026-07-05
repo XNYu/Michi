@@ -288,7 +288,7 @@ export default function WorkspaceRow({
       style={{
         position: 'relative',
         opacity: dnd?.isDragSource ? 0.5 : 1,
-        marginTop: 6,
+        marginTop: 'var(--sb-ws-gap, 6px)',
       }}
     >
       {dnd?.isDropTarget && (
@@ -327,7 +327,7 @@ export default function WorkspaceRow({
           //   glyph lands at x[6,21] — centered between the sidebar edge and
           //   the text.
           gap: 6,
-          padding: '5px 10px 4px 4px',
+          padding: 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 4px',
           fontFamily: 'var(--ui-font)',
           background: menu ? 'var(--term-alt)' : undefined,
           borderLeft: isActiveWorkspaceAway
@@ -382,7 +382,7 @@ export default function WorkspaceRow({
             >
               <span
                 style={{
-                  fontSize: 13.5,
+                  fontSize: 'var(--sb-fs, 13.5px)',
                   fontWeight: wsUnread ? 900 : 450,
                   color: 'var(--term-fg)',
                   fontFamily: 'var(--ui-font)',
