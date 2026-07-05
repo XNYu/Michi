@@ -22,8 +22,8 @@ import { requireAdmin } from './routes/middleware/admin';
 import { McpSlotRegistry, mountMcp } from './services/mcpServer';
 import { initDb, closeDb, closeAuditDb } from './services/db';
 import { recordAudit } from './services/audit';
-import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel } from './services/agentConfig';
-import { setProviderEnvBindings } from './services/secrets';
+import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning } from './services/agentConfig';
+import { setProviderEnvBindings, getProviderApiKey } from './services/secrets';
 import { getWarmStatus, markReady, markFailed } from './services/readyState';
 import { getRuntime, listRuntimes, registerRuntime } from './agents/registry';
 import { getEnabledFactories } from './agents/runtimeFactories';
@@ -34,6 +34,10 @@ import type { AgentRuntime } from './agents/types';
 import type { KiroRuntime } from './agents/kiro/KiroRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
+import { configureRuntimeDeps } from './agents/runtimeDeps';
+import { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission } from './services/dbRepository';
+import { getMichiDataDir } from './services/dataDir';
+import { listThreads, searchMessages, readNode } from './services/globalContext';
 
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
@@ -98,6 +102,17 @@ log.info('boot', 'db initialized');
 // Load persisted agent runtime/provider/model config (with env overrides)
 loadAgentConfig();
 log.info('boot', 'agent config loaded');
+
+// Wire Michi's SQLite / secrets / config into the runtime layer's injection
+// seam. MUST run before any runtime is constructed or warmed, since the
+// runtime modules read getRuntimeDeps() at call-time and throw if unconfigured.
+configureRuntimeDeps({
+  historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission },
+  dataDir: getMichiDataDir(),
+  providerKeys: { getProviderApiKey },
+  globalContext: { listThreads, searchMessages, readNode },
+  agentConfig: { getAgentConfig, resolveModel, resolveReasoning },
+});
 
 const mcpRegistry = new McpSlotRegistry();
 

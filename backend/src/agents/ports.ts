@@ -2,9 +2,12 @@
 import type { RuntimeId, AgentReasoning } from "./types";
 
 /** Minimal structural shapes the runtime layer reads. Michi's richer DB rows
- *  are structurally assignable to these. */
+ *  are structurally assignable to these. `parent_node_id` / `owner_user_id`
+ *  are optional (`?: string | null`) to mirror Michi's NodeRow / WorkspaceRow,
+ *  where those columns may be absent; consumers already guard with
+ *  `?? undefined` / `!==`. */
 export interface NodeRowLike {
-  parent_node_id: string | null;
+  parent_node_id?: string | null;
   workspace_id: string | null;
 }
 export interface MessageRowLike {
@@ -13,7 +16,7 @@ export interface MessageRowLike {
   created_at: number;
 }
 export interface WorkspaceRowLike {
-  owner_user_id: string | null;
+  owner_user_id?: string | null;
 }
 
 /** Read/persist access to conversation + workspace state. Consumer supplies
