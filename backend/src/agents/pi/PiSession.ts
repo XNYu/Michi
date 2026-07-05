@@ -1,16 +1,15 @@
 import type { AgentSession, ChatMessage } from "../types";
 import type { NormalizedEvent, PermissionOption } from "../../services/chatEvents";
 import type { AgentToolBridge } from "../toolBridge";
-import { getAgentConfig, resolveModel, resolveReasoning } from "../../services/agentConfig";
-import { getProviderApiKey } from "../../services/secrets";
+import { getRuntimeDeps } from "../runtimeDeps";
 import { getProviderInfo } from "./piProviders";
+import { getModelAttemptIds, getUpstreamProviderId } from "./piProviders";
 import { loadPiAi, loadPiAgentCore } from "./piAi";
 import { buildPiTools } from "./piTools";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
 import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
 import { resolvePolicy } from "../permissionPolicy";
-import { grantPermission, getWorkspaceInstructions } from "../../services/dbRepository";
 
 export interface PiSessionDeps {
     bridge: AgentToolBridge;
@@ -153,9 +152,14 @@ export class PiSession implements AgentSession {
     }
 
     private async *runTurn(rawText: string): AsyncIterableIterator<NormalizedEvent> {
-        const cfg = getAgentConfig();
+        const ownerUserId = this.ownerUserId ?? undefined;
+        const deps = getRuntimeDeps();
+        const cfg = deps.agentConfig.getAgentConfig(ownerUserId);
         const provider = cfg.provider;
-        const apiKey = getProviderApiKey(provider, this.ownerUserId ?? undefined);
+        const upstreamProvider = getUpstreamProviderId(provider);
+        const requestedModel = deps.agentConfig.resolveModel(this.runtimeId, ownerUserId);
+        const modelAttemptIds = getModelAttemptIds(provider, requestedModel);
+        const apiKey = deps.providerKeys.getProviderApiKey(provider, ownerUserId);
         if (!apiKey) {
             const name = getProviderInfo(provider)?.name ?? provider;
             // Tailor the error so cloud users see "set your key in Settings"
@@ -169,7 +173,7 @@ export class PiSession implements AgentSession {
         const piMod: any = await loadPiAi();
         const piAgentCore: any = await loadPiAgentCore();
         const { Type } = piMod;
-        const model = piMod.getModel(provider, resolveModel(this.runtimeId));
+        const model = piMod.getModel(upstreamProvider, modelAttemptIds[0] ?? requestedModel);
 
         // Reset the per-turn image budget before each LLM-driven loop.
         this.imageQuota.usedBytes = 0;
@@ -197,7 +201,7 @@ export class PiSession implements AgentSession {
             // here. Pi has no warm pool, so we can apply it at session creation
             // without violating any pool-key invariants.
             const workspaceInstructions = this.workspaceId
-                ? getWorkspaceInstructions(this.workspaceId)
+                ? deps.historyStore.getWorkspaceInstructions(this.workspaceId)
                 : null;
             const systemPrompt = [this.preamble, workspaceInstructions]
                 .filter(Boolean)
@@ -209,13 +213,19 @@ export class PiSession implements AgentSession {
                     tools,
                     // pi thinkingLevel doesn't accept "max"; clamp to xhigh.
                     thinkingLevel: (() => {
-                        const r = resolveReasoning(this.runtimeId);
+                        const r = deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
                         if (r === "max") return "xhigh";
                         return r ?? "off";
                     })(),
                     messages: [],
                 },
-                streamFn: (m: any, c: any, o: any) => piMod.streamSimple(m, c, { ...o, apiKey }),
+                streamFn: (_m: any, c: any, o: any) => streamSimpleWithFallback(
+                    piMod,
+                    upstreamProvider,
+                    modelAttemptIds,
+                    c,
+                    { ...o, apiKey },
+                ),
                 beforeToolCall: async (
                     bcCtx: { toolCall: { name: string }; args: unknown },
                     signal?: AbortSignal,
@@ -225,7 +235,7 @@ export class PiSession implements AgentSession {
                     if (policy === "deny") return { block: true, reason: "denied by policy" };
                     const decision = await this.requestPermission(bcCtx.toolCall.name, bcCtx.args, signal);
                     if (decision === "allow_always" && this.workspaceId) {
-                        grantPermission(this.workspaceId, bcCtx.toolCall.name);
+                        getRuntimeDeps().historyStore.grantPermission(this.workspaceId, bcCtx.toolCall.name);
                     }
                     if (decision === "reject_once" || decision === null) {
                         return { block: true, reason: "user denied" };
@@ -436,6 +446,45 @@ export class PiSession implements AgentSession {
         this.pendingPermissions.clear();
         this.agent = undefined;
     }
+}
+
+async function* streamSimpleWithFallback(
+    piMod: any,
+    upstreamProvider: string,
+    modelIds: string[],
+    context: any,
+    options: any,
+): AsyncIterableIterator<any> {
+    const attempts = modelIds.length > 0 ? modelIds : [undefined];
+    let lastErrorEvent: any;
+    let lastThrown: unknown;
+
+    for (let i = 0; i < attempts.length; i += 1) {
+        const modelId = attempts[i];
+        const model = modelId ? piMod.getModel(upstreamProvider, modelId) : undefined;
+        let yieldedAny = false;
+        try {
+            for await (const ev of piMod.streamSimple(model, context, options)) {
+                if (ev?.type === "error" && !yieldedAny && i < attempts.length - 1) {
+                    lastErrorEvent = ev;
+                    break;
+                }
+                yieldedAny = true;
+                yield ev;
+            }
+            if (!lastErrorEvent || yieldedAny || i === attempts.length - 1) return;
+            lastErrorEvent = undefined;
+        } catch (err) {
+            if (yieldedAny || i === attempts.length - 1) throw err;
+            lastThrown = err;
+        }
+    }
+
+    if (lastErrorEvent) {
+        yield lastErrorEvent;
+        return;
+    }
+    if (lastThrown) throw lastThrown;
 }
 
 /**

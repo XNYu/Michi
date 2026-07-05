@@ -1,5 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 
 type Restore = () => void;
 
@@ -22,12 +23,11 @@ afterEach(() => {
   while (restores.length > 0) {
     restores.pop()?.();
   }
+  __resetRuntimeDeps();
   delete require.cache[require.resolve('../src/agents/pi/PiSession')];
 });
 
 test('PiSession resolves model and reasoning against pi runtime, not the active runtime', async () => {
-  const agentConfigPath = require.resolve('../src/services/agentConfig');
-  const secretsPath = require.resolve('../src/services/secrets');
   const piAiPath = require.resolve('../src/agents/pi/piAi');
   const piToolsPath = require.resolve('../src/agents/pi/piTools');
 
@@ -36,21 +36,37 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
   let modelId: string | undefined;
   let thinkingLevel: string | undefined;
 
-  patchModule(agentConfigPath, 'getAgentConfig', () => ({
-    runtime: 'kiro',
-    provider: 'deepseek',
-    modelByRuntime: { kiro: 'kiro-only-model', pi: 'pi-good-model' },
-    reasoningByRuntime: { kiro: 'xhigh', pi: 'low' },
-  }));
-  patchModule(agentConfigPath, 'resolveModel', (runtimeId: string) => {
-    modelRuntime = runtimeId;
-    return `${runtimeId}-model`;
+  // Replaces the former agentConfig/secrets monkey-patches. Mirrors the exact
+  // stub values the patches used to return, including the recording closures
+  // that the assertions below depend on.
+  configureRuntimeDeps({
+    historyStore: {
+      getNode: () => null,
+      listMessages: () => [],
+      getWorkspace: () => null,
+      getWorkspaceInstructions: () => null,
+      hasGrant: () => false,
+      grantPermission: () => {},
+    },
+    providerKeys: { getProviderApiKey: () => 'test-key' },
+    agentConfig: {
+      getAgentConfig: () => ({
+        runtime: 'kiro',
+        provider: 'deepseek',
+        modelByRuntime: { kiro: 'kiro-only-model', pi: 'pi-good-model' },
+        reasoningByRuntime: { kiro: 'xhigh', pi: 'low' },
+      }),
+      resolveModel: (runtimeId: string) => {
+        modelRuntime = runtimeId;
+        return `${runtimeId}-model`;
+      },
+      resolveReasoning: (runtimeId: string) => {
+        reasoningRuntime = runtimeId;
+        return runtimeId === 'pi' ? 'low' : 'xhigh';
+      },
+    },
+    dataDir: '/tmp/agent-runtime-test',
   });
-  patchModule(agentConfigPath, 'resolveReasoning', (runtimeId: string) => {
-    reasoningRuntime = runtimeId;
-    return runtimeId === 'pi' ? 'low' : 'xhigh';
-  });
-  patchModule(secretsPath, 'getProviderApiKey', () => 'test-key');
   patchModule(piToolsPath, 'buildPiTools', () => []);
   patchModule(piAiPath, 'loadPiAi', async () => ({
     Type: {},

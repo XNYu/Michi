@@ -19,9 +19,7 @@ import {
     listProviderInfos,
     verifyPiProviderKey,
 } from "./piProviders";
-import { getAgentConfig } from "../../services/agentConfig";
-import { getProviderApiKey } from "../../services/secrets";
-import { getNode, listMessages } from "../../services/dbRepository";
+import { getRuntimeDeps } from "../runtimeDeps";
 import { rowsToAgentMessages } from "./historyAdapter";
 
 /**
@@ -129,10 +127,10 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // node row hasn't been synced from the frontend yet.
         let workspaceId: string | null = opts.workspaceId ?? null;
         try {
-            const row = getNode(opts.sessionId);
+            const row = getRuntimeDeps().historyStore.getNode(opts.sessionId);
             parentChatId = row?.parent_node_id ?? undefined;
             if (!workspaceId) workspaceId = row?.workspace_id ?? null;
-            const rows = listMessages(opts.sessionId);
+            const rows = getRuntimeDeps().historyStore.listMessages(opts.sessionId);
             initialMessages = rowsToAgentMessages(rows);
         } catch (err) {
             console.warn(`[piRuntime] loadSession: failed reading state for ${opts.sessionId}:`, err);
@@ -180,7 +178,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
     }
 
     async listModels(opts?: { provider?: string }): Promise<ModelInfo[]> {
-        const cfg = getAgentConfig();
+        const cfg = getRuntimeDeps().agentConfig.getAgentConfig();
         const provider = opts?.provider ?? cfg.provider;
         try {
             const models = await listPiModels(provider);
@@ -213,9 +211,9 @@ export class PiRuntime implements AgentRuntimeWithProviders {
      * key when the body omits one (e.g. a "verify the key I just saved" flow).
      */
     async verifyProviderKey(body: VerifyProviderKeyOptions): Promise<VerifyProviderKeyResult> {
-        const cfg = getAgentConfig();
+        const cfg = getRuntimeDeps().agentConfig.getAgentConfig();
         const provider = body.provider ?? cfg.provider;
-        const apiKey = body.key ?? getProviderApiKey(provider) ?? undefined;
+        const apiKey = body.key ?? getRuntimeDeps().providerKeys.getProviderApiKey(provider) ?? undefined;
         return verifyPiProviderKey({ provider, key: apiKey, model: body.model });
     }
 

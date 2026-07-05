@@ -1,4 +1,4 @@
-import type { MessageRow } from "../../services/dbRepository";
+import type { MessageRowLike as MessageRow } from "../ports";
 
 /**
  * pi-agent-core's AgentMessage union (only the parts we produce here):
