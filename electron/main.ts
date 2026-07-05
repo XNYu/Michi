@@ -452,10 +452,15 @@ async function createWindow(backendPort: number | null): Promise<void> {
     // material — the desktop shows through much more than 'sidebar' (which is
     // a denser frost). Still frosted (macOS has no fully-clear vibrancy
     // material), just far more transparent.
+    // visualEffectState 'followWindow' (the macOS default): the material is
+    // active/see-through only while the window is focused, and goes muted/opaque
+    // when Michi is in the background. This is the native NSVisualEffectView
+    // behavior (Finder, Notes) and gives a clear focus cue in a multi-window
+    // setup — the front window "glows" glassy, background ones recede.
     ...(VIBRANCY_ENABLED
       ? {
           vibrancy: 'under-window' as const,
-          visualEffectState: 'active' as const,
+          visualEffectState: 'followWindow' as const,
           backgroundColor: '#00000000',
         }
       : { backgroundColor: '#F5F2EE' }),
