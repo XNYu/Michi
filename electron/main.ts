@@ -448,9 +448,13 @@ async function createWindow(backendPort: number | null): Promise<void> {
     // window that SUPPRESSES the material (looks flat/opaque). backgroundColor
     // must be fully transparent so no solid layer paints over the material.
     // Without vibrancy, keep the warm opaque background (web/Win/Linux path).
+    // 'under-window' is the lightest / most see-through NSVisualEffectView
+    // material — the desktop shows through much more than 'sidebar' (which is
+    // a denser frost). Still frosted (macOS has no fully-clear vibrancy
+    // material), just far more transparent.
     ...(VIBRANCY_ENABLED
       ? {
-          vibrancy: 'sidebar' as const,
+          vibrancy: 'under-window' as const,
           visualEffectState: 'active' as const,
           backgroundColor: '#00000000',
         }
