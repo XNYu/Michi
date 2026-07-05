@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useChatActions, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { useTerminalColors } from './useTerminalColors';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
 import WarmFailedBanner from './WarmFailedBanner';
-import TerminalStatusLine from './StatusLine';
 import TerminalDashboard from './pages/Dashboard';
 import TerminalHome from './pages/Home';
 import NewWorkspaceDialog from '../NewWorkspaceDialog';
@@ -12,7 +11,6 @@ import { usePrefs } from '../../state/prefs';
 import type { PageId } from '../../state/commands';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { setManageWorkspaceId, useManageWorkspaceId } from '../../state/manageRoute';
-import { kbd } from '../../lib/platform';
 import type { ChatNodeState } from '../../state/chatTypes';
 
 const NARROW_THRESHOLD = 700;
@@ -326,17 +324,6 @@ export default function TerminalShell() {
     }
   }, [hydrated, projects.length]);
 
-  const streamingChatIds = useMemo(
-    () => activeProject?.chatIds ?? [],
-    [activeProject],
-  );
-  const streamingCount = useStructuralSelector(
-    React.useCallback((nodesMap: Record<string, ChatNodeState>) => streamingChatIds.reduce(
-      (acc, id) => acc + (nodesMap[id]?.status === 'streaming' ? 1 : 0),
-      0,
-    ), [streamingChatIds]),
-  );
-
   const narrowMode = width < NARROW_THRESHOLD;
   const [narrowOverlayOpen, setNarrowOverlayOpen] = useState(false);
   // Closing the overlay when the window grows back to wide.
@@ -368,21 +355,6 @@ export default function TerminalShell() {
     handleNav(p);
     if (narrowMode) setNarrowOverlayOpen(false);
   }, [handleNav, narrowMode]);
-
-  const statusLeft: React.ReactNode = activeProject ? (
-    <>
-      ◉ {activeProject.name}
-      {page !== 'dashboard' && page !== 'home' && <> · {page}</>}
-      {page === 'dashboard' && openPanes.length > 0 && (
-        <> · {openPanes.length} pane{openPanes.length > 1 ? 's' : ''}</>
-      )}
-      {streamingCount > 0 && <> · {streamingCount} streaming</>}
-      {selection.size > 0 && <> · {selection.size} selected</>}
-    </>
-  ) : (
-    '◉ michi'
-  );
-  const statusRight = `${kbd('mod', 'K')} command · ${kbd('mod', 'M')} map · ${kbd('mod', 'D')} digest · ${kbd('mod', 'O')} workspaces · ${kbd('mod', ',')} settings`;
 
   return (
     <div
@@ -443,7 +415,6 @@ export default function TerminalShell() {
           {page === 'profile' && PROFILE_PAGE_ENABLED && <LazyPage><TerminalProfile onNav={handleNav} /></LazyPage>}
         </div>
       </div>
-      <TerminalStatusLine left={statusLeft} right={statusRight} />
       {paletteOpen && (
         <React.Suspense fallback={null}>
           <CommandPalette
