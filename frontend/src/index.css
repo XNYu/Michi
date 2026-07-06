@@ -662,6 +662,43 @@ body {
   --term-rail-1: var(--term-line);
   --term-rail-2: color-mix(in srgb, var(--term-line) 70%, var(--term-bg));
   --term-rail-3: color-mix(in srgb, var(--term-line) 40%, var(--term-bg));
+  /* ── Shared glass material — the sidebar and every overlay are ONE sheet ─────
+     The sidebar and every .term-glass surface (Settings drawer, menus, popovers)
+     read the SAME blur, the SAME slider-driven translucency, and the SAME accent
+     wash — so they're identical by construction and move together when the glass
+     slider changes. The sidebar reveals the wash from --term-shell-bg painted
+     behind it; overlays sit over content instead, so they bake an equivalent
+     transparent-based wash into their own background. Under vibrancy the CSS blur
+     still works over OPAQUE web content (the Settings drawer over the content
+     column), but an overlay floating over a transparent region (a menu over the
+     vibrancy-transparent sidebar) has nothing to blur — a positional limit, not a
+     vibrancy bug. */
+  --term-glass-blur: 26px;
+  --term-glass-saturate: 160%;
+  /* Per-surface solidity knob: defaults to the sidebar slider so the Settings
+     drawer + sidebar move together. A surface can still override it locally; the
+     color-mix lives in .term-glass itself (NOT a :root token) so the var resolves
+     at the element that overrides it — a :root token would bake in :root's alpha
+     and inherit that, ignoring per-surface overrides. */
+  --term-glass-solid-alpha: var(--term-sidebar-solid-alpha);
+  /* Accent+mauve wash so an overlay reads as tinted glass on ANY backdrop, the
+     way the sidebar does. Transparent-based (no opaque floor) so it layers over
+     content; anchored top/trailing to mirror the sidebar's left-anchored wash. */
+  --term-glass-wash:
+    radial-gradient(600px 420px at 100% -8%,
+      color-mix(in srgb, var(--term-accent) 11%, transparent), transparent 60%),
+    radial-gradient(520px 480px at 88% 108%,
+      color-mix(in srgb, var(--term-mauve) 9%, transparent), transparent 62%);
+  /* Edge cues: a hairline inner highlight + a soft neutral drop so the panel
+     floats. Neutral (not directional) so the SAME primitive reads right for the
+     right-anchored Settings drawer AND a free-floating context menu. */
+  --term-glass-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 55%, transparent);
+  --term-glass-cast: 0 12px 32px -12px rgba(0, 0, 0, 0.25), 0 4px 12px -6px rgba(0, 0, 0, 0.12);
+  /* Card/list surface for controls INSIDE a glass panel. Fixed modest
+     translucency (NOT slider-driven) so control labels stay legible even at full
+     glass. Only container/card surfaces use this — knobs, selected states, accent
+     fills and text keep their opaque tokens. */
+  --term-surface-glass: color-mix(in srgb, color-mix(in srgb, var(--term-accent) 6%, var(--term-surface)) 46%, transparent);
 }
 
 /* ── Glass sidebar · proposal A (克制雾面玻璃) ──────────────────────────────
@@ -675,8 +712,9 @@ body {
    apps) will layer on top of this in a later pass, gated to Electron.
    ------------------------------------------------------------------------- */
 .terminal-sidebar {
-  -webkit-backdrop-filter: blur(26px) saturate(160%);
-  backdrop-filter: blur(26px) saturate(160%);
+  /* One blur source shared with .term-glass so sidebar + overlays stay identical. */
+  -webkit-backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
+  backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
 }
 
 /* Respect users who ask the OS to reduce transparency: fall back to the solid
@@ -684,6 +722,29 @@ body {
 @media (prefers-reduced-transparency: reduce) {
   :root { --term-sidebar-bg: var(--term-surface); }
   .terminal-sidebar {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ── Overlay glass · reusable frost for floating chrome ──────────────────────
+   Opt in by adding `term-glass` to any floating surface (drawer / menu / popover)
+   that overlays the reading column. It blurs the REAL content behind it (panes),
+   not a painted wash, so it gets true depth for free. Kept to the exact recipe
+   that works on the sidebar — no `contain`/`transform` on this element, both of
+   which can null out backdrop-filter in Chromium. Same reduced-transparency
+   fallback as the sidebar. */
+.term-glass {
+  background:
+    var(--term-glass-wash),
+    color-mix(in srgb, var(--term-surface) calc(var(--term-glass-solid-alpha) * 100%), transparent);
+  -webkit-backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
+  backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
+  box-shadow: var(--term-glass-highlight), var(--term-glass-cast);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .term-glass {
+    background: var(--term-surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -757,6 +818,13 @@ html[data-vibrancy="on"],
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
+/* NOTE: do NOT blanket-disable backdrop-filter on .term-glass under vibrancy.
+   backdrop-filter works fine under vibrancy WHEN there is opaque web content
+   behind the element — e.g. the Settings drawer sits over the opaque content
+   column and frosts correctly. It only fails to frost where the region behind is
+   transparent (a context menu floating over the vibrancy-transparent sidebar has
+   no opaque backdrop to blur — that's a positional limitation, not a vibrancy bug
+   in backdrop-filter itself). */
 /* The main reading column (panes / Home) stays fully OPAQUE over the material —
    only the chrome frame is see-through; the reading area is solid and quiet. */
 [data-vibrancy="on"] .terminal-content-col {

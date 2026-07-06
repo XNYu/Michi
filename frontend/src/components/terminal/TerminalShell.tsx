@@ -469,12 +469,13 @@ function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () =
         style={{
           position: 'fixed',
           inset: 0,
-          background: 'transparent',
+          /* Faint dim so the frosted drawer reads as elevated above the panes. */
+          background: 'color-mix(in srgb, var(--term-bg) 22%, transparent)',
           zIndex: 39,
         }}
       />
       <div
-        className="terminal-settings-drawer"
+        className="terminal-settings-drawer term-glass"
         style={{
           position: 'absolute',
           top: 0,
@@ -482,11 +483,11 @@ function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () =
           bottom: 22, /* clear the 22px status bar */
           width: 420,
           maxWidth: '50vw',
-          background: 'var(--term-pane-bg, var(--term-surface))',
+          /* background comes from .term-glass (frosted); no opaque fill here. */
           borderLeft: 'var(--term-pane-divider, 1px solid var(--term-line))',
           borderTopLeftRadius: 'var(--term-pane-radius, 0px)',
           borderBottomLeftRadius: 'var(--term-pane-radius, 0px)',
-          boxShadow: 'var(--term-pane-shadow, -8px 0 24px rgba(0,0,0,0.12))',
+          /* elevation (cast + inner highlight) comes from .term-glass box-shadow */
           display: 'flex',
           flexDirection: 'column',
           zIndex: 40,
@@ -500,7 +501,9 @@ function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () =
           justifyContent: 'space-between',
           padding: '10px 14px',
           borderBottom: '1px solid var(--term-line)',
-          background: 'var(--term-pane-header-bg, var(--term-alt))',
+          /* Transparent so the drawer frost runs continuously under the header;
+             only the hairline divider marks the header band. */
+          background: 'transparent',
         }}
       >
         <span

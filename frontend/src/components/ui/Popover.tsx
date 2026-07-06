@@ -36,6 +36,10 @@ export interface PopoverSurfaceProps {
   /** Animate in. Defaults to true; tooltip variant defaults to false to
    *  avoid flicker on rapid hover-in/out. */
   animate?: boolean;
+  /** Opt into the shared frosted-glass material (.term-glass): the surface
+   *  drops its opaque bg/shadow so the glass primitive owns them (blur + wash +
+   *  cast), matching the sidebar and Settings drawer. Border/radius/font stay. */
+  glass?: boolean;
   role?: string;
   'aria-label'?: string;
   /** Inline overrides for the rare callsite that needs e.g. `bottom`
@@ -70,6 +74,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       maxHeight,
       zIndex,
       animate = variant === 'menu',
+      glass = false,
       role,
       style,
       className,
@@ -94,10 +99,12 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       maxWidth,
       maxHeight,
       overflow: maxHeight !== undefined ? 'auto' : undefined,
-      background: `var(${isTooltip ? '--ui-tooltip-bg' : '--ui-popover-bg'})`,
+      // When `glass`, hand bg + shadow to the .term-glass class (frosted material
+      // shared with the sidebar / Settings drawer); keep border/radius here.
+      background: glass ? undefined : `var(${isTooltip ? '--ui-tooltip-bg' : '--ui-popover-bg'})`,
       border: `var(${isTooltip ? '--ui-tooltip-border' : '--ui-popover-border'})`,
       borderRadius: `var(${isTooltip ? '--ui-tooltip-radius' : '--ui-popover-radius'})`,
-      boxShadow: `var(${isTooltip ? '--ui-tooltip-shadow' : '--ui-popover-shadow'})`,
+      boxShadow: glass ? undefined : `var(${isTooltip ? '--ui-tooltip-shadow' : '--ui-popover-shadow'})`,
       fontFamily: 'var(--ui-font)',
       fontSize: isTooltip ? 11 : 11.5,
       color: 'var(--term-fg)',
@@ -111,7 +118,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
         ref={ref}
         role={role}
         aria-label={ariaLabel}
-        className={className}
+        className={glass ? `term-glass${className ? ` ${className}` : ''}` : className}
         style={baseStyle}
         onMouseDown={onMouseDown}
         onClick={onClick}

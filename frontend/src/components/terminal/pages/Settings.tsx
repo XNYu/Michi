@@ -86,7 +86,9 @@ export default function TerminalSettings({
       style={{
         flex: 1,
         minHeight: 0,
-        background: 'var(--term-bg)',
+        /* Transparent so the drawer's .term-glass frost shows through; individual
+           controls keep their own solid surfaces (macOS-vibrancy panel look). */
+        background: 'transparent',
         overflowY: 'auto',
         padding: '14px 16px 20px',
       }}
@@ -324,7 +326,7 @@ function NotificationsPane() {
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    background: 'var(--term-surface)',
+                    background: 'var(--term-surface-glass)',
                   }}
                 >
                   {sel && <span style={{ width: 6, height: 6, background: 'var(--term-accent)' }} />}
@@ -426,7 +428,7 @@ function ShortcutsPane() {
           >
             ▸ {g.title.toUpperCase()}
           </div>
-          <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
+          <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface-glass)' }}>
             {g.bindings.map((b, i) => (
               <div
                 key={i}
@@ -587,7 +589,7 @@ function RuntimePicker({
           fontSize: 12,
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
-          background: 'var(--term-surface)',
+          background: 'var(--term-surface-glass)',
           color: 'var(--term-fg)',
           minWidth: 320,
         }}
@@ -654,7 +656,7 @@ function ProviderPicker({
           fontSize: 12,
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
-          background: 'var(--term-surface)',
+          background: 'var(--term-surface-glass)',
           color: 'var(--term-fg)',
           minWidth: 320,
         }}
@@ -711,7 +713,7 @@ function ProviderModelPicker({
           fontSize: 12,
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
-          background: 'var(--term-surface)',
+          background: 'var(--term-surface-glass)',
           color: 'var(--term-fg)',
           minWidth: 320,
         }}
@@ -759,7 +761,7 @@ function ReasoningPicker({
           fontSize: 12,
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
-          background: 'var(--term-surface)',
+          background: 'var(--term-surface-glass)',
           color: 'var(--term-fg)',
           minWidth: 320,
         }}
@@ -876,7 +878,7 @@ function ProviderKeyControls({
             fontSize: 12,
             padding: '6px 8px',
             border: '1px solid var(--term-line)',
-            background: 'var(--term-surface)',
+            background: 'var(--term-surface-glass)',
             color: 'var(--term-fg)',
             minWidth: 320,
             outline: 'none',
@@ -890,7 +892,7 @@ function ProviderKeyControls({
             fontSize: 12,
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
-            background: 'var(--term-surface)',
+            background: 'var(--term-surface-glass)',
             color: 'var(--term-fg)',
             cursor: !keyDraft.trim() || keySaving ? 'default' : 'pointer',
             opacity: !keyDraft.trim() || keySaving ? 0.55 : 1,
@@ -922,7 +924,7 @@ function ProviderKeyControls({
             fontSize: 12,
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
-            background: 'var(--term-surface)',
+            background: 'var(--term-surface-glass)',
             color: 'var(--term-mid)',
             cursor: hasKey ? 'pointer' : 'default',
             opacity: hasKey ? 1 : 0.55,
@@ -1202,7 +1204,7 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
                 justifyContent: 'space-between',
                 padding: '8px 12px',
                 borderBottom: i < grants.length - 1 ? '1px solid var(--term-line)' : 'none',
-                background: 'var(--term-surface)',
+                background: 'var(--term-surface-glass)',
                 fontFamily: 'var(--ui-font)',
                 fontSize: 12,
               }}
@@ -1442,7 +1444,7 @@ function AppearancePane() {
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    background: 'var(--term-surface)',
+                    background: 'var(--term-surface-glass)',
                     flexShrink: 0,
                   }}
                 >
@@ -1756,7 +1758,7 @@ function Radio({
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: 'var(--term-surface)',
+                background: 'var(--term-surface-glass)',
               }}
             >
               {sel && <span style={{ width: 6, height: 6, background: 'var(--term-accent)' }} />}

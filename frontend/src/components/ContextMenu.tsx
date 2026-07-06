@@ -174,11 +174,31 @@ export default function ContextMenu({
       top={pos.y}
       width={width}
       minWidth={width ? undefined : 200}
+      // Frosted glass — same primitive as the sidebar / Settings drawer.
+      glass
       // Right-click menus historically sit above every other popover (eg
       // the Contexts popover hosts one internally). Preserve that.
       zIndex={1100}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ padding: '4px 0', userSelect: 'none' }}
+      // FULLY OPAQUE faux-frost. Real backdrop-filter frost is unreliable in the
+      // Electron vibrancy window: it only renders after a repaint (opening
+      // DevTools "fixes" it, closing it reverts to see-through) and it frosts
+      // nothing where the region behind is vibrancy-transparent (the menu goes
+      // clear over the sidebar but frosts over the main column). So the menu does
+      // NOT depend on backdrop-filter at all — it's a solid panel painted to LOOK
+      // like frosted glass: an opaque surface + a whisper of accent + a soft
+      // light-catch gradient. Renders identically on web and desktop, never goes
+      // see-through. (Top inner highlight zeroed; the cast shadow stays.)
+      style={{
+        padding: '4px 0',
+        userSelect: 'none',
+        background:
+          'linear-gradient(155deg, color-mix(in srgb, var(--term-fg) 6%, transparent), transparent 42%), ' +
+          'color-mix(in srgb, var(--term-alt) 45%, var(--term-surface))',
+        backdropFilter: 'none',
+        WebkitBackdropFilter: 'none',
+        ['--term-glass-highlight' as string]: '0 0 0 0 transparent',
+      } as React.CSSProperties}
     >
       {searchable && (
         <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--term-line)' }}>
