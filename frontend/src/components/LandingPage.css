@@ -39,7 +39,10 @@
 
   display: grid;
   grid-template-rows: 1fr auto;
+  /* 100vh jumps on iOS Safari as the URL bar shows/hides; dvh tracks the
+     visible viewport. vh fallback first for browsers without dvh support. */
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--landing-bg);
   color: var(--landing-fg);
   font-family: var(--landing-ui);

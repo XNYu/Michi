@@ -4,23 +4,43 @@
     <meta charset="utf-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+    <!-- Match the browser chrome to the active theme: parchment (light) is the
+         default, night (dark) for users on a dark palette / OS preference. -->
+    <meta name="theme-color" content="#f5f2ee" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#080808" media="(prefers-color-scheme: dark)" />
 
     <!-- Primary Meta Tags -->
-    <title>Michi | Seek Knowledge</title>
-    <meta name="title" content="Michi | Seek Knowledge">
-    <meta name="description" content="🐰 Open Source Michi Explorer - Hop into a warren of knowledge! Chase fascinating ideas through AI-powered mind maps. Warning: Side effects may include uncontrollable curiosity and frequent 'aha!' moments. Built with 🥕 by the community.">
-    <meta name="keywords" content="open source, michi, mind map, AI research, knowledge explorer, deep learning, research tool, knowledge graph, curiosity, exploration">
+    <title>Michi — every conversation is a tree</title>
+    <meta name="title" content="Michi — every conversation is a tree">
+    <meta name="description" content="Branching chat for knowledge exploration. Fork any reply into a parallel branch, compare answers side by side, and weave them back together with digests. Your API key, your data, your tree.">
+    <meta name="keywords" content="branching chat, michi, knowledge exploration, parallel conversations, AI research, digests, kiro">
 
     <!-- App Meta -->
     <meta name="application-name" content="Michi">
     <meta name="apple-mobile-web-app-title" content="Michi">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="msapplication-TileColor" content="#000000">
+    <meta name="msapplication-TileColor" content="#f5f2ee">
     <meta name="msapplication-tap-highlight" content="no">
     <meta name="format-detection" content="telephone=no">
+
+    <!-- Open Graph / social sharing. Uses the existing 1480×824 card in
+         public/. URLs are root-relative so they resolve on whatever origin
+         serves the app; set an absolute og:url/og:image for production if you
+         want reliable previews on crawlers that don't resolve relative paths. -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Michi">
+    <meta property="og:title" content="Michi — every conversation is a tree">
+    <meta property="og:description" content="Branching chat for knowledge exploration. Fork any reply into a parallel branch, compare answers side by side, and weave them back together with digests.">
+    <meta property="og:image" content="/og-image.png">
+    <meta property="og:image:width" content="1480">
+    <meta property="og:image:height" content="824">
+    <meta property="og:image:alt" content="Michi — a branching tree of chat nodes on a parchment canvas">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Michi — every conversation is a tree">
+    <meta name="twitter:description" content="Branching chat for knowledge exploration. Fork any reply, compare answers side by side, and weave them back together with digests.">
+    <meta name="twitter:image" content="/og-image.png">
 
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
