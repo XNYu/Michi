@@ -794,12 +794,11 @@ html[data-vibrancy="on"],
      desktop, not a painted gradient. A transparent shell reveals the material. */
   background: transparent !important;
 }
-/* Chrome frame — topbar, sidebar, status line — all frost with the SAME tint so
-   the left column and the top/bottom bars read as one continuous glass sheet.
-   The native material provides the blur; kill any CSS backdrop-filter so it
-   doesn't double-blur / muddy. */
-[data-vibrancy="on"] .terminal-topbar,
-[data-vibrancy="on"] .terminal-status-line {
+/* Chrome frame — topbar + sidebar — frost with the SAME tint so the left column
+   and the top bar read as one continuous glass sheet. The native material
+   provides the blur; kill any CSS backdrop-filter so it doesn't double-blur /
+   muddy. */
+[data-vibrancy="on"] .terminal-topbar {
   background: var(--term-vibrancy-tint) !important;
 }
 /* The topbar's Zone-1 spacer (the region above the sidebar holding the traffic

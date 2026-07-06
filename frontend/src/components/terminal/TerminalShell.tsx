@@ -480,7 +480,7 @@ function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () =
           position: 'absolute',
           top: 0,
           right: 0,
-          bottom: 22, /* clear the 22px status bar */
+          bottom: 0,
           width: 420,
           maxWidth: '50vw',
           /* background comes from .term-glass (frosted); no opaque fill here. */
