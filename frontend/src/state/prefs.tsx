@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PALETTES } from '../components/terminal/tokens';
 import { fetchPrefs, savePrefs } from '../services/api';
+import type { VibrancyMaterial } from '../lib/electronBridge';
 
 export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
@@ -81,6 +82,22 @@ export interface Prefs {
    *  through; without vibrancy it just controls the CSS-glass tint. Drives
    *  --term-sidebar-translucency (a 0..1 alpha) on <html>. */
   sidebarTranslucency: number;
+  /** Glass blur radius in px (0–40, default 26). Drives --term-glass-blur, shared
+   *  by the sidebar and every .term-glass overlay. */
+  glassBlur: number;
+  /** Glass backdrop saturation in % (100–220, default 160). Drives
+   *  --term-glass-saturate. */
+  glassSaturate: number;
+  /** Glass accent-wash strength in % (0–200, default 100). Scales the accent/mauve
+   *  tint via --term-glass-wash-strength (pref / 100). */
+  glassTint: number;
+  /** Glass depth in % (0–200, default 100). Scales the inner highlight + drop
+   *  shadow together via --term-glass-depth (pref / 100). */
+  glassDepth: number;
+  /** Sidebar's native macOS vibrancy material (Electron+macOS only). Lightest →
+   *  densest: under-window < sidebar < menu < hud. Applied via
+   *  window.electron.setVibrancy; ignored on web / Windows / Linux. */
+  sidebarVibrancy: VibrancyMaterial;
   /** When true, the docked terminal sidebar is hidden and a hover popover replaces it.
    *  Toggled via ⌘B and the topbar icon. */
   sidebarCollapsed: boolean;
@@ -132,7 +149,12 @@ export const DEFAULT_PREFS: Prefs = {
   paneRules: true,
   terminalSidebarWidth: 232,
   sidebarDensity: 'comfortable',
-  sidebarTranslucency: 58,
+  sidebarTranslucency: 60,
+  glassBlur: 10,
+  glassSaturate: 130,
+  glassTint: 30,
+  glassDepth: 30,
+  sidebarVibrancy: 'under-window',
   sidebarCollapsed: false,
   trashTTLDays: 30,
   focusDim: 20,
@@ -215,6 +237,21 @@ function readInitial(): Prefs {
     }
     if (typeof merged.sidebarTranslucency !== 'number' || merged.sidebarTranslucency < 0 || merged.sidebarTranslucency > 100) {
       merged.sidebarTranslucency = DEFAULT_PREFS.sidebarTranslucency;
+    }
+    if (typeof merged.glassBlur !== 'number' || merged.glassBlur < 0 || merged.glassBlur > 40) {
+      merged.glassBlur = DEFAULT_PREFS.glassBlur;
+    }
+    if (typeof merged.glassSaturate !== 'number' || merged.glassSaturate < 100 || merged.glassSaturate > 220) {
+      merged.glassSaturate = DEFAULT_PREFS.glassSaturate;
+    }
+    if (typeof merged.glassTint !== 'number' || merged.glassTint < 0 || merged.glassTint > 200) {
+      merged.glassTint = DEFAULT_PREFS.glassTint;
+    }
+    if (typeof merged.glassDepth !== 'number' || merged.glassDepth < 0 || merged.glassDepth > 200) {
+      merged.glassDepth = DEFAULT_PREFS.glassDepth;
+    }
+    if (!['under-window', 'sidebar', 'menu', 'hud'].includes(merged.sidebarVibrancy)) {
+      merged.sidebarVibrancy = DEFAULT_PREFS.sidebarVibrancy;
     }
     if (
       merged.sidebarDensity !== 'compact' &&
@@ -328,6 +365,18 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     const solidAlpha = (1 - prefs.sidebarTranslucency / 100).toFixed(3);
     document.documentElement.style.setProperty('--term-sidebar-solid-alpha', solidAlpha);
   }, [prefs.sidebarTranslucency]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // Glass material knobs, shared by the sidebar + every .term-glass overlay.
+    // blur/saturate are direct units; tint/depth are 0..2 multipliers (pref/100)
+    // that scale the wash colour and the highlight+shadow inside index.css.
+    const s = document.documentElement.style;
+    s.setProperty('--term-glass-blur', `${prefs.glassBlur}px`);
+    s.setProperty('--term-glass-saturate', `${prefs.glassSaturate}%`);
+    s.setProperty('--term-glass-wash-strength', (prefs.glassTint / 100).toFixed(3));
+    s.setProperty('--term-glass-depth', (prefs.glassDepth / 100).toFixed(3));
+  }, [prefs.glassBlur, prefs.glassSaturate, prefs.glassTint, prefs.glassDepth]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

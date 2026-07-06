@@ -1393,22 +1393,10 @@ function AppearancePane() {
         </div>
       </Row>
 
-      <Row k="theme.sidebarTranslucency" label="Sidebar glass">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={2}
-            value={prefs.sidebarTranslucency}
-            onChange={(e) => setPref('sidebarTranslucency', Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-          />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
-            {prefs.sidebarTranslucency}%
-          </span>
-        </div>
-      </Row>
+      {/* Glass material controls (Sidebar glass / blur / saturation / tint /
+          depth + native Sidebar material) are intentionally hidden — the defaults
+          in prefs.tsx are the tuned look. The prefs + effects still drive the
+          glass; re-add these Rows to expose them again. */}
 
       <Row k="theme.sidebarDensity" label="Sidebar density">
         <Radio

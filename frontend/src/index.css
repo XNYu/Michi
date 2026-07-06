@@ -683,17 +683,26 @@ body {
   --term-glass-solid-alpha: var(--term-sidebar-solid-alpha);
   /* Accent+mauve wash so an overlay reads as tinted glass on ANY backdrop, the
      way the sidebar does. Transparent-based (no opaque floor) so it layers over
-     content; anchored top/trailing to mirror the sidebar's left-anchored wash. */
+     content; anchored top/trailing to mirror the sidebar's left-anchored wash.
+     Colour strength is scaled by --term-glass-wash-strength (0..2, default 1;
+     driven by the "Glass tint" slider via prefs.glassTint / 100). The base
+     percentages (11% / 9%) are multiplied by that factor. */
+  --term-glass-wash-strength: 1;
   --term-glass-wash:
     radial-gradient(600px 420px at 100% -8%,
-      color-mix(in srgb, var(--term-accent) 11%, transparent), transparent 60%),
+      color-mix(in srgb, var(--term-accent) calc(11% * var(--term-glass-wash-strength)), transparent), transparent 60%),
     radial-gradient(520px 480px at 88% 108%,
-      color-mix(in srgb, var(--term-mauve) 9%, transparent), transparent 62%);
+      color-mix(in srgb, var(--term-mauve) calc(9% * var(--term-glass-wash-strength)), transparent), transparent 62%);
   /* Edge cues: a hairline inner highlight + a soft neutral drop so the panel
      floats. Neutral (not directional) so the SAME primitive reads right for the
-     right-anchored Settings drawer AND a free-floating context menu. */
-  --term-glass-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff 55%, transparent);
-  --term-glass-cast: 0 12px 32px -12px rgba(0, 0, 0, 0.25), 0 4px 12px -6px rgba(0, 0, 0, 0.12);
+     right-anchored Settings drawer AND a free-floating context menu. Opacity of
+     both is scaled by --term-glass-depth (0..2, default 1; the "Glass depth"
+     slider via prefs.glassDepth / 100) so highlight + shadow strengthen together. */
+  --term-glass-depth: 1;
+  --term-glass-highlight: inset 0 1px 0 color-mix(in srgb, #ffffff calc(55% * var(--term-glass-depth)), transparent);
+  --term-glass-cast:
+    0 12px 32px -12px rgba(0, 0, 0, calc(0.25 * var(--term-glass-depth))),
+    0 4px 12px -6px rgba(0, 0, 0, calc(0.12 * var(--term-glass-depth)));
   /* Card/list surface for controls INSIDE a glass panel. Fixed modest
      translucency (NOT slider-driven) so control labels stay legible even at full
      glass. Only container/card surfaces use this — knobs, selected states, accent

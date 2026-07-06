@@ -13,6 +13,9 @@ export interface SaveMarkdownResult {
   path?: string;
 }
 
+/** macOS NSVisualEffectView materials Michi exposes, lightest → densest frost. */
+export type VibrancyMaterial = 'under-window' | 'sidebar' | 'menu' | 'hud';
+
 export interface ElectronBridge {
   /** True only in `electron-builder` packaged builds. Absent in older builds — treat as false. */
   isPackaged?: boolean;
@@ -30,6 +33,8 @@ export interface ElectronBridge {
   showNotification?(title: string, body: string): void;
   /** Sync the native vibrancy material light/dark to the palette. Absent in older builds / web. */
   setDarkMaterial?(dark: boolean): void;
+  /** Switch the sidebar's native vibrancy material (desktop see-through density). Absent in older builds / web. */
+  setVibrancy?(material: VibrancyMaterial): void;
   /** Relaunch the app after self-update. Optional — absent in older builds. */
   relaunch?(): void;
   /** Open a multi-select OS file picker, returns absolute paths. Optional — absent in older builds. */

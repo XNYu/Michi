@@ -17,6 +17,12 @@ export function useTerminalColors(): Record<string, string> {
     getElectron()?.setDarkMaterial?.(isDark);
   }, [isDark]);
 
+  // Apply the chosen native sidebar vibrancy material. No-op in the browser and
+  // on builds without the bridge method (older Electron / web / Win / Linux).
+  useEffect(() => {
+    getElectron()?.setVibrancy?.(prefs.sidebarVibrancy);
+  }, [prefs.sidebarVibrancy]);
+
   return useMemo(
     () => cssVarsFor(prefs.terminalPalette, accent),
     [prefs.terminalPalette, accent],

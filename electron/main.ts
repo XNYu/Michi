@@ -680,6 +680,19 @@ ipcMain.on('app:setDarkMaterial', (_ev, dark: boolean) => {
   nativeTheme.themeSource = dark ? 'dark' : 'light';
 });
 
+// Runtime-switch the sidebar's NSVisualEffectView material so users can pick how
+// see-through / dense the desktop-vibrancy sidebar reads. macOS materials range
+// from 'under-window' (lightest, our default) to denser frosts ('sidebar',
+// 'menu', 'hud'). Applies to every open window. No-op unless vibrancy is on
+// (off macOS / MICHI_NO_VIBRANCY) or on an invalid material string.
+const VIBRANCY_MATERIALS = new Set(['under-window', 'sidebar', 'menu', 'hud']);
+ipcMain.on('app:setVibrancy', (_ev, material: string) => {
+  if (!VIBRANCY_ENABLED || !VIBRANCY_MATERIALS.has(material)) return;
+  for (const w of windows) {
+    if (!w.isDestroyed()) w.setVibrancy(material as 'under-window' | 'sidebar' | 'menu' | 'hud');
+  }
+});
+
 async function installDevExtensions(): Promise<void> {
   if (!isDev) return;
   try {

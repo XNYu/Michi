@@ -50,6 +50,10 @@ contextBridge.exposeInMainWorld('electron', {
   setDarkMaterial(dark: boolean): void {
     ipcRenderer.send('app:setDarkMaterial', dark);
   },
+  /** Switch the sidebar's native vibrancy material (desktop see-through density). */
+  setVibrancy(material: string): void {
+    ipcRenderer.send('app:setVibrancy', material);
+  },
   /** Relaunch the app (used after self-update). */
   relaunch(): void {
     ipcRenderer.send('app:relaunch');
