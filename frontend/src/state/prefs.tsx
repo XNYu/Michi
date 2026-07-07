@@ -77,6 +77,10 @@ export interface Prefs {
    *  nav). Drives the `--sb-*` CSS vars (row padding, font size, workspace group
    *  gap, timestamp size) set on the sidebar root in Sidebar.tsx. */
   sidebarDensity: SidebarDensity;
+  /** Horizontal gutter (px) between the sidebar's content and its left/right
+   *  edges. Added on top of each row's own padding via the `--sb-inset` CSS
+   *  var (0 = current flush look). */
+  sidebarInset: number;
   /** Sidebar glass translucency, 0–100. 0 = solid surface (opaque), 100 = maximally
    *  see-through. Under macOS window vibrancy this sets how much the desktop shows
    *  through; without vibrancy it just controls the CSS-glass tint. Drives
@@ -149,6 +153,7 @@ export const DEFAULT_PREFS: Prefs = {
   paneRules: true,
   terminalSidebarWidth: 232,
   sidebarDensity: 'comfortable',
+  sidebarInset: 2,
   sidebarTranslucency: 60,
   glassBlur: 10,
   glassSaturate: 130,
@@ -259,6 +264,9 @@ function readInitial(): Prefs {
       merged.sidebarDensity !== 'airy'
     ) {
       merged.sidebarDensity = DEFAULT_PREFS.sidebarDensity;
+    }
+    if (typeof merged.sidebarInset !== 'number' || merged.sidebarInset < 0 || merged.sidebarInset > 24) {
+      merged.sidebarInset = DEFAULT_PREFS.sidebarInset;
     }
     if (
       merged.singlePaneContentWidth !== null &&
@@ -461,6 +469,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       paneRules: DEFAULT_PREFS.paneRules,
       terminalSidebarWidth: DEFAULT_PREFS.terminalSidebarWidth,
       sidebarDensity: DEFAULT_PREFS.sidebarDensity,
+      sidebarInset: DEFAULT_PREFS.sidebarInset,
       paneTopFadeHeight: DEFAULT_PREFS.paneTopFadeHeight,
     }));
   }, []);

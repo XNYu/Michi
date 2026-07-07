@@ -533,7 +533,7 @@ export default function WorkspaceRow({
           {!forceExpand && filteredLiveTrees.length > THREAD_PREVIEW_LIMIT && (
             <button
               type="button"
-              className="t-row-hover"
+              className="t-row-hover sb-flush"
               aria-expanded={showAllThreads}
               onClick={() => setShowAllThreads((v) => !v)}
               style={{

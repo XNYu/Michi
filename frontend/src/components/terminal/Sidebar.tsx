@@ -95,6 +95,10 @@ export default function TerminalSidebar({
     '--sb-ws-gap': `${d.wsGap}px`,
     '--sb-ts-fs': `${d.tsFs}px`,
     '--sb-nav-py': `${d.navPy}px`,
+    // Horizontal gutter between sidebar content and its edges. Applied as
+    // padding on the scrollable tree + bottom nav (below), so it stacks on
+    // top of each row's own left/right padding. 0 = flush (original look).
+    '--sb-inset': `${prefs.sidebarInset}px`,
   } as React.CSSProperties;
 
   const aside = (
@@ -309,7 +313,7 @@ function BottomNav({
   return (
     <div
       style={{
-        padding: '6px 0',
+        padding: '6px var(--sb-inset, 0px)',
         flexShrink: 0,
       }}
     >

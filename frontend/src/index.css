@@ -725,6 +725,15 @@ body {
   -webkit-backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
   backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
 }
+/* Pull interactive rows out to the sidebar edge so their borderLeft (selection
+   indicator) and absolute-positioned streaming bars stay flush against the
+   sidebar's true edge. Each row adds --sb-inset to its own inline padding so
+   text stays indented. Net visual: bars flush, text indented.
+   Elements with .sb-flush are excluded (e.g. the mark-all-read button). */
+.terminal-sidebar .t-row-hover:not(.sb-flush) {
+  margin-left: calc(-1 * var(--sb-inset, 0px));
+  margin-right: calc(-1 * var(--sb-inset, 0px));
+}
 
 /* Respect users who ask the OS to reduce transparency: fall back to the solid
    surface and drop the blur entirely. */

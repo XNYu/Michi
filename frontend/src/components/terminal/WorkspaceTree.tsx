@@ -773,7 +773,18 @@ export default function WorkspaceTree({
     : liveProjects;
 
   return (
-    <div className="term-scrollbar" style={{ flex: 1, overflowY: 'auto' }}>
+    <div
+      className="term-scrollbar"
+      style={{
+        flex: 1,
+        overflowY: 'auto',
+        // Horizontal gutter between tree content and the sidebar edges. The
+        // scrollbar still sits at the element's true right edge; only the rows
+        // inset. 0 = original flush look. See Sidebar.tsx `--sb-inset`.
+        paddingLeft: 'var(--sb-inset, 0px)',
+        paddingRight: 'var(--sb-inset, 0px)',
+      }}
+    >
       {unreadFilterOn && projectsToRender.length > 0 && (
         <div
           style={{
@@ -787,7 +798,7 @@ export default function WorkspaceTree({
         >
           <button
             type="button"
-            className="t-row-hover"
+            className="t-row-hover sb-flush"
             aria-label="Mark all threads as read"
             onClick={() => markAllRead()}
             style={{
@@ -1047,7 +1058,7 @@ function MergedGroupsSection({
       {visibleGroups.length > MERGED_PREVIEW_LIMIT && (
         <button
           type="button"
-          className="t-row-hover"
+          className="t-row-hover sb-flush"
           aria-label={showAllMerged ? 'Show less merged threads' : 'Show more merged threads'}
           aria-expanded={showAllMerged}
           onClick={() => setShowAllMerged((v) => !v)}
