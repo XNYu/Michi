@@ -20,7 +20,7 @@ const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 // Empty string means "let the runtime pick from listModels()".
 const BUILTIN_DEFAULT_MODEL_BY_RUNTIME: Record<string, string> = {
   claude: "sonnet",
-  pi: "deepseek-v4-pro",
+  pi: "openrouter/owl-alpha",
   kiro: "",
 };
 
@@ -34,7 +34,7 @@ const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
 
 const DEFAULTS: AgentConfig = {
   runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
-  provider: "deepseek",
+  provider: "openrouter-free",
   modelByRuntime: {},
   reasoningByRuntime: {},
 };
@@ -326,6 +326,10 @@ export function resolveReasoning(runtimeId: string, userId?: string): AgentReaso
 
 export function getBuiltinDefaultModel(runtimeId: string): string {
   return BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId] ?? "";
+}
+
+export function getBuiltinDefaultReasoning(runtimeId: string): AgentReasoning | undefined {
+  return BUILTIN_DEFAULT_REASONING_BY_RUNTIME[runtimeId];
 }
 
 /**
