@@ -796,7 +796,7 @@ html[data-vibrancy="on"],
      shadow on the sidebar's right edge makes it read as recessed, with the main
      panel floating above it. Both the sidebar and the topbar Zone-1 spacer read
      this same var, so the recessed edge is continuous top-to-bottom. */
-  --term-sidebar-shadow: inset -8px 0 8px -8px rgba(0, 0, 0, 0.08);
+  --term-sidebar-shadow: inset -8px 0 8px -8px rgba(0, 0, 0, 0.056);
 }
 [data-vibrancy="on"] .terminal-shell {
   /* Drop the accent/mauve wash — under vibrancy the "thing to blur" is the real
