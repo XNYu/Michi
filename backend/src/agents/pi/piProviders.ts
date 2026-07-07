@@ -9,6 +9,10 @@ export interface PiProviderInfo {
     defaultModel: string;
     supportsReasoning: boolean;
     keyUrl?: string;
+    requiresUserKey?: boolean;
+    modelLocked?: boolean;
+    upstreamProviderId?: string;
+    fallbackModel?: string;
 }
 
 export interface PiModelInfo {
@@ -39,7 +43,24 @@ export interface VerifyPiProviderKeyResult {
     error?: string;
 }
 
+export const OPENROUTER_FREE_PROVIDER_ID = "openrouter-free";
+export const OPENROUTER_FREE_PRIMARY_MODEL = "openrouter/owl-alpha";
+export const OPENROUTER_FREE_FALLBACK_MODEL = "openrouter/free";
+
 export const PI_PROVIDERS: PiProviderInfo[] = [
+    {
+        id: OPENROUTER_FREE_PROVIDER_ID,
+        name: "OpenRouter Free Trial",
+        apiKeyLabel: "Built-in OpenRouter trial",
+        envVars: ["OPENROUTER_FREE_API_KEY", "OPENROUTER_API_KEY"],
+        defaultModel: OPENROUTER_FREE_PRIMARY_MODEL,
+        fallbackModel: OPENROUTER_FREE_FALLBACK_MODEL,
+        upstreamProviderId: "openrouter",
+        supportsReasoning: false,
+        requiresUserKey: false,
+        modelLocked: true,
+        keyUrl: "https://openrouter.ai/settings/keys",
+    },
     {
         id: "deepseek",
         name: "DeepSeek",
@@ -167,6 +188,25 @@ export function getProviderInfo(provider: string): PiProviderInfo | undefined {
     return PI_PROVIDERS.find((p) => p.id === provider);
 }
 
+export function getUpstreamProviderId(provider: string): string {
+    return getProviderInfo(provider)?.upstreamProviderId ?? provider;
+}
+
+export function providerRequiresUserKey(provider: string): boolean {
+    return getProviderInfo(provider)?.requiresUserKey !== false;
+}
+
+export function getModelAttemptIds(provider: string, requested?: string | null): string[] {
+    const info = getProviderInfo(provider);
+    if (!info) return requested ? [requested] : [];
+    if (info.modelLocked) {
+        return info.fallbackModel
+            ? [info.defaultModel, info.fallbackModel]
+            : [info.defaultModel];
+    }
+    return [requested || info.defaultModel];
+}
+
 export function isSupportedProvider(provider: unknown): provider is string {
     return typeof provider === "string" && !!getProviderInfo(provider);
 }
@@ -200,6 +240,19 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
     if (!isSupportedProvider(provider)) {
         throw new Error(`Unsupported provider: ${provider}`);
     }
+    const info = getProviderInfo(provider)!;
+    if (info.modelLocked) {
+        const upstreamProvider = getUpstreamProviderId(provider);
+        const piMod = await loadPiAi();
+        const model = (piMod as any).getModel(upstreamProvider, info.defaultModel);
+        return [{
+            model_id: String(model.id),
+            model_name: String(model.name || model.id),
+            description: typeof model.description === "string" ? model.description : undefined,
+            context_window_tokens:
+                typeof model.contextWindow === "number" ? model.contextWindow : undefined,
+        }];
+    }
     const piMod = await loadPiAi();
     const models = (piMod as any).getModels(provider) as Array<Record<string, any>>;
     return models.map((m) => ({
@@ -216,6 +269,7 @@ export async function resolveProviderModel(provider: string, requested?: string)
     if (!info) {
         throw new Error(`Unsupported provider: ${provider}`);
     }
+    if (info.modelLocked) return info.defaultModel;
     const models = await listPiModels(provider);
     if (requested && models.some((m) => m.model_id === requested)) return requested;
     if (models.some((m) => m.model_id === info.defaultModel)) return info.defaultModel;
@@ -279,7 +333,7 @@ export async function verifyPiProviderKey(
     }
 
     const piMod = await loadPiAi();
-    const model = (piMod as any).getModel(provider, modelId);
+    const model = (piMod as any).getModel(getUpstreamProviderId(provider), modelId);
     const timeoutMs = opts.timeoutMs ?? 15_000;
     const started = Date.now();
     const controller = new AbortController();
