@@ -755,7 +755,6 @@ function ProfilePageStyles() {
         --digest-f: var(--term-digest-f, #d7e7df);
         --danger: var(--term-danger, #a8261a);
         --ok: var(--term-ok, #2f6b4e);
-        --t-quick: 80ms cubic-bezier(.2, 0, .6, 1);
       }
 
       .profile-shell {

@@ -1,5 +1,13 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PopoverSurface, MenuItem as MenuRow } from './ui/Popover';
+
+/**
+ * macOS-style confirm blink: on click the row's highlight flashes once
+ * (off → on → off), THEN the action fires and the menu closes. Must match the
+ * `ui-menu-blink` animation duration in index.css so the run/close lands right
+ * as the flash finishes. Skipped under prefers-reduced-motion.
+ */
+const BLINK_MS = 160;
 
 export interface MenuItem {
   id: string;
@@ -69,6 +77,41 @@ export default function ContextMenu({
   const searchRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState({ x, y });
   const [filter, setFilter] = useState('');
+  // id of the row currently playing the confirm blink (null = none).
+  const [blinkingId, setBlinkingId] = useState<string | null>(null);
+  const blinkTimer = useRef<number | null>(null);
+
+  // Fire an item's action after a short macOS-style confirm blink, then close.
+  // Guards against double-fire (ignores clicks while a blink is already in
+  // flight) and honors prefers-reduced-motion by running immediately.
+  const fireWithBlink = useCallback(
+    (item: MenuItem) => {
+      if (item.disabled) return;
+      if (blinkTimer.current !== null) return;
+      const reduce =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      if (reduce) {
+        item.run();
+        onClose();
+        return;
+      }
+      setBlinkingId(item.id);
+      blinkTimer.current = window.setTimeout(() => {
+        blinkTimer.current = null;
+        item.run();
+        onClose();
+      }, BLINK_MS);
+    },
+    [onClose],
+  );
+
+  useEffect(
+    () => () => {
+      if (blinkTimer.current !== null) window.clearTimeout(blinkTimer.current);
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -119,8 +162,7 @@ export default function ContextMenu({
           if (item.disabled || !item.keys) continue;
           if (item.keys.toUpperCase() === k) {
             e.preventDefault();
-            item.run();
-            onClose();
+            fireWithBlink(item);
             return;
           }
         }
@@ -139,13 +181,9 @@ export default function ContextMenu({
       document.removeEventListener('mousedown', onDocDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose, sections, searchable]);
+  }, [onClose, sections, searchable, fireWithBlink]);
 
-  const run = (item: MenuItem) => {
-    if (item.disabled) return;
-    item.run();
-    onClose();
-  };
+  const run = (item: MenuItem) => fireWithBlink(item);
 
   useEffect(() => {
     if (searchable) searchRef.current?.focus();
@@ -174,31 +212,11 @@ export default function ContextMenu({
       top={pos.y}
       width={width}
       minWidth={width ? undefined : 200}
-      // Frosted glass — same primitive as the sidebar / Settings drawer.
-      glass
       // Right-click menus historically sit above every other popover (eg
       // the Contexts popover hosts one internally). Preserve that.
       zIndex={1100}
       onContextMenu={(e) => e.preventDefault()}
-      // FULLY OPAQUE faux-frost. Real backdrop-filter frost is unreliable in the
-      // Electron vibrancy window: it only renders after a repaint (opening
-      // DevTools "fixes" it, closing it reverts to see-through) and it frosts
-      // nothing where the region behind is vibrancy-transparent (the menu goes
-      // clear over the sidebar but frosts over the main column). So the menu does
-      // NOT depend on backdrop-filter at all — it's a solid panel painted to LOOK
-      // like frosted glass: an opaque surface + a whisper of accent + a soft
-      // light-catch gradient. Renders identically on web and desktop, never goes
-      // see-through. (Top inner highlight zeroed; the cast shadow stays.)
-      style={{
-        padding: '4px 0',
-        userSelect: 'none',
-        background:
-          'linear-gradient(155deg, color-mix(in srgb, var(--term-fg) 6%, transparent), transparent 42%), ' +
-          'color-mix(in srgb, var(--term-alt) 45%, var(--term-surface))',
-        backdropFilter: 'none',
-        WebkitBackdropFilter: 'none',
-        ['--term-glass-highlight' as string]: '0 0 0 0 transparent',
-      } as React.CSSProperties}
+      style={{ padding: '4px 0', userSelect: 'none' }}
     >
       {searchable && (
         <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--term-line)' }}>
@@ -266,6 +284,7 @@ export default function ContextMenu({
                   onClick={() => run(item)}
                   danger={item.danger}
                   disabled={item.disabled}
+                  className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
                 >
                   {!trailing && item.glyph && (
                     <span

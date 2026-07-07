@@ -647,6 +647,15 @@ body {
   --term-pane-shadow: none;
   --term-pane-header-bg: var(--term-alt);
   --term-hover-bg: var(--term-alt);
+  /* Motion timing tokens. Consumed as `var(--t-quick) var(--t-ease)` across
+     ~50 transition/animation sites (menu-item hover, buttons, chips, code
+     copy). These were referenced everywhere but never defined at :root, so
+     every `transition: … var(--t-quick) var(--t-ease)` that lacked an inline
+     fallback resolved to an invalid declaration (→ instant, un-animated). Keep
+     duration and easing as SEPARATE tokens — the call sites always pair them. */
+  --t-quick: 0ms;
+  --t-soft: 140ms;
+  --t-ease: cubic-bezier(.2, 0, .2, 1);
   --term-composer-bg: var(--term-bg);
   --term-composer-bg-focus: var(--term-surface);
   --term-composer-border: 1px solid var(--term-line-s);
@@ -2072,6 +2081,26 @@ html[data-vibrancy="on"],
   opacity: 0.6;
   cursor: not-allowed;
   background: transparent;
+}
+/* macOS-style confirm blink — a SINGLE flash. The clicked row is already lit by
+   :hover, so the animation must START lit (0% = --term-hover-bg) to seam with
+   that state — otherwise the very first frame jumps ON→OFF and you perceive a
+   phantom extra blink. From there the highlight winks OFF once in the middle and
+   comes back ON, ending lit as the menu closes: ON → OFF → ON = one blink. The
+   ±1% steps around 30/69 are ~1.4ms linear ramps, i.e. hard on/off with no fade,
+   matching the crisp 0ms hover. Flashes the row's own hover color (not a bolder
+   accent) so it stays a gentle confirm. BLINK_MS in ContextMenu.tsx must match
+   this 160ms. */
+@keyframes ui-menu-blink {
+  0%, 30%   { background: var(--term-hover-bg, var(--term-alt)); }
+  31%, 69%  { background: transparent; }
+  70%, 100% { background: var(--term-hover-bg, var(--term-alt)); }
+}
+.ui-menu-blink {
+  animation: ui-menu-blink 160ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-menu-blink { animation: none; }
 }
 
 .boot-warm-failed {
