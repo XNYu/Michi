@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell, nativeTheme, Notification as ElectronNotification } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, Notification as ElectronNotification } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -43,6 +43,33 @@ const VIBRANCY_ENABLED = process.platform === 'darwin' && process.env.MICHI_NO_V
 // fall back to process.cwd(). Finder launches give "/".
 const LAUNCH_CWD = process.env.MICHI_LAUNCH_CWD || process.cwd();
 startupMark('electron_main_start', { isDev, launchCwd: LAUNCH_CWD });
+
+// Power-save blocker — prevents macOS/Windows from sleeping while Michi is
+// running (useful during long agent sessions). Controlled exclusively via
+// ~/.michi/config.json top-level key "preventSleep": true. No UI toggle.
+let powerSaveBlockerId: number | null = null;
+
+function readPreventSleep(): boolean {
+  try {
+    const cfgPath = path.join(os.homedir(), '.michi', 'config.json');
+    const raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    return raw?.preventSleep === true;
+  } catch {
+    return false;
+  }
+}
+
+function applyPowerSaveBlocker(): void {
+  const wanted = readPreventSleep();
+  if (wanted && powerSaveBlockerId === null) {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    elog('INFO', 'power', 'powerSaveBlocker started', { id: powerSaveBlockerId });
+  } else if (!wanted && powerSaveBlockerId !== null) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    elog('INFO', 'power', 'powerSaveBlocker stopped', { id: powerSaveBlockerId });
+    powerSaveBlockerId = null;
+  }
+}
 
 // Lifecycle log dir — same root as the SQLite store (~/.michi/) so a single
 // "open log folder" button can take the user to everything they need to
@@ -848,6 +875,7 @@ app.on('second-instance', () => {
 app.whenReady().then(async () => {
   elog('INFO', 'boot', 'app ready', { isDev, isPackaged: app.isPackaged, logDir: LOG_DIR, launchCwd: LAUNCH_CWD });
   startupMark('electron_app_ready', { isDev, isPackaged: app.isPackaged, logDir: LOG_DIR });
+  applyPowerSaveBlocker();
   try {
     // In dev the bare `electron` binary uses Electron's default dock icon —
     // override it so `npm run electron:dev` matches the packaged app.
