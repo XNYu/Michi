@@ -399,14 +399,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     setFocusedNodeIdState(id);
     // Keep activeTreeId in sync with focus so the sidebar's ThreadRow active
     // visual never lingers on a tree whose node is no longer focused. If the
-    // focused node belongs to a tree, activate that tree; merge nodes (no
-    // branch parent) resolve to null, which deactivates the project's tree.
+    // focused node belongs to a tree, activate that tree. Nodes outside any
+    // tree (digest, merge) resolve to null — don't deactivate the current tree.
     if (!id) return;
     setProjects((prev) => {
       const owning = prev.find((p) => p.chatIds.includes(id));
       if (!owning) return prev;
       const treeId = findTreeIdForNode(id, owning);
-      if (treeId === owning.activeTreeId) return prev;
+      if (!treeId || treeId === owning.activeTreeId) return prev;
       return prev.map((p) => (p.id === owning.id ? reduceProject(p, { type: 'activate-tree', treeId }) : p));
     });
   }, []);
