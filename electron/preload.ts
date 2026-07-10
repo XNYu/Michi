@@ -26,6 +26,31 @@ function markVibrancy(): void {
 if (document.documentElement) markVibrancy();
 else document.addEventListener('DOMContentLoaded', markVibrancy, { once: true });
 
+// Belt-and-suspenders: intercept clicks on external <a> at the DOM level so
+// they ALWAYS open in the system browser, regardless of target/_blank/Streamdown
+// rendering quirks. Fires before Chromium's navigation or window-open machinery.
+function isExternalUrl(href: string): boolean {
+  try {
+    const u = new URL(href, window.location.href);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return u.hostname !== 'localhost' && u.hostname !== '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const anchor = (e.target as HTMLElement).closest?.('a[href]') as HTMLAnchorElement | null;
+  if (!anchor) return;
+  const href = anchor.getAttribute('href');
+  if (!href) return;
+  if (isExternalUrl(href)) {
+    e.preventDefault();
+    e.stopPropagation();
+    ipcRenderer.send('app:openExternal', href);
+  }
+}, true);
+
 contextBridge.exposeInMainWorld('electron', {
   isPackaged,
   michiWindowId,

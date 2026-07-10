@@ -577,6 +577,13 @@ function pickerDefaultPath(): string {
   return app.getPath('home');
 }
 
+// Preload-level click interceptor sends external URLs here for shell.openExternal.
+ipcMain.on('app:openExternal', (_ev, url: string) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    void shell.openExternal(url);
+  }
+});
+
 ipcMain.handle('app:chooseFolder', async () => {
   const r = await dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
