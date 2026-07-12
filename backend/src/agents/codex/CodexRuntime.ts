@@ -19,6 +19,7 @@ import { getNode, setNodeExternalSessionId, grantPermission, getWorkspaceInstruc
 import { resolveModel, resolveReasoning } from '../../services/agentConfig';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { preflightCodexAuth } from './codexBinary';
+import type { RuntimeModelCache } from '../runtimeModelCache';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -28,7 +29,6 @@ export class CodexConcurrencyError extends Error {
     this.name = 'CodexConcurrencyError';
   }
 }
-
 export class CodexSessionNotResumableError extends Error {
   constructor(message: string) {
     super(message);
@@ -67,6 +67,7 @@ const CODEX_APPROVAL_ALIASES: Record<string, string> = {
 
 export interface CodexRuntimeTestSeams {
   client?: CodexAppServerClient;
+  modelCache?: RuntimeModelCache;
 }
 
 export class CodexRuntime implements AgentRuntime {
@@ -83,7 +84,9 @@ export class CodexRuntime implements AgentRuntime {
   private readonly sessions = new Map<string, CodexSession>();
   private readonly threadToSession = new Map<string, CodexSession>();
 
-  private modelCache: ModelInfo[] | null = null;
+  private readonly modelCacheStore?: RuntimeModelCache;
+  private modelCache: ModelInfo[] | null;
+  private modelRefreshLock: Promise<ModelInfo[]> | null = null;
 
   constructor(
     bridge: AgentToolBridge,
@@ -95,6 +98,8 @@ export class CodexRuntime implements AgentRuntime {
     this.mcpRegistry = mcpRegistry;
     this.mcpPort = mcpPort;
     this.concurrencyCap = parseInt(process.env.MICHI_CODEX_MAX_CONCURRENT ?? '10', 10);
+    this.modelCacheStore = testSeams?.modelCache;
+    this.modelCache = this.modelCacheStore?.load(this.id) ?? null;
 
     if (testSeams?.client) {
       this.client = testSeams.client;
@@ -155,7 +160,7 @@ export class CodexRuntime implements AgentRuntime {
     let modelId = opts.model ?? resolveModel('codex');
     if (!modelId) {
       const models = await this.listModels();
-      const def = models.find((m: any) => (m as any).__isDefault);
+      const def = models.find((m) => m.isDefault);
       modelId = def?.id ?? '';
     }
 
@@ -265,7 +270,7 @@ export class CodexRuntime implements AgentRuntime {
     let modelId = opts.model ?? resolveModel('codex');
     if (!modelId) {
       const models = await this.listModels();
-      const def = models.find((m: any) => (m as any).__isDefault);
+      const def = models.find((m) => m.isDefault);
       modelId = def?.id ?? '';
     }
 
@@ -347,26 +352,43 @@ export class CodexRuntime implements AgentRuntime {
   // ---- listModels ----------------------------------------------------------
 
   async listModels(): Promise<ModelInfo[]> {
-    if (this.modelCache) return this.modelCache;
+    if (this.modelCache) {
+      void this.refreshModels().catch((err: unknown) => {
+        console.warn('[CodexRuntime] model refresh failed; using cached catalog:', (err as Error).message);
+      });
+      return this.modelCache;
+    }
+    return this.refreshModels();
+  }
 
-    await this.client.ensureStarted();
-    const result = await this.client.request('model/list', {}) as Record<string, unknown>;
-    const raw = Array.isArray(result['data']) ? (result['data'] as CodexModel[]) : [];
+  async refreshModels(): Promise<ModelInfo[]> {
+    if (this.modelRefreshLock) return this.modelRefreshLock;
 
-    const models: ModelInfo[] = raw
-      .filter((m) => !m.hidden)
-      .map((m) => {
-        const info: ModelInfo & { __isDefault?: boolean } = {
+    this.modelRefreshLock = (async () => {
+      await this.client.ensureStarted();
+      const result = await this.client.request('model/list', {}) as Record<string, unknown>;
+      const raw = Array.isArray(result['data']) ? (result['data'] as CodexModel[]) : [];
+
+      const models: ModelInfo[] = raw
+        .filter((m) => !m.hidden)
+        .map((m) => ({
           id: m.id,
           label: m.displayName || m.id,
           description: m.description || undefined,
-        };
-        if (m.isDefault) info.__isDefault = true;
-        return info;
-      });
+          isDefault: m.isDefault || undefined,
+        }));
 
-    this.modelCache = models;
-    return models;
+      // A transient empty response must not erase the last usable snapshot.
+      if (models.length > 0) {
+        this.modelCache = models;
+        this.modelCacheStore?.save(this.id, models);
+      }
+      return this.modelCache ?? models;
+    })().finally(() => {
+      this.modelRefreshLock = null;
+    });
+
+    return this.modelRefreshLock;
   }
 
   // ---- shutdown ------------------------------------------------------------

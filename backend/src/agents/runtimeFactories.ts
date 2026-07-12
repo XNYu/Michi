@@ -6,6 +6,7 @@ import { ClaudeRuntime } from "./claude/ClaudeRuntime";
 import { KiroRuntime } from "./kiro/KiroRuntime";
 import { CodexRuntime } from "./codex";
 import { getProviderEnvBindings } from "./pi/piProviders";
+import type { RuntimeModelCache } from "./runtimeModelCache";
 
 /**
  * Dependencies passed to a RuntimeFactory.create. Adding a new runtime
@@ -32,6 +33,8 @@ export interface RuntimeFactoryDeps {
      * backend/, while user workspaces usually live at the repo root.
      */
     defaultCwd?: string;
+    /** Shared persistent catalog cache for dynamic CLI runtimes. */
+    modelCache?: RuntimeModelCache;
 }
 
 export interface RuntimeFactory {
@@ -51,6 +54,7 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
             deps.mcpRegistry,
             deps.mcpPort ?? 3000,
             deps.defaultCwd,
+            deps.modelCache,
         ),
     },
     {
@@ -75,6 +79,7 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
             deps.bridge,
             deps.mcpRegistry!,
             deps.mcpPort ?? 3000,
+            { modelCache: deps.modelCache },
         ),
     },
 ];

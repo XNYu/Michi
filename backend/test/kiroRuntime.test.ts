@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { AgentSession } from '../src/agents/types';
+import type { ModelInfo } from '../src/agents/types';
+import type { RuntimeModelCache } from '../src/agents/runtimeModelCache';
 
 const bridge: AgentToolBridge = {
   spawnBranches: async () => [],
@@ -76,5 +78,34 @@ describe('KiroRuntime warm session handoff', () => {
     const session: AgentSession = await runtime.newSession({ cwd: '/tmp/a' });
     assert.equal(session.id, 'cold-sid');
     assert.equal(coldSessionNewCalls, 1);
+  });
+});
+describe('KiroRuntime model catalog cache', () => {
+  test('returns the disk snapshot immediately and replaces it after a live refresh', async () => {
+    const cached: ModelInfo[] = [{ id: 'cached-kiro', label: 'Cached Kiro' }];
+    let saved: ModelInfo[] | null = null;
+    const cache: RuntimeModelCache = {
+      load: () => cached,
+      save: (_runtimeId, models) => { saved = models; },
+    };
+    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default', cache);
+    const rt = runtime as any;
+
+    let resolveLive!: (value: any[]) => void;
+    let liveCalls = 0;
+    rt.getAvailableModels = async () => {
+      liveCalls += 1;
+      return new Promise<any[]>((resolve) => { resolveLive = resolve; });
+    };
+
+    const first = await runtime.listModels();
+    assert.deepEqual(first, cached, 'cached models should not wait for session/new');
+    assert.equal(liveCalls, 1, 'returning the snapshot should still start one refresh');
+
+    resolveLive([{ modelId: 'fresh-kiro', name: 'Fresh Kiro', description: 'updated' }]);
+  const fresh = await runtime.refreshModels();
+
+  assert.deepEqual(fresh.map((m) => m.id), ['fresh-kiro']);
+  assert.deepEqual(saved, fresh);
   });
 });

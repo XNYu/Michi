@@ -14,13 +14,13 @@ import { KiroSession } from "./KiroSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble } from "../preamble";
 import type { AgentToolBridge, BridgeContextResult, SpawnedBranch } from "../toolBridge";
+import type { RuntimeModelCache } from "../runtimeModelCache";
 
 export interface OpenSessionResult {
     sid: string;
     slotId?: string;
     modes?: any;
 }
-
 export interface LoadSessionResult {
     sid: string;
     slotId?: string;
@@ -95,6 +95,9 @@ export class KiroRuntime implements AgentRuntime {
      * Like modes, empirically identical across sessions; cached once per boot.
      */
     private globalAvailableModels: any[] | null = null;
+    private readonly modelCacheStore?: RuntimeModelCache;
+    private modelCache: ModelInfo[] | null;
+    private modelRefreshLock: Promise<ModelInfo[]> | null = null;
     private modesLoadLock: Promise<any[]> | null = null;
 
     /** sessionId → MCP slotId (owned here so newSession + loadSession + shutdown can manage it). */
@@ -112,9 +115,12 @@ export class KiroRuntime implements AgentRuntime {
         mcpPort: number,
         /** Default cwd used by `getAvailableModes` when no session-specific cwd applies. */
         defaultCwd: string = process.cwd(),
+        modelCache?: RuntimeModelCache,
     ) {
         this.mcpBaseUrl = `http://127.0.0.1:${mcpPort}/api`;
         this.defaultCwd = defaultCwd;
+        this.modelCacheStore = modelCache;
+        this.modelCache = modelCache?.load(this.id) ?? null;
     }
 
     /** Resolves the cwd for a sessionId — used by permission forwarding. */
@@ -296,11 +302,30 @@ export class KiroRuntime implements AgentRuntime {
      */
     private absorbModels(sid: string, models: any): void {
         if (!models) return;
-        if (!this.globalAvailableModels && Array.isArray(models.availableModels)) {
-            this.globalAvailableModels = models.availableModels;
+        if (Array.isArray(models.availableModels)) {
+            this.storeAvailableModels(models.availableModels);
         }
         if (typeof models.currentModelId === "string" && models.currentModelId) {
             this.sessionCurrentModel.set(sid, models.currentModelId);
+        }
+    }
+
+    private normalizeModels(list: any[]): ModelInfo[] {
+        return list
+            .map((m: any): ModelInfo => ({
+                id: String(m?.modelId ?? ""),
+                label: typeof m?.name === "string" ? m.name : undefined,
+                description: typeof m?.description === "string" ? m.description : undefined,
+            }))
+            .filter((m) => m.id);
+    }
+
+    private storeAvailableModels(list: any[]): void {
+        this.globalAvailableModels = list;
+        const normalized = this.normalizeModels(list);
+        if (normalized.length > 0) {
+            this.modelCache = normalized;
+            this.modelCacheStore?.save(this.id, normalized);
         }
     }
 
@@ -526,9 +551,7 @@ export class KiroRuntime implements AgentRuntime {
             c.destroySession(sid);
             const list = Array.isArray(modes?.availableModes) ? modes.availableModes : [];
             this.globalAvailableModes = list;
-            if (!this.globalAvailableModels && Array.isArray(models?.availableModels)) {
-                this.globalAvailableModels = models.availableModels;
-            }
+            if (Array.isArray(models?.availableModels)) this.storeAvailableModels(models.availableModels);
             perf.measure("getAvailableModes:fallback_session_new", t0);
             return list;
         })().finally(() => {
@@ -758,14 +781,33 @@ export class KiroRuntime implements AgentRuntime {
      * `session/set_model { modelId }`, and renaming would silently desync.
      */
     async listModels(): Promise<ModelInfo[]> {
-        const list = await this.getAvailableModels();
-        return list
-            .map((m: any): ModelInfo => ({
-                id: String(m?.modelId ?? ""),
-                label: typeof m?.name === "string" ? m.name : undefined,
-                description: typeof m?.description === "string" ? m.description : undefined,
-            }))
-            .filter((m) => m.id);
+        if (this.modelCache) {
+            void this.refreshModels().catch((err: unknown) => {
+                console.warn("[KiroRuntime] model refresh failed; using cached catalog:", (err as Error).message);
+            });
+            return this.modelCache;
+        }
+        return this.refreshModels();
+    }
+
+    async refreshModels(): Promise<ModelInfo[]> {
+        if (this.modelRefreshLock) return this.modelRefreshLock;
+
+        this.modelRefreshLock = (async () => {
+            const live = await this.getAvailableModels();
+            const normalized = this.normalizeModels(live);
+            // Preserve the previous snapshot when Kiro returns a transiently
+            // empty models payload during startup.
+            if (normalized.length > 0) {
+                this.modelCache = normalized;
+                this.modelCacheStore?.save(this.id, normalized);
+            }
+            return this.modelCache ?? normalized;
+        })().finally(() => {
+            this.modelRefreshLock = null;
+        });
+
+        return this.modelRefreshLock;
     }
 
     /** Shutdown: kill all clients in pool and reset internal maps. */

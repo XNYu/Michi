@@ -8,7 +8,6 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
-
 export type ExtraContext = {
   name: string;
   filePath: string;
@@ -179,6 +178,8 @@ export interface AgentRuntime {
   releaseSession(sessionId: string): Promise<void> | void;
   listModes?(sessionId: string): Promise<SessionMode[]>;
   listModels?(opts?: { provider?: string }): Promise<ModelInfo[]>;
+  /** Refresh a dynamic model catalog from the underlying runtime. */
+  refreshModels?(): Promise<ModelInfo[]>;
   shutdown(): Promise<void>;
 }
 

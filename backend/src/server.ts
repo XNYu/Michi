@@ -38,6 +38,8 @@ import { configureRuntimeDeps } from './agents/runtimeDeps';
 import { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission } from './services/dbRepository';
 import { getMichiDataDir } from './services/dataDir';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
+import { FileRuntimeModelCache } from './agents/runtimeModelCache';
+import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
 
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
@@ -91,7 +93,6 @@ log.info('boot', 'backend starting', {
   defaultCwd,
   processCwd: process.cwd(),
 });
-
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -115,6 +116,7 @@ configureRuntimeDeps({
 });
 
 const mcpRegistry = new McpSlotRegistry();
+const runtimeModelCache = new FileRuntimeModelCache(getMichiDataDir());
 
 // Register the enabled runtimes (filtered by MICHI_ENABLED_RUNTIMES, or
 // all of them locally) through a single factory loop. Each factory
@@ -137,7 +139,13 @@ for (const factory of getEnabledFactories()) {
             return child.id;
         },
     });
-    runtime = factory.create({ bridge, mcpRegistry, mcpPort: Number(port), defaultCwd });
+    runtime = factory.create({
+      bridge,
+      mcpRegistry,
+      mcpPort: Number(port),
+      defaultCwd,
+      modelCache: runtimeModelCache,
+    });
     registerRuntime(runtime);
     if (factory.id === 'kiro') kiroRuntime = runtime as KiroRuntime;
     if (factory.envBindings) allEnvBindings.push(...factory.envBindings);
@@ -181,6 +189,16 @@ const warmPromise = warmConfiguredRuntime()
   });
 // Suppress unhandled-rejection: state is captured via markFailed.
 warmPromise.catch(() => {});
+
+// Dynamic catalogs use stale-while-revalidate: runtime constructors load the
+// previous disk snapshot synchronously, while this refresh asks each CLI for
+// the current catalog without delaying Express readiness.
+refreshRuntimeModelsInBackground(listRuntimes(), (runtimeId, err) => {
+  log.warn('boot', 'runtime model refresh failed; using cached catalog', {
+    runtimeId,
+    err: err.message,
+  });
+});
 
 // Auth is opt-in via MICHI_REQUIRE_AUTH=true. Without the flag the
 // process behaves exactly like the pre-auth backend: open CORS, no

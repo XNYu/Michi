@@ -72,6 +72,7 @@ export function findCodexBinary(): string {
     path.join(os.homedir(), '.local', 'bin', 'codex'),
     '/usr/local/bin/codex',
     '/opt/homebrew/bin/codex',
+    '/Applications/ChatGPT.app/Contents/Resources/codex',
     '/Applications/Codex.app/Contents/Resources/codex',
   ];
 

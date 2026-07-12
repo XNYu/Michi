@@ -73,6 +73,25 @@ describe('codexBinary', () => {
     assert.equal(result, fakeBin);
   });
 
+  test('findCodexBinary resolves the Codex CLI bundled with ChatGPT.app', () => {
+    delete process.env.CODEX_CLI_BIN;
+
+    const emptyBinDir = path.join(tmpDir, 'emptybin');
+    fs.mkdirSync(emptyBinDir);
+    process.env.PATH = emptyBinDir;
+
+    const chatGptCodex = '/Applications/ChatGPT.app/Contents/Resources/codex';
+    const origExistsSync = fs.existsSync;
+    (fs as typeof fs & { existsSync: typeof fs.existsSync }).existsSync = (candidate: fs.PathLike) =>
+      candidate.toString() === chatGptCodex;
+
+    try {
+      assert.equal(findCodexBinary(), chatGptCodex);
+    } finally {
+      fs.existsSync = origExistsSync;
+    }
+  });
+
   // ── Case 2: missing binary throws CodexBinaryNotFoundError with tried paths ─
 
   test('findCodexBinary throws CodexBinaryNotFoundError when binary is not found', () => {

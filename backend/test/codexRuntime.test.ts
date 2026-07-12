@@ -4,6 +4,8 @@ import { CodexRuntime, CodexConcurrencyError, CodexSessionNotResumableError } fr
 import type { CodexAppServerClient } from '../src/agents/codex/CodexAppServerClient';
 import type { McpSlotRegistry } from '../src/services/mcpServer';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
+import type { ModelInfo } from '../src/agents/types';
+import type { RuntimeModelCache } from '../src/agents/runtimeModelCache';
 
 // ---- Stubs ------------------------------------------------------------------
 
@@ -52,12 +54,15 @@ function makeStubBridge(): AgentToolBridge {
   };
 }
 
-function makeRuntime(clientOverrides: Partial<Record<string, unknown>> = {}): CodexRuntime {
+function makeRuntime(
+  clientOverrides: Partial<Record<string, unknown>> = {},
+  modelCache?: RuntimeModelCache,
+): CodexRuntime {
   return new CodexRuntime(
     makeStubBridge(),
     makeStubMcpRegistry(),
     3001,
-    { client: makeStubClient(clientOverrides) },
+    { client: makeStubClient(clientOverrides), modelCache },
   );
 }
 
@@ -85,13 +90,45 @@ test('listModels filters hidden models and marks isDefault', async () => {
   const modelA = models.find((m) => m.id === 'model-a');
   assert.ok(modelA, 'model-a should be present');
   assert.equal(modelA!.label, 'Model A');
-  assert.ok((modelA as any).__isDefault, 'model-a should be marked as default');
+  assert.equal(modelA!.isDefault, true, 'model-a should be marked as default');
 
   const modelB = models.find((m) => m.id === 'model-b');
   assert.ok(modelB, 'model-b should be present');
-  assert.ok(!(modelB as any).__isDefault, 'model-b should not be marked as default');
+  assert.equal(modelB!.isDefault, undefined, 'model-b should not be marked as default');
 
   assert.ok(!models.find((m) => m.id === 'model-hidden'), 'hidden model should not appear');
+});
+test('listModels returns the disk snapshot immediately and refreshes it in the background', async () => {
+  const cached: ModelInfo[] = [{ id: 'cached-model', label: 'Cached model', isDefault: true }];
+  let saved: ModelInfo[] | null = null;
+  const cache: RuntimeModelCache = {
+    load: () => cached,
+    save: (_runtimeId, models) => { saved = models; },
+  };
+
+  let resolveLive!: (value: unknown) => void;
+  let modelListCalls = 0;
+  const runtime = makeRuntime({
+    request: async (method: string): Promise<unknown> => {
+      if (method !== 'model/list') return {};
+      modelListCalls += 1;
+      return new Promise((resolve) => { resolveLive = resolve; });
+    },
+  }, cache);
+
+  const first = await runtime.listModels();
+  assert.deepEqual(first, cached, 'cached models should not wait for the live RPC');
+  assert.equal(modelListCalls, 1, 'returning the snapshot should still start one refresh');
+
+  resolveLive({
+    data: [
+      { id: 'fresh-model', displayName: 'Fresh model', description: '', hidden: false, isDefault: true },
+    ],
+  });
+  const fresh = await runtime.refreshModels();
+
+  assert.deepEqual(fresh.map((m) => m.id), ['fresh-model']);
+  assert.deepEqual(saved, fresh);
 });
 
 test('newSession with empty model resolves isDefault from model/list', async () => {
