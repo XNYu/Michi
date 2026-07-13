@@ -2,7 +2,6 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
-  readonly VITE_MARKDOWN_RENDERER?: 'react-markdown' | 'streamdown';
   readonly VITE_MICHI_METRICS?: string;
   readonly VITE_MICHI_METRICS_RUN_ID?: string;
   readonly VITE_MICHI_PERF?: string;

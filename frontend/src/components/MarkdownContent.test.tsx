@@ -1,14 +1,9 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import MarkdownContent from './MarkdownContent';
-import { MARKDOWN_RENDERER_STORAGE_KEY, setMarkdownRendererFlag } from './markdownRendererFlag';
 
 describe('MarkdownContent streaming reveal', () => {
-  beforeEach(() => {
-    window.localStorage.removeItem(MARKDOWN_RENDERER_STORAGE_KEY);
-  });
-
   function newTokenText(container: HTMLElement): string {
     return Array.from(container.querySelectorAll('[data-stream-token-new]'))
       .map((node) => node.textContent)
@@ -97,33 +92,5 @@ describe('MarkdownContent streaming reveal', () => {
 
     expect(newTokenText(container)).toBe('world');
     expect(newTokenText(container)).not.toContain('hello');
-  });
-
-  it('can switch to Streamdown through the runtime feature flag', async () => {
-    window.localStorage.setItem(MARKDOWN_RENDERER_STORAGE_KEY, 'streamdown');
-
-    const { container } = render(
-      <MarkdownContent text="hello **streamdown**" />,
-    );
-
-    await waitFor(() => {
-      expect(container.querySelector('[data-streamdown]')).not.toBeNull();
-    });
-    expect(container.textContent).toContain('hello streamdown');
-  });
-
-  it('responds to renderer flag changes without remounting', async () => {
-    const { container } = render(
-      <MarkdownContent text="live **switch**" />,
-    );
-
-    expect(container.querySelector('[data-streamdown]')).toBeNull();
-
-    setMarkdownRendererFlag('streamdown');
-
-    await waitFor(() => {
-      expect(container.querySelector('[data-streamdown]')).not.toBeNull();
-    });
-    expect(container.textContent).toContain('live switch');
   });
 });

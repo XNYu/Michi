@@ -210,7 +210,7 @@ export function createCodePlugin(options: { themes?: ThemePair } = {}): CodeHigh
             pendingCallbacks.delete(key);
           }
         } catch (err) {
-          console.error('[streamdownCodePlugin] highlight failed:', err);
+          console.error('[shikiCodePlugin] highlight failed:', err);
           pendingCallbacks.delete(key);
         } finally {
           queuedKeys.delete(key);

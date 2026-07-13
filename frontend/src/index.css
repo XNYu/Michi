@@ -1,7 +1,5 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-@source "../../node_modules/streamdown/dist/*.js";
-@source "../../node_modules/@streamdown/cjk/dist/*.js";
 
 @theme {
   --color-app: var(--app-bg);
@@ -249,8 +247,7 @@
   margin-bottom: var(--message-paragraph-spacing, 1em);
 }
 
-.prose pre:has(> .michi-code-block),
-.prose pre:has(> [data-streamdown="code-block"]) {
+.prose pre:has(> .michi-code-block) {
   margin-top: var(--message-paragraph-spacing, 1em);
   margin-bottom: var(--message-paragraph-spacing, 1em);
   overflow: visible;
@@ -259,8 +256,7 @@
   padding: 0;
 }
 
-.prose pre:has(> .michi-code-block) > .michi-code-block,
-.prose pre:has(> [data-streamdown="code-block"]) > [data-streamdown="code-block"] {
+.prose pre:has(> .michi-code-block) > .michi-code-block {
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -285,27 +281,6 @@
   border-bottom: 1px solid var(--term-line, var(--line));
   background: color-mix(in srgb, var(--term-surface, var(--surface)) 72%, transparent);
   font-family: var(--ui-font);
-}
-
-/* Streamdown shell keeps the accent language pill (it's behind a dev flag and
-   has its own chrome). The legacy `.michi-code-*` path is restyled below into
-   the two design variants. */
-.prose [data-streamdown="code-block-header"] span {
-  display: inline-flex;
-  align-items: center;
-  max-width: min(60%, 220px);
-  overflow: hidden;
-  padding: 3px 6px;
-  border: 1px solid color-mix(in srgb, var(--term-accent, var(--accent)) 22%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--term-accent, var(--accent)) 8%, transparent);
-  color: var(--term-accent, var(--accent));
-  font-size: 10.5px;
-  font-weight: 650;
-  line-height: 1;
-  text-overflow: ellipsis;
-  text-transform: lowercase;
-  white-space: nowrap;
 }
 
 .michi-code-body {
@@ -363,8 +338,7 @@
    tokens — the ones shiki omits a `htmlStyle.color` for because they match the theme's
    default foreground — inherit that grey and become invisible. Beat that rule with a
    slightly more specific selector so plain text falls back to the themed `--fg`. */
-.prose pre.michi-code-pre,
-.prose [data-streamdown="code-block-body"] pre {
+.prose pre.michi-code-pre {
   color: var(--term-fg, var(--fg));
 }
 
@@ -391,8 +365,7 @@
    Assistant code-block chrome — design variants 01 Hairline / 02 Header rule.
    Switched from Settings → Appearance → Code block, via the `data-code-block`
    attribute on <html>. Both kill the GitHub-ish accent pill in favour of a
-   quiet mono label, square 3px corners, and copy-on-hover. Only the
-   legacy `.michi-code-*` path is themed here — streamdown keeps its own shell.
+   quiet mono label, square 3px corners, and copy-on-hover.
    ─────────────────────────────────────────────────────────────────────── */
 .michi-code-block { border-radius: 3px; }
 
@@ -458,51 +431,12 @@
 }
 [data-code-block="header"] .michi-code-pre { padding: 11px 14px 12px !important; }
 
-.prose [data-streamdown="code-block"] {
-  gap: 0;
-  margin-top: var(--message-paragraph-spacing, 1em);
-  margin-bottom: var(--message-paragraph-spacing, 1em);
-  overflow: hidden;
-  border-color: var(--term-line, var(--line));
-  border-radius: 6px;
-  background: var(--term-surface, var(--surface));
-  color: var(--term-fg, var(--fg));
-  padding: 0;
-}
-
-.prose [data-streamdown="code-block-header"] {
-  min-height: 30px;
-  padding: 0 8px 0 10px;
-  border-bottom: 1px solid var(--term-line, var(--line));
-  background: color-mix(in srgb, var(--term-surface, var(--surface)) 72%, transparent);
-  color: var(--term-muted, var(--fg-muted));
-}
-
-.prose [data-streamdown="code-block-header"] span {
-  margin-left: 0;
-}
-
-.prose [data-streamdown="code-block-body"] {
-  overflow-x: auto;
-  border: 0;
-  border-radius: 0;
-  background: var(--term-surface, var(--surface));
-  color: var(--term-fg, var(--fg));
-  padding: 11px 12px;
-}
-
-.prose [data-streamdown="code-block-body"] pre {
-  margin: 0;
-  background: transparent !important;
-}
-
 /* ───────────────────────────────────────────────────────────────────────
    Code wrap — Settings → Appearance → Code wrap, via `data-code-wrap` on
    <html>. Default (off / attribute absent) keeps the horizontal-scroll
    behaviour above. When on, long lines break at the container edge instead,
    and long unbroken tokens (URLs, base64) break mid-word so nothing escapes
-   the box. Both render paths are covered: legacy `.michi-code-*` and the
-   streamdown shell.
+   the box.
    ─────────────────────────────────────────────────────────────────────── */
 [data-code-wrap="on"] .michi-code-scroll {
   overflow-x: hidden;
@@ -511,14 +445,6 @@
   min-width: 0;
 }
 [data-code-wrap="on"] .michi-code-line {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-[data-code-wrap="on"] .prose [data-streamdown="code-block-body"] {
-  overflow-x: hidden;
-}
-[data-code-wrap="on"] .prose [data-streamdown="code-block-body"] pre,
-[data-code-wrap="on"] .prose [data-streamdown="code-block-body"] code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

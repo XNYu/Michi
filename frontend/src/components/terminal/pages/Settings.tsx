@@ -4,12 +4,6 @@ import { usePrefs, TerminalPalette, CodeBlockStyle } from '../../../state/prefs'
 import type { PageId } from '../../../state/commands';
 import { isArchiveGroupId } from '../../../state/trashActions';
 import {
-  MARKDOWN_RENDERER_CHANGE_EVENT,
-  readMarkdownRendererFlag,
-  setMarkdownRendererFlag,
-  type MarkdownRendererKind,
-} from '../../markdownRendererFlag';
-import {
   clearProviderKey,
   saveAgentOptions,
   saveProviderKey,
@@ -1497,8 +1491,6 @@ function AppearancePane() {
         />
       </Row>
 
-      {import.meta.env.DEV && <DevMarkdownRendererRow />}
-
       <Row k="theme.density" label="Density">
         <Radio
           opts={['comfortable', 'compact', 'dense']}
@@ -1666,36 +1658,6 @@ function AppearancePane() {
         </div>
       </Row>
     </div>
-  );
-}
-
-function DevMarkdownRendererRow() {
-  const [renderer, setRenderer] = useState<MarkdownRendererKind>(readMarkdownRendererFlag);
-
-  useEffect(() => {
-    const update = () => setRenderer(readMarkdownRendererFlag());
-    window.addEventListener('storage', update);
-    window.addEventListener(MARKDOWN_RENDERER_CHANGE_EVENT, update);
-    return () => {
-      window.removeEventListener('storage', update);
-      window.removeEventListener(MARKDOWN_RENDERER_CHANGE_EVENT, update);
-    };
-  }, []);
-
-  const choose = (next: string) => {
-    const rendererKind = next as MarkdownRendererKind;
-    setMarkdownRendererFlag(rendererKind);
-    setRenderer(rendererKind);
-  };
-
-  return (
-    <Row k="dev.markdownRenderer" label="Markdown renderer">
-      <Radio
-        opts={['react-markdown', 'streamdown']}
-        value={renderer}
-        onChange={choose}
-      />
-    </Row>
   );
 }
 

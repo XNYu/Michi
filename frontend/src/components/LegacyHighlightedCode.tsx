@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { createCodePlugin } from './streamdownCodePlugin';
-import type { CodeHighlighterPlugin, HighlightResult } from './streamdownCodePlugin';
+import { createCodePlugin } from './shikiCodePlugin';
+import type { CodeHighlighterPlugin, HighlightResult } from './shikiCodePlugin';
 import CodeBlockPlainLines from './CodeBlockPlainLines';
 
 type HighlightOptions = Parameters<CodeHighlighterPlugin['highlight']>[0];

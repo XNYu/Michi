@@ -1,7 +1,6 @@
-import { render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { render } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
 import MarkdownContent from './MarkdownContent';
-import { MARKDOWN_RENDERER_STORAGE_KEY, setMarkdownRendererFlag } from './markdownRendererFlag';
 
 function anchors(container: HTMLElement) {
   return Array.from(container.querySelectorAll('a'));
@@ -10,9 +9,7 @@ function byHref(container: HTMLElement, hrefIncludes: string) {
   return anchors(container).find((a) => (a.getAttribute('href') ?? '').includes(hrefIncludes));
 }
 
-describe('MarkdownContent links (legacy renderer)', () => {
-  beforeEach(() => window.localStorage.removeItem(MARKDOWN_RENDERER_STORAGE_KEY));
-
+describe('MarkdownContent links', () => {
   it('opens external markdown links in a new context', () => {
     const { container } = render(<MarkdownContent text="[GitHub](https://github.com/foo)" />);
     const a = byHref(container, 'github.com/foo')!;
@@ -88,21 +85,5 @@ describe('MarkdownContent links (legacy renderer)', () => {
     const as = anchors(container);
     expect(as).toHaveLength(1);
     expect(as[0].getAttribute('href')).toBe('https://foo.com/a/b/c');
-  });
-});
-
-describe('MarkdownContent links (streamdown renderer)', () => {
-  beforeEach(() => setMarkdownRendererFlag('streamdown'));
-  afterEach(() => setMarkdownRendererFlag('react-markdown'));
-
-  it('applies target and scheme-less autolink under streamdown', async () => {
-    const { container } = render(
-      <MarkdownContent text="[GitHub](https://github.com/foo) and docs.example.com/ec2/home" />,
-    );
-    await waitFor(() => expect(byHref(container, 'docs.example.com/ec2/home')).toBeTruthy());
-    expect(byHref(container, 'github.com/foo')!.getAttribute('target')).toBe('_blank');
-    expect(byHref(container, 'docs.example.com/ec2/home')!.getAttribute('href')).toBe(
-      'https://docs.example.com/ec2/home',
-    );
   });
 });

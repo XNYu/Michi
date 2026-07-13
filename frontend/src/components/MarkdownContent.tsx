@@ -4,10 +4,6 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { rehypeAutolinkBareUrls } from './rehypeAutolinkBareUrls';
 import MarkdownRendererAdapter from './MarkdownRendererAdapter';
 import LegacyCodeBlock, { languageFromClassName } from './LegacyCodeBlock';
-import {
-  MARKDOWN_RENDERER_CHANGE_EVENT,
-  readMarkdownRendererFlag,
-} from './markdownRendererFlag';
 import { hasCjkText, performanceNowMs, rendererStreamProbeEnabled, writeRendererStreamProbe } from '../lib/streamProbe';
 import { countRender } from '../services/renderCounters';
 
@@ -230,7 +226,17 @@ function MarkdownContentInner({
   const probeIdRef = useRef<string | null>(null);
   const lastCommitAtRef = useRef<number | null>(null);
   const lastTextCharsRef = useRef(text.length);
-  const [renderer, setRenderer] = useState(readMarkdownRendererFlag);
+  const [rehypeKatex, setRehypeKatex] = useState<null | ((...args: unknown[]) => unknown)>(null);
+  useEffect(() => {
+    if (rehypeKatex === null && hasMath(text)) {
+      void Promise.all([
+        import('rehype-katex'),
+        import('katex/dist/katex.min.css'),
+      ]).then(([mod]) => {
+        setRehypeKatex(() => mod.default);
+      });
+    }
+  }, [text, rehypeKatex]);
   const proseSize =
     size === 'xs' ? 'prose-xs' :
     size === 'sm' ? 'prose-sm' :
@@ -260,9 +266,7 @@ function MarkdownContentInner({
     const plugins: any[] = [rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeAutolinkBareUrls];
     if (revealPlugin) plugins.push(revealPlugin);
     return plugins;
-  }, [revealPlugin]);
-  // streamdown runs its own pipeline, so it needs the autolink plugin directly.
-  const streamdownRehypePlugins = useMemo(() => [rehypeAutolinkBareUrls], []);
+  }, [rehypeKatex, revealPlugin]);
   // External links open in a new context (system browser in Electron via
   // setWindowOpenHandler; a new tab in a plain browser) instead of replacing
   // the app. Internal/relative/mailto/hash links keep default behavior.
@@ -302,7 +306,7 @@ function MarkdownContentInner({
         phase: 'markdown_commit',
         subsystem: 'markdown',
         probeId: probeIdRef.current,
-        renderer,
+        renderer: 'react-markdown',
         revealEnabled,
         revealTailChars: revealTailChars ?? 0,
         cjk: hasCjkText(text),
@@ -317,27 +321,14 @@ function MarkdownContentInner({
     revealStateRef.current.previousText = revealEnabled && rootRef.current
       ? domRevealText(rootRef.current)
       : '';
-  }, [text, revealEnabled, renderer, revealTailChars, renderStartedAt, probeEnabled]);
-
-  useEffect(() => {
-    const update = () => setRenderer(readMarkdownRendererFlag());
-    window.addEventListener('storage', update);
-    window.addEventListener(MARKDOWN_RENDERER_CHANGE_EVENT, update);
-    return () => {
-      window.removeEventListener('storage', update);
-      window.removeEventListener(MARKDOWN_RENDERER_CHANGE_EVENT, update);
-    };
-  }, []);
+  }, [text, revealEnabled, revealTailChars, renderStartedAt, probeEnabled]);
 
   return (
     <div ref={rootRef} className={cls} style={style}>
       <MarkdownRendererAdapter
         text={text}
-        renderer={renderer}
+        legacyRemarkPlugins={remarkPlugins}
         legacyRehypePlugins={rehypePlugins}
-        streamdownRehypePlugins={streamdownRehypePlugins}
-        isAnimating={revealEnabled}
-        streamdownComponents={{ ...hlComponents, a: anchorComponent }}
         legacyComponents={{
           ...hlComponents,
           a: anchorComponent,
