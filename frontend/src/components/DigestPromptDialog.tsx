@@ -73,7 +73,14 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
 
   return (
     <div style={SCRIM} onClick={onCancel}>
-      <div style={PANE} onClick={(e) => e.stopPropagation()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="digest-prompt-title"
+        aria-describedby="digest-prompt-description"
+        style={PANE}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div style={TAB_BAR}>
           <span
             style={{
@@ -88,12 +95,13 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
             }}
           >
             <span aria-hidden>⊕</span>
-            <span>DIGEST</span>
+            <span id="digest-prompt-title">CREATE DIGEST</span>
           </span>
           <button type="button" onClick={onCancel} aria-label="Close" style={X_BTN}>×</button>
         </div>
 
         <div
+          id="digest-prompt-description"
           style={{
             padding: '14px 16px 4px',
             fontFamily: 'var(--ui-font)',
@@ -102,7 +110,7 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
             lineHeight: 1.45,
           }}
         >
-          Steer the weave — or leave blank for the default summary.
+          Summarize the selected conversations into one digest. Add optional guidance below, or leave it blank for a balanced summary.
         </div>
 
         <div style={{ padding: '8px 14px 14px' }}>
@@ -140,7 +148,8 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
                 }
                 if (e.key === 'Escape') onCancel();
               }}
-              placeholder="e.g. focus on architecture decisions, summarize as bullets…"
+              aria-label="Digest guidance (optional)"
+              placeholder="e.g. Focus on architecture decisions and summarize them as bullets…"
               rows={3}
               style={{
                 flex: 1,
@@ -172,7 +181,7 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
               cursor: 'pointer',
             }}
           >
-            cancel
+            Cancel
           </button>
           <button
             type="button"
@@ -189,7 +198,7 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
               borderRadius: 0,
             }}
           >
-            create
+            Create digest
           </button>
         </div>
       </div>
