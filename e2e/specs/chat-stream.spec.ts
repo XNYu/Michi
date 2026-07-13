@@ -6,7 +6,7 @@ test.describe('chat stream', () => {
     await installMockApi(page);
     await bootWithWorkspace(page);
 
-    const composer = page.locator('textarea').first();
+    const composer = page.locator('[contenteditable="true"]').first();
     await composer.fill('hello kiro');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 
@@ -23,7 +23,7 @@ test.describe('chat stream', () => {
     await installMockApi(page);
     await bootWithWorkspace(page);
 
-    await page.locator('textarea').first().fill('hi');
+    await page.locator('[contenteditable="true"]').first().fill('hi');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 
     // FollowUpRow renders the three follow-up suggestions from defaultTurn.

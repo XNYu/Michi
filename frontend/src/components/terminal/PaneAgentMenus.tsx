@@ -16,8 +16,11 @@ interface PaneAgentMenusProps {
   currentModeId?: string;
   agentStatus: AgentStatus | null;
   providerModels: readonly AgentModelInfo[];
+  modelsLoading: boolean;
+  modelsError: string | null;
   onSwitchAgent: (modeId: string) => void;
   onSaveModel: (modelId: string) => void;
+  onRetryModels: () => void;
   onSaveReasoning: (reasoning: AgentReasoning) => void;
   onCloseAgentMenu: () => void;
   onCloseModelMenu: () => void;
@@ -30,8 +33,11 @@ export function PaneAgentMenus({
   currentModeId,
   agentStatus,
   providerModels,
+  modelsLoading,
+  modelsError,
   onSwitchAgent,
   onSaveModel,
+  onRetryModels,
   onSaveReasoning,
   onCloseAgentMenu,
   onCloseModelMenu,
@@ -75,7 +81,10 @@ export function PaneAgentMenus({
             anchor={modelMenu}
             agentStatus={agentStatus}
             providerModels={providerModels}
+            modelsLoading={modelsLoading}
+            modelsError={modelsError}
             onSaveModel={onSaveModel}
+            onRetryModels={onRetryModels}
             onSaveReasoning={onSaveReasoning}
             onClose={onCloseModelMenu}
           />
@@ -88,14 +97,20 @@ function ModelReasoningMenu({
   anchor,
   agentStatus,
   providerModels,
+  modelsLoading,
+  modelsError,
   onSaveModel,
+  onRetryModels,
   onSaveReasoning,
   onClose,
 }: {
   anchor: MenuAnchor;
   agentStatus: AgentStatus;
   providerModels: readonly AgentModelInfo[];
+  modelsLoading: boolean;
+  modelsError: string | null;
   onSaveModel: (modelId: string) => void;
+  onRetryModels: () => void;
   onSaveReasoning: (reasoning: AgentReasoning) => void;
   onClose: () => void;
 }) {
@@ -112,7 +127,14 @@ function ModelReasoningMenu({
       trailingGlyph: true,
       items:
         providerModels.length === 0
-          ? [{ id: 'loading', label: 'Loading…', disabled: true, run: () => {} }]
+          ? modelsError
+            ? [
+                { id: 'model-error', label: modelsError, disabled: true, run: () => {} },
+                { id: 'model-retry', label: 'Retry', run: onRetryModels },
+              ]
+            : modelsLoading
+              ? [{ id: 'loading', label: 'Loading models…', disabled: true, run: () => {} }]
+              : [{ id: 'empty', label: 'No models available', disabled: true, run: () => {} }]
           : providerModels.map((m) => ({
               id: `m-${m.id}`,
               label: m.label || m.id,
@@ -121,6 +143,15 @@ function ModelReasoningMenu({
               run: () => onSaveModel(m.id),
             })),
     });
+    if (providerModels.length > 0 && modelsError) {
+      sections.push({
+        label: 'Catalog refresh',
+        items: [
+          { id: 'model-refresh-error', label: modelsError, disabled: true, run: () => {} },
+          { id: 'model-refresh-retry', label: 'Retry', run: onRetryModels },
+        ],
+      });
+    }
   }
 
   if (showReasoning) {

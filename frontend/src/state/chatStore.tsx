@@ -662,24 +662,34 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // discovers its cwd. On desktop startup this can run before the backend is
   // listening, so retry briefly instead of treating the first connection
   // refusal as a permanent miss.
-  const warmedCwdsRef = React.useRef<Set<string>>(new Set());
-  const warmingCwdsRef = React.useRef<Set<string>>(new Set());
+  const warmedTargetsRef = React.useRef<Set<string>>(new Set());
+  const warmingTargetsRef = React.useRef<Set<string>>(new Set());
   const warmRetryStatesRef = React.useRef<Map<string, { cancelled: boolean }>>(new Map());
+  const activeWarmTargetRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (!hydrated || !activeProjectId) return;
     const p = projects.find((proj) => proj.id === activeProjectId);
     if (!p?.cwd) return;
+    if (!agentStatus?.runtime) return;
     const cwd = p.cwd;
     const projectId = p.id;
-    if (warmedCwdsRef.current.has(cwd) || warmingCwdsRef.current.has(cwd)) return;
+    const runtime = agentStatus.runtime;
+    const model = agentStatus.model ?? '';
+    const warmTarget = `${runtime}\u0000${model}\u0000${cwd}`;
+    const previousTarget = activeWarmTargetRef.current;
+    if (previousTarget !== warmTarget) {
+      activeWarmTargetRef.current = warmTarget;
+      if (previousTarget) warmedTargetsRef.current.delete(previousTarget);
+    }
+    if (warmedTargetsRef.current.has(warmTarget) || warmingTargetsRef.current.has(warmTarget)) return;
 
     const retryState = { cancelled: false };
     const startedAt = Date.now();
     const retryDelayMs = 250;
     const maxAttempts = 120;
-    warmingCwdsRef.current.add(cwd);
-    warmRetryStatesRef.current.set(cwd, retryState);
-    startupMark('workspace_warm_start', { cwd, projectId });
+    warmingTargetsRef.current.add(warmTarget);
+    warmRetryStatesRef.current.set(warmTarget, retryState);
+    startupMark('workspace_warm_start', { cwd, projectId, runtime, model });
 
     const run = async () => {
       let attempts = 0;
@@ -689,14 +699,18 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           try {
             await warmCwd(cwd);
             if (retryState.cancelled) return;
-            warmedCwdsRef.current.add(cwd);
-            startupMark('workspace_warm_done', { cwd, projectId, attempts, durMs: Date.now() - startedAt });
+            if (activeWarmTargetRef.current === warmTarget) {
+              warmedTargetsRef.current.add(warmTarget);
+            }
+            startupMark('workspace_warm_done', { cwd, projectId, runtime, model, attempts, durMs: Date.now() - startedAt });
             return;
           } catch (err) {
             if (retryState.cancelled) return;
             startupMark('workspace_warm_attempt_failed', {
               cwd,
               projectId,
+              runtime,
+              model,
               attempts,
               error: (err as Error).message,
             });
@@ -704,17 +718,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           }
         }
         if (!retryState.cancelled) {
-          startupMark('workspace_warm_gave_up', { cwd, projectId, attempts, durMs: Date.now() - startedAt });
+          startupMark('workspace_warm_gave_up', { cwd, projectId, runtime, model, attempts, durMs: Date.now() - startedAt });
         }
       } finally {
-        if (warmRetryStatesRef.current.get(cwd) === retryState) {
-          warmRetryStatesRef.current.delete(cwd);
-          warmingCwdsRef.current.delete(cwd);
+        if (warmRetryStatesRef.current.get(warmTarget) === retryState) {
+          warmRetryStatesRef.current.delete(warmTarget);
+          warmingTargetsRef.current.delete(warmTarget);
         }
       }
     };
     void run();
-  }, [hydrated, activeProjectId, projects]);
+  }, [hydrated, activeProjectId, agentStatus?.runtime, agentStatus?.model, projects]);
 
   const rafPending = React.useRef(false);
 

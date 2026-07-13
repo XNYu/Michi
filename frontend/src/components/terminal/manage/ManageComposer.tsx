@@ -7,12 +7,11 @@ import { getElectron } from '../../../lib/electronBridge';
 import {
   getWebUploadCwd,
   importWorkspaceFileUpload,
-  listAgentModels,
   saveAgentOptions,
-  type AgentModelInfo,
   type AgentReasoning,
   type UploadProgress,
 } from '../../../services/api';
+import { useAgentModelCatalog } from '../../../hooks/useAgentModelCatalog';
 import { appendAttachmentsSentinel } from '../../../lib/composerAttachments';
 import { toast } from 'sonner';
 import { ComposerShell } from '../ComposerShell';
@@ -109,8 +108,19 @@ export default function ManageComposer({
     manageStickyModeId = id;
     setPendingModeIdState(id);
   }, []);
-  const [providerModels, setProviderModels] = useState<AgentModelInfo[]>([]);
-  const [providerModelsKey, setProviderModelsKey] = useState<string | null>(null);
+  const shouldLoadModels = !!modelMenu && !!(
+    agentStatus?.capabilities.providerModels || agentStatus?.capabilities.models === true
+  );
+  const {
+    models: providerModels,
+    loading: modelsLoading,
+    error: modelsError,
+    retry: retryModels,
+  } = useAgentModelCatalog({
+    enabled: shouldLoadModels,
+    runtime: agentStatus?.runtime,
+    provider: agentStatus?.provider,
+  });
 
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressViewState | null>(null);
@@ -229,19 +239,10 @@ export default function ManageComposer({
   }, []);
 
   const openModelMenu = useCallback(
-    (anchor: PaneMenuAnchor, shouldLoadModels: boolean) => {
+    (anchor: PaneMenuAnchor, _shouldLoadModels: boolean) => {
       setModelMenu(anchor);
-      if (!shouldLoadModels) return;
-      const key = `${agentStatus?.runtime ?? ''}:${agentStatus?.provider ?? ''}`;
-      if (providerModels.length !== 0 && providerModelsKey === key) return;
-      void listAgentModels({ provider: agentStatus?.provider })
-        .then(({ models }) => {
-          setProviderModels(models);
-          setProviderModelsKey(key);
-        })
-        .catch(() => { /* noop */ });
     },
-    [agentStatus?.provider, agentStatus?.runtime, providerModels.length, providerModelsKey],
+    [],
   );
 
   const handlePaste = useCallback(
@@ -530,6 +531,8 @@ export default function ManageComposer({
         currentModeId={currentModeId}
         agentStatus={agentStatus}
         providerModels={providerModels}
+        modelsLoading={modelsLoading}
+        modelsError={modelsError}
         onSwitchAgent={(modeId) => {
           // No thread yet — record the pick locally. submit() stamps it onto
           // the new thread, which applies it to the session on send. When
@@ -547,6 +550,7 @@ export default function ManageComposer({
             refreshAgentStatus();
           });
         }}
+        onRetryModels={retryModels}
         onCloseAgentMenu={() => setAgentMenu(null)}
         onCloseModelMenu={() => setModelMenu(null)}
       />

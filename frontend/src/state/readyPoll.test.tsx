@@ -63,6 +63,17 @@ function Probe() {
   );
 }
 
+function WarmProjectProbe() {
+  const { createProject } = useChatStore();
+  const created = React.useRef(false);
+  React.useEffect(() => {
+    if (created.current) return;
+    created.current = true;
+    void createProject('Warm target', '/tmp');
+  }, [createProject]);
+  return null;
+}
+
 function wrapper({ children }: { children: React.ReactNode }) {
   return (
     <PrefsProvider>
@@ -204,5 +215,49 @@ describe('chatStore boot ready polling', () => {
     // /api/ready never reports `ready`, so recovery comes from the retry loop,
     // not the watchReady backstop.
     await waitFor(() => expect(getByTestId('modes').textContent).toBe('gpu-dev'));
+  });
+
+  test('re-warms the same cwd when runtime or model changes', async () => {
+    (api.fetchReady as any).mockResolvedValue({ status: 'ready', error: null });
+    (api.warmCwd as any).mockResolvedValue(undefined);
+    (api.fetchAgentStatus as any).mockResolvedValue({
+      ...STATUS_FIXTURE,
+      runtime: 'kiro',
+      model: 'claude-opus-4.8',
+    });
+
+    render(wrapper({ children: <WarmProjectProbe /> }));
+    await waitFor(() => expect(api.warmCwd).toHaveBeenCalledTimes(1));
+    expect(api.warmCwd).toHaveBeenLastCalledWith('/tmp');
+
+    (api.fetchAgentStatus as any).mockResolvedValue({
+      ...STATUS_FIXTURE,
+      runtime: 'gemini',
+      model: 'gemini-2.5-pro',
+    });
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
+    });
+    await waitFor(() => expect(api.warmCwd).toHaveBeenCalledTimes(2));
+
+    (api.fetchAgentStatus as any).mockResolvedValue({
+      ...STATUS_FIXTURE,
+      runtime: 'gemini',
+      model: 'gemini-2.5-flash',
+    });
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
+    });
+    await waitFor(() => expect(api.warmCwd).toHaveBeenCalledTimes(3));
+
+    (api.fetchAgentStatus as any).mockResolvedValue({
+      ...STATUS_FIXTURE,
+      runtime: 'kiro',
+      model: 'claude-opus-4.8',
+    });
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
+    });
+    await waitFor(() => expect(api.warmCwd).toHaveBeenCalledTimes(4));
   });
 });

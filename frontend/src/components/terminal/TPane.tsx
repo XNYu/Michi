@@ -15,8 +15,8 @@ import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
-import { listAgentModels, saveAgentOptions } from '../../services/api';
-import type { AgentModelInfo } from '../../services/api';
+import { saveAgentOptions } from '../../services/api';
+import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
 import MergeBanner from './MergeBanner';
@@ -303,9 +303,20 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   );
   const [agentMenu, setAgentMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
   const [modelMenu, setModelMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
-  // Provider-scoped model cache. Keyed on provider id so switching providers re-fetches.
-  const [providerModels, setProviderModels] = useState<AgentModelInfo[]>([]);
-  const [providerModelsKey, setProviderModelsKey] = useState<string | null>(null);
+  // Load only while the menu is open; the shared hook retries transient catalog failures.
+  const shouldLoadModels = !!modelMenu && !!(
+    agentStatus?.capabilities.providerModels || agentStatus?.capabilities.models === true
+  );
+  const {
+    models: providerModels,
+    loading: modelsLoading,
+    error: modelsError,
+    retry: retryModels,
+  } = useAgentModelCatalog({
+    enabled: shouldLoadModels,
+    runtime: agentStatus?.runtime,
+    provider: agentStatus?.provider,
+  });
   // NB: do NOT call this `pending` — `onSubmit` already has a local
   // `const pending = n.pendingComments ?? []`.
   const [pendingAttachments, setPendingAttachments] = useState<PanePendingAttachment[]>([]);
@@ -1116,19 +1127,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   const openModelMenu = useCallback((
     anchor: { x: number; y: number; anchorBottom: number },
-    shouldLoadModels: boolean,
+    _shouldLoadModels: boolean,
   ) => {
     setModelMenu(anchor);
-    if (!shouldLoadModels) return;
-    const key = `${agentStatus?.runtime ?? ''}:${agentStatus?.provider ?? ''}`;
-    if (providerModels.length !== 0 && providerModelsKey === key) return;
-    void listAgentModels({ provider: agentStatus?.provider })
-      .then(({ models }) => {
-        setProviderModels(models);
-        setProviderModelsKey(key);
-      })
-      .catch(() => {});
-  }, [agentStatus?.provider, agentStatus?.runtime, providerModels.length, providerModelsKey]);
+  }, []);
 
   const handleOpenBranch = useCallback((childNodeId: string) => {
     focusPane(childNodeId);
@@ -1723,6 +1725,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         currentModeId={n.currentModeId ?? undefined}
         agentStatus={agentStatus}
         providerModels={providerModels}
+        modelsLoading={modelsLoading}
+        modelsError={modelsError}
         onSwitchAgent={(modeId) => void switchAgent(nodeId, modeId)}
         onSaveModel={(model) => {
           void saveAgentOptions({ model }).then(() => {
@@ -1734,6 +1738,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             refreshAgentStatus();
           });
         }}
+        onRetryModels={retryModels}
         onCloseAgentMenu={() => setAgentMenu(null)}
         onCloseModelMenu={() => setModelMenu(null)}
       />

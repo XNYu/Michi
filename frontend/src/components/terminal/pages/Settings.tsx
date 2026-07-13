@@ -11,11 +11,9 @@ import {
 } from '../../markdownRendererFlag';
 import {
   clearProviderKey,
-  listAgentModels,
   saveAgentOptions,
   saveProviderKey,
   verifyProviderKey,
-  type AgentModelInfo,
   type AgentProviderInfo,
   type AgentReasoning,
   type AgentStatus,
@@ -27,6 +25,12 @@ import { authClient } from '../../../services/auth';
 import { signOutAndReset } from '../../../services/signOut';
 import { kbd } from '../../../lib/platform';
 import { API_BASE_URL } from '../../../config/env';
+import {
+  providerModelLocked,
+  providerOptionSuffix,
+  providerRequiresUserKey,
+} from '../../../lib/providerCapabilities';
+import { useAgentModelCatalog } from '../../../hooks/useAgentModelCatalog';
 
 type Section = 'model' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
 
@@ -681,31 +685,28 @@ function ProviderModelPicker({
   status: AgentStatus;
   onChanged: () => void;
 }) {
-  const [models, setModels] = useState<AgentModelInfo[]>([]);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setModels([]);
-    listAgentModels({ provider: status.provider })
-      .then(({ models }) => { if (!cancelled) setModels(models); })
-      .catch(() => { if (!cancelled) setModels([]); });
-    return () => { cancelled = true; };
-  }, [status.runtime, status.provider]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const activeProvider = (status.providers ?? []).find((p) => p.id === status.provider);
+  const locked = activeProvider ? providerModelLocked(activeProvider) : false;
+  const { models, loading, error: loadError, retry } = useAgentModelCatalog({
+    enabled: status.capabilities.models === true,
+    runtime: status.runtime,
+    provider: status.provider,
+  });
 
   return (
     <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
       <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>model</div>
       <select
         value={status.model ?? ''}
-        disabled={saving}
+        disabled={saving || loading || locked}
         onChange={async (e) => {
           setSaving(true);
-          setError(null);
+          setSaveError(null);
           const result = await saveAgentOptions({ model: e.target.value });
           setSaving(false);
-          if (!result.ok) setError(result.error);
+          if (!result.ok) setSaveError(result.error);
           onChanged();
         }}
         style={{
@@ -722,12 +723,24 @@ function ProviderModelPicker({
         {models.length === 0 && status.model && (
           <option value={status.model}>{status.model}</option>
         )}
+        {models.length === 0 && !status.model && (
+          <option value="">{loading ? 'Loading models…' : 'No models available'}</option>
+        )}
         {models.map((m) => (
           <option key={m.id} value={m.id}>{m.label || m.id}</option>
         ))}
       </select>
-      {error && (
-        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
+      {loading && (
+        <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6 }}>Loading models…</div>
+      )}
+      {loadError && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+          <span style={{ fontSize: 11, color: 'var(--term-danger)' }}>{loadError}</span>
+          <BorderBtn onClick={retry} style={{ padding: '2px 7px', fontSize: 10.5 }}>Retry</BorderBtn>
+        </div>
+      )}
+      {saveError && (
+        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{saveError}</div>
       )}
     </div>
   );

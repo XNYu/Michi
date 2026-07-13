@@ -190,6 +190,6 @@ export async function bootWithWorkspace(page: Page, name = 'E2E Workspace') {
   await nameInput.fill(name);
   await page.getByRole('button', { name: /^create$/i }).click();
 
-  // Wait for chat composer to be focusable (textarea inside MentionTextarea).
-  await page.locator('textarea').first().waitFor({ state: 'visible', timeout: 10_000 });
+  // Wait for the TipTap-backed MentionEditor used by the Home composer.
+  await page.locator('[contenteditable="true"]').first().waitFor({ state: 'visible', timeout: 10_000 });
 }
