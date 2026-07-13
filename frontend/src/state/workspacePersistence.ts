@@ -1035,7 +1035,7 @@ export function writeScopedLocalStorage({
       // STATE_SCHEMA_VERSION change must therefore force a full re-seed
       // (e.g. bump the key prefix) rather than rely on this field alone.
       version: STATE_SCHEMA_VERSION,
-      activeProjectId: null,
+      activeProjectId,
       projectIds,
     };
     try {

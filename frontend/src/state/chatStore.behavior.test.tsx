@@ -23,6 +23,8 @@ vi.mock('../services/api', () => ({
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
+  fetchPrefs: () => Promise.resolve(null),
+  savePrefs: () => Promise.resolve(),
   deleteWorkspace: () => Promise.resolve({ ok: true }),
   setChatMode: () => Promise.resolve('fake-chat'),
   respondToPermission: () => Promise.resolve({ ok: true }),
@@ -321,5 +323,20 @@ describe('auto-branch behavior (real provider)', () => {
       });
       (globalThis as any).requestAnimationFrame = originalGlobalRaf;
     }
+  });
+
+  it('updates the absolute folder bound to an existing workspace', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+
+    await act(async () => {
+      await result.current.store.createProject('test', '/tmp/original');
+    });
+    await waitFor(() => expect(result.current.store.activeProject?.cwd).toBe('/tmp/original'));
+
+    act(() => {
+      result.current.store.setProjectCwd(result.current.store.activeProject!.id, '/tmp/relinked');
+    });
+
+    expect(result.current.store.activeProject?.cwd).toBe('/tmp/relinked');
   });
 });

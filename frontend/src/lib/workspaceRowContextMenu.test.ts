@@ -42,4 +42,20 @@ describe('buildWorkspaceRowContextMenu — Manage workspace item', () => {
     expect(labels.some((l) => l.includes('archive'))).toBe(true);
     expect(labels.some((l) => l.includes('delete'))).toBe(true);
   });
+
+  it('offers Link/Change folder when the caller provides the desktop action', () => {
+    const changeFolder = vi.fn();
+    const actions = { ...mkActions(), changeFolder };
+    const unlinked = buildWorkspaceRowContextMenu({ project: mkProject(), actions });
+    const link = unlinked.flatMap((s) => s.items).find((i) => i.label === 'Link folder…');
+    expect(link).toBeDefined();
+    link!.onSelect();
+    expect(changeFolder).toHaveBeenCalledWith('p1');
+
+    const linked = buildWorkspaceRowContextMenu({
+      project: mkProject({ cwd: '/tmp/project' }),
+      actions,
+    });
+    expect(linked.flatMap((s) => s.items).some((i) => i.label === 'Change folder…')).toBe(true);
+  });
 });

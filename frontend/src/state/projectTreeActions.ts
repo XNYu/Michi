@@ -101,6 +101,14 @@ export function useProjectActions({
     setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, name } : p)));
   }, [setProjects]);
 
+  const setProjectCwd = useCallback((projectId: string, cwd: string) => {
+    const trimmed = cwd.trim();
+    if (!trimmed) return;
+    setProjects((prev) => prev.map((p) => (
+      p.id === projectId && p.cwd !== trimmed ? { ...p, cwd: trimmed } : p
+    )));
+  }, [setProjects]);
+
   const setProjectInstructions = useCallback(
     (projectId: string, instructions: string) => {
       const next = instructions.length > 0 ? instructions : undefined;
@@ -202,6 +210,7 @@ export function useProjectActions({
     createProject,
     enterChatsWorkspace,
     renameProject,
+    setProjectCwd,
     setProjectInstructions,
     deleteProject,
     restoreProject,

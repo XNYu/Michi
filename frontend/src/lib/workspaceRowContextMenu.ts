@@ -22,6 +22,8 @@ export interface WorkspaceRowActions {
   beginInlineRename: (projectId: string) => void;
   /** Open the Workspace Manage page for the given workspace id. */
   openManageWorkspace: (projectId: string) => void;
+  /** Ask the desktop shell to bind a different absolute folder. */
+  changeFolder?: (projectId: string) => void;
 }
 
 export interface BuildWorkspaceRowArgs {
@@ -43,6 +45,10 @@ export function buildWorkspaceRowContextMenu(
           keys: 'M',
           onSelect: () => actions.openManageWorkspace(project.id),
         },
+        ...(actions.changeFolder ? [{
+          label: project.cwd ? 'Change folder…' : 'Link folder…',
+          onSelect: () => actions.changeFolder!(project.id),
+        }] : []),
       ],
     },
     {

@@ -10,6 +10,8 @@ import {
 } from '../../../lib/workspaceRowContextMenu';
 import type { PageId } from '../../../state/commands';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
+import { getElectron } from '../../../lib/electronBridge';
+import { toast } from 'sonner';
 
 function formatRelative(ts: number): string {
   if (!ts) return '—';
@@ -214,6 +216,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
     activeProjectId,
     deleteProject,
     renameProject,
+    setProjectCwd,
     archiveProject,
     unarchiveProject,
     pinProject,
@@ -239,6 +242,22 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   const [menu, setMenu] = React.useState<{ id: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
 
+  const changeFolder = React.useCallback(async (projectId: string) => {
+    const electron = getElectron();
+    if (!electron) {
+      toast.info('Linking a local folder requires the desktop app.');
+      return;
+    }
+    try {
+      const result = await electron.chooseFolder();
+      if (result.canceled || !result.path) return;
+      setProjectCwd(projectId, result.path);
+      toast.success('Workspace folder updated');
+    } catch (error) {
+      toast.error(`Could not update folder: ${(error as Error).message}`);
+    }
+  }, [setProjectCwd]);
+
   const menuSections = React.useMemo<MenuSection[]>(() => {
     if (!menu) return [];
     const p = projects.find((pp) => pp.id === menu.id);
@@ -257,10 +276,11 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             setManageWorkspaceId(id);
             onNav('workspace-manage');
           },
+          changeFolder: (id) => { void changeFolder(id); },
         },
       }),
     );
-  }, [menu, projects, archiveProject, unarchiveProject, pinProject, unpinProject, deleteProject, onNav]);
+  }, [menu, projects, archiveProject, unarchiveProject, pinProject, unpinProject, deleteProject, changeFolder, onNav]);
 
   const [query, setQuery] = React.useState('');
 
@@ -673,7 +693,7 @@ function WorkspaceCard({
           >
             {w.cwd
               ? <Highlight text={w.cwd} q={query} />
-              : formatRelative(w.lastTs) + ' ago'}
+              : 'quick chat · no folder'}
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>

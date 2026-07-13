@@ -153,6 +153,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [folderName, setFolderName] = useState<string | null>(null);
   const [absolutePath, setAbsolutePath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [folderNotice, setFolderNotice] = useState<string | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -161,6 +162,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       setFolderName(null);
       setAbsolutePath(null);
       setError(null);
+      setFolderNotice(null);
     }
   }, [open]);
 
@@ -168,6 +170,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
 
   const pickFolder = async () => {
     setError(null);
+    setFolderNotice(null);
 
     // Electron path — always preferred; returns an absolute path.
     const electron = getElectron();
@@ -186,9 +189,14 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
         const handle = await pick();
         setFolderName(handle.name);
         setAbsolutePath(null);
+        setFolderNotice(
+          `Browsers cannot link an absolute local folder. “${handle.name}” will only be used as the workspace name; the agent will not receive filesystem access.`,
+        );
         return;
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
+        setError('Could not read that folder. You can create a quick chat instead.');
+        return;
       }
     }
     fallbackInputRef.current?.click();
@@ -203,6 +211,9 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       if (first) {
         setFolderName(first);
         setAbsolutePath(null);
+        setFolderNotice(
+          `Browsers cannot link an absolute local folder. “${first}” will only be used as the workspace name; the agent will not receive filesystem access.`,
+        );
       }
     }
     e.target.value = '';
@@ -217,7 +228,8 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
     onCreate(finalName, absolutePath ?? undefined);
   };
 
-  const folderDisplay = absolutePath || folderName;
+  const browserNameOnly = !!folderName && !absolutePath;
+  const folderDisplay = absolutePath || (folderName ? `${folderName} — not linked` : null);
 
   return (
     <div style={SCRIM} onClick={onClose}>
@@ -304,6 +316,21 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
           </div>
         )}
 
+        {folderNotice && (
+          <div
+            role="status"
+            style={{
+              padding: '9px 14px 0',
+              fontSize: 11.5,
+              lineHeight: 1.45,
+              color: 'var(--fg-muted)',
+              fontFamily: 'var(--ui-font)',
+            }}
+          >
+            {folderNotice} Use the desktop app to link or change a folder later.
+          </div>
+        )}
+
         <input
           ref={fallbackInputRef}
           type="file"
@@ -317,8 +344,10 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
 
         <div style={FOOTER}>
           <button type="button" onClick={onClose} style={BTN_GHOST}>cancel</button>
-          <button type="button" onClick={onSkip} style={BTN_SECONDARY}>skip</button>
-          <button type="button" onClick={handleCreate} style={BTN_PRIMARY}>create</button>
+          <button type="button" onClick={onSkip} style={BTN_SECONDARY}>open quick chat</button>
+          <button type="button" onClick={handleCreate} style={BTN_PRIMARY}>
+            {browserNameOnly ? 'create without folder' : 'create'}
+          </button>
         </div>
       </div>
     </div>

@@ -589,6 +589,8 @@ export interface ChatContextValue {
    */
   enterChatsWorkspace: () => Promise<string>;
   renameProject: (projectId: string, name: string) => void;
+  /** Replace the absolute folder bound to a workspace. Desktop-only UI supplies the path. */
+  setProjectCwd: (projectId: string, cwd: string) => void;
   /** Persist the per-workspace system-prompt addendum. Empty string clears it. */
   setProjectInstructions: (projectId: string, instructions: string) => void;
   deleteProject: (projectId: string) => void;
