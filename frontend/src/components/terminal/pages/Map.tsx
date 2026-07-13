@@ -7,6 +7,8 @@ import { Dot, Tag } from '../primitives';
 import ContextMenu from '../../ContextMenu';
 import { visibleMapNodeIds } from './mapVisibility';
 import { buildTreeContextMenu } from '../../../lib/treeContextMenu';
+import { requestDigest } from '../../../lib/digestPrompt';
+import { findTreeIdForNode } from '../../../state/tree';
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
 
@@ -448,6 +450,49 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   }
 
   const streamingCount = liveIds.filter((id) => streamingIds.has(id)).length;
+  // Selection is global store state, but the Map action bar must only operate
+  // on live nodes visible in this map. This prevents a stale selection from a
+  // digest/archived surface from silently joining a merge or export.
+  const selectedMapIds = liveIds.filter((id) => selection.has(id));
+  const selectedTreeIds = selectedMapIds.map((id) => findTreeIdForNode(id, activeProject));
+  const selectionHasStreaming = selectedMapIds.some((id) => streamingIds.has(id));
+  const knownSelectedTreeIds = selectedTreeIds.filter((id): id is string => !!id);
+  const selectionSpansTrees =
+    knownSelectedTreeIds.length !== selectedMapIds.length
+    || new Set(knownSelectedTreeIds).size > 1;
+  const canMergeSelection =
+    selectedMapIds.length >= 2
+    && !selectionHasStreaming
+    && !selectionSpansTrees;
+  const canDigestSelection =
+    selectedMapIds.length >= 1
+    && !selectionHasStreaming
+    && !selectionSpansTrees;
+
+  const mergeSelection = () => {
+    if (!canMergeSelection) return;
+    try {
+      createMergedChat(selectedMapIds);
+      clearSelection();
+      onNav?.('dashboard');
+    } catch {
+      // createMergedChat already surfaces its validation error as a toast.
+    }
+  };
+
+  const digestSelection = () => {
+    if (!canDigestSelection) return;
+    requestDigest(activeProject.id, selectedMapIds);
+    clearSelection();
+  };
+
+  const exportSelection = () => {
+    window.dispatchEvent(
+      new CustomEvent('michi:toggle-export-panel', {
+        detail: { projectId: activeProject.id, nodeIds: selectedMapIds },
+      }),
+    );
+  };
 
   const strokeFor = (
     kind: string | undefined,
@@ -780,49 +825,19 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           </div>
         </div>
 
-        {selection.size > 0 && (
-          <div
-            style={{
-              position: 'absolute',
-              left: 16,
-              right: 16,
-              bottom: 14,
-              background: 'var(--term-fg)',
-              color: 'var(--term-surface)',
-              padding: '8px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              fontSize: 11.5,
-            }}
-          >
-            <span
-              style={{
-                background: 'var(--term-select)',
-                color: 'var(--term-fg)',
-                padding: '2px 8px',
-                fontWeight: 700,
-              }}
-            >
-              {selection.size}
-            </span>
-            <span style={{ letterSpacing: '.04em' }}>SELECTED</span>
-            <span style={{ color: 'var(--term-faint)' }}>·</span>
-            <span
-              style={{
-                fontFamily: 'var(--ui-font)',
-                color: 'var(--term-alt)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                flex: 1,
-              }}
-            >
-              {Array.from(selection)
-                .map((id) => nodesSnapshot[id]?.title || id)
-                .join(', ')}
-            </span>
-          </div>
+        {selectedMapIds.length > 0 && (
+          <MapSelectionBar
+            count={selectedMapIds.length}
+            names={selectedMapIds.map((id) => nodesSnapshot[id]?.title || id)}
+            canMerge={canMergeSelection}
+            canDigest={canDigestSelection}
+            selectionHasStreaming={selectionHasStreaming}
+            selectionSpansTrees={selectionSpansTrees}
+            onMerge={mergeSelection}
+            onDigest={digestSelection}
+            onExport={exportSelection}
+            onClear={clearSelection}
+          />
         )}
       </div>
       {menu && activeProject && (
@@ -860,6 +875,112 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
         />
       )}
     </MapFrame>
+  );
+}
+
+export function MapSelectionBar({
+  count,
+  names,
+  canMerge,
+  canDigest,
+  selectionHasStreaming,
+  selectionSpansTrees,
+  onMerge,
+  onDigest,
+  onExport,
+  onClear,
+}: {
+  count: number;
+  names: string[];
+  canMerge: boolean;
+  canDigest: boolean;
+  selectionHasStreaming: boolean;
+  selectionSpansTrees: boolean;
+  onMerge: () => void;
+  onDigest: () => void;
+  onExport: () => void;
+  onClear: () => void;
+}) {
+  const actionStyle = (enabled: boolean): React.CSSProperties => ({
+    border: '1px solid color-mix(in srgb, var(--term-surface) 42%, transparent)',
+    background: enabled ? 'var(--term-surface)' : 'transparent',
+    color: enabled ? 'var(--term-fg)' : 'var(--term-faint)',
+    padding: '3px 9px',
+    font: 'inherit',
+    fontWeight: 600,
+    cursor: enabled ? 'pointer' : 'not-allowed',
+    opacity: enabled ? 1 : 0.62,
+  });
+  const digestTitle = selectionHasStreaming
+    ? 'Wait for streaming to finish before creating a digest.'
+    : selectionSpansTrees
+      ? 'Digest requires nodes from a single thread.'
+      : 'Create a digest from the selected nodes.';
+  const mergeTitle = selectionHasStreaming
+    ? 'Wait for streaming to finish before merging.'
+    : selectionSpansTrees
+      ? 'Merge requires nodes from a single thread.'
+    : count < 2
+      ? 'Select at least two nodes to merge.'
+      : 'Merge selected nodes into a new thread.';
+
+  return (
+    <div
+      role="toolbar"
+      aria-label="Map selection actions"
+      style={{
+        position: 'absolute',
+        left: 16,
+        right: 16,
+        bottom: 14,
+        background: 'var(--term-fg)',
+        color: 'var(--term-surface)',
+        padding: '8px 10px 8px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11.5,
+        boxShadow: '0 8px 24px color-mix(in srgb, var(--term-fg) 22%, transparent)',
+      }}
+    >
+      <span
+        style={{
+          background: 'var(--term-select)',
+          color: 'var(--term-fg)',
+          padding: '2px 8px',
+          fontWeight: 700,
+        }}
+      >
+        {count}
+      </span>
+      <span style={{ letterSpacing: '.04em' }}>SELECTED</span>
+      <span style={{ color: 'var(--term-faint)' }}>·</span>
+      <span
+        title={names.join(', ')}
+        style={{
+          fontFamily: 'var(--ui-font)',
+          color: 'var(--term-alt)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          flex: 1,
+        }}
+      >
+        {names.join(', ')}
+      </span>
+      <button type="button" disabled={!canMerge} title={mergeTitle} onClick={onMerge} style={actionStyle(canMerge)}>
+        Merge
+      </button>
+      <button type="button" disabled={!canDigest} title={digestTitle} onClick={onDigest} style={actionStyle(canDigest)}>
+        Digest
+      </button>
+      <button type="button" onClick={onExport} style={actionStyle(true)}>
+        Export
+      </button>
+      <button type="button" onClick={onClear} style={actionStyle(true)}>
+        Clear
+      </button>
+    </div>
   );
 }
 

@@ -5,6 +5,8 @@ import { useChatStore, useChatNodesSnapshot } from '../../../state/chatStore';
 import { getElectron } from '../../../lib/electronBridge';
 import { importWorkspaceFileUpload, type UploadProgress } from '../../../services/api';
 import { sanitizeContextName } from '../../../lib/sanitizeContextName';
+import { navigateToNode } from '../../../state/navigateToNode';
+import { findTreeIdForNode } from '../../../state/tree';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 import { deriveDigests, deriveHeaderCounts } from '../manage/derive';
 import ManageHeader from '../manage/ManageHeader';
@@ -24,6 +26,7 @@ type Tab = 'chats' | 'contexts' | 'digests';
 
 export default function WorkspaceManage({ workspaceId, onNav }: Props) {
   const store = useChatStore();
+  const { activeProjectId, selectProject } = store;
   const nodes = useChatNodesSnapshot();
   const project = workspaceId
     ? store.projects.find((p) => p.id === workspaceId && !p.deletedAt) ?? null
@@ -38,6 +41,18 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
   const dragDepthRef = React.useRef(0);
   const [dropzoneVisible, setDropzoneVisible] = React.useState(false);
   const [droppedFileCount, setDroppedFileCount] = React.useState(0);
+  const [manageMode, setManageMode] = React.useState(false);
+  const managedProjectId = project?.id ?? null;
+
+  // ManageComposer creates a thread through the active-workspace action. The
+  // manager can be opened from the all-workspaces page without activating its
+  // project first, so align the active workspace on entry before the user can
+  // submit into the wrong project.
+  React.useEffect(() => {
+    if (managedProjectId && activeProjectId !== managedProjectId) {
+      selectProject(managedProjectId);
+    }
+  }, [activeProjectId, managedProjectId, selectProject]);
 
   const handleAddContext = React.useCallback(async () => {
     if (importing || !project) return;
@@ -201,7 +216,41 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
     digests: digests.length,
   };
 
-  const handleSubmitted = () => onNav('home');
+  const handleOpenNode = (nodeId: string) => {
+    const node = nodes[nodeId];
+    if (node?.kind === 'digest') {
+      // Digest nodes deliberately sit outside the branch tree. Anchor their
+      // dashboard pane to the source thread so opening one from the workspace
+      // manager never writes it into whichever thread happened to be active.
+      const sourceId = node.digest?.sources.find((id) => project.chatIds.includes(id));
+      const treeId = sourceId ? findTreeIdForNode(sourceId, project) : project.activeTreeId;
+      if (treeId) {
+        if (store.activeProjectId !== project.id) store.selectProject(project.id);
+        store.openPaneInTree(project.id, treeId, nodeId);
+        store.activateTree(treeId, project.id);
+        store.setFocusedNodeId(nodeId);
+      } else {
+        store.openPane(nodeId);
+      }
+    } else {
+      navigateToNode(
+        {
+          projects: store.projects,
+          activeProjectId: store.activeProjectId,
+          selectProject: store.selectProject,
+          openPane: store.openPane,
+          openPaneInTree: store.openPaneInTree,
+          activateTree: store.activateTree,
+          setFocusedNodeId: store.setFocusedNodeId,
+        },
+        nodeId,
+        project.id,
+      );
+    }
+    onNav('dashboard');
+  };
+
+  const handleSubmitted = () => onNav('dashboard');
 
   return (
     <div
@@ -250,10 +299,8 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
             workspace={project}
             nodes={nodes}
             filter={filter}
-            onOpen={(id) => {
-              store.openPane(id);
-              onNav('dashboard');
-            }}
+            manageMode={manageMode}
+            onOpen={handleOpenNode}
             menuActions={{
               activateTree: store.activateTree,
               archiveTree: store.archiveTree,
@@ -313,10 +360,14 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
           <DigestList
             digests={digests}
             filter={filter}
-            onOpen={(id) => store.openPane(id)}
-            onRebuild={() => { /* TODO(v2): chatStore.regenerateDigest API */ }}
+            onOpen={handleOpenNode}
+            onRebuild={(id) => { void store.refreshDigest(id); }}
             onExport={(id) =>
-              window.dispatchEvent(new CustomEvent('michi:export', { detail: { digestNodeId: id } }))
+              window.dispatchEvent(
+                new CustomEvent('michi:toggle-export-panel', {
+                  detail: { projectId: project.id, digestNodeId: id },
+                }),
+              )
             }
           />
         )}
