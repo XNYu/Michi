@@ -17,9 +17,9 @@ export function buildContextRowMenu(opts: {
     const { context, onToggleAutoInject, onRename, onDelete } = opts;
     return [
         {
-            label: context.autoInject ? 'Disable auto-inject' : 'Enable auto-inject',
-            keys: 'I',
-            action: onToggleAutoInject,
+            label: context.pinnedAt ? 'Remove from favorites' : 'Add to favorites',
+            keys: 'F',
+            action: onPin,
         },
         { label: 'Rename', keys: 'R', action: onRename },
         { label: 'Delete', keys: 'D', action: onDelete, danger: true },

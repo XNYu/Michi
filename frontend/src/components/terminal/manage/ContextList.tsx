@@ -39,48 +39,51 @@ export default function ContextList({
       )
     : contexts;
 
-  const auto = filtered.filter((c) => c.autoInject);
-  const avail = filtered.filter((c) => !c.autoInject);
-
   const totalBytes = filtered.reduce((acc, c) => acc + (c.size ?? 0), 0);
-  const autoCount = auto.length;
+  const favoriteCount = filtered.filter((c) => c.pinnedAt).length;
+
+  // Group by artifact type; within a group favorites sort first, then newest first.
+  const byType = new Map<string, ContextEntry[]>();
+  for (const c of filtered) {
+    const t = artifactType(c);
+    const arr = byType.get(t) ?? [];
+    arr.push(c);
+    byType.set(t, arr);
+  }
+  for (const arr of byType.values()) {
+    arr.sort((a, b) => {
+      if (!!a.pinnedAt !== !!b.pinnedAt) return a.pinnedAt ? -1 : 1;
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+  }
 
   return (
     <div>
-      <Strip totalBytes={totalBytes} autoCount={autoCount} onAdd={onAdd} />
-      <Section
-        title="Auto-injecting"
-        subtitle="loaded on every new chat"
-        count={auto.length}
-        rows={auto}
-        selectedId={selectedContextId}
-        onSelect={onSelect}
-        onToggleAutoInject={onToggleAutoInject}
-        onDelete={onDelete}
-        onPreview={onPreview}
-      />
-      <Section
-        title="Available"
-        subtitle="attach manually with @ in any chat"
-        count={avail.length}
-        rows={avail}
-        selectedId={selectedContextId}
-        onSelect={onSelect}
-        onToggleAutoInject={onToggleAutoInject}
-        onDelete={onDelete}
-        onPreview={onPreview}
-      />
+      <Strip totalBytes={totalBytes} favoriteCount={favoriteCount} onAdd={onAdd} />
+      {TYPE_GROUPS.map((g) => (
+        <Section
+          key={g.key}
+          title={g.title}
+          count={(byType.get(g.key) ?? []).length}
+          rows={byType.get(g.key) ?? []}
+          selectedId={selectedContextId}
+          onSelect={onSelect}
+          onPin={onPin}
+          onDelete={onDelete}
+          onPreview={onPreview}
+        />
+      ))}
     </div>
   );
 }
 
 function Strip({
   totalBytes,
-  autoCount,
+  favoriteCount,
   onAdd,
 }: {
   totalBytes: number;
-  autoCount: number;
+  favoriteCount: number;
   onAdd: () => void;
 }) {
   return (
@@ -118,7 +121,7 @@ function Strip({
       </button>
       <span style={{ flex: 1 }} />
       <span style={{ color: 'var(--term-faint, var(--term-muted))', fontSize: 12 }}>
-        {autoCount} always-on · {fmtBytes(totalBytes)} total
+        {favoriteCount} favorite{favoriteCount === 1 ? '' : 's'} · {fmtBytes(totalBytes)} total
       </span>
     </div>
   );
@@ -283,7 +286,7 @@ function Section({
             </div>
             {hovered ? (
               <RowActions
-                pinned={!!c.autoInject}
+                favorite={!!c.pinnedAt}
                 onPreview={() => onPreview(c.filePath)}
                 onPin={() => onToggleAutoInject(c.id, !c.autoInject)}
                 onDelete={() => onDelete(c.id)}
@@ -318,13 +321,13 @@ function RowMeta({ size }: { size: number | undefined }) {
 }
 
 function RowActions({
-  pinned,
+  favorite,
   onPreview,
   onPin,
   onDelete,
   contextName,
 }: {
-  pinned: boolean;
+  favorite: boolean;
   onPreview: () => void;
   onPin: () => void;
   onDelete: () => void;
@@ -346,12 +349,15 @@ function RowActions({
         <FolderOpenIcon />
       </IconBtn>
       <IconBtn
-        ariaLabel={`${pinned ? 'unpin' : 'pin'} ${contextName}`}
-        title={pinned ? 'Unpin (stop auto-inject)' : 'Pin (auto-inject)'}
-        active={pinned}
+        ariaLabel={favorite
+          ? `Remove ${contextName} from favorites`
+          : `Add ${contextName} to favorites`}
+        title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+        active={favorite}
+        ariaPressed={favorite}
         onClick={onPin}
       >
-        <PinIcon filled={pinned} />
+        <StarIcon filled={favorite} />
       </IconBtn>
       <IconBtn
         ariaLabel={`delete ${contextName}`}
@@ -371,6 +377,7 @@ function IconBtn({
   ariaLabel,
   title,
   active,
+  ariaPressed,
   danger,
 }: {
   children: React.ReactNode;
@@ -378,12 +385,14 @@ function IconBtn({
   ariaLabel: string;
   title: string;
   active?: boolean;
+  ariaPressed?: boolean;
   danger?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
       title={title}
       onClick={(e) => {
         e.stopPropagation();
@@ -428,7 +437,7 @@ function FolderOpenIcon() {
   );
 }
 
-function PinIcon({ filled }: { filled: boolean }) {
+function StarIcon({ filled }: { filled: boolean }) {
   return (
     <svg
       width="14"
@@ -438,8 +447,9 @@ function PinIcon({ filled }: { filled: boolean }) {
       stroke="currentColor"
       strokeWidth="1.4"
       strokeLinejoin="round"
+      aria-hidden="true"
     >
-      <path d="M9.5 1.5l5 5-2 1-3.5 3.5-1-1L4.5 14l1.5-3.5-1-1L8.5 6 9.5 4l0-2.5z" />
+      <path d="M8 1.5l1.95 3.95 4.36.63-3.15 3.07.74 4.34L8 11.44l-3.9 2.05.74-4.34-3.15-3.07 4.36-.63L8 1.5z" />
     </svg>
   );
 }

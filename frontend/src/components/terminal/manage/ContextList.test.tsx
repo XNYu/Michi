@@ -56,15 +56,44 @@ describe('ContextList', () => {
     expect(screen.getByText(/^available/i).parentElement?.textContent).toContain('1');
   });
 
-  it('hover reveals the pin button; clicking it calls onToggleAutoInject with the negated value', () => {
-    const onToggle = vi.fn();
+  it('sorts favorite artifacts to the top of their group', () => {
+    render(
+      <ContextList
+        contexts={[
+          ctx('1', 'older.md', { createdAt: NOW }),
+          ctx('2', 'favorite.md', { createdAt: NOW - 1000, pinnedAt: NOW }),
+        ]}
+        filter=""
+        selectedContextId={null}
+        onSelect={() => {}}
+        onPin={() => {}}
+        onDelete={() => {}}
+        onPreview={() => {}}
+        onAdd={() => {}}
+      />,
+    );
+    const names = screen.getAllByText(/\.md$/).map((n) => n.textContent);
+    expect(names[0]).toBe('favorite.md');
+  });
+
+  it('describes a favorite as removable without implying auto-injection', () => {
+    const onPin = vi.fn();
     renderRow({
       contexts: [ctx('1', 'a.md', true)],
       onToggleAutoInject: onToggle,
     });
     hoverFirstRow();
-    fireEvent.click(screen.getByLabelText(/unpin a\.md/i));
-    expect(onToggle).toHaveBeenCalledWith('1', false);
+    const favoriteButton = screen.getByRole('button', { name: 'Remove a.md from favorites' });
+    expect(favoriteButton.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(favoriteButton);
+    expect(onPin).toHaveBeenCalledWith('1');
+  });
+
+  it('offers to add a non-favorite artifact to favorites', () => {
+    renderRow();
+    hoverFirstRow();
+    const favoriteButton = screen.getByRole('button', { name: 'Add a.md to favorites' });
+    expect(favoriteButton.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('hover reveals the trash button; clicking it calls onDelete', () => {
