@@ -5,6 +5,7 @@ import { PiRuntime } from "./pi/PiRuntime";
 import { ClaudeRuntime } from "./claude/ClaudeRuntime";
 import { KiroRuntime } from "./kiro/KiroRuntime";
 import { CodexRuntime } from "./codex";
+import { AntigravityRuntime } from "./antigravity";
 import { getProviderEnvBindings } from "./pi/piProviders";
 import type { RuntimeModelCache } from "./runtimeModelCache";
 
@@ -82,6 +83,11 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
             { modelCache: deps.modelCache },
         ),
     },
+    {
+        id: "antigravity",
+        label: "Antigravity",
+        create: (deps) => new AntigravityRuntime({ modelCache: deps.modelCache }),
+    },
 ];
 
 /**
@@ -98,7 +104,13 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
 export function getEnabledFactories(): readonly RuntimeFactory[] {
     const env = process.env.MICHI_ENABLED_RUNTIMES?.trim();
     if (!env) return RUNTIME_FACTORIES;
-    const requested = env.split(",").map((s) => s.trim()).filter(Boolean);
+    const requested = env
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        // One-release compatibility: the removed Gemini ACP runtime occupied
+        // this slot before Google moved AI Pro users to Antigravity.
+        .map((id) => id === "gemini" ? "antigravity" : id);
     const known = new Set(RUNTIME_FACTORIES.map((f) => f.id));
     const unknown = requested.filter((id) => !known.has(id));
     if (unknown.length) {

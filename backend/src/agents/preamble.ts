@@ -82,6 +82,12 @@ function renderHead(enableFollowUps: boolean): string {
  * UI gate at render time (frontend pref), not in the system prompt.
  */
 export function buildStableSystemPrompt(): string {
+    return buildMetadataSystemPrompt() + ASK_USER_INSTRUCTION;
+}
+
+/** Stable metadata-only prompt for runtimes whose custom-agent layer cannot
+ * use Michi's structured ask_user tool. */
+export function buildMetadataSystemPrompt(): string {
     return renderHead(true);
 }
 

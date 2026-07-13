@@ -357,8 +357,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const parentChatId: string | undefined = req.body?.parentChatId;
             const mergeContexts: unknown = req.body?.mergeContexts;
             const model: unknown = req.body?.model;
+            const modeId: unknown = req.body?.modeId;
             if (model !== undefined && typeof model !== "string") {
                 return res.status(400).json({ error: "model must be a string" });
+            }
+            if (modeId !== undefined && (typeof modeId !== "string" || modeId.length === 0)) {
+                return res.status(400).json({ error: "modeId must be a non-empty string" });
             }
 
             // In cloud mode, derive cwd server-side from workspaceId; ignore client-supplied cwd.
@@ -522,6 +526,13 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 workspaceId,
                 ownerUserId: req.user?.id ?? null,
             });
+            if (
+                typeof modeId === "string" &&
+                session.setMode &&
+                session.currentModeId !== modeId
+            ) {
+                await session.setMode(modeId);
+            }
             sessionRegistry.registerSession(session, req.user?.id ?? null);
             res.json({
                 chatId: session.id,
@@ -852,14 +863,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 });
                 sessionRegistry.registerSession(session, req.user?.id ?? null);
 
-                // Apply a pre-session agent pick (Home composer) to this fresh
-                // session before the caller streams its first prompt. Only for
-                // brand-new nodes (no prior chatId) so resumes are untouched. A
-                // bad/unsupported mode must not fail session creation — log and
-                // fall back to the runtime default.
+                // Apply the caller's explicit agent pick before the first
+                // prompt. This block only runs for a newly constructed runtime
+                // session; live/exact resumes returned above are untouched.
+                // A bad/unsupported mode must not fail session creation.
                 if (
                     desiredModeId &&
-                    !chatId &&
                     session.setMode &&
                     session.currentModeId !== desiredModeId
                 ) {
@@ -1111,8 +1120,21 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.json({ availableModes: [] });
         }
         try {
-            const availableModes = await chatManager.getAvailableModes();
-            res.json({ availableModes });
+            // The kiro path keeps its warm-aware ChatManager fast path; any
+            // other modes-capable runtime answers through the AgentRuntime
+            // contract. The frontend expects { id, name, description }.
+            if (runtime === chatManager.getRuntime()) {
+                const availableModes = await chatManager.getAvailableModes();
+                return res.json({ availableModes });
+            }
+            const modes = await (runtime.listModes?.("") ?? Promise.resolve([]));
+            res.json({
+                availableModes: modes.map((m) => ({
+                    id: m.id,
+                    name: m.label ?? m.id,
+                    description: m.description,
+                })),
+            });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }

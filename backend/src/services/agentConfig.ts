@@ -33,7 +33,9 @@ const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
 };
 
 const DEFAULTS: AgentConfig = {
-  runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
+  runtime: process.env.MICHI_DEFAULT_RUNTIME === "gemini"
+    ? "antigravity"
+    : process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
   provider: "openrouter-free",
   modelByRuntime: {},
   reasoningByRuntime: {},
@@ -49,6 +51,10 @@ let current: AgentConfig = {
 
 let warnedAboutLegacy = false;
 
+export function normalizeLegacyRuntimeId(runtime: string): RuntimeId {
+  return runtime === "gemini" ? "antigravity" : runtime;
+}
+
 function readDiskFile(): Record<string, any> | null {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -62,7 +68,7 @@ function readRuntimeFromEnv(): RuntimeId | undefined {
   // The registry (not this module) decides whether the id is real, so we
   // accept any non-empty string here.
   const newEnv = process.env.MICHI_AGENT_RUNTIME;
-  if (typeof newEnv === "string" && newEnv.length > 0) return newEnv;
+  if (typeof newEnv === "string" && newEnv.length > 0) return normalizeLegacyRuntimeId(newEnv);
   const legacy = process.env.MICHI_AGENT;
   if (legacy) {
     if (legacy === "pi-deepseek") {
@@ -112,7 +118,10 @@ export function loadAgentConfig(): AgentConfig {
   if (disk && typeof disk === "object") {
     if (disk.agent && typeof disk.agent === "object") {
       const a = disk.agent;
-      if (typeof a.runtime === "string" && a.runtime.length > 0) next.runtime = a.runtime;
+      if (typeof a.runtime === "string" && a.runtime.length > 0) {
+        next.runtime = normalizeLegacyRuntimeId(a.runtime);
+        if (a.runtime === "gemini") migratedFromLegacy = true;
+      }
       if (typeof a.provider === "string" && a.provider) next.provider = a.provider;
       if (a.modelByRuntime && typeof a.modelByRuntime === "object" && !Array.isArray(a.modelByRuntime)) {
         for (const [k, v] of Object.entries(a.modelByRuntime)) {
@@ -201,7 +210,7 @@ export function getAgentConfig(userId?: string): AgentConfig {
       }
     } catch { /* keep {} */ }
     return {
-      runtime: row.runtime as RuntimeId,
+      runtime: normalizeLegacyRuntimeId(row.runtime),
       provider: row.provider,
       modelByRuntime,
       reasoningByRuntime,
