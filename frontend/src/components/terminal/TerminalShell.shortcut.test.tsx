@@ -4,7 +4,14 @@ import { render } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
 
 const closePaneSpy = vi.hoisted(() => vi.fn());
-const storeState = vi.hoisted(() => ({ focusedPane: null as string | null, openPanes: [] as string[] }));
+const clearSelectionSpy = vi.hoisted(() => vi.fn());
+const clearTreeSelectionSpy = vi.hoisted(() => vi.fn());
+const storeState = vi.hoisted(() => ({
+  focusedPane: null as string | null,
+  openPanes: [] as string[],
+  selection: new Set<string>(),
+  treeSelection: new Set<string>(),
+}));
 
 vi.mock('../../state/chatStore', async () => {
   const actual = await vi.importActual<any>('../../state/chatStore');
@@ -15,11 +22,12 @@ vi.mock('../../state/chatStore', async () => {
       activeProjectId: 'p1',
       projects: [],
       openPanes: storeState.openPanes, focusedPane: storeState.focusedPane, focusedNodeId: null,
-      selection: new Set(),
+      selection: storeState.selection,
       nodes: {},
       hydrated: true,
-      treeSelection: new Set(),
-      clearTreeSelection: () => {}, selectAllTrees: () => {},
+      treeSelection: storeState.treeSelection,
+      clearSelection: clearSelectionSpy,
+      clearTreeSelection: clearTreeSelectionSpy, selectAllTrees: () => {},
       restoreLastDeletion: () => null, openPane: () => {}, closePane: closePaneSpy,
       createThread: () => {}, createBlankChild: () => {},
       focusPane: () => {}, selectProject: () => {}, createProject: () => {},
@@ -41,9 +49,9 @@ vi.mock('../../state/chatStore', async () => {
       focusedPane: storeState.focusedPane,
       focusedNodeId: null,
       viewMode: 'single',
-      selection: new Set(),
+      selection: storeState.selection,
       hydrated: true,
-      treeSelection: new Set(),
+      treeSelection: storeState.treeSelection,
       searchHighlightTerm: null,
     }),
     useChatActions: () => ({
@@ -54,7 +62,8 @@ vi.mock('../../state/chatStore', async () => {
       openPane: () => {},
       createBlankChild: () => {},
       restoreLastDeletion: () => null,
-      clearTreeSelection: () => {},
+      clearSelection: clearSelectionSpy,
+      clearTreeSelection: clearTreeSelectionSpy,
       selectAllTrees: () => {},
     }),
     useChatNodesSnapshot: () => ({}),
@@ -74,7 +83,7 @@ vi.mock('../../state/prefs', async () => {
   return {
     ...actual,
     usePrefs: () => ({
-      prefs: { sidebarCollapsed: false, workspaceOrder: [] },
+      prefs: actual.DEFAULT_PREFS,
       setPref: () => {},
     }),
   };
@@ -83,8 +92,12 @@ vi.mock('../../state/prefs', async () => {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   closePaneSpy.mockReset();
+  clearSelectionSpy.mockReset();
+  clearTreeSelectionSpy.mockReset();
   storeState.focusedPane = null;
   storeState.openPanes = [];
+  storeState.selection = new Set();
+  storeState.treeSelection = new Set();
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -123,5 +136,25 @@ describe('TerminalShell shortcuts', () => {
     }
     expect(closePaneSpy).toHaveBeenCalledTimes(1);
     expect(closePaneSpy).toHaveBeenCalledWith('L');
+  });
+
+  it('Escape clears node and tree selection together', () => {
+    storeState.selection = new Set(['node-1']);
+    storeState.treeSelection = new Set(['tree-1']);
+    render(<TerminalShell />);
+    const focusTarget = document.createElement('button');
+    document.body.appendChild(focusTarget);
+    focusTarget.focus();
+
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      }));
+    } finally {
+      focusTarget.remove();
+    }
+
+    expect(clearSelectionSpy).toHaveBeenCalledOnce();
+    expect(clearTreeSelectionSpy).toHaveBeenCalledOnce();
   });
 });

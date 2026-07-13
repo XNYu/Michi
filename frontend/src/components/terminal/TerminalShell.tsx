@@ -90,6 +90,7 @@ export default function TerminalShell() {
     openPane,
     createBlankChild,
     restoreLastDeletion,
+    clearSelection,
     clearTreeSelection,
     selectAllTrees,
   } = useChatActions();
@@ -189,10 +190,13 @@ export default function TerminalShell() {
         return;
       }
       if (isEditable(document.activeElement)) return;
-      // Escape: clear tree selection
-      if (e.key === 'Escape' && treeSelection.size > 0) {
+      // Escape clears both node- and tree-level selection. They can coexist
+      // (for example after selecting in Map, then entering manage mode), so
+      // clear both in one pass instead of returning after the first set.
+      if (e.key === 'Escape' && (selection.size > 0 || treeSelection.size > 0)) {
         e.preventDefault();
-        clearTreeSelection();
+        if (selection.size > 0) clearSelection();
+        if (treeSelection.size > 0) clearTreeSelection();
         return;
       }
       if (!meta) return;
@@ -281,7 +285,7 @@ export default function TerminalShell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav]);
+  }, [page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav]);
 
   useEffect(() => {
     const onEvt = () => setNewWsOpen(true);

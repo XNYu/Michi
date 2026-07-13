@@ -656,17 +656,27 @@ export default function WorkspaceTree({
 
   const toggleWorkspaceExpand = useCallback(
     (projectId: string) => {
+      // Clicking an INACTIVE workspace is a project switch: activate it and
+      // keep it expanded (never collapse on activation), routing through
+      // selectProjectStable so snapshotBeforeSwitch pins the outgoing
+      // (implicit-active → expanded) workspace before the active flip.
+      // Without this the previously-active workspace silently collapses.
+      // Collapse only happens on a SECOND click, once the workspace is active.
+      if (projectId !== activeProjectId) {
+        selectProjectStable(projectId, true);
+        return;
+      }
+      // Active workspace: plain expand/collapse toggle. Collapsing must NOT
+      // switch active project — that would trigger the focusedPane reveal
+      // effect which re-expands it.
       const cur = isWorkspaceExpanded(prefs.sidebarExpanded, projectId, activeProjectId);
       const next = {
         ...prefs.sidebarExpanded,
         workspaces: { ...prefs.sidebarExpanded.workspaces, [projectId]: !cur },
       };
       setPref('sidebarExpanded', next);
-      // Only switch active project when expanding — collapsing should not
-      // trigger the focusedPane reveal effect which would re-expand it.
-      if (!cur && projectId !== activeProjectId) selectProject(projectId);
     },
-    [prefs.sidebarExpanded, activeProjectId, setPref, selectProject],
+    [prefs.sidebarExpanded, activeProjectId, setPref, selectProjectStable],
   );
 
   const renderProject = (project: typeof projects[number], opts: { dnd?: ReturnType<typeof dndForProject> } = {}) => {

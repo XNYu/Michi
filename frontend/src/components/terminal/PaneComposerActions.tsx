@@ -80,7 +80,7 @@ export function PaneComposerActions({
             : sendMode === 'retry'
               ? 'Retry last turn'
               : streaming
-                ? 'Queue (Enter) — branches off the running stream'
+                ? 'Send next (Enter) — sends after the current response'
                 : 'Send (Enter)'
         }
       >
@@ -126,7 +126,7 @@ export function PaneComposerActions({
             ? 'Stop'
             : sendMode === 'retry'
               ? 'Retry'
-              : <>{streaming ? 'Queue' : 'Send'} <span className="t-action-kbd-key">{kbd('enter')}</span></>
+              : <>{streaming ? 'Send next' : 'Send'} <span className="t-action-kbd-key">{kbd('enter')}</span></>
           }
         </span>
       </button>

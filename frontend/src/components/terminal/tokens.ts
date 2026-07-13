@@ -50,7 +50,10 @@ export interface TerminalTokens {
 export const BONE: TerminalTokens = {
   bg: '#fdfdfc', bgDeep: '#ffffff', surface: '#ffffff', alt: '#efece5', alt2: '#e8e4d8',
   line: '#d8d2c4', lineS: '#b5ac98', fg: '#1a1916', mid: '#5a544a',
-  muted: '#8a8272', faint: '#b0a890',
+  // Keep secondary text quiet without dropping below WCAG AA for the 11–13px
+  // labels and timestamps that use these tokens. Both colors clear 4.5:1 on
+  // the Bone canvas and its white raised surfaces.
+  muted: '#70695d', faint: '#777064',
   accent: '#b8451f', accentF: '#f4dccf',
   select: '#c48300', selectF: '#f8eccf',
   digest: '#2f6b4e', digestF: '#d7e7df',
