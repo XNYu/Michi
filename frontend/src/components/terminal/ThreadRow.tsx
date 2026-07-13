@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useChatNode, useChatProjects, useStructuralSelector } from '../../state/chatStore';
+import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
 import ContextMenu from '../ContextMenu';
 import MoveThreadDialog from '../MoveThreadDialog';
@@ -74,6 +75,7 @@ export default function ThreadRow({
   moveTargets,
 }: Props) {
   const { treeSelection, focusedNodeId, projects } = useChatProjects();
+  const { prefs } = usePrefs();
   const selected = treeSelection.has(tree.id);
   const n = useChatNode(tree.rootNodeId);
   const projectEdges = projects.find((p) => p.id === projectId)?.edges ?? [];
@@ -255,9 +257,11 @@ export default function ThreadRow({
             {label}
           </span>
         )}
-        <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)' }}>
-          {formatRelative(tree.lastActiveAt)}
-        </span>
+        {prefs.showSidebarTimestamps && (
+          <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)', marginRight: 2 }}>
+            {formatRelative(tree.lastActiveAt)}
+          </span>
+        )}
         {selected && (
           <span style={{ color: 'var(--term-select)', fontSize: 11, fontWeight: 700 }}>
             ✓

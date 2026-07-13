@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useChatNode, useChatProjects } from '../../state/chatStore';
+import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
 import { Chevron } from './ThreadRow';
 import type { TreeNode } from '../../state/tree';
@@ -59,6 +60,7 @@ export default function BranchRow({
   onRenameEnd,
 }: Props) {
   const n = useChatNode(node.nodeId);
+  const { prefs } = usePrefs();
   const hasChildren = node.children.length > 0;
   const title =
     n?.title ||
@@ -207,7 +209,7 @@ export default function BranchRow({
             {title}
           </span>
         )}
-        {nodeUpdatedAt > 0 && (
+        {prefs.showSidebarTimestamps && nodeUpdatedAt > 0 && (
           <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)', flexShrink: 0 }}>
             {relativeTime(nodeUpdatedAt)}
           </span>

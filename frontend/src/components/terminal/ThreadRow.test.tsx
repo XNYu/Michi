@@ -3,17 +3,21 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ThreadRow from './ThreadRow';
 
-const mockToggleTreeSelection = vi.fn();
-
 const mockStoreState = {
-  toggleTreeSelection: mockToggleTreeSelection,
   treeSelection: new Set<string>(),
   focusedNodeId: null as string | null,
 };
 
+vi.mock('../../state/prefs', () => ({
+  usePrefs: () => ({ prefs: { showSidebarTimestamps: false } }),
+}));
+
+// ThreadRow no longer owns selection: every click is forwarded to onActivate,
+// and the parent (WorkspaceRow) inspects the modifier keys to decide between
+// select vs. activate. These mocks only need to cover what ThreadRow reads for
+// display (treeSelection / focusedNodeId / projects).
 vi.mock('../../state/chatStore', () => ({
   useChatNode: () => ({ title: 'Root title' }),
-  useChatStore: () => mockStoreState,
   useChatProjects: () => ({
     projects: [],
     openPanes: [],
@@ -21,11 +25,6 @@ vi.mock('../../state/chatStore', () => ({
     treeSelection: mockStoreState.treeSelection,
     focusedNodeId: mockStoreState.focusedNodeId,
   }),
-  useChatActions: () => ({
-    toggleTreeSelection: mockStoreState.toggleTreeSelection,
-  }),
-  useNodesSelector: (selector: (nodes: Record<string, unknown>) => unknown) =>
-    selector({}),
   useStructuralSelector: (selector: (nodes: Record<string, unknown>) => unknown) =>
     selector({}),
 }));
@@ -61,46 +60,52 @@ describe('ThreadRow', () => {
     vi.clearAllMocks();
   });
 
-  it('cmd/ctrl+click toggles treeSelection and does not call onActivate', () => {
+  // Selection ownership moved out of ThreadRow: it forwards every click to
+  // onActivate with the raw event, and the parent decides select vs. activate
+  // by inspecting the modifier keys. So the row's job is just "always call
+  // onActivate, carrying the modifier state".
+  it('cmd+click forwards the modifier to onActivate', () => {
     const onActivate = vi.fn();
     renderThreadRow({ onActivate });
 
     const row = screen.getByText('Root title').closest('[data-sidebar-row]')!;
     fireEvent.click(row, { metaKey: true });
 
-    expect(mockToggleTreeSelection).toHaveBeenCalledWith('t1');
-    expect(onActivate).not.toHaveBeenCalled();
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate.mock.calls[0][0]).toMatchObject({ metaKey: true });
   });
 
-  it('ctrl+click (non-mac) toggles treeSelection and does not call onActivate', () => {
+  it('ctrl+click (non-mac) forwards the modifier to onActivate', () => {
     const onActivate = vi.fn();
     renderThreadRow({ onActivate });
 
     const row = screen.getByText('Root title').closest('[data-sidebar-row]')!;
     fireEvent.click(row, { ctrlKey: true });
 
-    expect(mockToggleTreeSelection).toHaveBeenCalledWith('t1');
-    expect(onActivate).not.toHaveBeenCalled();
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate.mock.calls[0][0]).toMatchObject({ ctrlKey: true });
   });
 
-  it('plain click calls onActivate and does not toggle treeSelection', () => {
+  it('plain click calls onActivate with no modifiers', () => {
     const onActivate = vi.fn();
     renderThreadRow({ onActivate });
 
     const row = screen.getByText('Root title').closest('[data-sidebar-row]')!;
     fireEvent.click(row);
 
-    expect(onActivate).toHaveBeenCalled();
-    expect(mockToggleTreeSelection).not.toHaveBeenCalled();
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate.mock.calls[0][0]).toMatchObject({ metaKey: false, ctrlKey: false });
   });
 
-  it('renames a thread from the context menu inline editor', () => {
+  it('renames a thread from the context menu inline editor', async () => {
     const { actions } = renderThreadRow();
 
     fireEvent.contextMenu(screen.getByText('Root title').closest('[data-sidebar-row]')!);
     fireEvent.click(screen.getByText(/Rename/));
 
-    const input = screen.getByLabelText('Thread name');
+    // ContextMenu fires the item action after a short confirm-blink timeout,
+    // so the inline editor appears asynchronously.
+    const input = await screen.findByLabelText('Thread name');
     expect((input as HTMLInputElement).value).toBe('Root title');
 
     fireEvent.change(input, { target: { value: 'Research plan' } });
@@ -109,13 +114,13 @@ describe('ThreadRow', () => {
     expect(actions.renameTree).toHaveBeenCalledWith('t1', 'Research plan');
   });
 
-  it('cancels inline rename on Escape', () => {
+  it('cancels inline rename on Escape', async () => {
     const { actions } = renderThreadRow();
 
     fireEvent.contextMenu(screen.getByText('Root title').closest('[data-sidebar-row]')!);
     fireEvent.click(screen.getByText(/Rename/));
 
-    const input = screen.getByLabelText('Thread name');
+    const input = await screen.findByLabelText('Thread name');
     fireEvent.change(input, { target: { value: 'Should not save' } });
     fireEvent.keyDown(input, { key: 'Escape' });
 

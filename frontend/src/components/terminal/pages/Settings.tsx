@@ -1430,6 +1430,14 @@ function AppearancePane() {
         </div>
       </Row>
 
+      <Row k="theme.sidebarTimestamps" label="Sidebar timestamps">
+        <Toggle
+          on={prefs.showSidebarTimestamps}
+          label="show last-active time on thread rows"
+          onChange={(v) => setPref('showSidebarTimestamps', v)}
+        />
+      </Row>
+
       <Row k="theme.codeBlock" label="Code block">
         <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
           {CODE_BLOCK_OPTIONS.map((o, i) => {

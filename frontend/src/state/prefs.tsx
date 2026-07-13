@@ -81,6 +81,9 @@ export interface Prefs {
    *  edges. Added on top of each row's own padding via the `--sb-inset` CSS
    *  var (0 = current flush look). */
   sidebarInset: number;
+  /** When true, show the relative "last active" timestamp (e.g. "3h", "2d")
+   *  on each thread row in the sidebar. Default off to keep rows uncluttered. */
+  showSidebarTimestamps: boolean;
   /** Sidebar glass translucency, 0–100. 0 = solid surface (opaque), 100 = maximally
    *  see-through. Under macOS window vibrancy this sets how much the desktop shows
    *  through; without vibrancy it just controls the CSS-glass tint. Drives
@@ -154,6 +157,7 @@ export const DEFAULT_PREFS: Prefs = {
   terminalSidebarWidth: 232,
   sidebarDensity: 'comfortable',
   sidebarInset: 2,
+  showSidebarTimestamps: false,
   sidebarTranslucency: 60,
   glassBlur: 10,
   glassSaturate: 130,
@@ -267,6 +271,9 @@ function readInitial(): Prefs {
     }
     if (typeof merged.sidebarInset !== 'number' || merged.sidebarInset < 0 || merged.sidebarInset > 24) {
       merged.sidebarInset = DEFAULT_PREFS.sidebarInset;
+    }
+    if (typeof merged.showSidebarTimestamps !== 'boolean') {
+      merged.showSidebarTimestamps = DEFAULT_PREFS.showSidebarTimestamps;
     }
     if (
       merged.singlePaneContentWidth !== null &&
