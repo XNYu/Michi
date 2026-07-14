@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useChatStore, useChatNode, useChatNodesSnapshot } from '../../state/chatStore';
+import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { parseDigestStructure, staleSources } from '../../state/digest';
 import MarkdownContent from '../MarkdownContent';
 import { Tag } from './primitives';
@@ -28,7 +29,7 @@ export default function DigestPane({
   const { focusedPane, focusPane, setFocusedNodeId, refreshDigest, createChildChat } = useChatStore();
   const n = useChatNode(nodeId);
   const nodesSnapshot = useChatNodesSnapshot();
-  const isFocused = focusedPane === nodeId;
+  const paneShellStyle = usePaneShellStyle(nodeId);
 
   const parsed = useMemo(
     () => (n?.digest ? parseDigestStructure(n.digest.content) : null),
@@ -85,21 +86,8 @@ export default function DigestPane({
         setFocusedNodeId(nodeId);
       }}
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--term-pane-bg, var(--term-surface))',
-        border: 'var(--term-pane-border, none)',
-        borderRight: 'var(--term-pane-divider, 1px solid var(--term-line))',
+        ...paneShellStyle,
         borderLeft: '3px solid var(--term-digest)',
-        minWidth: 0,
-        minHeight: 0,
-        height: '100%',
-        overflow: 'hidden',
-        fontFamily: 'var(--ui-font)',
-        animation: 'fadeUp 0.22s ease-out both',
-        opacity: focusedPane == null || isFocused ? 1 : 0.85,
-        transition: 'opacity var(--t-soft) var(--t-ease)',
-        position: 'relative',
       }}
     >
       <div

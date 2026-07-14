@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { useChatActions, useChatNode, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
 import type { ChatNodeState, ContextEntry, ProjectEdge } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
+import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { stripBranchPrefix, parseFanoutCommand, shouldBranchOnSubmit } from '../nodes/chatNodeUtils';
 import SelectionActions from '../SelectionActions';
 import MentionEditor, { type MentionEditorHandle } from '../MentionEditor';
@@ -252,6 +253,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     activeProject,
   } = useChatProjects();
   const { prefs } = usePrefs();
+  const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
   const hasCommittedRef = useRef(false);
   useEffect(() => {
@@ -1395,25 +1397,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         void handleDrop(e);
       }}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--term-pane-bg, var(--term-surface))',
-        border: 'var(--term-pane-border, none)',
-        borderRight: prefs.paneRules ? 'var(--term-pane-divider, 1px solid var(--term-line))' : 'none',
-        borderRadius: 'var(--term-pane-radius, 0px)',
-        boxShadow: 'var(--term-pane-shadow, none)',
-        minWidth: 0,
-        minHeight: 0,
-        height: '100%',
-        overflow: 'hidden',
-        fontFamily: 'var(--ui-font)',
-        animation: 'fadeUp 0.22s ease-out both',
-        opacity: focusedPane == null || isFocused ? 1 : 1 - prefs.focusDim / 100 * 0.5,
-        filter: focusedPane == null || isFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
-        transition: 'opacity var(--t-soft) var(--t-ease), filter var(--t-soft) var(--t-ease)',
-        position: 'relative',
-      }}
+      style={paneShellStyle}
     >
       {n.spawnedByAgent && (
         <div
