@@ -7,9 +7,6 @@ interface Props {
 export function QuoteChip({ text }: Props) {
   const [expanded, setExpanded] = useState(false);
 
-  // Counts use the original text so multi-line quotes report accurately.
-  const lines = text.split('\n').length;
-  const chars = text.length;
   // Collapsed preview collapses internal whitespace so a multi-line quote
   // shows as one continuous line, then the line-clamp truncates.
   const collapsedPreview = text.replace(/\s+/g, ' ').trim();
@@ -60,8 +57,6 @@ export function QuoteChip({ text }: Props) {
             userSelect: 'none',
           }}
         >
-          <span>{lines} {lines === 1 ? 'line' : 'lines'} · {chars} {chars === 1 ? 'char' : 'chars'}</span>
-          <span>·</span>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
