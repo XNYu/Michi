@@ -30,6 +30,8 @@ vi.mock('../services/api', () => ({
   syncWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   deleteWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   migrateLocalStorage: vi.fn().mockResolvedValue({ migrated: false }),
+  fetchPrefs: vi.fn().mockResolvedValue(null),
+  savePrefs: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../services/notifications', () => ({ notify: vi.fn() }));

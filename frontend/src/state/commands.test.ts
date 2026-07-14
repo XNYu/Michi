@@ -34,13 +34,17 @@ describe('buildCommands', () => {
     const cmds = buildCommands(baseCtx);
     const navIds = cmds.filter((c) => c.group === 'nav').map((c) => c.id);
     expect(navIds).toEqual([
-      'nav.home', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.settings',
+      'nav.home', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
     ]);
   });
 
   it('omits selection action commands when selection is empty', () => {
     const cmds = buildCommands(baseCtx);
-    const selectionActions = cmds.filter((c) => c.group === 'action' && c.id.startsWith('action.'));
+    // Selection actions only. `action.bypass-permissions` is an always-present
+    // global toggle that shares the `action.` prefix but is not selection-scoped.
+    const selectionActions = cmds.filter(
+      (c) => c.group === 'action' && c.id.startsWith('action.') && c.id !== 'action.bypass-permissions',
+    );
     expect(selectionActions).toHaveLength(0);
   });
 

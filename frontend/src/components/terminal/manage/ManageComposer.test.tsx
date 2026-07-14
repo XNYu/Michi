@@ -1,7 +1,22 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import ManageComposer, { __resetManageComposerSessionStateForTests } from './ManageComposer';
+
+// The agent switcher menu is a searchable ContextMenu: it renders a `filter…`
+// <input> (a second textbox) and fires its `run` after a ~160ms confirm blink.
+// So the composer textarea must be queried specifically, and menu picks must
+// be flushed past the blink timer.
+const composerTextarea = () =>
+  document.querySelector('textarea') as HTMLTextAreaElement;
+afterEach(() => {
+  vi.useRealTimers();
+});
+function flushBlink() {
+  act(() => {
+    vi.advanceTimersByTime(200);
+  });
+}
 
 const createThread = vi.fn(() => 'new-node-id');
 const sendMessage = vi.fn();
@@ -128,6 +143,7 @@ describe('ManageComposer', () => {
   });
 
   it('pre-selected agent is stamped onto the new thread on send', () => {
+    vi.useFakeTimers();
     storeState.availableModes = [
       { id: 'planner', name: 'Planner' },
       { id: 'build', name: 'Build' },
@@ -141,11 +157,14 @@ describe('ManageComposer', () => {
       />,
     );
 
-    // Open the agent menu and pick "Build".
+    // Open the agent menu and pick "Build". The menu is a searchable
+    // ContextMenu (a `filter…` input joins the composer textarea) and its pick
+    // resolves after a confirm-blink timer.
     fireEvent.click(screen.getByTitle(/Switch agent/));
     fireEvent.click(screen.getByText('Build'));
+    flushBlink();
 
-    const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
+    const ta = composerTextarea();
     fireEvent.change(ta, { target: { value: 'plan this' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
 
@@ -153,6 +172,7 @@ describe('ManageComposer', () => {
   });
 
   it('remembers the pre-picked agent across remounts (sticky)', () => {
+    vi.useFakeTimers();
     storeState.availableModes = [
       { id: 'planner', name: 'Planner' },
       { id: 'build', name: 'Build' },
@@ -164,6 +184,7 @@ describe('ManageComposer', () => {
     );
     fireEvent.click(screen.getByTitle(/Switch agent/));
     fireEvent.click(screen.getByText('Planner'));
+    flushBlink();
     first.unmount();
 
     // Second mount: the pick is restored without re-selecting.
@@ -172,7 +193,7 @@ describe('ManageComposer', () => {
     );
     expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
 
-    const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
+    const ta = composerTextarea();
     fireEvent.change(ta, { target: { value: 'go' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     expect(createThread).toHaveBeenCalledWith('planner');

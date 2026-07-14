@@ -249,10 +249,10 @@ describe('auto-branch behavior (real provider)', () => {
       handlers.onDone?.();
     });
 
-    expect(mockNotify).toHaveBeenCalledWith({
+    expect(mockNotify).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Branch complete',
       body: 'Streaming finished',
-    });
+    }));
   });
 
   it('does not let a stale RAF commit roll streaming text backward', async () => {
