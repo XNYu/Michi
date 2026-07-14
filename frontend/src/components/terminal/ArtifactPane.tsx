@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { useChatStore, useChatNode, useChatActions } from '../../state/chatStore';
-import { usePrefs } from '../../state/prefs';
+import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import MarkdownContent from '../MarkdownContent';
 import { fetchArtifactContent } from '../../services/api';
 import { getElectron } from '../../lib/electronBridge';
@@ -55,11 +55,10 @@ export default function ArtifactPane({
   nodeId: string;
   contentMaxWidth?: number | null;
 }) {
-  const { activeProject, focusedPane, focusPane, setFocusedNodeId } = useChatStore();
+  const { activeProject, focusPane, setFocusedNodeId } = useChatStore();
   const { dispatch } = useChatActions();
-  const { prefs } = usePrefs();
   const n = useChatNode(nodeId);
-  const isFocused = focusedPane === nodeId;
+  const paneShellStyle = usePaneShellStyle(nodeId);
 
   const artifact = n?.artifact;
   const filePath = artifact?.filePath ?? '';
@@ -146,24 +145,7 @@ export default function ArtifactPane({
         focusPane(nodeId);
         setFocusedNodeId(nodeId);
       }}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--term-pane-bg, var(--term-surface))',
-        border: 'var(--term-pane-border, none)',
-        borderRight: prefs.paneRules ? 'var(--term-pane-divider, 1px solid var(--term-line))' : 'none',
-        borderRadius: 'var(--term-pane-radius, 0px)',
-        boxShadow: 'var(--term-pane-shadow, none)',
-        minWidth: 0,
-        minHeight: 0,
-        height: '100%',
-        overflow: 'hidden',
-        fontFamily: 'var(--ui-font)',
-        opacity: focusedPane == null || isFocused ? 1 : 1 - prefs.focusDim / 100 * 0.5,
-        filter: focusedPane == null || isFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
-        transition: 'opacity var(--t-soft) var(--t-ease), filter var(--t-soft) var(--t-ease)',
-        position: 'relative',
-      }}
+      style={paneShellStyle}
     >
       {/* Header: breadcrumb + toolbar */}
       <div
