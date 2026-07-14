@@ -49,6 +49,15 @@ export function MapIcon({ size = 14, className }: IconProps) {
   );
 }
 
+export function BranchesIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 2.5h8M5 6.5h8M7 10.5h6M7 14h4" />
+      <path d="M3 2.5v4h2M5 6.5v4h2M7 10.5V14" />
+    </svg>
+  );
+}
+
 export function DigestIcon({ size = 14, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

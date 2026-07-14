@@ -81,7 +81,7 @@ export function assistantPersistenceContent(m: ChatMessage): string {
   return m.role === 'assistant' ? assistantAnswerVisibleText(m) : m.text;
 }
 
-export function assistantMetadata(m: ChatMessage): { title: string | null; followUps: string[] } {
+export function assistantMetadata(m: ChatMessage): { title: string | null; branchOverview: string | null; followUps: string[] } {
   return extractAssistantMetadata(assistantAnswerRawText(m));
 }
 

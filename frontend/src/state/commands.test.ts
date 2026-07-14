@@ -34,7 +34,7 @@ describe('buildCommands', () => {
     const cmds = buildCommands(baseCtx);
     const navIds = cmds.filter((c) => c.group === 'nav').map((c) => c.id);
     expect(navIds).toEqual([
-      'nav.home', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
+      'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
     ]);
   });
 

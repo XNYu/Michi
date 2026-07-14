@@ -62,6 +62,7 @@ export const nodes = sqliteTable('nodes', {
   parentNodeId:       text('parent_node_id'),  // self-ref; drizzle doesn't support inline self-ref
   kind:               text('kind').notNull().default('chat'),
   title:              text('title'),
+  branchOverview:     text('branch_overview'),
   status:             text('status').notNull().default('idle'),
   positionX:          real('position_x'),
   positionY:          real('position_y'),

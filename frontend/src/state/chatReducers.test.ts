@@ -27,6 +27,56 @@ describe('reduceNodes done — unread', () => {
   });
 });
 
+describe('reduceNodes done — branch overview', () => {
+  it('prefers the structured SSE overview over fallback text parsing for the same turn', () => {
+    const before = {
+      n1: makeNode({
+        messages: [{
+          id: 'a1',
+          role: 'assistant',
+          text: 'Quoted format: [BRANCH-OVERVIEW: stale example]\n\n[BRANCH-OVERVIEW: final server value]',
+          toolCalls: [],
+          streaming: true,
+          createdAt: 1,
+        }],
+      }),
+    };
+    const withStructured = reduceNodes(before, {
+      type: 'set-branch-overview',
+      nodeId: 'n1',
+      overview: 'final server value',
+      assistantId: 'a1',
+    });
+    const after = reduceNodes(withStructured, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
+    expect(after.n1.branchOverview).toBe('final server value');
+  });
+
+  it('stores a valid branch overview from assistant metadata', () => {
+    const before = {
+      n1: makeNode({
+        messages: [{
+          id: 'a1',
+          role: 'assistant',
+          text: 'Answer.\n\n[BRANCH-OVERVIEW: The branch compares two auth models and currently favors rotating tokens.]',
+          toolCalls: [],
+          streaming: true,
+          createdAt: 1,
+        }],
+      }),
+    };
+    const after = reduceNodes(before, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
+    expect(after.n1.branchOverview).toBe(
+      'The branch compares two auth models and currently favors rotating tokens.',
+    );
+  });
+
+  it('preserves the previous overview when a turn omits metadata', () => {
+    const before = { n1: makeNode({ branchOverview: 'Previous overview' }) };
+    const after = reduceNodes(before, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
+    expect(after.n1.branchOverview).toBe('Previous overview');
+  });
+});
+
 describe('reduceNodes node-viewed', () => {
   it('writes viewedAt to the action timestamp', () => {
     const before = { n1: makeNode({ viewedAt: 100 }) };

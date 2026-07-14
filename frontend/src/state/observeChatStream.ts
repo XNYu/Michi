@@ -101,6 +101,12 @@ export function observeChatStream({
       },
       onHeartbeat: (idleMs) => dispatch({ type: 'heartbeat', nodeId, idleMs }),
       onTitle: (title) => dispatch({ type: 'set-title', nodeId, title }),
+      onBranchOverview: (overview, seq, incomingAssistantId, incomingTurnId) => {
+        rememberEnvelope(incomingAssistantId, incomingTurnId);
+        if (applySeq(seq, incomingTurnId)) {
+          dispatch({ type: 'set-branch-overview', nodeId, overview, assistantId });
+        }
+      },
       onFollowUps: (followUps) => dispatch({ type: 'set-follow-ups', nodeId, followUps }),
       onFollowUpsStatus: (status) => dispatch({ type: 'follow-ups-status', nodeId, status }),
       onCommands: (commands) => dispatch({ type: 'set-commands', nodeId, commands }),

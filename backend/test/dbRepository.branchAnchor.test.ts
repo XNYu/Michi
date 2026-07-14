@@ -3,6 +3,7 @@
  *   edges.anchor_message_id  TEXT
  *   edges.created_at         INTEGER
  *   nodes.follow_ups_source_message_id TEXT
+ *   nodes.branch_overview TEXT
  *
  * Each test uses a fresh temp-dir DB so they are fully isolated.
  */
@@ -20,6 +21,7 @@ import {
   saveEdge,
   listEdges,
   getNode,
+  updateNodeBranchOverview,
 } from '../src/services/dbRepository';
 
 function freshTmpDir(): string {
@@ -34,11 +36,11 @@ function insertWorkspace(id: string) {
   });
 }
 
-function insertNode(wsId: string, id: string) {
+function insertNode(wsId: string, id: string, branchOverview: string | null = null) {
   saveNode({
     id, workspace_id: wsId,
     tree_id: null, parent_node_id: null,
-    kind: 'chat', title: id, status: 'idle',
+    kind: 'chat', title: id, branch_overview: branchOverview, status: 'idle',
     position_x: null, position_y: null, minimized: 0,
     deleted_at: null, deletion_group_id: null,
     spawned_by_agent: 0, current_mode_id: null, pane_width: null,
@@ -167,6 +169,23 @@ describe('saveNode / getNode — follow_ups_source_message_id', () => {
     const node = getNode('n1');
     assert.ok(node, 'node should exist');
     assert.equal(node.follow_ups_source_message_id, 'asst-msg-99');
+  });
+
+  test('persists branch_overview', () => {
+    insertWorkspace('ws1');
+    insertNode('ws1', 'overview-node', 'Initial branch state.');
+    assert.equal(getNode('overview-node')?.branch_overview, 'Initial branch state.');
+  });
+
+  test('updates branch_overview without replacing other node fields', () => {
+    insertWorkspace('ws1');
+    insertNode('ws1', 'overview-node', 'Initial branch state.');
+
+    updateNodeBranchOverview('overview-node', 'Updated durable state.');
+
+    const node = getNode('overview-node');
+    assert.equal(node?.branch_overview, 'Updated durable state.');
+    assert.equal(node?.title, 'overview-node');
   });
 
   test('null follow_ups_source_message_id round-trips correctly', () => {

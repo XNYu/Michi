@@ -14,7 +14,13 @@ Required final answer metadata:
   write the first line before any prose as a single line of the form:
       [TITLE: 4-8 word summary]
   on its own line. The UI strips this line and renders it as the thread title.
-- Do not emit [TITLE:] or [FOLLOW-UP n/3:] sentinel lines in commentary,
+- Near the end of the final answer, immediately before any follow-up sentinels,
+  write one single-line overview of the branch in this form:
+      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this branch is about and where it currently stands]
+  Keep it factual and useful when read later without the conversation. Match the
+  user's language. Use inline Markdown if helpful, but no headings, lists, or closing square bracket.
+  The UI strips this line and renders it in the Branches document.
+- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,
   progress/status updates, tool plans, or any message before you are ready to
   deliver the final answer.
 {{FOLLOW_UPS_INSTRUCTIONS}}`;
@@ -67,6 +73,26 @@ const FOLLOW_UPS_DISABLED = `- Follow-ups are DISABLED for this thread. Do NOT e
 const CONTEXT_MANIFEST_HEADER = `\nWorkspace context files available (read with your filesystem tools when relevant; the user can also @-mention to inject contents directly):`;
 
 const USER_SPEAK_TAIL = `\nThe user will now speak.\n`;
+
+// After this many user turns, start reminding the model to produce follow-ups.
+const FOLLOW_UPS_REMIND_AFTER_TURNS = 2;
+// Repeat the reminder every N turns after the initial trigger.
+const FOLLOW_UPS_REMIND_INTERVAL = 1;
+
+const FOLLOW_UPS_REMINDER = `\n\n[Reminder: before the three follow-ups, include one [BRANCH-OVERVIEW: ...] line summarizing what this branch is about and where it stands. Then end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with "]".]`;
+
+/**
+ * Returns a short reminder suffix when the conversation is long enough that
+ * the model may have lost attention on the system-prompt follow-up instructions.
+ * Returns empty string when no reminder is needed.
+ */
+export function followUpReminder(userTurnCount: number, enableFollowUps: boolean): string {
+    if (!enableFollowUps) return "";
+    if (userTurnCount < FOLLOW_UPS_REMIND_AFTER_TURNS) return "";
+    const turnsSinceThreshold = userTurnCount - FOLLOW_UPS_REMIND_AFTER_TURNS;
+    if (turnsSinceThreshold % FOLLOW_UPS_REMIND_INTERVAL === 0) return FOLLOW_UPS_REMINDER;
+    return "";
+}
 
 function renderHead(enableFollowUps: boolean): string {
     const followUpsLine = enableFollowUps ? FOLLOW_UPS_INSTRUCTION : FOLLOW_UPS_DISABLED;

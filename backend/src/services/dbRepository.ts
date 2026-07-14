@@ -64,6 +64,7 @@ export interface NodeRow {
   parent_node_id?: string | null;
   kind: string;
   title?: string | null;
+  branch_overview?: string | null;
   status: string;
   position_x?: number | null;
   position_y?: number | null;
@@ -444,13 +445,13 @@ export function saveNode(node: NodeRow, userId?: string): void {
   if (isNodeTombstoned(node.id) || isWorkspaceTombstoned(node.workspace_id)) return;
 
   getDb().prepare(`
-    INSERT INTO nodes (id, workspace_id, tree_id, parent_node_id, kind, title, status,
+    INSERT INTO nodes (id, workspace_id, tree_id, parent_node_id, kind, title, branch_overview, status,
       position_x, position_y, minimized, deleted_at, deletion_group_id,
       spawned_by_agent, current_mode_id, pane_width, digest, follow_ups, follow_ups_source_message_id,
       acp_session_id, runtime_id,
       provider_id, model_id, reasoning, resume_fingerprint, composer_draft, external_session_id,
-      trim_snapshot, created_at, rev)
-    VALUES (@id, @workspace_id, @tree_id, @parent_node_id, @kind, @title, @status,
+      trim_snapshot, last_applied_turn_id, last_applied_seq, created_at, rev)
+    VALUES (@id, @workspace_id, @tree_id, @parent_node_id, @kind, @title, @branch_overview, @status,
       @position_x, @position_y, @minimized, @deleted_at, @deletion_group_id,
       @spawned_by_agent, @current_mode_id, @pane_width, @digest, @follow_ups, @follow_ups_source_message_id,
       @acp_session_id, @runtime_id,
@@ -458,7 +459,7 @@ export function saveNode(node: NodeRow, userId?: string): void {
       @trim_snapshot, @created_at, @rev)
     ON CONFLICT(id) DO UPDATE SET
       tree_id=excluded.tree_id, parent_node_id=excluded.parent_node_id,
-      kind=excluded.kind, title=excluded.title, status=excluded.status,
+      kind=excluded.kind, title=excluded.title, branch_overview=excluded.branch_overview, status=excluded.status,
       position_x=excluded.position_x, position_y=excluded.position_y,
       minimized=excluded.minimized, deleted_at=excluded.deleted_at,
       deletion_group_id=excluded.deletion_group_id, spawned_by_agent=excluded.spawned_by_agent,
@@ -483,6 +484,7 @@ export function saveNode(node: NodeRow, userId?: string): void {
     tree_id: null,
     parent_node_id: null,
     title: null,
+    branch_overview: null,
     position_x: null,
     position_y: null,
     deleted_at: null,
@@ -514,6 +516,16 @@ export function updateNodeTitle(id: string, title: string, userId?: string): voi
     return;
   }
   getDb().prepare('UPDATE nodes SET title = ? WHERE id = ?').run(title, id);
+}
+
+export function updateNodeBranchOverview(id: string, overview: string, userId?: string): void {
+  if (process.env.MICHI_CLOUD === '1' && userId) {
+    getDb().prepare(
+      'UPDATE nodes SET branch_overview = ? WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
+    ).run(overview, id, id, userId);
+    return;
+  }
+  getDb().prepare('UPDATE nodes SET branch_overview = ? WHERE id = ?').run(overview, id);
 }
 
 export function softDeleteNode(id: string, deletedAt: number, groupId: string, userId?: string): void {

@@ -64,6 +64,22 @@ describe('serializeWorkspaceForSync — edge fields', () => {
 });
 
 describe('serializeWorkspaceForSync — node fields', () => {
+  it('includes branch_overview when set on a node', () => {
+    const project = makeProject('ws1', ['n1']);
+    const nodes = { n1: makeNode('n1', 'ws1', { branchOverview: 'Current branch state.' }) };
+
+    const wire = serializeWorkspaceForSync(project, nodes);
+    expect(wire.nodes[0]!.branch_overview).toBe('Current branch state.');
+  });
+
+  it('emits null branch_overview when absent', () => {
+    const project = makeProject('ws1', ['n1']);
+    const nodes = { n1: makeNode('n1', 'ws1') };
+
+    const wire = serializeWorkspaceForSync(project, nodes);
+    expect(wire.nodes[0]!.branch_overview).toBeNull();
+  });
+
   it('includes follow_ups_source_message_id when set on a node', () => {
     const project = makeProject('ws1', ['n1']);
     const nodes = { n1: makeNode('n1', 'ws1', { followUpsSourceMessageId: 'm-src' }) };
@@ -138,6 +154,20 @@ describe('hydrateBackendWorkspaces — edge fields', () => {
 });
 
 describe('hydrateBackendWorkspaces — node fields', () => {
+  it('hydrates branchOverview from backend node row', () => {
+    const ws = makeBackendWorkspace({
+      nodeRows: [{
+        id: 'n1',
+        created_at: 1_716_800_000_000,
+        kind: 'chat',
+        branch_overview: 'A durable branch summary.',
+      }],
+    });
+
+    const state = hydrateBackendWorkspaces([ws]);
+    expect(state.nodes['n1'].branchOverview).toBe('A durable branch summary.');
+  });
+
   it('hydrates followUpsSourceMessageId from backend node row', () => {
     const ws = makeBackendWorkspace({
       nodeRows: [{

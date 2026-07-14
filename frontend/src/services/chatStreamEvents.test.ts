@@ -39,6 +39,7 @@ const sampleEvents: ChatStreamEvent[] = [
     data: { topics: [{ title: 'Branch', prompt: 'Explore branch', chatId: 'chat-child' }] },
   },
   { event: CHAT_STREAM_EVENTS.title, data: { title: 'Shared schema' } },
+  { event: CHAT_STREAM_EVENTS.branchOverview, data: { overview: 'The schema update is ready to ship.' } },
   { event: CHAT_STREAM_EVENTS.followUps, data: { followUps: ['What next?'] } },
   { event: CHAT_STREAM_EVENTS.followUpsStatus, data: { status: 'completed' } },
   {
@@ -139,6 +140,7 @@ describe('parseChatStreamEvent', () => {
   it('dispatches typed events to matching handlers', () => {
     const onContextSaved = vi.fn();
     const onContextUpdated = vi.fn();
+    const onBranchOverview = vi.fn();
 
     dispatchChatStreamEvent(
       {
@@ -156,6 +158,19 @@ describe('parseChatStreamEvent', () => {
       { onContextUpdated },
     );
 
+    dispatchChatStreamEvent(
+      {
+        event: CHAT_STREAM_EVENTS.branchOverview,
+        data: {
+          overview: 'The schema update is ready to ship.',
+          seq: 3,
+          assistantId: 'a-n1-T1',
+          turnId: 'T1',
+        },
+      },
+      { onBranchOverview },
+    );
+
     expect(onContextSaved).toHaveBeenCalledWith(
       'repo_notes',
       '.contexts/repo_notes.md',
@@ -165,6 +180,12 @@ describe('parseChatStreamEvent', () => {
       'repo_notes',
       '.contexts/repo_notes.md',
       84,
+    );
+    expect(onBranchOverview).toHaveBeenCalledWith(
+      'The schema update is ready to ship.',
+      3,
+      'a-n1-T1',
+      'T1',
     );
   });
 });

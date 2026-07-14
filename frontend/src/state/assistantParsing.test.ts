@@ -1,5 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { finalizeAssistant, stripInlineMetadataSentinels } from './assistantParsing';
+import { finalizeAssistant, parseBranchOverview, stripInlineMetadataSentinels } from './assistantParsing';
+
+describe('branch overview metadata', () => {
+  it('extracts the overview and keeps it out of visible assistant text', () => {
+    const raw = [
+      '[TITLE: Token refresh]',
+      '',
+      'The detailed answer stays visible.',
+      '',
+      '[BRANCH-OVERVIEW: Comparing refresh-token strategies; rotating tokens currently look safest.]',
+      '[FOLLOW-UP 1/3: What about multiple devices?]',
+    ].join('\n');
+
+    const result = finalizeAssistant(raw);
+    expect(result.branchOverview).toBe('Comparing refresh-token strategies; rotating tokens currently look safest.');
+    expect(result.visibleText).toBe('The detailed answer stays visible.');
+    expect(result.visibleText).not.toContain('BRANCH-OVERVIEW');
+  });
+
+  it('returns null for malformed or missing overview metadata', () => {
+    expect(parseBranchOverview('plain answer')).toBeNull();
+    expect(parseBranchOverview('[BRANCH-OVERVIEW: ]')).toBeNull();
+  });
+
+  it('scrubs overview sentinels from arbitrary persisted text', () => {
+    expect(stripInlineMetadataSentinels('Body\n\n[BRANCH-OVERVIEW: concise state]'))
+      .toBe('Body\n\n');
+  });
+});
 
 describe('finalizeAssistant — follow-up sentinel stripping', () => {
   it('strips standard well-formed sentinels (closing brackets present, own lines)', () => {

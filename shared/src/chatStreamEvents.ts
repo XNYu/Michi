@@ -52,6 +52,7 @@ export const CHAT_STREAM_EVENTS = {
   heartbeat: "heartbeat",
   spawnBranches: "spawn_branches",
   title: "title",
+  branchOverview: "branch_overview",
   followUps: "follow_ups",
   followUpsStatus: "follow_ups_status",
   commands: "commands",
@@ -81,6 +82,7 @@ export interface ChatStreamPayloads {
   heartbeat: { idleMs: number };
   spawn_branches: { topics: SpawnBranchTopic[] };
   title: { title: string };
+  branch_overview: { overview: string };
   follow_ups: { followUps: string[] };
   follow_ups_status: { status: "in_progress" | "completed" | "failed" };
   commands: { commands: AgentCommand[] };
@@ -215,6 +217,7 @@ const parsers = {
   heartbeat: (data) => ({ idleMs: optionalFiniteNumber(data.idleMs) ?? 0 }),
   spawn_branches: (data) => ({ topics: parseSpawnTopics(data.topics) }),
   title: (data) => ({ title: stringOrEmpty(data.title) }),
+  branch_overview: (data) => ({ overview: stringOrEmpty(data.overview) }),
   follow_ups: (data) => ({ followUps: parseStringList(data.followUps) }),
   follow_ups_status: (data) => {
     const raw = typeof data.status === "string" ? data.status : "";

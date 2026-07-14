@@ -15,6 +15,7 @@ import type { ChatNodeState } from '../../state/chatTypes';
 
 const NARROW_THRESHOLD = 700;
 const TerminalMap = React.lazy(() => import('./pages/Map'));
+const TerminalBranches = React.lazy(() => import('./pages/Branches'));
 const TerminalDigest = React.lazy(() => import('./pages/Digest'));
 const TerminalSettings = React.lazy(() => import('./pages/Settings'));
 const TerminalWorkspaces = React.lazy(() => import('./pages/Workspaces'));
@@ -56,12 +57,13 @@ export default function TerminalShell() {
   const manageWorkspaceId = useManageWorkspaceId();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Remembers the page the user was on before opening Map/Digest/Workspaces,
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  // Remembers the page the user was on before opening Branches/Map/Digest/Workspaces,
   // so clicking the same nav button toggles back.
   const previousPageRef = React.useRef<PageId>('dashboard');
   const handleNav = React.useCallback((p: PageId) => {
     if (p === 'settings') { setSettingsOpen((v) => !v); return; }
-    const TOGGLE_PAGES: PageId[] = ['map', 'digest', 'workspaces'];
+    const TOGGLE_PAGES: PageId[] = ['branches', 'map', 'digest', 'workspaces'];
     setPage((current) => {
       if (TOGGLE_PAGES.includes(p)) {
         if (current === p) {
@@ -406,6 +408,7 @@ export default function TerminalShell() {
         <div className="terminal-content-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
           {page === 'home' && <TerminalHome onSubmitted={() => setPage('dashboard')} />}
           {page === 'dashboard' && <TerminalDashboard />}
+          {page === 'branches' && <LazyPage><TerminalBranches onNav={handleNav} /></LazyPage>}
           {page === 'map' && <LazyPage><TerminalMap onNav={handleNav} /></LazyPage>}
           {page === 'digest' && <LazyPage><TerminalDigest onNav={handleNav} /></LazyPage>}
           {page === 'workspaces' && <LazyPage><TerminalWorkspaces onNav={handleNav} /></LazyPage>}

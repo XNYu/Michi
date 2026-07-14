@@ -301,6 +301,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     followUps: parseJsonStringArray(row.follow_ups),
     followUpsSourceMessageId: asString(row.follow_ups_source_message_id) || undefined,
     title: asString(row.title),
+    branchOverview: asString(row.branch_overview) || undefined,
     status: 'idle',
     minimized: row.minimized === 1 || row.minimized === true || undefined,
     position: posX !== undefined && posY !== undefined ? { x: posX, y: posY } : undefined,
@@ -518,6 +519,10 @@ export function hydrateSavedState(saved: unknown): HydratedState {
       messages: msgs,
       followUps: raw.followUps ?? [],
       title: raw.title,
+      branchOverview:
+        typeof (raw as any).branchOverview === 'string' && (raw as any).branchOverview.trim().length > 0
+          ? (raw as any).branchOverview
+          : undefined,
       status: 'idle',
       minimized: raw.minimized,
       position: validPos,

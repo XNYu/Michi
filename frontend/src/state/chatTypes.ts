@@ -210,6 +210,12 @@ export interface ChatNodeState {
   followUpsGenerating?: boolean;
   /** Title parsed from the agent's reply. null/undefined falls back to first user msg. */
   title?: string;
+  /** Agent-maintained one-paragraph summary rendered in the active thread's Branches document. */
+  branchOverview?: string;
+  /** Transient assistant message id that supplied the structured SSE overview.
+   * Lets the terminal `done` parser remain a legacy fallback without
+   * overwriting the canonical server-side extraction. */
+  branchOverviewSourceMessageId?: string;
   status: 'idle' | 'streaming' | 'error';
   /** Epoch ms when the current streaming turn began. Survives remounts. */
   streamingStartedAt?: number;
@@ -506,6 +512,7 @@ export type ChatAction =
   | { type: 'node-viewed'; nodeId: string; viewedAt: number }
   | { type: 'mark-all-read'; viewedAt: number }
   | { type: 'set-title'; nodeId: string; title: string }
+  | { type: 'set-branch-overview'; nodeId: string; overview: string; assistantId?: string }
   | { type: 'rename-node'; nodeId: string; title: string }
   | { type: 'set-follow-ups'; nodeId: string; followUps: string[] }
   | { type: 'follow-ups-status'; nodeId: string; status: 'in_progress' | 'completed' | 'failed' }

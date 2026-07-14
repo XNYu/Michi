@@ -29,6 +29,7 @@ export interface StreamHandlers {
   onHeartbeat?: (idleMs: number) => void;
   onSpawnBranches?: (topics: SpawnBranchTopic[]) => void;
   onTitle?: (title: string) => void;
+  onBranchOverview?: (overview: string, seq?: number, assistantId?: string, turnId?: string) => void;
   onFollowUps?: (followUps: string[]) => void;
   onFollowUpsStatus?: (status: 'in_progress' | 'completed' | 'failed') => void;
   onCommands?: (commands: AgentCommand[]) => void;
@@ -81,6 +82,14 @@ export function dispatchChatStreamEvent(
       return;
     case CHAT_STREAM_EVENTS.title:
       handlers.onTitle?.(streamEvent.data.title);
+      return;
+    case CHAT_STREAM_EVENTS.branchOverview:
+      handlers.onBranchOverview?.(
+        streamEvent.data.overview,
+        streamEvent.data.seq,
+        streamEvent.data.assistantId,
+        streamEvent.data.turnId,
+      );
       return;
     case CHAT_STREAM_EVENTS.followUps:
       handlers.onFollowUps?.(streamEvent.data.followUps);

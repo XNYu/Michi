@@ -17,6 +17,11 @@ describe('stripSentinelsStreamingSafe — completed sentinels', () => {
     expect(visibleText).toBe('body\n\n');
   });
 
+  it('strips a completed [BRANCH-OVERVIEW: ...] sentinel', () => {
+    const raw = 'body\n\n[BRANCH-OVERVIEW: Current state]';
+    expect(stripSentinelsStreamingSafe(raw).visibleText).toBe('body\n\n');
+  });
+
   it('strips multiple sentinels mixed with prose', () => {
     const raw = '[TITLE: T]\n\nA paragraph.\n\n[FOLLOW-UP 1/3: q?]';
     const { visibleText } = stripSentinelsStreamingSafe(raw);
@@ -63,6 +68,10 @@ describe('stripSentinelsStreamingSafe — incomplete sentinel tail (mid-stream)'
   it('hides a `[FOLLOW` / `[FOLLOW-UP` tail', () => {
     expect(stripSentinelsStreamingSafe('body\n\n[FOLLOW').visibleText).toBe('body\n\n');
     expect(stripSentinelsStreamingSafe('body\n\n[FOLLOW-UP 1/3: q').visibleText).toBe('body\n\n');
+  });
+
+  it('hides an incomplete branch overview tail', () => {
+    expect(stripSentinelsStreamingSafe('body\n\n[BRANCH-OVER').visibleText).toBe('body\n\n');
   });
 
   it('releases `[note` immediately when next char rules out sentinel', () => {

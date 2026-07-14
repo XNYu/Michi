@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { CHAT_STREAM_EVENTS, type ChatStreamEvent } from "michi-shared";
 import type { AgentSession } from "./types";
 import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEvents";
-import { persistCompletedTurn, persistNodeTitle } from "../services/chatPersistence";
+import {
+  persistCompletedTurn,
+  persistNodeBranchOverview,
+  persistNodeTitle,
+} from "../services/chatPersistence";
+import { extractBranchOverview } from "../services/messageSerialization";
 
 export interface HubSubscriber {
   send(ev: ChatStreamEvent): void;
@@ -103,6 +108,66 @@ export class ChatHub {
     void Promise.resolve(this.activeSessions.get(chatId)?.cancel()).catch(() => {});
   }
 
+  /**
+   * Handle a self-initiated turn (agent proactive output, e.g. background
+   * task completion). Unlike startTurn(), this does not send user text —
+   * the turn_start payload carries `selfInitiated: true` so the frontend
+   * knows not to render a user bubble.
+   */
+  startSelfTurn(args: StartSelfTurnArgs): void {
+    const turnId = randomUUID();
+    const assistantId = `self-${args.nodeId}-${turnId}`;
+    const log: TurnLog = {
+      turnId,
+      assistantId,
+      nodeId: args.nodeId,
+      userText: '',
+      events: [],
+      status: "active",
+      nextSeq: 0,
+      assistantChunks: [],
+    };
+    this.turns.set(args.chatId, log);
+    this.append(args.chatId, log, {
+      event: CHAT_STREAM_EVENTS.turnStart,
+      data: { turnId, assistantId, nodeId: args.nodeId, userText: '', selfInitiated: true },
+    } as ChatStreamEvent);
+    void this.runSelfTurn(args.chatId, log, args.events);
+  }
+
+  private async runSelfTurn(
+    chatId: string,
+    log: TurnLog,
+    events: AsyncIterableIterator<NormalizedEvent>,
+  ): Promise<void> {
+    try {
+      let branchOverviewPublished = false;
+      for await (const ev of events) {
+        if (ev.kind === "chunk") log.assistantChunks.push(ev.text);
+        if (ev.kind === "title") persistNodeTitle(log.nodeId, ev.title);
+        if (ev.kind === "turn_end") {
+          this.publishBranchOverview(chatId, log);
+          branchOverviewPublished = true;
+        }
+        this.append(chatId, log, toChatStreamEvent(ev));
+        if (ev.kind === "turn_end") break;
+      }
+      if (!branchOverviewPublished) this.publishBranchOverview(chatId, log);
+      if (log.assistantChunks.length > 0) {
+        persistCompletedTurn(log.nodeId, '', log.assistantChunks.join(""), {
+          turnId: log.turnId,
+          selfInitiated: true,
+        });
+      }
+      log.status = "ended";
+    } catch (err) {
+      this.append(chatId, log, createChatStreamError((err as Error).message));
+      log.status = "error";
+    } finally {
+      this.scheduleEvict(chatId, log);
+    }
+  }
+
   private subscribersFor(chatId: string): Set<HubSubscriber> {
     let set = this.subscribers.get(chatId);
     if (!set) {
@@ -128,15 +193,36 @@ export class ChatHub {
     }
   }
 
+  /**
+   * Branch Overview is an app-level projection of the final assistant reply,
+   * rather than a runtime-specific event. Publishing it here gives the owner
+   * stream, observers, and replay exactly the same ordered event.
+   */
+  private publishBranchOverview(chatId: string, log: TurnLog): void {
+    const overview = extractBranchOverview(log.assistantChunks.join(""));
+    if (!overview) return;
+    persistNodeBranchOverview(log.nodeId, overview);
+    this.append(chatId, log, {
+      event: CHAT_STREAM_EVENTS.branchOverview,
+      data: { overview },
+    });
+  }
+
   private async runTurn(chatId: string, log: TurnLog, session: AgentSession): Promise<void> {
     this.activeSessions.set(chatId, session);
     try {
+      let branchOverviewPublished = false;
       for await (const ev of session.send(log.userText)) {
         if (ev.kind === "chunk") log.assistantChunks.push(ev.text);
         if (ev.kind === "title") persistNodeTitle(log.nodeId, ev.title);
+        if (ev.kind === "turn_end") {
+          this.publishBranchOverview(chatId, log);
+          branchOverviewPublished = true;
+        }
         this.append(chatId, log, toChatStreamEvent(ev));
         if (ev.kind === "turn_end") break;
       }
+      if (!branchOverviewPublished) this.publishBranchOverview(chatId, log);
       persistCompletedTurn(log.nodeId, log.userText, log.assistantChunks.join(""), {
         turnId: log.turnId,
       });

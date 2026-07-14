@@ -421,6 +421,7 @@ export function setupPersistenceRoutes(): express.Router {
               parent_node_id: n.parentNodeId ?? null,
               kind: n.kind ?? 'chat',
               title: n.title ?? null,
+              branch_overview: n.branchOverview ?? null,
               status: n.status ?? 'idle',
               position_x: n.position?.x ?? null,
               position_y: n.position?.y ?? null,

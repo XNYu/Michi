@@ -4,6 +4,7 @@ import {
     getNode,
     listMessages,
     saveMessage,
+    updateNodeBranchOverview,
     updateNodeResumeFingerprint,
     updateNodeTitle,
 } from "./dbRepository";
@@ -28,6 +29,19 @@ export function persistNodeTitle(nodeId: string | undefined, title: string): voi
         updateNodeTitle(nodeId, title);
     } catch (err) {
         console.warn("Failed to persist node title:", err);
+    }
+}
+
+/** Persist the structured Branches-document block when the local node exists.
+ * A newly-created frontend node may not have reached the bulk sync yet; in
+ * that case the frontend's normal sync persists the same reducer state later. */
+export function persistNodeBranchOverview(nodeId: string | undefined, overview: string): void {
+    if (!nodeId || !overview.trim()) return;
+    if (!getNode(nodeId)) return;
+    try {
+        updateNodeBranchOverview(nodeId, overview);
+    } catch (err) {
+        console.warn("Failed to persist node branch overview:", err);
     }
 }
 

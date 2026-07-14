@@ -204,6 +204,10 @@ export function runChatStream({
     },
     onHeartbeat: (idleMs) => dispatch({ type: 'heartbeat', nodeId, idleMs }),
     onTitle: (title) => dispatch({ type: 'set-title', nodeId, title }),
+    onBranchOverview: (overview, seq, _assistantId, turnId) => {
+      trackSeq(seq, turnId);
+      dispatch({ type: 'set-branch-overview', nodeId, overview, assistantId: currentAssistantId });
+    },
     onFollowUps: (followUps) => dispatch({ type: 'set-follow-ups', nodeId, followUps }),
     onFollowUpsStatus: (status) =>
       dispatch({ type: 'follow-ups-status', nodeId, status }),

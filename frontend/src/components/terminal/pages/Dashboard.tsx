@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import { usePrefs } from '../../../state/prefs';
@@ -12,6 +12,31 @@ import { getElectron } from '../../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFileUpload, type UploadProgress } from '../../../services/api';
 import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
+
+/**
+ * Center a pane using the coordinates that are actually painted in the
+ * dashboard strip. `offsetLeft` is relative to an offset parent and can drift
+ * when the shell changes pages; viewport-relative rectangles do not.
+ */
+export function centeredPaneScrollLeft({
+  paneLeft,
+  paneWidth,
+  stripLeft,
+  stripWidth,
+  currentScrollLeft,
+  maxScrollLeft,
+}: {
+  paneLeft: number;
+  paneWidth: number;
+  stripLeft: number;
+  stripWidth: number;
+  currentScrollLeft: number;
+  maxScrollLeft: number;
+}): number {
+  const paneDocumentLeft = paneLeft - stripLeft + currentScrollLeft;
+  const desired = paneDocumentLeft + paneWidth / 2 - stripWidth / 2;
+  return Math.max(0, Math.min(desired, maxScrollLeft));
+}
 
 export default function TerminalDashboard() {
   const { activeProject, openPanes, focusedPane } = useChatProjects();
@@ -201,35 +226,35 @@ export default function TerminalDashboard() {
     }
   }, [activeProject, progressForFile]);
 
-  const scrollToPane = (id: string) => {
+  const scrollToPane = (id: string, behavior: ScrollBehavior = 'smooth') => {
     const strip = stripRef.current;
     if (!strip) return;
     const el = strip.querySelector<HTMLDivElement>(`[data-node-id="${id}"]`);
     if (!el) return;
     // Horizontal-only: don't use scrollIntoView, which can scroll inner pane
     // scrollers vertically as a side-effect.
-    const isFirst = el.offsetLeft === 0;
-    let desired: number;
-    if (isFirst) {
-      // First pane: flush to the left edge.
-      desired = 0;
-    } else {
-      // Other panes: center, but leave a 48px peek on the left so the user
-      // can see there's a pane before this one.
-      const PEEK = 48;
-      desired = el.offsetLeft - Math.max(PEEK, (strip.clientWidth - el.clientWidth) / 2);
-    }
+    const stripRect = strip.getBoundingClientRect();
+    const paneRect = el.getBoundingClientRect();
     // Allow scrolling past the natural end so the last pane can be centered
     // instead of stuck at the right edge. The extra scrollable room comes from
     // paddingRight on the grid container (see below).
-    const maxScroll = strip.scrollWidth - strip.clientWidth;
-    const clamped = Math.max(0, Math.min(desired, maxScroll));
-    strip.scrollTo({ left: clamped, behavior: 'smooth' });
+    const clamped = centeredPaneScrollLeft({
+      paneLeft: paneRect.left,
+      paneWidth: paneRect.width,
+      stripLeft: stripRect.left,
+      stripWidth: strip.clientWidth,
+      currentScrollLeft: strip.scrollLeft,
+      maxScrollLeft: strip.scrollWidth - strip.clientWidth,
+    });
+    strip.scrollTo({ left: clamped, behavior });
   };
 
-  useEffect(() => {
+  // This runs before the Dashboard paints after Overview navigation, so the
+  // newly focused node is already in view instead of showing a stale pane for
+  // one frame (or waiting through a smooth-scroll animation).
+  useLayoutEffect(() => {
     if (!focusedPane) return;
-    scrollToPane(focusedPane);
+    scrollToPane(focusedPane, 'auto');
   }, [focusedPane]);
 
   // When new panes are appended (agent spawn_branches, fanout, manual open),
@@ -237,7 +262,11 @@ export default function TerminalDashboard() {
   // pane shrinks openPanes — we skip that case so we don't yank the viewport.
   // Also flag the new IDs for the spawn-in animation, with a stagger index so
   // multiple branches "fan out" rather than appearing simultaneously.
-  const prevOpenPanesRef = useRef<string[]>([]);
+  // A freshly mounted Dashboard already receives a focused pane (for example
+  // when Branches opens a node). Treating that whole restored list as
+  // "new" would schedule a second scroll to its last pane and overwrite the
+  // focused-node landing position.
+  const prevOpenPanesRef = useRef<string[]>(openPanes);
   useEffect(() => {
     const prev = prevOpenPanesRef.current;
     const added = openPanes.filter((id) => !prev.includes(id));

@@ -223,7 +223,7 @@ export default function TerminalTopbar({
   const showWorkspaceTitle =
     page === 'workspaces' || page === 'trash' || page === 'archived' ||
     page === 'workspace-manage' ||
-    (!!activeProject && (page === 'map' || page === 'digest'));
+    (!!activeProject && (page === 'branches' || page === 'map' || page === 'digest'));
   // Home page body inherits --term-bg from the shell; the rest of the app
   // paints panes with --term-pane-bg (≈ --term-surface), which is lighter.
   // On Home, align the topbar to --term-bg so there's no white band above
@@ -232,7 +232,8 @@ export default function TerminalTopbar({
     ? 'var(--term-bg)'
     : 'var(--term-pane-bg, var(--term-surface))';
   const pageLabel =
-    page === 'map' ? 'MAP'
+    page === 'branches' ? 'BRANCHES'
+    : page === 'map' ? 'MAP'
     : page === 'digest' ? 'DIGEST'
     : page === 'workspaces' ? 'WORKSPACES'
     : page === 'trash' ? 'TRASH'

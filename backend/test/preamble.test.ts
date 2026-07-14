@@ -15,6 +15,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     buildStableSystemPrompt,
+    buildMetadataSystemPrompt,
     buildFirstTurnPrefix,
     buildPreamble,
 } from '../src/agents/preamble';
@@ -37,11 +38,17 @@ describe('buildStableSystemPrompt', () => {
         assert.match(s, /\[TITLE:/);
     });
 
+    test('always includes the BRANCH-OVERVIEW sentinel instruction', () => {
+        const s = buildStableSystemPrompt();
+        assert.match(s, /\[BRANCH-OVERVIEW:/);
+        assert.match(s, /1-3 concise sentences/);
+    });
+
     test('scopes metadata sentinels to final answers only', () => {
         const s = buildStableSystemPrompt();
         assert.match(s, /final answer only/);
         assert.match(s, /after all tool use and intermediate commentary is complete/);
-        assert.match(s, /Do not emit \[TITLE:\] or \[FOLLOW-UP n\/3:\] sentinel lines in commentary/);
+        assert.match(s, /Do not emit \[TITLE:\], \[BRANCH-OVERVIEW:\], or \[FOLLOW-UP n\/3:\] sentinel lines in commentary/);
         assert.match(s, /end your final answer with three lines/);
     });
 
@@ -80,6 +87,7 @@ describe('buildFirstTurnPrefix', () => {
         });
         assert.doesNotMatch(s, /\[FOLLOW-UP 1\/3:/);
         assert.doesNotMatch(s, /\[TITLE:/);
+        assert.doesNotMatch(s, /\[BRANCH-OVERVIEW:/);
     });
 
     test('renders mergeContexts when provided', () => {
@@ -131,7 +139,7 @@ describe('buildFirstTurnPrefix', () => {
 
 describe('buildPreamble (legacy composition for Pi/Kiro)', () => {
     test('with enableFollowUps=true and contextManifest, includes stable head + variable section', () => {
-        const stable = buildStableSystemPrompt();
+        const stable = buildMetadataSystemPrompt();
         const full = buildPreamble({
             enableFollowUps: true,
             cwd: '/tmp/x',

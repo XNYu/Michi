@@ -1,4 +1,18 @@
-const SENTINEL_PREFIXES = ["[TITLE:", "[FOLLOW-UP"] as const;
+const SENTINEL_PREFIXES = ["[TITLE:", "[BRANCH-OVERVIEW:", "[FOLLOW-UP"] as const;
+
+const BRANCH_OVERVIEW_RE = /\[BRANCH-OVERVIEW:\s*([^\]\n\r]+)\]/gi;
+
+/**
+ * Extract the final per-branch summary from an agent reply. The preamble
+ * requires this to be a single line; choosing the last completed marker is
+ * defensive when an agent quotes an earlier marker while explaining format.
+ */
+export function extractBranchOverview(raw: string): string | null {
+    BRANCH_OVERVIEW_RE.lastIndex = 0;
+    const matches = [...raw.matchAll(BRANCH_OVERVIEW_RE)];
+    const overview = matches.at(-1)?.[1]?.trim() ?? "";
+    return overview.length > 0 ? overview : null;
+}
 
 function couldStillBeSentinel(buf: string): boolean {
     const upper = buf.toUpperCase();

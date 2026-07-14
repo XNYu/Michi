@@ -472,11 +472,13 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       let extractedTitle: string | null = null;
+      let extractedBranchOverview: string | null = null;
       let extractedFollowUps: string[] = [];
       const msgs = n.messages.map((m) => {
         if (m.id !== action.assistantId) return m;
         const meta = assistantMetadata(m);
         extractedTitle = meta.title;
+        extractedBranchOverview = meta.branchOverview;
         extractedFollowUps = meta.followUps;
         // Finalize stuck tool call statuses. The agent's turn has ended, so
         // any tool call still in a non-terminal state must have completed —
@@ -516,6 +518,12 @@ export function reduceNodes(
           followUpsSourceMessageId:
             extractedFollowUps.length > 0 ? action.assistantId : n.followUpsSourceMessageId,
           title: lockedTitle,
+          // A structured branch_overview SSE frame is canonical. Parsing the
+          // rendered text remains only for older servers / stored replies.
+          branchOverview:
+            n.branchOverviewSourceMessageId === action.assistantId
+              ? n.branchOverview
+              : extractedBranchOverview ?? n.branchOverview,
           resumeFingerprint: computeTranscriptFingerprint(msgs),
         },
       };
@@ -775,6 +783,21 @@ export function reduceNodes(
       // exempt — their title is derived from regenerated content.
       if (n.kind === 'chat' && n.title && n.title.trim().length > 0) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, title: next } };
+    }
+    case 'set-branch-overview': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      const next = action.overview.trim();
+      // Empty / malformed markers must not erase the last useful branch state.
+      if (!next || n.branchOverview === next) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          branchOverview: next,
+          ...(action.assistantId ? { branchOverviewSourceMessageId: action.assistantId } : {}),
+        },
+      };
     }
     case 'rename-node': {
       const n = nodes[action.nodeId];

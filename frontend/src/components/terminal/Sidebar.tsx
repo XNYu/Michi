@@ -8,6 +8,7 @@ import TreeSelectionBar from './TreeSelectionBar';
 import ResizeHandle from '../ResizeHandle';
 import {
   HomeIcon,
+  BranchesIcon,
   MapIcon,
   DigestIcon,
   WorkspacesIcon,
@@ -317,6 +318,7 @@ function BottomNav({
         flexShrink: 0,
       }}
     >
+      <Item id="branches" glyph={<BranchesIcon size={15} />} label="Branches" />
       <Item id="map" glyph={<MapIcon size={15} />} label="Map" />
       <Item id="digest" glyph={<DigestIcon size={15} />} label="Digest" dot={hasUnreadDigest} />
       <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
@@ -328,5 +330,4 @@ function BottomNav({
     </div>
   );
 }
-
 

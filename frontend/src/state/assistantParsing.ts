@@ -137,6 +137,7 @@ function findFollowUpsCut(rest: string): { followUps: string[]; cutStart: number
 }
 
 const INLINE_TITLE_RE = /\[TITLE:\s*([^\]]+)\]/i;
+const INLINE_BRANCH_OVERVIEW_RE = /\[BRANCH-OVERVIEW:\s*([^\]\n\r]+)\]/i;
 const TITLE_MARKER = /^\s*(?:#+\s*)?\**\s*title\s*[:：]\s*\**\s*(.+?)\s*\**\s*$/im;
 
 // Global form of the sentinels — used by `stripInlineMetadataSentinels` as a
@@ -144,6 +145,7 @@ const TITLE_MARKER = /^\s*(?:#+\s*)?\**\s*title\s*[:：]\s*\**\s*(.+?)\s*\**\s*$
 // finalizeAssistant (e.g. backend-persisted body, mid-stream chunks where the
 // `[TITLE: ...]` got released before close, or hydrated legacy turns).
 const INLINE_TITLE_RE_G = /\[TITLE:\s*[^\]]+\]/gi;
+const INLINE_BRANCH_OVERVIEW_RE_G = /\[BRANCH-OVERVIEW:\s*[^\]\n\r]+\]/gi;
 const INLINE_FOLLOWUP_BLOCK_RE_G = /\[FOLLOW-UPS:\s*[^\]]+\]/gi;
 const INLINE_FOLLOWUP_ITEM_RE_G = /\[FOLLOW-UP\s+[1-3]\s*(?:\/\s*3)?\s*:\s*[^\]\n\r]*?(?:\]|(?=\s*\[FOLLOW-UP\s+[1-3])|(?=[\n\r])|$)/gi;
 
@@ -157,6 +159,7 @@ export function stripInlineMetadataSentinels(text: string): string {
   if (!text || (text.indexOf('[') < 0)) return text;
   return text
     .replace(INLINE_TITLE_RE_G, '')
+    .replace(INLINE_BRANCH_OVERVIEW_RE_G, '')
     .replace(INLINE_FOLLOWUP_BLOCK_RE_G, '')
     .replace(INLINE_FOLLOWUP_ITEM_RE_G, '')
     // Collapse the blank line that the sentinel used to live on.
@@ -189,6 +192,12 @@ export function parseTitle(fullText: string): { title: string | null; rest: stri
   return { title: titleText, rest: before + after };
 }
 
+export function parseBranchOverview(fullText: string): string | null {
+  const match = fullText.match(INLINE_BRANCH_OVERVIEW_RE);
+  const overview = match?.[1]?.trim() ?? '';
+  return overview.length > 0 ? overview : null;
+}
+
 /**
  * Parse the raw assistant buffer into the visible text + a title + follow-up
  * suggestions. Shared by every stream subscriber so fallback parsing behaves
@@ -201,6 +210,7 @@ export function parseTitle(fullText: string): { title: string | null; rest: stri
  */
 export function finalizeAssistant(raw: string): {
   title: string | null;
+  branchOverview: string | null;
   followUps: string[];
   visibleText: string;
   remapOffset: (rawOffset: number) => number;
@@ -234,10 +244,15 @@ export function finalizeAssistant(raw: string): {
   // preserves any content after the tag if the LLM put text past the marker.
   // In practice both are at end-of-reply so it doesn't matter.
   const fuCutInRest = fu.cutStart;
-  const visible = rest.slice(0, fuCutInRest).trim();
+  const visible = rest
+    .slice(0, fuCutInRest)
+    .replace(INLINE_BRANCH_OVERVIEW_RE_G, '')
+    .replace(/\n[ \t]*\n[ \t]*\n+/g, '\n\n')
+    .trim();
 
   const followUps = fu.followUps;
   const title = titleText;
+  const branchOverview = parseBranchOverview(raw);
 
   // --- Build remapOffset ---
   const titleGap = titleRemoveStart >= 0 ? titleRemoveEnd - titleRemoveStart : 0;
@@ -260,7 +275,7 @@ export function finalizeAssistant(raw: string): {
     return Math.min(restOff, visibleLen);
   }
 
-  return { title, followUps, visibleText: visible, remapOffset };
+  return { title, branchOverview, followUps, visibleText: visible, remapOffset };
 }
 
 /**
@@ -272,6 +287,7 @@ export function finalizeAssistant(raw: string): {
  */
 export function extractAssistantMetadata(raw: string): {
   title: string | null;
+  branchOverview: string | null;
   followUps: string[];
 } {
   const titleFound = findTitleMatch(raw);
@@ -286,7 +302,7 @@ export function extractAssistantMetadata(raw: string): {
   })();
 
   const fu = findFollowUpsCut(rest);
-  return { title, followUps: fu.followUps };
+  return { title, branchOverview: parseBranchOverview(raw), followUps: fu.followUps };
 }
 
 // ── Streaming-safe sentinel stripping ────────────────────────────────────
@@ -319,7 +335,7 @@ export function extractAssistantMetadata(raw: string): {
 // Sentinel detection is shared with the streaming-time filter in
 // chatStreamRunner.ts via `SENTINEL_PREFIXES` below.
 
-const SENTINEL_PREFIXES = ['[TITLE:', '[FOLLOW-UP'] as const;
+const SENTINEL_PREFIXES = ['[TITLE:', '[BRANCH-OVERVIEW:', '[FOLLOW-UP'] as const;
 
 function couldStillBeSentinel(buf: string): boolean {
   const upper = buf.toUpperCase();
