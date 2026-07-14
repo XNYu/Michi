@@ -6,6 +6,7 @@ import EmptyThreads from '../../EmptyThreads';
 import ResizeHandle from '../../ResizeHandle';
 import TPane from '../TPane';
 import DigestPane from '../DigestPane';
+import ArtifactPane from '../ArtifactPane';
 import PaneErrorBoundary from '../PaneErrorBoundary';
 import TerminalHome from './Home';
 import { getElectron } from '../../../lib/electronBridge';
@@ -408,6 +409,8 @@ export default function TerminalDashboard() {
             <PaneErrorBoundary paneId={id}>
               {paneKinds[i] === 'digest' ? (
                 <DigestPane nodeId={id} contentMaxWidth={effContentWidth} />
+              ) : paneKinds[i] === 'artifact' ? (
+                <ArtifactPane nodeId={id} contentMaxWidth={effContentWidth} />
               ) : (
                 <TPane nodeId={id} contentMaxWidth={effContentWidth} />
               )}

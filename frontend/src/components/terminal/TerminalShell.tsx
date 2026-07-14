@@ -393,6 +393,7 @@ export default function TerminalShell() {
         onToggleSidebar={handleToggleSidebarEffective}
         onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
         onOpenPalette={() => setPaletteOpen(true)}
+        artifactsOpen={artifactsOpen}
       />
       <WarmFailedBanner />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>

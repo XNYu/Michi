@@ -13,6 +13,7 @@ import { selectUnreadTotal } from '../../state/sidebarSelectors';
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
 import { isArchiveGroupId } from '../../state/trashActions';
+import { ArtifactsIcon } from './icons';
 
 const TOPBAR_HEIGHT = 44;
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
@@ -40,6 +41,7 @@ export default function TerminalTopbar({
   onToggleSidebar,
   onNewThread,
   onOpenPalette,
+  artifactsOpen = false,
 }: {
   page: PageId;
   onNav: (p: PageId) => void;
@@ -47,6 +49,7 @@ export default function TerminalTopbar({
   onToggleSidebar: () => void;
   onNewThread?: () => void;
   onOpenPalette?: () => void;
+  artifactsOpen?: boolean;
 }) {
   const {
     activeProject,
@@ -470,7 +473,7 @@ export default function TerminalTopbar({
                     focused={focusedPane === id}
                     streaming={status === 'streaming'}
                     error={status === 'error'}
-                    kind={paneKinds[i] === 'digest' ? 'digest' : 'chat'}
+                    kind={paneKinds[i] === 'digest' ? 'digest' : paneKinds[i] === 'artifact' ? 'artifact' : 'chat'}
                     onFocus={focusPane}
                     onClose={closePane}
                     onCloseOthers={closeOtherPanes}
@@ -621,26 +624,7 @@ export default function TerminalTopbar({
               )}
             </span>
           )}
-          <button
-            ref={contextsBtnRef}
-            onClick={toggleContextsPopover}
-            title={`Contexts (${kbd('mod', ';')})`}
-            style={{
-              padding: '3px 8px',
-              border: popoverOpen ? '1px solid var(--term-accent)' : '1px solid var(--term-line)',
-              background: 'transparent',
-              color: popoverOpen ? 'var(--term-accent)' : 'var(--term-fg)',
-              fontFamily: 'inherit',
-              fontSize: 'inherit',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              cursor: 'pointer',
-              WebkitAppRegion: 'no-drag',
-            } as React.CSSProperties}
-          >
-            <span style={{ fontSize: 13 }}>▤</span>
-          </button>
+          <ArtifactsToggleButton onClick={toggleArtifacts} active={artifactsOpen} />
       </div>
 
       {popoverOpen && anchorRect && (
@@ -784,6 +768,42 @@ function BreadcrumbBackButton({
       } as React.CSSProperties}
     >
       {children}
+    </button>
+  );
+}
+
+function ArtifactsToggleButton({ onClick, active }: { onClick: () => void; active?: boolean }) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Artifacts"
+      title={`Artifacts (${kbd('shift', 'mod', 'A')})`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: ZONE1_BUTTON_W,
+        height: ZONE1_BUTTON_W,
+        padding: '0 6px',
+        background: active
+          ? 'var(--term-select-f)'
+          : hover
+          ? 'var(--term-hover-bg, var(--term-alt))'
+          : 'transparent',
+        border: 'none',
+        borderRadius: 4,
+        color: active ? 'var(--term-select)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
+        cursor: 'pointer',
+        transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
+        flexShrink: 0,
+        WebkitAppRegion: 'no-drag',
+      } as React.CSSProperties}
+    >
+      <ArtifactsIcon size={14} />
     </button>
   );
 }

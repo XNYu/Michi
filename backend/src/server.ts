@@ -16,6 +16,7 @@ import { setupAgentRoutes } from './routes/agent';
 import { setupUserKeysRoutes } from './routes/userKeys';
 import { setupUploadsRoutes } from './routes/uploads';
 import { setupFilesRoutes } from './routes/files';
+import { setupArtifactRoutes } from './routes/artifacts';
 import { ChatManager } from './services/chatManager';
 import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
 import { requireAdmin } from './routes/middleware/admin';
@@ -411,6 +412,7 @@ if (REQUIRE_AUTH) {
 }
 app.use('/api', setupUploadsRoutes());
 app.use('/api', setupFilesRoutes());
+app.use('/api', setupArtifactRoutes());
 app.use('/api', setupMichiRoutes(chatManager));
 app.use('/api', setupDigestRoutes(chatManager));
 app.use('/api', setupPersistenceRoutes());

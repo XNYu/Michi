@@ -18,7 +18,7 @@ interface Props {
   focused: boolean;
   streaming: boolean;
   error: boolean;
-  kind?: 'chat' | 'digest';
+  kind?: 'chat' | 'digest' | 'artifact';
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
   onCloseOthers: (keepId: string) => void;
@@ -47,9 +47,12 @@ export default function PaneCaption({
   const [closeHover, setCloseHover] = useState(false);
 
   const isDigest = kind === 'digest';
+  const isArtifact = kind === 'artifact';
   const dotColor = isDigest
     ? 'var(--term-digest)'
-    : dotColorFor(streaming, error, focused);
+    : isArtifact
+      ? 'var(--term-accent)'
+      : dotColorFor(streaming, error, focused);
 
   const titleColor = focused ? 'var(--term-fg)' : 'var(--term-mid)';
   const titleWeight = focused ? 600 : 400;

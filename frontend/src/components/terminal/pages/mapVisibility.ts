@@ -3,7 +3,7 @@ import { findTreeIdForNode } from '../../../state/tree';
 
 type MapNodeVisibilityState = {
   deletedAt?: number;
-  kind?: 'chat' | 'digest';
+  kind?: 'chat' | 'digest' | 'artifact';
 };
 
 export function visibleMapNodeIds(
@@ -20,7 +20,7 @@ export function visibleMapNodeIds(
 
   return project.chatIds.filter((id) => {
     const node = nodes[id];
-    if (node?.deletedAt || node?.kind === 'digest') return false;
+    if (node?.deletedAt || node?.kind === 'digest' || node?.kind === 'artifact') return false;
     const treeId = findTreeIdForNode(id, project);
     return !!treeId && liveTreeIds.has(treeId);
   });

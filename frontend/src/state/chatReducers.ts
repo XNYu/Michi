@@ -655,6 +655,79 @@ export function reduceNodes(
       if (next.length === n.consumedLinks.length) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, consumedLinks: next } };
     }
+    case 'create-artifact': {
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          nodeId: action.nodeId,
+          kind: 'artifact',
+          chatId: null,
+          projectId: action.projectId,
+          messages: [],
+          followUps: [],
+          status: 'idle',
+          artifact: {
+            filePath: action.filePath,
+            content: null,
+            viewMode: 'rendered',
+            status: 'idle',
+          },
+        },
+      };
+    }
+    case 'artifact-loading': {
+      const n = nodes[action.nodeId];
+      if (!n || n.kind !== 'artifact' || !n.artifact) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          artifact: { ...n.artifact, status: 'loading', error: undefined },
+        },
+      };
+    }
+    case 'artifact-loaded': {
+      const n = nodes[action.nodeId];
+      if (!n || n.kind !== 'artifact' || !n.artifact) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          title: action.basename,
+          artifact: {
+            ...n.artifact,
+            content: action.content,
+            basename: action.basename,
+            extension: action.extension,
+            size: action.size,
+            modifiedAt: action.modifiedAt,
+            status: 'idle',
+          },
+        },
+      };
+    }
+    case 'artifact-error': {
+      const n = nodes[action.nodeId];
+      if (!n || n.kind !== 'artifact' || !n.artifact) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          artifact: { ...n.artifact, status: 'error', error: action.error },
+        },
+      };
+    }
+    case 'artifact-set-view': {
+      const n = nodes[action.nodeId];
+      if (!n || n.kind !== 'artifact' || !n.artifact) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          artifact: { ...n.artifact, viewMode: action.viewMode },
+        },
+      };
+    }
     case 'create-digest': {
       return {
         ...nodes,

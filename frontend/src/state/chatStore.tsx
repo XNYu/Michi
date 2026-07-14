@@ -1912,6 +1912,44 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     newNodeId,
   });
 
+  // ---- Artifact pane ----
+  const openArtifactPane = useCallback(
+    (filePath: string): string => {
+      if (!activeProjectId) throw new Error('No active project');
+      if (!filePath || !filePath.trim()) throw new Error('No file path provided');
+
+      // Backend resolves workspace root for all workspace types (user-picked,
+      // skip-folder scratch dir, upload root fallback).
+
+      // Check if this file is already open as an artifact pane
+      const existing = Object.values(nodesRef.current).find(
+        (n) => n.kind === 'artifact' && n.artifact?.filePath === filePath && n.projectId === activeProjectId,
+      );
+      if (existing) {
+        // Just focus the existing pane
+        openPane(existing.nodeId);
+        return existing.nodeId;
+      }
+
+      const nodeId = newNodeId();
+      dispatch({ type: 'create-artifact', nodeId, projectId: activeProjectId, filePath });
+
+      // Add to project's chatIds so the node is tracked
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === activeProjectId
+            ? { ...p, chatIds: [...p.chatIds, nodeId] }
+            : p,
+        ),
+      );
+
+      // Open it as a pane
+      openPane(nodeId);
+      return nodeId;
+    },
+    [activeProjectId, dispatch, newNodeId, nodesRef, openPane, projects, setProjects],
+  );
+
   const {
     deleteNode,
     trimNode,
@@ -2144,6 +2182,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       markDigestViewed,
       setComposerDraft,
       deleteDigest,
+      openArtifactPane,
       openPanes,
       focusedPane,
       focusedNodeId,
@@ -2249,6 +2288,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       markDigestViewed,
       setComposerDraft,
       deleteDigest,
+      openArtifactPane,
       openPanes,
       focusedPane,
       focusedNodeId,

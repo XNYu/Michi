@@ -8,7 +8,28 @@ export type { AgentStatus } from '../services/api';
 
 export type Theme = 'light' | 'dark';
 
-export type NodeKind = 'chat' | 'digest';
+export type NodeKind = 'chat' | 'digest' | 'artifact';
+
+/** State for an artifact viewer pane (kind === 'artifact'). */
+export interface ArtifactState {
+  /** Relative file path within the workspace cwd. */
+  filePath: string;
+  /** Loaded text content. null = not yet fetched. */
+  content: string | null;
+  /** 'rendered' shows MarkdownContent; 'source' shows raw text. */
+  viewMode: 'rendered' | 'source';
+  /** File extension (without dot), e.g. 'md', 'ts'. */
+  extension?: string;
+  /** File basename, e.g. 'analysis.md'. */
+  basename?: string;
+  /** Size in bytes. */
+  size?: number;
+  /** Last-modified epoch ms. */
+  modifiedAt?: number;
+  /** Loading/error state. */
+  status: 'idle' | 'loading' | 'error';
+  error?: string;
+}
 
 export type ViewMode = 'single' | 'two' | 'three';
 
@@ -243,6 +264,8 @@ export interface ChatNodeState {
   consumedLinks?: string[];
   /** Populated iff kind === 'digest'. Holds the generated markdown, sources, and fingerprints. */
   digest?: DigestState;
+  /** Populated iff kind === 'artifact'. Holds the file viewer state. */
+  artifact?: ArtifactState;
   /** True iff this node was created by an agent-initiated spawn_branches tool call. */
   spawnedByAgent?: boolean;
   /**
@@ -492,6 +515,11 @@ export type ChatAction =
   | { type: 'clear-positions'; nodeIds: string[] }
   | { type: 'consume-links'; nodeId: string; peerIds: string[] }
   | { type: 'forget-consumed-link'; nodeId: string; peerId: string }
+  | { type: 'create-artifact'; nodeId: string; projectId: string; filePath: string }
+  | { type: 'artifact-loading'; nodeId: string }
+  | { type: 'artifact-loaded'; nodeId: string; content: string; basename: string; extension: string; size: number; modifiedAt: number }
+  | { type: 'artifact-error'; nodeId: string; error: string }
+  | { type: 'artifact-set-view'; nodeId: string; viewMode: 'rendered' | 'source' }
   | { type: 'create-digest'; nodeId: string; projectId: string; sources: string[] }
   | { type: 'digest-started'; nodeId: string }
   | { type: 'digest-chunk'; nodeId: string; text: string }
@@ -723,6 +751,8 @@ export interface ChatContextValue {
   setComposerDraft: (nodeId: string, draft: ComposerDraft | null) => void;
   /** Delete a digest node (aborts in-flight generation, removes edges + state). */
   deleteDigest: (nodeId: string) => void;
+  /** Open a file as an artifact pane. Returns the artifact node id. */
+  openArtifactPane: (filePath: string) => string;
   /** Node ids currently open as panes, in tab order. Not persisted. */
   openPanes: string[];
   /** Currently-focused pane nodeId. Always one of openPanes if non-empty. */

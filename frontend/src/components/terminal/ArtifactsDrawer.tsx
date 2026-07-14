@@ -69,6 +69,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     updateContext,
     deleteContext,
     pinContext,
+    openArtifactPane,
   } = useChatStore();
 
   const [filter, setFilter] = useState('');
@@ -152,6 +153,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   const openArtifact = useCallback(
     (c: ContextEntry) => {
       const t = artifactType(c);
+      console.log('[ArtifactsDrawer] openArtifact', { name: c.name, type: c.type, resolved: t, filePath: c.filePath });
       if (t === 'link') {
         if (c.url) window.open(c.url, '_blank', 'noopener,noreferrer');
         return;
@@ -165,8 +167,29 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
         }
         return;
       }
-      // doc / file → hand off to the OS default app. A moved/deleted file
-      // surfaces the opener's own error (lazy liveness, per design).
+      // doc → open in ArtifactPane (markdown viewer) if available
+      if (t === 'doc') {
+        const relPath = c.kind === 'reference' || c.filePath.startsWith('/')
+          ? c.filePath
+          : c.filePath;
+        try {
+          openArtifactPane(relPath);
+          onClose();
+        } catch (err) {
+          // Fallback: open via OS if pane creation fails (e.g. no workspace cwd)
+          console.warn('[ArtifactsDrawer] openArtifactPane failed, falling back to OS opener:', err);
+          const electron = getElectron();
+          if (!electron?.openPath) return;
+          const abs = c.filePath.startsWith('/')
+            ? c.filePath
+            : cwd
+              ? `${cwd.replace(/\/$/, '')}/${c.filePath}`
+              : null;
+          if (abs) void electron.openPath(abs);
+        }
+        return;
+      }
+      // file → hand off to the OS default app.
       const electron = getElectron();
       if (!electron?.openPath) return;
       const abs =
@@ -180,7 +203,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
         if (!r.ok && r.error) console.warn(`openPath(${abs}) failed:`, r.error);
       });
     },
-    [activeProject?.id, cwd],
+    [activeProject?.id, cwd, openArtifactPane, onClose],
   );
 
   // "Cite" — ask the focused pane to append @name to its composer. The pane
