@@ -2054,7 +2054,7 @@ html[data-vibrancy="on"],
 .mention-editor-host .ProseMirror {
   outline: none;
   min-height: calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 1.5);
-  max-height: calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 6);
+  max-height: min(50vh, calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 18));
   overflow-y: auto;
   box-sizing: border-box;
   width: 100%;
@@ -2064,67 +2064,18 @@ html[data-vibrancy="on"],
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--term-fg);
-  transition: max-height 140ms ease-out;
-  /* Composer always hides its scrollbar — the card frame is the visual bound. */
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.mention-editor-host .ProseMirror::-webkit-scrollbar { display: none; }
-.mention-editor-host.has-expand-button .ProseMirror {
-  padding-right: 30px;
-}
-.mention-editor-host.is-expanded .ProseMirror {
-  max-height: min(50vh, calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 18));
   scrollbar-width: thin;
   scrollbar-color: var(--term-line) transparent;
 }
-.mention-editor-host.is-expanded .ProseMirror::-webkit-scrollbar {
+.mention-editor-host .ProseMirror::-webkit-scrollbar {
   display: block;
   width: 8px;
 }
-.mention-editor-host.is-expanded .ProseMirror::-webkit-scrollbar-track {
+.mention-editor-host .ProseMirror::-webkit-scrollbar-track {
   background: transparent;
 }
-.mention-editor-host.is-expanded .ProseMirror::-webkit-scrollbar-thumb {
+.mention-editor-host .ProseMirror::-webkit-scrollbar-thumb {
   background: var(--term-line);
-}
-.mention-editor-expand-button {
-  position: absolute;
-  top: -2px;
-  right: 0;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--term-faint);
-  font: inherit;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 120ms ease-out,
-    color 120ms ease-out,
-    background 120ms ease-out,
-    border-color 120ms ease-out;
-}
-.mention-editor-host:hover .mention-editor-expand-button,
-.mention-editor-expand-button:focus-visible {
-  opacity: 0.58;
-  pointer-events: auto;
-}
-.mention-editor-expand-button:hover,
-.mention-editor-expand-button:focus-visible {
-  opacity: 0.92;
-  color: var(--term-muted);
-  border-color: var(--term-line);
-  background: color-mix(in srgb, var(--term-composer-bg, var(--term-bg)) 94%, var(--term-fg));
-  outline: none;
 }
 .mention-editor-host .ProseMirror p { margin: 0; }
 /* Block markdown nodes inside the composer — compact WYSIWYG that matches the

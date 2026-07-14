@@ -1,9 +1,7 @@
 import {
   forwardRef,
-  useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -97,60 +95,6 @@ export function enterSubmits(state: EditorState): boolean {
     if (name === 'codeBlock' || name === 'listItem' || name === 'blockquote') return false;
   }
   return true;
-}
-
-export const COMPOSER_COLLAPSED_ROWS = 6;
-
-export function composerExceedsCollapsedRows(
-  el: HTMLElement,
-  rows = COMPOSER_COLLAPSED_ROWS,
-): boolean {
-  const styles = window.getComputedStyle(el);
-  const lineHeight = parseFloat(styles.lineHeight);
-  const fontSize = parseFloat(styles.fontSize);
-  const fallbackLineHeight =
-    Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 1.5 : 0;
-  const rowHeight = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : fallbackLineHeight;
-  if (rowHeight <= 0) return el.scrollHeight > el.clientHeight + 1;
-  return el.scrollHeight > rowHeight * rows + 1;
-}
-
-function ComposerExpandIcon({ expanded }: { expanded: boolean }) {
-  return expanded ? (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="4 14 10 14 10 20" />
-      <polyline points="20 10 14 10 14 4" />
-      <line x1="14" y1="10" x2="21" y2="3" />
-      <line x1="3" y1="21" x2="10" y2="14" />
-    </svg>
-  ) : (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="15 3 21 3 21 9" />
-      <polyline points="9 21 3 21 3 15" />
-      <line x1="21" y1="3" x2="14" y2="10" />
-      <line x1="3" y1="21" x2="10" y2="14" />
-    </svg>
-  );
 }
 
 // Mention node extended to carry our MentionRecord fields (refId + kind) on top
@@ -363,8 +307,6 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   } = props;
 
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [exceedsCollapsedRows, setExceedsCollapsedRows] = useState(false);
 
   // Refs the (mount-time) ProseMirror plugin callbacks read for fresh values.
   const contextsRef = useRef(contexts);
@@ -406,13 +348,6 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   slashItemsRef.current = slashItems;
   slashSelectedRef.current = slashSelected;
   slashOpenRef.current = !!slashCtx && slashItems.length > 0;
-
-  const measureComposerOverflow = useCallback(() => {
-    const proseMirror = hostRef.current?.querySelector<HTMLElement>('.ProseMirror');
-    const next = !!proseMirror && composerExceedsCollapsedRows(proseMirror);
-    setExceedsCollapsedRows(next);
-    if (!next) setIsExpanded(false);
-  }, []);
 
   // Imperative slash actions, rebound when `editor` becomes available so the
   // editor-creation keymap closure can reach them via refs.
@@ -567,24 +502,6 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     editor?.setEditable(!disabled);
   }, [editor, disabled]);
 
-  useLayoutEffect(() => {
-    measureComposerOverflow();
-  }, [editor, mentions, measureComposerOverflow, value]);
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const resizeObserver = new ResizeObserver(() => measureComposerOverflow());
-    resizeObserver.observe(host);
-    const proseMirror = host.querySelector<HTMLElement>('.ProseMirror');
-    if (proseMirror) resizeObserver.observe(proseMirror);
-    window.addEventListener('resize', measureComposerOverflow);
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', measureComposerOverflow);
-    };
-  }, [editor, measureComposerOverflow]);
-
   // Recompute /-command context from the editor's text + caret on every doc or
   // selection change. The caret's TEXT offset is derived with the same leaf
   // serialization docToDraft uses (mention → `@label`, hardBreak → `\n`) so it
@@ -644,30 +561,9 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     [editor],
   );
 
-  const showExpandButton = exceedsCollapsedRows || isExpanded;
-  const hostClassName =
-    'mention-editor-host' +
-    (showExpandButton ? ' has-expand-button' : '') +
-    (isExpanded ? ' is-expanded' : '');
-
   return (
-    <div ref={hostRef} style={{ position: 'relative', flex: 1, minWidth: 0 }} className={hostClassName}>
+    <div ref={hostRef} style={{ position: 'relative', flex: 1, minWidth: 0 }} className="mention-editor-host">
       <EditorContent editor={editor} className={className} data-testid={props['data-testid']} />
-      {showExpandButton ? (
-        <button
-          type="button"
-          className="mention-editor-expand-button"
-          aria-label={isExpanded ? 'Collapse composer' : 'Expand composer'}
-          title={isExpanded ? 'Collapse composer' : 'Expand composer'}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            setIsExpanded((cur) => !cur);
-            requestAnimationFrame(() => editor?.commands.focus('end'));
-          }}
-        >
-          <ComposerExpandIcon expanded={isExpanded} />
-        </button>
-      ) : null}
       <SuggestionPopup state={popup} selected={selected} anchor={hostRef.current} onHover={setSelected} />
       <SlashCommandPopup
         items={slashItems}
