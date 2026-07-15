@@ -101,6 +101,36 @@ describe('auto-branch behavior (real provider)', () => {
     localStorage.clear();
   });
 
+  it('includes a newly created tree in an immediate first-turn prerequisite', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+
+    await act(async () => {
+      await result.current.store.createProject('test', undefined);
+    });
+    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
+
+    let rootId = '';
+    act(() => {
+      rootId = result.current.store.createThread() ?? '';
+      result.current.store.sendMessage(rootId, 'hello');
+    });
+
+    await waitFor(() => expect(mockEnsureSession).toHaveBeenCalledTimes(1));
+    const options = mockEnsureSession.mock.calls[0][0] as {
+      graphPrerequisite: {
+        workspace: { activeTreeId: string | null };
+        tree?: { id: string; rootNodeId: string };
+        node: { id: string; treeId: string | null };
+      };
+    };
+    const prerequisite = options.graphPrerequisite;
+
+    expect(prerequisite.tree).toEqual(expect.objectContaining({ rootNodeId: rootId }));
+    expect(prerequisite.node).toEqual(expect.objectContaining({ id: rootId }));
+    expect(prerequisite.node.treeId).toBe(prerequisite.tree?.id);
+    expect(prerequisite.workspace.activeTreeId).toBe(prerequisite.tree?.id);
+  });
+
   it('sendMessage on a streaming node does NOT call streamMessage (guard fires)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { result } = renderHook(() => useStoreAndNodes(), { wrapper });

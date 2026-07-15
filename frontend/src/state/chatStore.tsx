@@ -283,7 +283,19 @@ export const WINDOW_ID = typeof window !== 'undefined' ? resolveWindowId() : 'de
 
 export function ChatProvider({ children, userId }: { children: React.ReactNode; userId?: string }) {
   const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({});
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjectsState] = useState<Project[]>([]);
+  // Structural actions often create a tree/node and submit its first message
+  // in the same event handler. Keep the project forest synchronously readable,
+  // matching nodesRef below, so startStream never builds a graph prerequisite
+  // from the previous render's tree list.
+  const projectsRef = useRef(projects);
+  const setProjects = useCallback<React.Dispatch<React.SetStateAction<Project[]>>>((update) => {
+    const next = typeof update === 'function'
+      ? (update as (prev: Project[]) => Project[])(projectsRef.current)
+      : update;
+    projectsRef.current = next;
+    setProjectsState(next);
+  }, []);
   const activeProjectBaseKey = userId ? buildStateKey(userId) : LEGACY_STATE_KEY;
   // Seed from localStorage so the most-recently-active workspace is restored on
   // boot. Backend hydration runs async; without this seed, `initialActiveProjectIdRef`
@@ -1072,7 +1084,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
       // Gather linked peers whose context hasn't been injected yet, so we
       // can bridge them into this node's session.
-      const owningProject = projects.find((p) => p.id === n.projectId);
+      const owningProject = projectsRef.current.find((p) => p.id === n.projectId);
       const consumed = new Set(n.consumedLinks ?? []);
       const peerIds = linkedPeersOf(nodeId, owningProject?.edges ?? []).filter(
         (pid) => !consumed.has(pid),
@@ -1414,7 +1426,26 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           if (prefsRef.current.notifications === 'all') {
             if (document.hasFocus() && focusedPaneRef.current === nodeId) return;
             const node = nodesRef.current[nodeId];
-            notify({ title: node?.title ?? 'Branch complete', body: 'Streaming finished' });
+            notify({
+              title: node?.title ?? 'Branch complete',
+              body: 'Streaming finished',
+              onClick: () => {
+                window.focus();
+                const proj = projectsRef.current.find(p => p.chatIds.includes(nodeId));
+                if (!proj) { openPane(nodeId); return; }
+                const treeId = findTreeIdForNode(nodeId, proj);
+                if (!treeId) { openPane(nodeId); return; }
+                selectProject(proj.id);
+                if (treeId !== proj.activeTreeId) {
+                  openPaneInTree(proj.id, treeId, nodeId);
+                  activateTree(treeId, proj.id);
+                } else {
+                  openPane(nodeId);
+                }
+                setFocusedNodeId(nodeId);
+                window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+              },
+            });
           }
         },
       });
@@ -1424,7 +1455,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         cancel();
       }
     },
-    [dispatch, newNodeId, projects, setOpenPanes],
+    [dispatch, newNodeId, setOpenPanes],
   );
 
   const {
