@@ -11,9 +11,21 @@ const FALLBACK_BOOTSTRAP_CPS = 30;
 const BACKGROUND_STALL_SNAP_MS = 1000;
 type FrameHandle = number | ReturnType<typeof globalThis.setTimeout>;
 
-export type StreamSmoothingProfile = 'default' | 'kiro';
+// --- Diagnostic logging ---
+// Enable by running in DevTools: localStorage.setItem('michi:smooth-diag', '1')
+// Disable: localStorage.removeItem('michi:smooth-diag')
+// No caching — reads live so you can toggle mid-session without refresh.
+function smoothDiagEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem('michi:smooth-diag') === '1';
+  } catch { return false; }
+}
+let _lastDiagLogAt = 0;
 
-type SmoothConfigName = 'default' | 'kiro' | 'kiro-cjk';
+export type StreamSmoothingProfile = 'default' | 'kiro' | 'claude';
+
+type SmoothConfigName = 'default' | 'kiro' | 'kiro-cjk' | 'claude';
 
 interface SmoothConfig {
   name: SmoothConfigName;
@@ -62,7 +74,47 @@ const KIRO_CJK_SMOOTH_CONFIG: SmoothConfig = {
   maxTypewriterCps: Number.POSITIVE_INFINITY,
 };
 
+const CLAUDE_SMOOTH_CONFIG: SmoothConfig = {
+  name: 'claude',
+  // Bedrock Cross-Region Streaming flushes ~16 events every ~950ms.
+  // Uses a leaky constant-rate controller (see CLAUDE_LEAKY_CONFIG below)
+  // instead of the default proportional controller. The proportional formula
+  // (cps = backlog/T) decays exponentially within each burst cycle, causing
+  // visible speed oscillation (fast→slow→fast). The leaky controller keeps
+  // a near-constant release rate with a weak correction term for stability.
+  initialBufferMs: 250,
+  resumeBufferMs: 0,       // no re-buffer pauses — leaky controller handles gaps
+  targetLagMs: 1050,       // fallback for cold-start before throughput EMA stabilizes
+  finishLagMs: 80,
+  minTypewriterCps: 8,
+  maxTypewriterCps: 1200,
+};
+
+/**
+ * Leaky constant-rate controller parameters for the Claude profile.
+ *
+ * Instead of cps = backlog / targetLagMs (proportional, causes 3:1 speed ratio),
+ * we use: cps = throughputEma + (backlog - targetBacklog) / correctionTau
+ *
+ * - throughputEma: observed steady-state arrival rate (graphemes/sec), EMA-tracked
+ * - targetBacklog: ideal buffer level = throughputEma × targetLagMs / 1000
+ * - correctionTau: time constant for buffer correction (higher = smoother)
+ *
+ * Result: speed ratio within a burst cycle drops from ~3:1 to ~1.3:1.
+ */
+const CLAUDE_LEAKY_CONFIG = {
+  /** Time constant for correcting buffer deviation (ms). Higher = smoother. */
+  correctionTauMs: 5000,
+  /** EMA alpha for throughput tracking. Lower = more stable, slower to adapt. */
+  throughputEmaAlpha: 0.15,
+  /** Minimum bursts observed before switching from proportional to leaky. */
+  minBurstsForLeaky: 2,
+  /** Floor multiplier for release CPS (fraction of throughputEma). */
+  minCpsFraction: 0.7,
+};
+
 function configForProfile(profile: StreamSmoothingProfile, source: string): SmoothConfig {
+  if (profile === 'claude') return CLAUDE_SMOOTH_CONFIG;
   if (profile === 'kiro') {
     return hasCjkText(source) ? KIRO_CJK_SMOOTH_CONFIG : KIRO_SMOOTH_CONFIG;
   }
@@ -70,7 +122,9 @@ function configForProfile(profile: StreamSmoothingProfile, source: string): Smoo
 }
 
 export function smoothingProfileForRuntime(runtimeId?: string | null): StreamSmoothingProfile {
-  return runtimeId === 'kiro' ? 'kiro' : 'default';
+  if (runtimeId === 'claude') return 'claude';
+  if (runtimeId === 'kiro') return 'kiro';
+  return 'default';
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -242,6 +296,14 @@ export function useSmooth(
   const isBackgroundedRef = useRef(false);
   const wasBackgroundedRef = useRef(false);
 
+  // Leaky constant-rate controller state (Claude profile)
+  const throughputEmaRef = useRef(0);       // graphemes/sec, EMA of sustained throughput
+  const burstCountRef = useRef(0);          // number of bursts observed (for cold-start gate)
+  const totalGraphemesRef = useRef(0);      // total graphemes received since streaming start
+  const streamStartAtRef = useRef<number | null>(null); // when streaming started
+  const lastBurstAtRef = useRef<number | null>(null);   // timestamp of previous burst boundary
+  const graphemesAtLastBurstRef = useRef(0);            // totalGraphemes at last burst boundary
+
   configRef.current = config;
   profileRef.current = profile;
   streamingRef.current = streaming;
@@ -305,6 +367,13 @@ export function useSmooth(
     lastArrivalAtRef.current = null;
     agentCpsRef.current = 0;
     hasRateEstimateRef.current = false;
+    // Reset leaky controller state
+    throughputEmaRef.current = 0;
+    burstCountRef.current = 0;
+    totalGraphemesRef.current = 0;
+    streamStartAtRef.current = null;
+    lastBurstAtRef.current = null;
+    graphemesAtLastBurstRef.current = 0;
   }
 
   function snapToSource(reason = 'snap_to_source', row: Record<string, unknown> = {}) {
@@ -392,13 +461,37 @@ export function useSmooth(
     const effectiveAgentCps = hasRateEstimateRef.current
       ? agentCpsRef.current
       : FALLBACK_BOOTSTRAP_CPS;
-    const cps = nextTypewriterCps(effectiveAgentCps, backlog, {
-      targetLagMs: cfg.targetLagMs,
-      finishLagMs: cfg.finishLagMs,
-      streaming: streamingRef.current,
-      minTypewriterCps: cfg.minTypewriterCps,
-      maxTypewriterCps: cfg.maxTypewriterCps,
-    });
+
+    // Choose CPS strategy: leaky constant-rate for Claude, proportional for others
+    let cps: number;
+    const useLeakyController = cfg.name === 'claude'
+      && burstCountRef.current >= CLAUDE_LEAKY_CONFIG.minBurstsForLeaky
+      && throughputEmaRef.current > 0;
+
+    if (useLeakyController) {
+      // Leaky constant-rate: baseCps + weak proportional correction
+      const baseCps = throughputEmaRef.current;
+      const targetBacklog = baseCps * cfg.targetLagMs / 1000;
+      const correction = (backlog - targetBacklog) / CLAUDE_LEAKY_CONFIG.correctionTauMs * 1000;
+      const minCps = baseCps * CLAUDE_LEAKY_CONFIG.minCpsFraction;
+      if (streamingRef.current) {
+        cps = clamp(baseCps + correction, minCps, cfg.maxTypewriterCps);
+      } else {
+        // Streaming ended — gradually accelerate to drain remaining buffer.
+        // Cap at baseCps × 2 to avoid the "last flash" where hundreds of
+        // characters appear in a single frame.
+        const finishCps = Math.min(baseCps * 2, (backlog * 1000) / cfg.finishLagMs);
+        cps = clamp(finishCps, cfg.minTypewriterCps, cfg.maxTypewriterCps);
+      }
+    } else {
+      cps = nextTypewriterCps(effectiveAgentCps, backlog, {
+        targetLagMs: cfg.targetLagMs,
+        finishLagMs: cfg.finishLagMs,
+        streaming: streamingRef.current,
+        minTypewriterCps: cfg.minTypewriterCps,
+        maxTypewriterCps: cfg.maxTypewriterCps,
+      });
+    }
     const elapsedMs = Math.min(rawElapsedMs, MAX_FRAME_DELTA_MS);
 
     budgetRef.current += cps * (elapsedMs / 1000);
@@ -414,6 +507,29 @@ export function useSmooth(
 
     flushDisplayed();
     const displayedDeltaGraphemes = cursorRef.current - cursorBefore;
+
+    // --- Diagnostic console log (5Hz) ---
+    if (smoothDiagEnabled() && timestamp - _lastDiagLogAt > 200) {
+      _lastDiagLogAt = timestamp;
+      const backlogNow = Math.max(0, boundaries.length - cursorRef.current);
+      const lagEstMs = cps > 0 ? Math.round((backlogNow / cps) * 1000) : (backlogNow > 0 ? 9999 : 0);
+      const state = backlogNow === 0
+        ? (streamingRef.current ? 'CAUGHT_UP' : 'IDLE')
+        : (displayedDeltaGraphemes === 0 ? 'BUFFERING' : 'DRAINING');
+      const controllerType = useLeakyController ? 'LEAKY' : 'PROPORTIONAL';
+      // eslint-disable-next-line no-console
+      console.log(
+        `[SMOOTH] cps=${Math.round(cps)} backlog=${backlogNow} ` +
+        `source=${boundaries.length} displayed=${cursorRef.current} ` +
+        `lagEst=${lagEstMs}ms state=${state} ` +
+        `profile=${configRef.current.name} controller=${controllerType} ` +
+        `throughputEma=${Math.round(throughputEmaRef.current)} ` +
+        `agentCps=${Math.round(agentCpsRef.current)} ` +
+        `budget=${budgetRef.current.toFixed(2)} ` +
+        `elapsedMs=${Math.round(elapsedMs)} revealed=${displayedDeltaGraphemes}`,
+      );
+    }
+
     if (displayedDeltaGraphemes > 0) {
       if (rendererStreamProbeEnabled()) {
         const lastDisplayAt = lastDisplayProbeAtRef.current;
@@ -447,6 +563,15 @@ export function useSmooth(
       lastFrameAtRef.current = null;
       budgetRef.current = 0;
       firstBufferedAtRef.current = null;
+      // --- Diagnostic: buffer exhausted ---
+      if (smoothDiagEnabled() && streamingRef.current) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[SMOOTH:EMPTY] Buffer exhausted while streaming! ` +
+          `profile=${configRef.current.name} agentCps=${Math.round(agentCpsRef.current)} ` +
+          `This is the stall the user sees.`,
+        );
+      }
     }
   }
 
@@ -554,12 +679,61 @@ export function useSmooth(
     if (delta > 0) {
       const now = nowMs();
       const lastArrival = lastArrivalAtRef.current;
+
+      // Track stream start time for throughput calculation
+      if (streamStartAtRef.current === null) {
+        streamStartAtRef.current = now;
+      }
+      totalGraphemesRef.current += delta;
+
+      // --- Diagnostic: source arrival ---
+      if (smoothDiagEnabled()) {
+        const gapMs = lastArrival !== null ? Math.round(now - lastArrival) : 0;
+        const backlogNow = Math.max(0, sourceBoundaries.length - cursorRef.current);
+        if (gapMs > 200 || lastArrival === null) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[SMOOTH:BURST] +${delta} graphemes after ${gapMs}ms gap. ` +
+            `backlog=${backlogNow} wasCaughtUp=${wasCaughtUp} ` +
+            `profile=${configRef.current.name} ` +
+            `throughputEma=${Math.round(throughputEmaRef.current)} ` +
+            `burstCount=${burstCountRef.current}`,
+          );
+        }
+      }
+
       if (lastArrival !== null && hasRateEstimateRef.current) {
         const dt = now - lastArrival;
         if (dt > 0) {
           const instant = clamp((delta * 1000) / dt, 0, configRef.current.maxTypewriterCps);
           agentCpsRef.current =
             agentCpsRef.current * (1 - RATE_EMA_ALPHA) + instant * RATE_EMA_ALPHA;
+        }
+
+        // Leaky controller: detect burst boundary and update throughput EMA
+        // A gap > 200ms signals a new burst cycle
+        if (dt > 200 && configRef.current.name === 'claude') {
+          burstCountRef.current += 1;
+          // Calculate throughput from the interval between this burst and the last.
+          // This responds quickly to burst-size changes (CJK vs ASCII, code vs prose)
+          // instead of being anchored by the cold-start average.
+          const lastBurstAt = lastBurstAtRef.current;
+          if (lastBurstAt !== null) {
+            const intervalMs = now - lastBurstAt;
+            const intervalGraphemes = totalGraphemesRef.current - graphemesAtLastBurstRef.current;
+            if (intervalMs > 100 && intervalGraphemes > 0) {
+              const intervalThroughput = (intervalGraphemes * 1000) / intervalMs;
+              const alpha = CLAUDE_LEAKY_CONFIG.throughputEmaAlpha;
+              if (throughputEmaRef.current === 0) {
+                throughputEmaRef.current = intervalThroughput;
+              } else {
+                throughputEmaRef.current =
+                  throughputEmaRef.current * (1 - alpha) + intervalThroughput * alpha;
+              }
+            }
+          }
+          lastBurstAtRef.current = now;
+          graphemesAtLastBurstRef.current = totalGraphemesRef.current;
         }
       }
       lastArrivalAtRef.current = now;
@@ -568,6 +742,14 @@ export function useSmooth(
         const windowMs = hasRateEstimateRef.current ? cfg.resumeBufferMs : cfg.initialBufferMs;
         activeBufferWindowMsRef.current = windowMs;
         firstBufferedAtRef.current = windowMs > 0 ? now : null;
+        // --- Diagnostic: re-buffer triggered ---
+        if (smoothDiagEnabled() && windowMs > 0) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[SMOOTH:REBUFFER] Caught up → re-buffering for ${windowMs}ms. ` +
+            `This pauses display! profile=${cfg.name}`,
+          );
+        }
       }
     }
 

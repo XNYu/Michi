@@ -8,6 +8,7 @@ import type { AgentToolBridge } from '../toolBridge';
 import { spawnClaude } from './claudeBinary';
 import { ClaudeInitTimeoutError } from './claudeBinary';
 import { createClaudeEnvelopeParser } from './claudeEnvelopeParser';
+import { createClaudeStdoutHandler } from './claudeStdoutProbe';
 import { createTranslator } from './claudeEventTranslator';
 import { getClaudeJsonlPath } from './claudeProjectsPath';
 import { buildClaudeMcpConfig } from './claudeMcpConfig';
@@ -631,7 +632,10 @@ export class ClaudeSession implements AgentSession {
     this.exitPromise = new Promise<void>((r) => { exitResolve = r; });
 
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => parser.push(chunk));
+    child.stdout.on('data', createClaudeStdoutHandler(
+      (chunk) => parser.push(chunk),
+      { sessionId: this.id, nodeId: this.nodeId },
+    ));
     child.stdout.on('end', () => parser.flush());
 
     child.stderr.setEncoding('utf8');

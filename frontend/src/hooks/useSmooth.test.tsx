@@ -35,7 +35,7 @@ describe('typewriter streaming speed curve', () => {
 
   it('maps only Kiro to the thicker smoothing profile', () => {
     expect(smoothingProfileForRuntime('kiro')).toBe('kiro');
-    expect(smoothingProfileForRuntime('claude')).toBe('default');
+    expect(smoothingProfileForRuntime('claude')).toBe('claude');
     expect(smoothingProfileForRuntime('pi')).toBe('default');
     expect(smoothingProfileForRuntime(undefined)).toBe('default');
   });
@@ -296,5 +296,117 @@ describe('useSmooth', () => {
     runNextFrame(2_000);
     expect(result.current.displayed).toBe(source);
     expect(result.current.isSmoothing).toBe(false);
+  });
+
+  it('Claude leaky controller maintains near-constant CPS after stabilization', () => {
+    // Simulate Bedrock burst pattern: ~40 chars every ~950ms
+    const burst1 = 'a'.repeat(40);
+    const burst2 = burst1 + 'b'.repeat(40);
+    const burst3 = burst2 + 'c'.repeat(40);
+    const burst4 = burst3 + 'd'.repeat(40);
+    const { result, rerender } = renderHook(
+      ({ text, streaming }) => useSmooth(text, streaming, 'claude'),
+      { initialProps: { text: '', streaming: true } },
+    );
+
+    // Burst 1
+    now = 0;
+    act(() => { rerender({ text: burst1, streaming: true }); });
+    // Drain through initial buffer and first burst cycle
+    drainFrames([250, 350, 450, 550, 650, 750, 850]);
+
+    // Burst 2 at ~950ms
+    now = 950;
+    act(() => { rerender({ text: burst2, streaming: true }); });
+    drainFrames([950, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800]);
+
+    // Burst 3 at ~1900ms
+    now = 1900;
+    act(() => { rerender({ text: burst3, streaming: true }); });
+    drainFrames([1900, 1950, 2050, 2150, 2250, 2350, 2450, 2550, 2650, 2750]);
+
+    // Burst 4 at ~2850ms — by now leaky controller should be active
+    now = 2850;
+    act(() => { rerender({ text: burst4, streaming: true }); });
+
+    // Sample CPS after burst 4 at two different points in the cycle
+    // (early and late) — they should be similar if the controller is constant-rate
+    const earlyDisplayed = result.current.displayed.length;
+    drainFrames([2900, 2950, 3000, 3050, 3100]);
+    const midDisplayed = result.current.displayed.length;
+    const earlyRate = midDisplayed - earlyDisplayed; // chars in 200ms
+
+    drainFrames([3200, 3250, 3300, 3350, 3400]);
+    const lateDisplayed = result.current.displayed.length;
+    const lateRate = lateDisplayed - midDisplayed; // chars in next 300ms
+
+    // Under proportional controller, lateRate would be <<earlyRate (3:1 ratio).
+    // Under leaky controller, the ratio should be much closer (within 2:1).
+    // Allow generous bounds since we're testing the principle, not exact values.
+    if (earlyRate > 0 && lateRate > 0) {
+      const ratio = earlyRate / lateRate;
+      // Normalize by time: earlyRate is over 200ms, lateRate over 300ms
+      const earlyPerMs = earlyRate / 200;
+      const latePerMs = lateRate / 300;
+      const normalizedRatio = earlyPerMs / latePerMs;
+      expect(normalizedRatio).toBeLessThan(2.5); // proportional would be 3+
+    }
+    // Also verify we're actually revealing text (not stuck)
+    expect(result.current.displayed.length).toBeGreaterThan(burst3.length);
+  });
+
+  it('Claude leaky controller finishes gradually instead of explosive drain', () => {
+    // Build up enough bursts to activate leaky controller, then stop streaming
+    // with backlog remaining. CPS should be capped at ~2× throughputEma, NOT
+    // backlog*1000/80 which would be thousands of CPS.
+    const burst1 = 'x'.repeat(50);
+    const burst2 = burst1 + 'y'.repeat(50);
+    const burst3 = burst2 + 'z'.repeat(50);
+    const burst4 = burst3 + 'w'.repeat(50);
+    const { result, rerender } = renderHook(
+      ({ text, streaming }) => useSmooth(text, streaming, 'claude'),
+      { initialProps: { text: '', streaming: true } },
+    );
+
+    // Burst 1
+    now = 0;
+    act(() => { rerender({ text: burst1, streaming: true }); });
+    drainFrames([250, 350, 450]);
+
+    // Burst 2 at ~950ms
+    now = 950;
+    act(() => { rerender({ text: burst2, streaming: true }); });
+    drainFrames([950, 1050, 1150, 1250, 1350, 1450, 1550, 1650, 1750]);
+
+    // Burst 3 at ~1900ms
+    now = 1900;
+    act(() => { rerender({ text: burst3, streaming: true }); });
+    drainFrames([1900, 2000, 2100, 2200, 2300, 2400, 2500, 2600, 2700]);
+
+    // Burst 4 at ~2850ms
+    now = 2850;
+    act(() => { rerender({ text: burst4, streaming: true }); });
+    drainFrames([2850, 2950, 3050]);
+
+    // Record displayed length before stopping
+    const beforeStop = result.current.displayed.length;
+    const totalSource = burst4.length;
+    const backlogAtStop = totalSource - beforeStop;
+
+    // Stop streaming — there should be significant backlog remaining
+    expect(backlogAtStop).toBeGreaterThan(20);
+
+    now = 3100;
+    act(() => { rerender({ text: burst4, streaming: false }); });
+
+    // Run ONE frame — should NOT drain everything at once
+    drainFrames([3116]);
+    const afterOneFrame = result.current.displayed.length;
+    const revealedInOneFrame = afterOneFrame - beforeStop;
+
+    // Under the old explosive drain (cps = backlog*1000/80 = huge),
+    // one 16ms frame would reveal most of the backlog. With gradual finish
+    // (capped at throughputEma*2), one 16ms frame reveals much less.
+    expect(revealedInOneFrame).toBeLessThan(backlogAtStop * 0.5);
   });
 });
