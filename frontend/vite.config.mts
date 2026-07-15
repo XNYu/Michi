@@ -1,12 +1,21 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   base: './',
+  resolve: {
+    // This is a linked workspace package, not an immutable npm dependency.
+    // Resolve its source directly so new exports cannot be hidden behind a
+    // stale Vite optimized-dependency cache.
+    alias: {
+      'michi-shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url)),
+    },
+  },
   optimizeDeps: {
-    include: ['michi-shared'],
+    exclude: ['michi-shared'],
   },
   server: {
     port: 3001,
