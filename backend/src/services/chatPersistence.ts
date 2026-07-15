@@ -13,7 +13,7 @@ import { computeTranscriptFingerprint, type TranscriptMessage } from "./resumeSt
 
 /**
  * The frontend creates nodes in its own state and only ships them to SQLite
- * via the bulk /workspaces/:id/sync endpoint. The first turn typically
+ * via explicit workspace commands. The first turn typically
  * completes before that sync runs, so the node row doesn't exist yet and
  * `messages.node_id` FK insert fails.
  *

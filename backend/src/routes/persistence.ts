@@ -10,7 +10,6 @@ import {
   getAiGlobalContext, setAiGlobalContext,
   emptyWorkspaceTrash, purgeWorkspaceNodes,
   trimNode, restoreTrimmedNode,
-  syncWorkspaceState, syncWorkspaceDelta, SyncResult,
   WorkspaceRow,
 } from '../services/dbRepository';
 import { normalizeIncomingMessageRow } from '../services/messageSerialization';
@@ -28,7 +27,7 @@ export function setupPersistenceRoutes(): express.Router {
       durableNodePrerequisite: true,
       explicitCommands: true,
       backgroundWorkspaceSync: false,
-      legacySyncAccepted: process.env.MICHI_LEGACY_SYNC_ACCEPTED !== '0',
+      legacySyncAccepted: false,
     });
   });
 
@@ -164,82 +163,15 @@ export function setupPersistenceRoutes(): express.Router {
     }
   });
 
-  // Bulk sync workspace state from frontend.
-  //
-  // Cloud-mode INSERT semantics: sync is the *only* write path the frontend
-  // exercises today (PUT /workspaces/:id is unused). When the row doesn't
-  // exist yet — typical for a freshly created workspace — we must let the
-  // request through and stamp owner_user_id from req.user.id below. Otherwise
-  // requireWorkspaceOwner would 404 the very first sync, leaving the row
-  // unwritten forever and breaking downstream /uploads, /chats,
-  // /ensure-session for that workspace.
-  router.post('/workspaces/:id/sync', (req, res, next) => {
-    if (process.env.MICHI_CLOUD === '1') {
-      const existing = getWorkspace(req.params.id);
-      if (existing) return requireWorkspaceOwner(req, res, next);
-    }
-    next();
-  }, (req, res) => {
-    try {
-      const workspaceId = req.params.id;
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
-      if (process.env.MICHI_LEGACY_SYNC_ACCEPTED === '0') {
-        return res.status(410).json({ error: 'legacy_workspace_sync_disabled', reloadRequired: true });
-      }
-      const existingWorkspace = getWorkspace(workspaceId, userId);
-      if ((existingWorkspace?.persistence_version ?? 1) >= 2) {
-        return res.status(409).json({
-          error: 'persistence_v2_reload_required',
-          reloadRequired: true,
-          protocolVersion: 2,
-        });
-      }
-      log.warn('workspace', 'legacy sync accepted', { id: workspaceId, deprecated: true });
-
-      // Two write shapes on the same endpoint, routed by `mode`:
-      //   - mode === 'delta' → incremental: apply upserts + explicit deletes
-      //     + per-dirty-node message reconcile (syncWorkspaceDelta).
-      //   - anything else (absent / 'full') → full-snapshot reconcile
-      //     (syncWorkspaceState): upsert payload rows, then delete only rows
-      //     present in the DB but absent from the payload.
-      // Both own the workspace-tombstone short-circuit (anti-revival) and
-      // return { tombstoned: true } when the workspace is tombstoned, so we
-      // report the no-op without resurrecting anything. On a live workspace
-      // they return the bumped newRev + any stale-write conflicts.
-      //
-      // Kill switch: set MICHI_SYNC_CONFLICTS=0 to disable L2 optimistic-
-      // concurrency rejection and fall back to L1b accept-all behaviour.
-      // Rev is still bumped and stamped, so re-enabling is seamless.
-      let result: SyncResult;
-      if (req.body.mode === 'delta') {
-        const { workspace, upserts, deletes, messageReconcileNodeIds, baseRevs } = req.body;
-        result = syncWorkspaceDelta(
-          workspaceId,
-          { workspace, upserts, deletes, messageReconcileNodeIds, baseRevs },
-          userId,
-        );
-      } else {
-        const { workspace, trees, nodes, edges, messages, contexts, baseRevs, baseSyncRev } = req.body;
-        result = syncWorkspaceState(
-          workspaceId,
-          { workspace, trees, nodes, edges, messages, contexts, baseRevs, baseSyncRev },
-          userId,
-        );
-      }
-      if (result.tombstoned) {
-        return res.json({ ok: true, ignored: 'workspace tombstoned' });
-      }
-      // Server-authoritative rev + any rejected (stale) rows so the client can
-      // advance its local revs and resolve conflicts. See sync L2 design.
-      res.json({ ok: true, newRev: result.newRev, conflicts: result.conflicts });
-    } catch (err) {
-      log.error('workspace', 'sync failed', {
-        id: req.params.id,
-        err: (err as Error).message,
-        stack: (err as Error).stack,
-      });
-      res.status(500).json({ error: (err as Error).message });
-    }
+  // Compatibility endpoint for stale tabs only. Workspace snapshots are no
+  // longer an accepted writer: turns persist through ChatHub and structural
+  // mutations use graph prerequisites / explicit domain commands.
+  router.post('/workspaces/:id/sync', (_req, res) => {
+    res.status(410).json({
+      error: 'legacy_workspace_sync_disabled',
+      reloadRequired: true,
+      protocolVersion: 2,
+    });
   });
 
   // Permanently empty a workspace's trash: physically delete every node with

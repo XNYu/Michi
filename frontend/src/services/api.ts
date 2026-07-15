@@ -930,28 +930,12 @@ export async function applyWorkspaceCommands(
   }
 }
 
-/**
- * Server-authoritative sync response (L2). The backend stamps each accepted row
- * with `newRev` and reports any rows it rejected as stale in `conflicts` (each
- * carrying the authoritative `serverRow`). A tombstoned workspace short-circuits
- * with `{ ok, ignored }`. Older/no-rev backends return `{ ok }` only — callers
- * treat absent `conflicts` as "all accepted" (L1 accept-all behavior).
- */
+/** Legacy snapshot response shape retained for pure migration helpers/tests. */
 export interface SyncWorkspaceResponse {
   ok: boolean;
   newRev?: number;
   conflicts?: Array<{ id: string; table: string; serverRow: unknown }>;
   ignored?: string;
-}
-
-export async function syncWorkspace(id: string, data: unknown): Promise<SyncWorkspaceResponse> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${id}/sync`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error(`syncWorkspace failed: ${res.status}`);
-  return res.json() as Promise<SyncWorkspaceResponse>;
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
@@ -961,9 +945,8 @@ export async function deleteWorkspace(id: string): Promise<void> {
 
 /**
  * Physically purge every soft-deleted node in a workspace. Called from the
- * Empty Trash UI BEFORE clearing local state so a stale POST /sync (which is
- * delete-then-reinsert) cannot resurrect the nodes. Returns the count of
- * rows actually removed.
+ * Empty Trash UI BEFORE clearing local state. Returns the count of rows
+ * actually removed.
  */
 export async function emptyWorkspaceTrash(workspaceId: string): Promise<{ ok: boolean; purged: number }> {
   const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/trash/empty`, {

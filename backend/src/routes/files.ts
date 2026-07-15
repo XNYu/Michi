@@ -67,7 +67,7 @@ function desktopUploadRoot(): string {
  *
  * Resolution order:
  *   1. The persisted `workspaces.cwd` (the canonical session cwd). The frontend
- *      syncs `project.cwd` via POST /workspaces/:id/sync → saveWorkspace, so an
+ *      persists `project.cwd` via an explicit workspace command, so an
  *      Electron workspace opened against a user-picked folder has its real
  *      absolute cwd here — the SAME dir POST /chats runs the ClaudeSession in.
  *      This is what lets show_image files in a picked folder actually serve.

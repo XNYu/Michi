@@ -6,7 +6,6 @@ import {
   fetchWorkspaces,
   migrateLocalStorage,
   applyWorkspaceCommands,
-  syncWorkspace,
 } from '../services/api';
 import type { WorkspaceCommand } from '../services/api';
 import { findTreeIdForNode } from './tree';
@@ -31,8 +30,7 @@ import { API_BASE_URL } from '../config/env';
 
 // Note: the inbound load path for `Project.aiGlobalContext` lives in
 // `chatHydration.ts` (which actually maps backend workspace rows to Project
-// shape). This file owns the *outbound* save path: serializing the field into
-// the `workspaces.settings` JSON blob during /sync. The dedicated
+// shape). This file owns the outbound command-row serialization. The dedicated
 // POST /workspaces/:id/ai-global-context endpoint also writes the same field
 // directly, so the next load picks it up either way.
 
@@ -240,8 +238,8 @@ export function serializeWorkspaceRow(project: Project) {
     active_tree_id: project.activeTreeId || null,
     created_at: project.createdAt || Date.now(),
     updated_at: Date.now(),
-    // /workspaces/:id/sync forwards settings straight to saveWorkspace, which
-    // stores it as a TEXT column — pass a serialized JSON string (or null).
+    // The command handler stores settings in a TEXT column, so pass a
+    // serialized JSON string (or null).
     settings: Object.keys(settings).length > 0 ? JSON.stringify(settings) : null,
     // Soft-delete + archive + pin timestamps live on the row so a "deleted"
     // workspace stays in the trash across restarts. Always emit (number or
@@ -496,7 +494,7 @@ export function mergeWorkspaceDirtyDelta(
 export interface WorkspaceDirtyDelta {
   /** Nodes whose row changed → upsert these node rows. */
   nodeIds: Set<string>;
-  /** Nodes whose MESSAGE SET changed → upserts.messages + messageReconcileNodeIds. */
+  /** Nodes whose message set changed. Turn messages persist outside this queue. */
   messageNodeIds: Set<string>;
   /** Edges added/changed (by serialized edge id). */
   edgeUpsertIds: Set<string>;
@@ -567,9 +565,8 @@ export function accumulateWorkspaceDirtyDelta(
   };
 
   if (!prev) {
-    // Brand-new project: every entity is an upsert. The periodic full-sync
-    // also covers fresh projects, but mark entities so the very first delta
-    // (if it wins the race) carries the whole project.
+    // Brand-new project: mark every structural entity so the first command
+    // batch creates the whole workspace graph.
     d.workspaceChanged = true;
     for (const nid of cur.chatIds) {
       d.nodeIds.add(nid);
@@ -1241,15 +1238,14 @@ interface UseWorkspacePersistenceArgs {
   setActiveProjectId: Dispatch<SetStateAction<string | null>>;
   setNodes: Dispatch<SetStateAction<Record<string, ChatNodeState>>>;
   setHydrated: Dispatch<SetStateAction<boolean>>;
-  /** Authenticated user ID. When present, workspace state is stored under
-   *  michi:v1:state:<userId> instead of the shared michi:v1:state key. */
+  /** Authenticated user ID used to locate a pre-v2 localStorage migration payload. */
   userId?: string;
   /** Stable per-window id used to resolve activeProjectId during async hydration. */
   windowId?: string;
   /**
    * Held true by destructive async actions while they await a backend purge
-   * endpoint. The 2s sync interval inspects this and skips its POST /sync
-   * tick so a pre-purge snapshot can't race-cover the explicit DELETE.
+   * endpoint. The 2s command flush inspects this so structural commands do not
+   * race the explicit DELETE.
    * Optional for backwards compat with tests that mount the hook directly.
    */
   syncPausedRef?: MutableRefObject<boolean>;
@@ -1269,9 +1265,7 @@ export function useWorkspacePersistence({
   windowId,
   syncPausedRef,
 }: UseWorkspacePersistenceArgs) {
-  // Compute the active localStorage key for this session. When userId is known,
-  // use the per-user namespaced key; fall back to the legacy shared key so that
-  // no-auth / Electron deployments continue to work unmodified.
+  // Compute the localStorage key used only for one-time migration and cleanup.
   const storageKey = userId ? buildStateKey(userId) : LEGACY_STATE_KEY;
   const storageKeyRef = useRef(storageKey);
   storageKeyRef.current = storageKey;
@@ -1299,53 +1293,27 @@ export function useWorkspacePersistence({
     }
   }, [userId]);
   const projectsRef = useRef(projects);
-  const activeProjectIdRef = useRef(activeProjectId);
   const hydratedRef = useRef(hydrated);
   const dirtyRef = useRef(false);
   const dirtyProjectIdsRef = useRef(new Set<string>());
   // Entity-granular pending delta per dirty project, accumulated across ticks
-  // and drained on a successful backend flush (in lockstep with the
-  // project-granular dirty refs). The localStorage path stays project-granular;
-  // only the backend /sync path consumes this finer map.
+  // and drained by explicit command batches.
   const dirtyDeltaByProjectRef = useRef(new Map<string, WorkspaceDirtyDelta>());
   const pendingCommandDeltaByProjectRef = useRef(new Map<string, WorkspaceDirtyDelta>());
   const nodeCommandProjectionRef = useRef(new Map<string, string>());
-  const authoritativePersistenceRef = useRef(false);
-  // L2 server-authoritative rev tracking. Kept in dedicated refs (NOT on the
-  // reactive entities) so advancing a rev on ack cannot re-trigger the
-  // dirty-tracking effect and cannot perturb the byte-identical row
-  // serializers. Keys: per-row last-seen rev (key = serializer/backend row id)
-  // and per-workspace last-seen sync_rev (key = project id).
-  const revByEntityIdRef = useRef(new Map<string, number>());
-  const syncRevByProjectRef = useRef(new Map<string, number>());
-  // Timestamp of the last FULL (mode:'full') backend sync. The flush sends a
-  // full snapshot instead of a delta once this is older than the cadence,
-  // self-healing any entity-level dirty mis-attribution.
-  const lastFullSyncAtRef = useRef(0);
-  // Projects whose backend sync did NOT durably land (rejected / ok:false)
-  // AFTER the local dirty refs were already cleared. Re-flushed as a FULL
-  // snapshot on the next tick so a transient backend failure (SQLITE_BUSY past
-  // busy_timeout, network blip, 500) can never silently drop a change. Each id
-  // is cleared on a confirmed-accepted sync. (spec §18/D12 "backend-dirty 集合")
-  const backendDirtyRef = useRef(new Set<string>());
   const workspaceSyncQueueRef = useRef<WorkspaceSyncQueue | null>(null);
   if (!workspaceSyncQueueRef.current) {
     workspaceSyncQueueRef.current = new WorkspaceSyncQueue((err, projectId) => {
       console.warn(`workspace persistence queue task failed (${projectId}):`, err);
-      if (authoritativePersistenceRef.current) dirtyRef.current = true;
+      dirtyRef.current = true;
     });
   }
-  // Index needs rewriting when the project list or activeProjectId changes,
-  // independent of whether any project's content changed.
-  const indexDirtyRef = useRef(false);
   // Guards against scheduling multiple idle flushes before the first one runs.
   const idleScheduledRef = useRef(false);
   const justHydratedRef = useRef(false);
   const prevProjectsRef = useRef<Project[]>(projects);
   const prevNodesRef = useRef<Record<string, ChatNodeState>>(nodes);
-  const prevActiveProjectIdRef = useRef<string | null>(activeProjectId);
   projectsRef.current = projects;
-  activeProjectIdRef.current = activeProjectId;
   hydratedRef.current = hydrated;
 
   // Mark dirty when state changes (only after hydration completes).
@@ -1358,7 +1326,6 @@ export function useWorkspacePersistence({
       justHydratedRef.current = true;
       prevProjectsRef.current = projects;
       prevNodesRef.current = nodes;
-      prevActiveProjectIdRef.current = activeProjectId;
       for (const project of projects) {
         for (const nodeId of project.chatIds) {
           const row = serializeNodeRow(project, nodes, nodeId);
@@ -1376,14 +1343,12 @@ export function useWorkspacePersistence({
     // accumulateWorkspaceDirtyDelta helper (which owns the symmetric upsert/
     // delete invariant and the node-diff logic).
     const changed = new Set<string>();
-    let listChanged = false;
     const prevProjectById = new Map(prevProjectsRef.current.map((pp) => [pp.id, pp] as const));
 
     for (const p of projects) {
       const prev = prevProjectById.get(p.id);
       if (!prev) {
         changed.add(p.id);
-        listChanged = true; // added
       } else if (prev !== p) {
         changed.add(p.id); // content changed
       }
@@ -1402,11 +1367,9 @@ export function useWorkspacePersistence({
     for (const pp of prevProjectsRef.current) {
       if (!projects.find((p) => p.id === pp.id)) {
         changed.add(pp.id);
-        listChanged = true; // removed
         // Whole project removed. We do NOT attempt entity-level deletes here —
-        // workspace deletion goes through dedicated DELETE endpoints, and the
-        // periodic full-sync self-heal reconciles anything stale. Drop any
-        // pending delta for it so we don't ship a delta for a gone project.
+        // workspace deletion goes through dedicated DELETE endpoints. Drop any
+        // pending commands for it so we don't write a gone project.
         dirtyDeltaByProjectRef.current.delete(pp.id);
       }
     }
@@ -1430,31 +1393,20 @@ export function useWorkspacePersistence({
         }
       }
     }
-    const activeChanged = activeProjectId !== prevActiveProjectIdRef.current;
-    if (changed.size > 0 || activeChanged) {
+    if (changed.size > 0) {
       dirtyRef.current = true;
       for (const id of Array.from(changed)) dirtyProjectIdsRef.current.add(id);
-      if (listChanged || activeChanged) indexDirtyRef.current = true;
     }
     prevProjectsRef.current = projects;
     prevNodesRef.current = nodes;
-    prevActiveProjectIdRef.current = activeProjectId;
-  }, [projects, activeProjectId, nodes]); // eslint-disable-line react-hooks/exhaustive-deps -- hydrated intentionally excluded to avoid marking dirty on hydration
+  }, [projects, nodes]); // eslint-disable-line react-hooks/exhaustive-deps -- hydrated intentionally excluded to avoid marking dirty on hydration
 
-  // Periodic save: flush changed projects to localStorage + backend every 2s
-  // when dirty. The localStorage write is scoped to changed projects and run
-  // off the critical path via requestIdleCallback; dirty refs are cleared
-  // INSIDE the flush (not before scheduling) so a pending idle flush cannot be
-  // lost if the tab unloads first.
+  // Periodically turn structural state changes into explicit v2 commands.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const intervalId = window.setInterval(() => {
-      // Fire when something changed locally OR a prior backend sync still owes
-      // a retry. Without the backendDirtyRef clause, a project that failed to
-      // sync but has no new local edits would never get re-sent.
       if (
         (!dirtyRef.current
-          && backendDirtyRef.current.size === 0
           && pendingCommandDeltaByProjectRef.current.size === 0)
         || !hydratedRef.current
       ) return;
@@ -1465,201 +1417,45 @@ export function useWorkspacePersistence({
 
       const flush = () => {
         idleScheduledRef.current = false;
-        // Snapshot dirty state, then clear ONLY on a successful write so a
-        // failed flush is retried on the next tick.
-        const changedIds = new Set(Array.from(dirtyProjectIdsRef.current));
-        const indexDirty = indexDirtyRef.current;
-
-        // Snapshot the per-project deltas alongside the project-granular set so
-        // both clear together only on a successful local write.
         const deltaSnapshot = new Map(dirtyDeltaByProjectRef.current);
 
-        if (authoritativePersistenceRef.current) {
-          for (const [projectId, delta] of deltaSnapshot) {
-            const existing = pendingCommandDeltaByProjectRef.current.get(projectId) ?? emptyWorkspaceDirtyDelta();
-            pendingCommandDeltaByProjectRef.current.set(
-              projectId,
-              mergeWorkspaceDirtyDelta(existing, delta),
-            );
-          }
+        for (const [projectId, delta] of deltaSnapshot) {
+          const existing = pendingCommandDeltaByProjectRef.current.get(projectId) ?? emptyWorkspaceDirtyDelta();
+          pendingCommandDeltaByProjectRef.current.set(
+            projectId,
+            mergeWorkspaceDirtyDelta(existing, delta),
+          );
         }
 
-        try {
-          if (!authoritativePersistenceRef.current) {
-            writeScopedLocalStorage({
-              baseKey: storageKeyRef.current,
-              projects: projectsRef.current,
-              activeProjectId: activeProjectIdRef.current,
-              nodes: nodesRef.current,
-              changedIds,
-              indexDirty,
-            });
-          }
-          dirtyRef.current = false;
-          dirtyProjectIdsRef.current.clear();
-          dirtyDeltaByProjectRef.current.clear();
-          indexDirtyRef.current = false;
-        } catch (err) {
-          console.warn('persist failed:', err);
-          // dirtyRef stays true -> next tick retries.
-        }
-
-        if (authoritativePersistenceRef.current) {
-          for (const project of projectsRef.current) {
-            if (!pendingCommandDeltaByProjectRef.current.has(project.id)) continue;
-            const projectId = project.id;
-            const queue = workspaceSyncQueueRef.current!;
-            queue.enqueue(projectId, async () => {
-              const latestProject = projectsRef.current.find((candidate) => candidate.id === projectId);
-              const pending = pendingCommandDeltaByProjectRef.current.get(projectId);
-              if (!latestProject || !pending) return;
-              const batch = buildExplicitWorkspaceCommands(
-                latestProject,
-                nodesRef.current,
-                pending,
-                nodeCommandProjectionRef.current,
-              );
-              if (batch.commands.length === 0) {
-                if (!queue.hasPending(projectId)) pendingCommandDeltaByProjectRef.current.delete(projectId);
-                return;
-              }
-              const operationId = `cmd-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-              await applyWorkspaceCommands(projectId, operationId, batch.commands);
-              for (const [nodeId, projection] of batch.nodeProjectionUpdates) {
-                nodeCommandProjectionRef.current.set(nodeId, projection);
-              }
-              if (!queue.hasPending(projectId) && !dirtyProjectIdsRef.current.has(projectId)) {
-                pendingCommandDeltaByProjectRef.current.delete(projectId);
-              }
-            });
-          }
-          return;
-        }
-
-        // Periodic full-sync self-heal for legacy protocol only: on a slow cadence (every 60s) send a
-        // FULL snapshot instead of a delta for the dirty projects. This heals
-        // any entity-level dirty mis-attribution that a long delta-only streak
-        // could accumulate. The localStorage path above is unchanged either way.
-        const FULL_SYNC_INTERVAL_MS = 60_000;
-        const doFullSync = Date.now() - lastFullSyncAtRef.current > FULL_SYNC_INTERVAL_MS;
-        if (doFullSync) lastFullSyncAtRef.current = Date.now();
-
-        // Backend sync: only projects whose CONTENT changed. Uses the snapshot
-        // regardless of the local write outcome (idempotent delete+reinsert).
-        // Per project, send a DELTA (cheap, incremental) — or a FULL snapshot on
-        // the slow self-heal cadence.
-        // Projects to push this flush: those whose content changed since the
-        // last flush, PLUS any owed a retry from a prior backend failure.
-        const backendIds = new Set<string>(changedIds);
-        for (const id of backendDirtyRef.current) backendIds.add(id);
+        dirtyRef.current = false;
+        dirtyProjectIdsRef.current.clear();
+        dirtyDeltaByProjectRef.current.clear();
 
         for (const project of projectsRef.current) {
-          if (!backendIds.has(project.id)) continue;
+          if (!pendingCommandDeltaByProjectRef.current.has(project.id)) continue;
           const projectId = project.id;
-          const syncQueue = workspaceSyncQueueRef.current!;
-          const queuedBehindInFlight = syncQueue.isInFlight(projectId);
-          // A retry's per-project delta was cleared when its earlier flush
-          // cleared the dirty refs, so re-send it as a FULL snapshot of current
-          // state — always correct and self-healing — exactly like the slow
-          // full-sync cadence.
-          const isRetry = backendDirtyRef.current.has(projectId);
-          const sendFull = doFullSync || isRetry || queuedBehindInFlight;
-          syncQueue.enqueue(projectId, async () => {
-            // Queued tasks intentionally build from the latest refs at execution
-            // time and send a full snapshot. Replacing an older queued task is
-            // therefore lossless: the latest snapshot contains all prior edits.
-            const latestProject = projectsRef.current.find((p) => p.id === projectId);
-            if (!latestProject) return;
-            const body = sendFull
-              ? serializeWorkspaceForSync(latestProject, nodesRef.current)
-              : serializeWorkspaceDelta(
-                  latestProject,
-                  nodesRef.current,
-                  deltaSnapshot.get(projectId) ?? emptyWorkspaceDirtyDelta(),
-                );
-            const sentIds = collectSentRowIds(body);
-            const payload = {
-              ...body,
-              baseRevs: collectBaseRevs(sentIds, revByEntityIdRef.current),
-              ...(sendFull
-                ? { baseSyncRev: syncRevByProjectRef.current.get(projectId) ?? null }
-                : {}),
-            };
-
-            try {
-              const resp = await syncWorkspace(projectId, payload);
-              // Not durably accepted (rejected handled in .catch; here: no body
-              // or explicit ok:false) → leave the project owed a retry.
-              if (shouldRetryBackendSync(resp, false)) {
-                backendDirtyRef.current.add(projectId);
-                dirtyRef.current = true; // ensure the next tick wakes the flush
-                return;
-              }
-              // Tombstoned workspace short-circuit — nothing to advance/adopt.
-              if (resp.ignored) {
-                if (!syncQueue.hasPending(projectId)) backendDirtyRef.current.delete(projectId);
-                return;
-              }
-              const conflicts = resp.conflicts ?? [];
-              const conflictIds = conflicts.map((c) => c.id);
-              const currentSyncRev = syncRevByProjectRef.current.get(projectId);
-              const incomingSyncRev = typeof resp.newRev === 'number' ? resp.newRev : undefined;
-              const staleResponse =
-                currentSyncRev !== undefined &&
-                incomingSyncRev !== undefined &&
-                incomingSyncRev < currentSyncRev;
-              if (staleResponse) return;
-              // Advance every accepted row's local rev → newRev (the self-
-              // conflict fix). Because rev is in a ref, this does NOT re-dirty
-              // anything. Also advance the workspace sync_rev.
-              if (typeof resp.newRev === 'number') {
-                advanceAcceptedRevs(revByEntityIdRef.current, sentIds, conflictIds, resp.newRev);
-                advanceWorkspaceSyncRev(syncRevByProjectRef.current, projectId, resp.newRev);
-              }
-              // Per-row adopt-server for conflicts (§5.3 converge-to-server):
-              // replace ONLY the conflicted ids in reactive state; unconflicted
-              // local edits stay. Do NOT re-pull the whole workspace.
-              if (conflicts.length > 0) {
-                console.warn('[sync] conflict', projectId, conflictIds);
-                const hasNewerLocalWork =
-                  syncQueue.hasPending(projectId) || dirtyProjectIdsRef.current.has(projectId);
-                if (!shouldAdoptSyncConflicts({
-                  currentSyncRev,
-                  incomingSyncRev,
-                  hasNewerLocalWork,
-                })) {
-                  recordConflictRevs(conflicts, revByEntityIdRef.current);
-                  backendDirtyRef.current.add(projectId);
-                  dirtyRef.current = true;
-                  return;
-                }
-                const curProjects = projectsRef.current;
-                const curNodes = nodesRef.current;
-                const adopted = adoptConflictsIntoState(
-                  curProjects,
-                  curNodes,
-                  conflicts,
-                  projectId,
-                  revByEntityIdRef.current,
-                );
-                if (adopted.nodes !== curNodes) {
-                  nodesRef.current = adopted.nodes;
-                  setNodes(adopted.nodes);
-                }
-                if (adopted.projects !== curProjects) {
-                  setProjects(adopted.projects);
-                }
-              }
-              if (!syncQueue.hasPending(projectId) && !dirtyProjectIdsRef.current.has(projectId)) {
-                backendDirtyRef.current.delete(projectId);
-              }
-            } catch (err) {
-              console.warn(`workspace sync failed (${projectId}):`, err);
-              // Re-mark so the next tick retries (full snapshot). Without this a
-              // transient failure (SQLITE_BUSY past busy_timeout, network, 500)
-              // is silently dropped after the dirty refs were already cleared.
-              backendDirtyRef.current.add(projectId);
-              dirtyRef.current = true;
+          const queue = workspaceSyncQueueRef.current!;
+          queue.enqueue(projectId, async () => {
+            const latestProject = projectsRef.current.find((candidate) => candidate.id === projectId);
+            const pending = pendingCommandDeltaByProjectRef.current.get(projectId);
+            if (!latestProject || !pending) return;
+            const batch = buildExplicitWorkspaceCommands(
+              latestProject,
+              nodesRef.current,
+              pending,
+              nodeCommandProjectionRef.current,
+            );
+            if (batch.commands.length === 0) {
+              if (!queue.hasPending(projectId)) pendingCommandDeltaByProjectRef.current.delete(projectId);
+              return;
+            }
+            const operationId = `cmd-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            await applyWorkspaceCommands(projectId, operationId, batch.commands);
+            for (const [nodeId, projection] of batch.nodeProjectionUpdates) {
+              nodeCommandProjectionRef.current.set(nodeId, projection);
+            }
+            if (!queue.hasPending(projectId) && !dirtyProjectIdsRef.current.has(projectId)) {
+              pendingCommandDeltaByProjectRef.current.delete(projectId);
             }
           });
         }
@@ -1675,77 +1471,35 @@ export function useWorkspacePersistence({
     return () => window.clearInterval(intervalId);
   }, [nodesRef]); // eslint-disable-line react-hooks/exhaustive-deps -- syncPausedRef is a stable MutableRefObject; .current is read at call time
 
-  // Flush on beforeunload: synchronous scoped localStorage write + best-effort
-  // SQLite sync. Cannot use requestIdleCallback here (it won't run during
-  // unload), so this reads the CURRENT dirty refs directly. If an idle flush
-  // was pending (refs not yet cleared), this captures it; if it already ran
-  // (refs cleared), changedIds is empty and nothing is rewritten.
+  // Flush unsent structural commands with sendBeacon during unload.
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (authoritativePersistenceRef.current) {
-        if (typeof navigator.sendBeacon !== 'function') return;
-        const deltas = new Map(pendingCommandDeltaByProjectRef.current);
-        for (const [projectId, delta] of dirtyDeltaByProjectRef.current) {
-          deltas.set(
-            projectId,
-            mergeWorkspaceDirtyDelta(deltas.get(projectId) ?? emptyWorkspaceDirtyDelta(), delta),
-          );
-        }
-        for (const [projectId, delta] of deltas) {
-          const project = projectsRef.current.find((candidate) => candidate.id === projectId);
-          if (!project) continue;
-          const batch = buildExplicitWorkspaceCommands(
-            project,
-            nodesRef.current,
-            delta,
-            nodeCommandProjectionRef.current,
-          );
-          if (batch.commands.length === 0) continue;
-          const payload = JSON.stringify({
-            operationId: `unload-${projectId}-${Date.now()}`,
-            commands: batch.commands,
-          });
-          navigator.sendBeacon(
-            `${API_BASE_URL}/workspaces/${encodeURIComponent(projectId)}/commands`,
-            new Blob([payload], { type: 'application/json' }),
-          );
-        }
-        return;
+      if (typeof navigator.sendBeacon !== 'function') return;
+      const deltas = new Map(pendingCommandDeltaByProjectRef.current);
+      for (const [projectId, delta] of dirtyDeltaByProjectRef.current) {
+        deltas.set(
+          projectId,
+          mergeWorkspaceDirtyDelta(deltas.get(projectId) ?? emptyWorkspaceDirtyDelta(), delta),
+        );
       }
-      const changedIds = new Set(Array.from(dirtyProjectIdsRef.current));
-      // Refs are intentionally NOT cleared here — the tab is unloading, so
-      // next-tick cleanup is irrelevant.
-      try {
-        writeScopedLocalStorage({
-          baseKey: storageKeyRef.current,
-          projects: projectsRef.current,
-          activeProjectId: activeProjectIdRef.current,
-          nodes: nodesRef.current,
-          changedIds,
-          indexDirty: indexDirtyRef.current,
+      for (const [projectId, delta] of deltas) {
+        const project = projectsRef.current.find((candidate) => candidate.id === projectId);
+        if (!project) continue;
+        const batch = buildExplicitWorkspaceCommands(
+          project,
+          nodesRef.current,
+          delta,
+          nodeCommandProjectionRef.current,
+        );
+        if (batch.commands.length === 0) continue;
+        const payload = JSON.stringify({
+          operationId: `unload-${projectId}-${Date.now()}`,
+          commands: batch.commands,
         });
-      } catch {
-        // Best-effort: quota errors or private browsing may prevent writes.
-      }
-      // Best-effort SQLite flush for changed projects. NOTE: browsers cancel
-      // pending fetch() on unload, so this often silently fails; localStorage
-      // above is the reliable path and SQLite catches up on next interval /
-      // restart.
-      if (authoritativePersistenceRef.current) return;
-      for (const project of projectsRef.current) {
-        if (!changedIds.has(project.id)) continue;
-        const syncQueue = workspaceSyncQueueRef.current!;
-        // Never bypass the per-workspace single-flight guard during unload. If
-        // a request is already active, localStorage above is the reliable copy;
-        // starting another best-effort fetch would recreate the response race.
-        if (syncQueue.isInFlight(project.id)) continue;
-        syncQueue.enqueue(project.id, async () => {
-          try {
-            await syncWorkspace(project.id, serializeWorkspaceForSync(project, nodesRef.current));
-          } catch {
-            // Best effort only; the tab is unloading.
-          }
-        });
+        navigator.sendBeacon(
+          `${API_BASE_URL}/workspaces/${encodeURIComponent(projectId)}/commands`,
+          new Blob([payload], { type: 'application/json' }),
+        );
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1769,15 +1523,19 @@ export function useWorkspacePersistence({
       try {
         try {
           const capabilities = await fetchPersistenceCapabilities();
-          authoritativePersistenceRef.current =
+          const v2Available =
             capabilities.protocolVersion >= 2
             && capabilities.authoritativeTurnPersistence
             && capabilities.durableNodePrerequisite
             && capabilities.explicitCommands
             && capabilities.backgroundWorkspaceSync === false;
+          if (!v2Available) {
+            console.warn('backend does not advertise the required persistence v2 capabilities');
+          }
         } catch {
-          // Old backend: retain the queued legacy sync path for compatibility.
-          authoritativePersistenceRef.current = false;
+          // Backend startup may briefly race the renderer. Persistence v2 is
+          // still the only supported path; readiness retries elsewhere will
+          // reconnect without enabling the removed legacy snapshot writer.
         }
         const fullWorkspaces = await fetchAllWorkspaces();
         if (cancelled) return;
@@ -1785,11 +1543,6 @@ export function useWorkspacePersistence({
           const rawBackend = fullWorkspaces.filter(
             (w): w is Record<string, unknown> => !!w && typeof w === 'object',
           );
-          // Seed rev refs from the raw backend rows BEFORE hydrating, so the
-          // first /sync after boot carries correct baseRevs (key = serializer
-          // row id). The localStorage-only path below leaves the refs empty
-          // (→ baseRev null → server accepts; correct for offline).
-          populateRevsFromBackend(rawBackend, revByEntityIdRef.current, syncRevByProjectRef.current);
           const backendState = hydrateBackendWorkspaces(
             rawBackend,
             initialActiveProjectIdRef.current,
@@ -1798,9 +1551,7 @@ export function useWorkspacePersistence({
             setProjects(backendState.projects);
             setActiveProjectId(resolveActiveProjectForWindow(backendState.activeProjectId));
             installNodes(backendState.nodes);
-            if (authoritativePersistenceRef.current) {
-              clearDurableLocalStorageMirror(storageKeyRef.current);
-            }
+            clearDurableLocalStorageMirror(storageKeyRef.current);
           }
           finishHydration('backend');
         } else {
@@ -1825,15 +1576,11 @@ export function useWorkspacePersistence({
                   )
                 ).filter((w): w is Record<string, unknown> => !!w && typeof w === 'object');
                 if (cancelled) return;
-                // Seed rev refs from the post-migration backend rows too.
-                populateRevsFromBackend(full, revByEntityIdRef.current, syncRevByProjectRef.current);
                 const migrated = hydrateBackendWorkspaces(full, lsState.activeProjectId);
                 setProjects(migrated.projects);
                 setActiveProjectId(resolveActiveProjectForWindow(migrated.activeProjectId));
                 installNodes(migrated.nodes);
-                if (authoritativePersistenceRef.current) {
-                  clearDurableLocalStorageMirror(storageKeyRef.current);
-                }
+                clearDurableLocalStorageMirror(storageKeyRef.current);
                 finishHydration('migration');
               }
             } catch {

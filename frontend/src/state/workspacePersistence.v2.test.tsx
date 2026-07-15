@@ -5,7 +5,6 @@ import type { ChatNodeState, Project } from './chatTypes';
 
 const apiMocks = vi.hoisted(() => ({
   applyWorkspaceCommands: vi.fn(async () => {}),
-  syncWorkspace: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('../services/api', () => ({
@@ -22,7 +21,6 @@ vi.mock('../services/api', () => ({
   fetchWorkspaces: vi.fn(),
   migrateLocalStorage: vi.fn(),
   applyWorkspaceCommands: apiMocks.applyWorkspaceCommands,
-  syncWorkspace: apiMocks.syncWorkspace,
 }));
 
 import { stateProjectKey, stateIndexKey, useWorkspacePersistence } from './workspacePersistence';
@@ -72,7 +70,6 @@ describe('v2 authoritative workspace persistence', () => {
     vi.useFakeTimers();
     localStorage.clear();
     apiMocks.applyWorkspaceCommands.mockClear();
-    apiMocks.syncWorkspace.mockClear();
     Object.defineProperty(window, 'requestIdleCallback', { configurable: true, value: undefined });
   });
 
@@ -84,13 +81,11 @@ describe('v2 authoritative workspace persistence', () => {
     act(() => result.current.streamChunk());
     await act(async () => vi.advanceTimersByTimeAsync(2_000));
 
-    expect(apiMocks.syncWorkspace).not.toHaveBeenCalled();
     expect(apiMocks.applyWorkspaceCommands).not.toHaveBeenCalled();
     expect(localStorage.getItem(stateIndexKey('michi:v1:state'))).toBeNull();
     expect(localStorage.getItem(stateProjectKey('michi:v1:state', 'ws-1'))).toBeNull();
 
     act(() => window.dispatchEvent(new Event('beforeunload')));
-    expect(apiMocks.syncWorkspace).not.toHaveBeenCalled();
   });
 
   it('flushes an immediate-close domain mutation with an explicit command beacon, never /sync', async () => {
@@ -101,7 +96,6 @@ describe('v2 authoritative workspace persistence', () => {
     act(() => result.current.renameWorkspace('Renamed'));
     act(() => window.dispatchEvent(new Event('beforeunload')));
 
-    expect(apiMocks.syncWorkspace).not.toHaveBeenCalled();
     expect(sendBeacon).toHaveBeenCalledTimes(1);
     const [url, body] = sendBeacon.mock.calls[0];
     expect(String(url)).toContain('/workspaces/ws-1/commands');
