@@ -231,6 +231,9 @@ export interface ChatNodeState {
   followUpsGenerating?: boolean;
   /** Title parsed from the agent's reply. null/undefined falls back to first user msg. */
   title?: string;
+  /** Transient marker for titles created by a user/domain action. Runtime titles
+   * are persisted by the backend turn writer and must not schedule a second write. */
+  titleNeedsPersistence?: boolean;
   /** Agent-maintained one-paragraph summary rendered in the active thread's Branches document. */
   branchOverview?: string;
   /** Transient assistant message id that supplied the structured SSE overview.

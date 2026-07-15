@@ -1,4 +1,4 @@
-import { migrateAssistantToBlocks, parseAssistantBlocks } from './assistantBlocks';
+import { finalizeAssistantBlocks, migrateAssistantToBlocks, parseAssistantBlocks } from './assistantBlocks';
 import type {
   ChatMessage,
   ChatNodeState,
@@ -97,9 +97,26 @@ function parseToolCalls(raw: unknown): ToolCallState[] {
       title: asString(t.title) ?? '',
       status: asString(t.status) ?? '',
       kind: asString(t.kind),
+      detail: asString(t.detail),
+      inputJson: asString(t.inputJson),
+      output: asString(t.output),
       textOffset: asOptionalNumber(t.textOffset),
     }];
   });
+}
+
+function parseMessageMetadata(raw: unknown): Record<string, unknown> {
+  let value = raw;
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function parseComposerDraft(raw: unknown): ComposerDraft | undefined {
@@ -264,6 +281,7 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
   const nodeId = asString(row.node_id) ?? '';
   const role = row.role === 'assistant' ? 'assistant' : 'user';
   const rawContent = typeof row.content === 'string' ? row.content : '';
+  const metadata = parseMessageMetadata(row.metadata);
   const baseMsg: ChatMessage = {
     id: asString(row.id) ?? `${nodeId}-${asNumber(row.seq, fallbackSeq)}`,
     role,
@@ -272,8 +290,24 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
     blocks: role === 'assistant' ? parseAssistantBlocks(row.blocks) : undefined,
     streaming: false,
     createdAt: asOptionalNumber(row.created_at),
+    quotedText: asString(metadata.quotedText),
+    attachments: Array.isArray(metadata.attachments)
+      ? metadata.attachments.flatMap((item) => {
+          if (!item || typeof item !== 'object') return [];
+          const attachment = item as Record<string, unknown>;
+          const name = asString(attachment.name);
+          const absPath = asString(attachment.absPath);
+          return name && absPath ? [{ name, absPath }] : [];
+        })
+      : undefined,
+    comments: Array.isArray(metadata.comments)
+      ? metadata.comments as ChatMessage['comments']
+      : undefined,
+    plan: Array.isArray(metadata.plan)
+      ? metadata.plan as ChatMessage['plan']
+      : undefined,
   };
-  return role === 'assistant' ? migrateAssistantToBlocks(baseMsg) : baseMsg;
+  return role === 'assistant' ? finalizeAssistantBlocks(migrateAssistantToBlocks(baseMsg)) : baseMsg;
 }
 
 /**

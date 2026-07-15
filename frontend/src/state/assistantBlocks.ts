@@ -1,5 +1,14 @@
-import { extractAssistantMetadata, stripSentinelsStreamingSafe } from './assistantParsing';
+import { stripSentinelsStreamingSafe } from './assistantParsing';
 import type { AssistantBlock, ChatMessage, ToolCallState } from './chatTypes';
+import {
+  applyTurnEvent,
+  extractTurnMetadata,
+  finalizeTurnContent,
+  type ChatStreamEvent,
+  type DurableAssistantBlock,
+  type DurableToolCall,
+  type DurableTurnSnapshot,
+} from 'michi-shared';
 
 export type AssistantSection = 'answer' | 'thinking';
 
@@ -78,15 +87,62 @@ export function assistantThinkingText(m: ChatMessage): string {
 }
 
 export function assistantPersistenceContent(m: ChatMessage): string {
-  return m.role === 'assistant' ? assistantAnswerVisibleText(m) : m.text;
+  return m.role === 'assistant' ? finalizeTurnContent(assistantAnswerRawText(m)) : m.text;
 }
 
 export function assistantMetadata(m: ChatMessage): { title: string | null; branchOverview: string | null; followUps: string[] } {
-  return extractAssistantMetadata(assistantAnswerRawText(m));
+  const metadata = extractTurnMetadata(assistantAnswerRawText(m));
+  return {
+    title: metadata.title ?? null,
+    branchOverview: metadata.branchOverview ?? null,
+    followUps: metadata.followUps ?? [],
+  };
 }
 
 export function visibleMessageText(m: ChatMessage): string {
   return m.role === 'assistant' ? assistantAnswerVisibleText(m) : m.text;
+}
+
+/**
+ * Frontend adapter around the shared durable projector. Durable stream event
+ * placement lives in shared; this layer preserves UI-only ChatMessage fields.
+ */
+export function projectAssistantStreamEvent(
+  message: ChatMessage,
+  workspaceId: string,
+  event: ChatStreamEvent,
+): ChatMessage {
+  if (message.role !== 'assistant') return message;
+  const startedAt = message.createdAt ?? 0;
+  const snapshot: DurableTurnSnapshot = {
+    version: 1,
+    turnId: event.data.turnId ?? `frontend-${message.id}`,
+    nodeId: '',
+    workspaceId,
+    assistantId: message.id,
+    userMessage: null,
+    assistantMessage: {
+      id: message.id,
+      role: 'assistant',
+      content: assistantPersistenceContent(message),
+      blocks: (message.blocks ?? []) as DurableAssistantBlock[],
+      toolCalls: message.toolCalls as DurableToolCall[],
+      plan: message.plan,
+      createdAt: startedAt,
+    },
+    nodeMetadata: {},
+    status: 'active',
+    lastAppliedSeq: -1,
+    startedAt,
+  };
+  const projected = applyTurnEvent(snapshot, event);
+  return {
+    ...message,
+    blocks: projected.assistantMessage.blocks as AssistantBlock[],
+    toolCalls: projected.assistantMessage.toolCalls as ToolCallState[],
+    plan: projected.assistantMessage.plan,
+    streaming: projected.status === 'active' ? message.streaming : false,
+  };
 }
 
 function currentSection(blocks: readonly AssistantBlock[]): AssistantSection {

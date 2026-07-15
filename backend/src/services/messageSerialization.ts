@@ -134,6 +134,7 @@ export function normalizeIncomingMessageRow(
         content: contentFromIncomingMessage(raw),
         blocks: normalizeJsonField(raw.blocks),
         tool_calls: normalizeJsonField(raw.tool_calls ?? raw.toolCalls),
+        metadata: normalizeJsonField(raw.metadata),
         seq,
         created_at: typeof raw.created_at === "number"
             ? raw.created_at

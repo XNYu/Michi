@@ -4,6 +4,7 @@ import { ChatHub } from '../src/agents/chatHub';
 import type { AgentSession } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import type { ChatStreamEvent } from 'michi-shared';
+import type { DurableTurnSnapshot } from 'michi-shared';
 
 function asyncIteratorFrom(events: NormalizedEvent[]): AsyncIterableIterator<NormalizedEvent> {
   let i = 0;
@@ -27,9 +28,25 @@ function sessionFrom(events: NormalizedEvent[]): AgentSession {
   };
 }
 
+function hubWithPersistence(overrides: Partial<{
+  begin(snapshot: DurableTurnSnapshot): void;
+  checkpoint(snapshot: DurableTurnSnapshot): void;
+  finalize(snapshot: DurableTurnSnapshot): void;
+}> = {}): ChatHub {
+  return new ChatHub({
+    retentionMs: 100,
+    workspaceIdForNode: () => 'ws-test',
+    persistence: {
+      begin: overrides.begin ?? (() => {}),
+      checkpoint: overrides.checkpoint ?? (() => {}),
+      finalize: overrides.finalize ?? (() => {}),
+    },
+  });
+}
+
 describe('ChatHub.startTurn', () => {
   it('publishes branch_overview before done on the owner message stream', async () => {
-    const hub = new ChatHub({ retentionMs: 100 });
+    const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
     hub.subscribe('owner-chat', {
       send: (ev) => received.push(ev),
@@ -54,7 +71,7 @@ describe('ChatHub.startTurn', () => {
   });
 
   it('uses structured overview metadata without emitting a duplicate sentinel fallback', async () => {
-    const hub = new ChatHub({ retentionMs: 100 });
+    const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
     hub.subscribe('structured-overview-chat', {
       send: (ev) => received.push(ev),
@@ -81,11 +98,154 @@ describe('ChatHub.startTurn', () => {
       'structured overview must arrive before done',
     );
   });
+
+  it('commits the canonical turn before broadcasting persisted done', async () => {
+    const order: string[] = [];
+    let begun: DurableTurnSnapshot | undefined;
+    let finalized: DurableTurnSnapshot | undefined;
+    let wirePrompt = '';
+    const hub = hubWithPersistence({
+      begin: (snapshot) => { begun = snapshot; },
+      finalize: (snapshot) => { finalized = snapshot; order.push('finalize'); },
+    });
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('durable-chat', {
+      send: (ev) => {
+        received.push(ev);
+        if (ev.event === 'done') order.push('done');
+      },
+      close: () => {},
+    });
+    const session = sessionFrom([
+      { kind: 'chunk', text: 'durable answer' },
+      { kind: 'turn_end', stopReason: 'end_turn' },
+    ]);
+    session.send = (prompt) => {
+      wirePrompt = prompt;
+      return asyncIteratorFrom([
+        { kind: 'chunk', text: 'durable answer' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]);
+    };
+
+    const { done } = hub.startTurn({
+      chatId: 'durable-chat',
+      nodeId: 'durable-node',
+      text: 'wire prompt with injected context',
+      displayText: 'visible user text',
+      userMetadata: { quotedText: 'quote' },
+      session,
+      turnId: 'turn-durable',
+    });
+    await done;
+
+    assert.equal(wirePrompt, 'wire prompt with injected context');
+    assert.equal(begun?.userMessage?.content, 'visible user text');
+    assert.equal(begun?.userMessage?.metadata?.quotedText, 'quote');
+    assert.equal(finalized?.assistantMessage.content, 'durable answer');
+    assert.deepEqual(order, ['finalize', 'done']);
+    const terminal = received.find((ev) => ev.event === 'done');
+    assert.equal(terminal?.data.persisted, true);
+  });
+
+  it('emits a recoverable persistence error instead of done when finalize fails', async () => {
+    const hub = hubWithPersistence({
+      finalize: () => { throw new Error('disk full'); },
+    });
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('failed-chat', {
+      send: (ev) => received.push(ev),
+      close: () => {},
+    });
+
+    const { done } = hub.startTurn({
+      chatId: 'failed-chat',
+      nodeId: 'failed-node',
+      text: 'hello',
+      session: sessionFrom([
+        { kind: 'chunk', text: 'answer exists' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    assert.equal(received.some((ev) => ev.event === 'done'), false);
+    const terminal = received.find((ev) => ev.event === 'error');
+    assert.equal(terminal?.data.code, 'turn_persistence_failed');
+    assert.equal(terminal?.data.recoverable, true);
+    assert.match(terminal?.data.message ?? '', /could not be committed/i);
+  });
+
+  it('does not reinterpret a successful model turn as a runtime error after a transient finalize failure', async () => {
+    let finalizeCalls = 0;
+    const hub = hubWithPersistence({
+      finalize: () => {
+        finalizeCalls += 1;
+        if (finalizeCalls === 1) throw new Error('database busy');
+      },
+    });
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('transient-failure-chat', {
+      send: (ev) => received.push(ev),
+      close: () => {},
+    });
+
+    const { done } = hub.startTurn({
+      chatId: 'transient-failure-chat',
+      nodeId: 'transient-failure-node',
+      text: 'hello',
+      session: sessionFrom([
+        { kind: 'chunk', text: 'model completed successfully' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    assert.equal(finalizeCalls, 1);
+    assert.equal(received.some((ev) => ev.event === 'done'), false);
+    const terminal = received.find((ev) => ev.event === 'error');
+    assert.equal(terminal?.data.code, 'turn_persistence_failed');
+    assert.equal(terminal?.data.recoverable, true);
+  });
+
+  it('continues the model turn after a transient checkpoint failure', async () => {
+    let checkpointCalls = 0;
+    let finalized: DurableTurnSnapshot | undefined;
+    const hub = hubWithPersistence({
+      checkpoint: () => {
+        checkpointCalls += 1;
+        if (checkpointCalls === 1) throw new Error('database busy');
+      },
+      finalize: (snapshot) => { finalized = snapshot; },
+    });
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('checkpoint-failure-chat', {
+      send: (ev) => received.push(ev),
+      close: () => {},
+    });
+
+    const { done } = hub.startTurn({
+      chatId: 'checkpoint-failure-chat',
+      nodeId: 'checkpoint-failure-node',
+      text: 'hello',
+      session: sessionFrom([
+        { kind: 'tool_call', toolCallId: 'tool-1', title: 'Read', status: 'running' },
+        { kind: 'chunk', text: 'answer after checkpoint failure' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    assert.equal(checkpointCalls >= 1, true);
+    assert.equal(finalized?.assistantMessage.content, 'answer after checkpoint failure');
+    assert.equal(received.some((ev) => ev.event === 'done'), true);
+    assert.equal(received.some((ev) => ev.event === 'error'), false);
+  });
 });
 
 describe('ChatHub.startSelfTurn', () => {
   it('publishes branch_overview before done and replays it to late subscribers', async () => {
-    const hub = new ChatHub({ retentionMs: 100 });
+    const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
     hub.subscribe('chat-overview', {
       send: (ev) => received.push(ev),
@@ -118,7 +278,7 @@ describe('ChatHub.startSelfTurn', () => {
   });
 
   it('broadcasts turn_start with selfInitiated=true to subscribers', async () => {
-    const hub = new ChatHub({ retentionMs: 100 });
+    const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
 
     hub.subscribe('chat-1', {
@@ -157,7 +317,7 @@ describe('ChatHub.startSelfTurn', () => {
   });
 
   it('assistantId is prefixed with self-', async () => {
-    const hub = new ChatHub({ retentionMs: 100 });
+    const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
 
     hub.subscribe('chat-2', {
@@ -180,7 +340,7 @@ describe('ChatHub.startSelfTurn', () => {
   });
 
   it('does not interfere with a regular startTurn on a different chatId', async () => {
-    const hub = new ChatHub({ retentionMs: 100 });
+    const hub = hubWithPersistence();
     const selfEvents: ChatStreamEvent[] = [];
     const regularEvents: ChatStreamEvent[] = [];
 

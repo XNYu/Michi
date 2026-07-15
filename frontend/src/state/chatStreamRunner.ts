@@ -35,6 +35,12 @@ interface RunChatStreamOptions {
   cancelFns: Ref<Record<string, () => void>>;
   requestNodeId?: string;
   ownerToken?: string;
+  displayText?: string;
+  userMetadata?: {
+    quotedText?: string;
+    attachments?: Array<{ name: string; absPath: string }>;
+    comments?: Array<Record<string, unknown>>;
+  };
   extraHandlers?: Omit<Partial<StreamHandlers>, 'onTurnStart' | 'onDone' | 'onAborted' | 'onError'>;
   /** Fires after finishAsDone completes — safe place for side-effects like notifications. */
   onStreamComplete?: () => void;
@@ -56,6 +62,8 @@ export function runChatStream({
   cancelFns,
   requestNodeId,
   ownerToken,
+  displayText,
+  userMetadata,
   extraHandlers,
   onStreamComplete,
   onTurnEnd,
@@ -222,7 +230,19 @@ export function runChatStream({
       dispatch({ type: 'usage-summary', nodeId, contextUsagePercentage: data.contextUsagePercentage, totalCredits: data.totalCredits, turnDurationMs: data.turnDurationMs }),
     onMcpServerError: (data) =>
       dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
-    onDone: (stopReason) => {
+    onDone: (stopReason, _assistantId, turnId, persisted) => {
+      if (turnId) currentTurnId = turnId;
+      if (persisted === false) {
+        dispatch({
+          type: 'error',
+          nodeId,
+          assistantId: currentAssistantId,
+          message: 'The turn finished but the backend did not confirm durable persistence.',
+        });
+        cleanup();
+        onTurnEnd?.('error', nodeId);
+        return;
+      }
       if (stopReason === 'error') {
         dispatch({
           type: 'error',
@@ -254,5 +274,8 @@ export function runChatStream({
     ...extraHandlers,
   };
 
-  return streamMessage(chatId, prompt, handlers, requestNodeId, ownerToken);
+  return streamMessage(chatId, prompt, handlers, requestNodeId, ownerToken, {
+    displayText,
+    userMetadata,
+  });
 }

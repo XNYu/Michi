@@ -1,14 +1,12 @@
 import type { ChatAction, ChatNodeState, ComposerDraft, ContextEntry, Project, ProjectAction, Tree } from './chatTypes';
 import { computeTranscriptFingerprint } from './transcriptFingerprint';
 import {
-  appendAnswerBlockText,
-  appendImageBlock,
-  appendThinkingBlockText,
   appendToolBlock,
   assistantMetadata,
-  finalizeAssistantBlocks,
+  projectAssistantStreamEvent,
   nextToolBlockPlacement,
 } from './assistantBlocks';
+import { CHAT_STREAM_EVENTS } from 'michi-shared';
 
 export const NODE_ACTIVITY_ACTIONS = new Set<ChatAction['type']>([
   'user-send',
@@ -316,6 +314,37 @@ export function reduceNodes(
         };
       }
       const now = Date.now();
+      const newMessages = action.selfInitiated
+        ? [
+            // Self-initiated turn with no prior assistant message: standalone placeholder
+            {
+              id: action.assistantId,
+              role: 'assistant' as const,
+              text: '',
+              toolCalls: [] as never[],
+              blocks: [] as never[],
+              streaming: true,
+              createdAt: now,
+            },
+          ]
+        : [
+            {
+              id: `u-${action.assistantId}`,
+              role: 'user' as const,
+              text: action.userText,
+              toolCalls: [] as never[],
+              createdAt: now,
+            },
+            {
+              id: action.assistantId,
+              role: 'assistant' as const,
+              text: '',
+              toolCalls: [] as never[],
+              blocks: [] as never[],
+              streaming: true,
+              createdAt: now,
+            },
+          ];
       return {
         ...nodes,
         [action.nodeId]: {
@@ -389,7 +418,9 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
-        m.id === action.assistantId ? appendAnswerBlockText(m, action.text) : m,
+        m.id === action.assistantId
+          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.chunk, data: { text: action.text } })
+          : m,
       );
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
     }
@@ -398,7 +429,7 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
         m.id === action.assistantId
-          ? appendThinkingBlockText(m, action.text)
+          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.thought, data: { text: action.text } })
           : m,
       );
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
@@ -407,7 +438,9 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
-        m.id === action.assistantId ? { ...m, plan: action.entries } : m,
+        m.id === action.assistantId
+          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.plan, data: { entries: action.entries } })
+          : m,
       );
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
     }
@@ -416,9 +449,18 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) => {
         if (m.id !== action.assistantId) return m;
-        const placement = nextToolBlockPlacement(m);
-        const tool = { ...action.tool, textOffset: placement.rawOffset };
-        return appendToolBlock({ ...m, toolCalls: [...m.toolCalls, tool] }, tool.id);
+        return projectAssistantStreamEvent(m, n.projectId, {
+          event: CHAT_STREAM_EVENTS.toolCall,
+          data: {
+            toolCallId: action.tool.id,
+            title: action.tool.title,
+            status: action.tool.status,
+            kind: action.tool.kind,
+            detail: action.tool.detail,
+            inputJson: action.tool.inputJson,
+            output: action.tool.output,
+          },
+        });
       });
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
     }
@@ -427,15 +469,14 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
         m.id === action.assistantId
-          ? appendImageBlock(m, {
-              // workspaceId is the node's project id (derived here, not passed
-              // by the caller — the stream handler only knows nodeId + the
-              // retargeted assistantId).
-              workspaceId: n.projectId,
-              path: action.path,
-              caption: action.caption,
-              mimeType: action.mimeType,
-              size: action.size,
+          ? projectAssistantStreamEvent(m, n.projectId, {
+              event: CHAT_STREAM_EVENTS.image,
+              data: {
+                path: action.path,
+                caption: action.caption,
+                mimeType: action.mimeType,
+                size: action.size,
+              },
             })
           : m,
       );
@@ -446,25 +487,18 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) => {
         if (m.id !== action.assistantId) return m;
-        const tcs = m.toolCalls.map((t) => {
-          if (t.id !== action.tool.id) return t;
-          // Only overwrite fields that have non-empty values — ACP sends
-          // tool_call_update with empty title/kind that would clobber
-          // values already set by the initial tool_call event.
-          const merged = { ...t };
-          if (action.tool.title) merged.title = action.tool.title;
-          if (action.tool.status) merged.status = action.tool.status;
-          if (action.tool.kind) merged.kind = action.tool.kind;
-          if (action.tool.detail) merged.detail = action.tool.detail;
-          if (action.tool.inputJson) merged.inputJson = action.tool.inputJson;
-          if (action.tool.output) merged.output = action.tool.output;
-          return merged;
+        return projectAssistantStreamEvent(m, n.projectId, {
+          event: CHAT_STREAM_EVENTS.toolCallUpdate,
+          data: {
+            toolCallId: action.tool.id,
+            title: action.tool.title,
+            status: action.tool.status,
+            kind: action.tool.kind,
+            detail: action.tool.detail,
+            inputJson: action.tool.inputJson,
+            output: action.tool.output,
+          },
         });
-        const exists = tcs.some((t) => t.id === action.tool.id);
-        if (exists) return { ...m, toolCalls: tcs };
-        const placement = nextToolBlockPlacement(m);
-        const addition = { ...action.tool, textOffset: placement.rawOffset };
-        return appendToolBlock({ ...m, toolCalls: [...tcs, addition] }, addition.id);
       });
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
     }
@@ -480,20 +514,10 @@ export function reduceNodes(
         extractedTitle = meta.title;
         extractedBranchOverview = meta.branchOverview;
         extractedFollowUps = meta.followUps;
-        // Finalize stuck tool call statuses. The agent's turn has ended, so
-        // any tool call still in a non-terminal state must have completed —
-        // kiro just didn't send a closing tool_call_update (or sent one with
-        // empty status, which the update reducer ignores by design). Without
-        // this, chips display "running" forever after the conversation ends.
-        const toolCalls = m.toolCalls.map((t) => {
-          const stuck =
-            !t.status ||
-            t.status === 'running' ||
-            t.status === 'in_progress' ||
-            t.status === 'pending';
-          return stuck ? { ...t, status: 'completed' as const } : t;
+        return projectAssistantStreamEvent(m, n.projectId, {
+          event: CHAT_STREAM_EVENTS.done,
+          data: { stopReason: 'end_turn', persisted: true },
         });
-        return finalizeAssistantBlocks({ ...m, toolCalls });
       });
       // Lock the title once it exists — only fill it in if this is the
       // first turn (no title yet). See `set-title` for the same rule on
@@ -532,7 +556,12 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
-        m.id === action.assistantId ? finalizeAssistantBlocks(m) : m,
+        m.id === action.assistantId
+          ? projectAssistantStreamEvent(m, n.projectId, {
+              event: CHAT_STREAM_EVENTS.error,
+              data: { message: action.message },
+            })
+          : m,
       );
       return {
         ...nodes,
@@ -855,7 +884,14 @@ export function reduceNodes(
       // rewrite the sidebar label out from under the user. Digest nodes are
       // exempt — their title is derived from regenerated content.
       if (n.kind === 'chat' && n.title && n.title.trim().length > 0) return nodes;
-      return { ...nodes, [action.nodeId]: { ...n, title: next } };
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          title: next,
+          ...(n.kind === 'digest' ? { titleNeedsPersistence: true } : {}),
+        },
+      };
     }
     case 'set-branch-overview': {
       const n = nodes[action.nodeId];
@@ -877,7 +913,7 @@ export function reduceNodes(
       if (!n) return nodes;
       const next = action.title.trim();
       if (!next || n.title === next) return nodes;
-      return { ...nodes, [action.nodeId]: { ...n, title: next } };
+      return { ...nodes, [action.nodeId]: { ...n, title: next, titleNeedsPersistence: true } };
     }
     case 'set-follow-ups': {
       const n = nodes[action.nodeId];
@@ -1025,6 +1061,7 @@ export function reduceNodes(
           ],
           followUps: [],
           title: spawned.title,
+          titleNeedsPersistence: true,
           status: 'streaming',
           streamingStartedAt: Date.now(),
           spawnedByAgent: true,

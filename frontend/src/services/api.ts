@@ -331,6 +331,7 @@ export interface EnsureSessionOptions {
   /** Desired agent/mode to apply when a fresh session is created (pre-session pick). */
   modeId?: string | null;
   resumeFingerprint?: string | null;
+  graphPrerequisite?: Record<string, unknown>;
 }
 
 export interface EnsureSessionResult {
@@ -365,6 +366,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.modelId) body.modelId = opts.modelId;
   if (opts.reasoning) body.reasoning = opts.reasoning;
   if (opts.resumeFingerprint) body.resumeFingerprint = opts.resumeFingerprint;
+  if (opts.graphPrerequisite) body.graphPrerequisite = opts.graphPrerequisite;
 
   const res = await fetch(`${API_BASE_URL}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
     method: 'POST',
@@ -570,6 +572,14 @@ export function streamMessage(
   handlers: StreamHandlers,
   nodeId?: string,
   ownerToken?: string,
+  durable?: {
+    displayText?: string;
+    userMetadata?: {
+      quotedText?: string;
+      attachments?: Array<{ name: string; absPath: string }>;
+      comments?: Array<Record<string, unknown>>;
+    };
+  },
 ): () => void {
   const controller = new AbortController();
   const probeEnabled = streamProbeEnabled();
@@ -617,6 +627,8 @@ export function streamMessage(
       const payload: Record<string, unknown> = { text };
       if (nodeId) payload.nodeId = nodeId;
       if (ownerToken) payload.ownerToken = ownerToken;
+      if (durable?.displayText !== undefined) payload.displayText = durable.displayText;
+      if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
       const startedAt = Date.now();
       startupMark('stream_request_start', { chatId, nodeId, textLen: text.length });
       const res = await fetch(`${API_BASE_URL}/chats/${chatId}/message`, {
@@ -863,6 +875,59 @@ export async function fetchWorkspace(id: string): Promise<unknown> {
   const res = await fetch(`${API_BASE_URL}/workspaces/${id}`);
   if (!res.ok) throw new Error(`fetchWorkspace failed: ${res.status}`);
   return res.json();
+}
+
+export interface PersistenceCapabilities {
+  protocolVersion: number;
+  authoritativeTurnPersistence: boolean;
+  durableNodePrerequisite: boolean;
+  explicitCommands: boolean;
+  backgroundWorkspaceSync: boolean;
+  legacySyncAccepted: boolean;
+}
+
+export async function fetchPersistenceCapabilities(): Promise<PersistenceCapabilities> {
+  const res = await fetch(`${API_BASE_URL}/persistence/capabilities`);
+  if (!res.ok) throw new Error(`fetchPersistenceCapabilities failed: ${res.status}`);
+  return res.json();
+}
+
+export async function ensureDurableGraphNode(
+  workspaceId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/graph/nodes/ensure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(body.error || `ensureDurableGraphNode failed: ${res.status}`);
+  }
+}
+
+export interface WorkspaceCommand {
+  type: 'workspace.upsert' | 'tree.upsert' | 'tree.delete' | 'node.upsert' | 'node.patch'
+    | 'edge.upsert' | 'edge.delete' | 'context.upsert' | 'context.delete';
+  payload: Record<string, unknown>;
+}
+
+export async function applyWorkspaceCommands(
+  workspaceId: string,
+  operationId: string,
+  commands: readonly WorkspaceCommand[],
+): Promise<void> {
+  if (commands.length === 0) return;
+  const res = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/commands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operationId, commands }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(body.error || `applyWorkspaceCommands failed: ${res.status}`);
+  }
 }
 
 /**

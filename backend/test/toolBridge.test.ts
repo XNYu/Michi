@@ -22,7 +22,7 @@ afterEach(() => {
 describe('AgentToolBridge contexts', () => {
   test('saveContext creates a context file and updateContext rewrites it', () => {
     const cwd = mkTmpDir();
-    const bridge = createAgentToolBridge({ createChild: async () => 'child-1' });
+    const bridge = createAgentToolBridge({ createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }) });
 
     const saved = bridge.saveContext({ cwd, name: 'notes', body: 'v1' });
     assert.deepEqual(saved, { name: 'notes', filePath: '.contexts/notes.md', size: 2 });
@@ -35,9 +35,24 @@ describe('AgentToolBridge contexts', () => {
 
   test('updateContext rejects missing or invalid contexts', () => {
     const cwd = mkTmpDir();
-    const bridge = createAgentToolBridge({ createChild: async () => 'child-1' });
+    const bridge = createAgentToolBridge({ createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }) });
 
     assert.equal(bridge.updateContext({ cwd, name: 'missing', body: 'new' }), null);
     assert.equal(bridge.updateContext({ cwd, name: '../bad', body: 'new' }), null);
+  });
+});
+
+describe('AgentToolBridge spawned identity', () => {
+  test('returns the backend-created nodeId together with chatId', async () => {
+    const bridge = createAgentToolBridge({
+      createChild: async () => ({ chatId: 'chat-child', nodeId: 'node-child' }),
+    });
+    const created = await bridge.spawnBranches({
+      parentChatId: 'parent', cwd: mkTmpDir(), enableFollowUps: true,
+      topics: [{ title: 'Child', prompt: 'Investigate' }],
+    });
+    assert.deepEqual(created, [{
+      title: 'Child', prompt: 'Investigate', chatId: 'chat-child', nodeId: 'node-child',
+    }]);
   });
 });

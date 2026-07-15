@@ -2,8 +2,8 @@
   "name": "michi-shared",
   "version": "1.0.0",
   "private": true,
-  "main": "dist/chatStreamEvents.js",
-  "types": "dist/chatStreamEvents.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },

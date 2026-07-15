@@ -19,6 +19,7 @@ export interface SpawnedBranch {
     title: string;
     prompt: string;
     chatId: string;
+    nodeId: string;
 }
 
 export interface BridgeSpawnBranchesArgs {
@@ -71,7 +72,7 @@ export interface AgentToolBridgeDeps {
         parentChatId: string;
         cwd: string;
         enableFollowUps: boolean;
-    }) => Promise<string>; // returns child chatId
+    }) => Promise<{ chatId: string; nodeId: string }>;
 }
 
 function isValidContextName(name: unknown): name is string {
@@ -89,13 +90,13 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
             for (const t of args.topics) {
                 if (!t?.title || !t?.prompt) continue;
                 try {
-                    const childChatId = await deps.createChild({
+                    const child = await deps.createChild({
                         parentChatId: args.parentChatId,
                         cwd: args.cwd,
                         enableFollowUps: args.enableFollowUps,
                     });
-                    result.push({ title: t.title, prompt: t.prompt, chatId: childChatId });
-                    log.info("bridge", "branch child created", { parentChatId: args.parentChatId, childChatId, title: t.title });
+                    result.push({ title: t.title, prompt: t.prompt, chatId: child.chatId, nodeId: child.nodeId });
+                    log.info("bridge", "branch child created", { parentChatId: args.parentChatId, childChatId: child.chatId, nodeId: child.nodeId, title: t.title });
                 } catch (err) {
                     log.error("bridge", "branch child create failed", { parentChatId: args.parentChatId, title: t.title, err: (err as Error).message });
                 }

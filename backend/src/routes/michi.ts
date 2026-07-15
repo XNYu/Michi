@@ -27,6 +27,7 @@ import {
     updateNodeResumeBinding,
 } from "../services/dbRepository";
 import type { WorkspaceRow } from "../services/dbRepository";
+import { ensureDurableGraphNode } from "../services/graphCommands";
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import {
     buildCompatibleResumeContext,
@@ -631,6 +632,26 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (!nodeId || nodeId.length > 128) {
             return res.status(400).json({ error: "nodeId must be a non-empty string <=128 chars" });
         }
+        if (!getNode(nodeId)) {
+            const prerequisite = body.graphPrerequisite;
+            if (!prerequisite || typeof prerequisite !== 'object') {
+                return res.status(409).json({
+                    error: 'durable node prerequisite required before session creation',
+                    code: 'NODE_NOT_PERSISTED',
+                });
+            }
+            try {
+                ensureDurableGraphNode({
+                    ...(prerequisite as Parameters<typeof ensureDurableGraphNode>[0]),
+                    ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
+                });
+            } catch (err) {
+                return res.status(409).json({
+                    error: (err as Error).message,
+                    code: 'NODE_PREREQUISITE_FAILED',
+                });
+            }
+        }
 
         // In cloud mode, derive cwd server-side from the node's workspace ownership.
         // Desktop trusts client-supplied cwd.
@@ -915,6 +936,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     router.post("/chats/:chatId/message", requireChatOwner, async (req, res) => {
         const { chatId } = req.params;
         const text: string = req.body?.text || "";
+        const displayText: string = typeof req.body?.displayText === 'string'
+            ? req.body.displayText
+            : text;
+        const userMetadata = req.body?.userMetadata && typeof req.body.userMetadata === 'object'
+            ? req.body.userMetadata
+            : undefined;
         const nodeId: string | undefined = req.body?.nodeId;
         const ownerToken: string | undefined = req.body?.ownerToken;
         const routeStart = Date.now();
@@ -937,13 +964,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(409).json({ error: "a turn is already active for this chat" });
         }
 
+        let started;
+        try {
+            started = chatHub.startTurn({ chatId, nodeId, text, displayText, userMetadata, session });
+        } catch (err) {
+            return res.status(409).json({
+                error: (err as Error).message,
+                code: 'turn_begin_failed',
+            });
+        }
+
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders?.();
 
-        const started = chatHub.startTurn({ chatId, nodeId, text, session });
         let wroteTerminal = false;
         let wroteFirstEvent = false;
         const sub: HubSubscriber = {

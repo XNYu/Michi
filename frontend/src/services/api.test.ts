@@ -22,6 +22,21 @@ describe('ensureSession', () => {
       'Claude slots are busy. Stop a running reply or wait for one to finish, then retry.',
     );
   });
+
+  it('carries the durable graph prerequisite in the same request as session creation', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      chatId: 'chat-1', currentModeId: null, resumeStrategy: 'fresh',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const graphPrerequisite = {
+      workspace: { id: 'ws-1', name: 'Workspace', createdAt: 1 },
+      node: { id: 'n1', treeId: null, parentNodeId: null, kind: 'chat', createdAt: 1 },
+      edges: [],
+    };
+    await ensureSession({ nodeId: 'n1', workspaceId: 'ws-1', graphPrerequisite });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body)).graphPrerequisite).toEqual(graphPrerequisite);
+  });
 });
 
 // ── streamMessage terminal-state safety net ──
@@ -83,6 +98,31 @@ describe('streamMessage terminal-state safety net', () => {
 
     await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('sends the display/wire split and exposes the persisted terminal boundary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+      encodeChatStreamEvent({
+        event: CHAT_STREAM_EVENTS.done,
+        data: { stopReason: 'end_turn', persisted: true },
+      }),
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const onDone = vi.fn();
+    streamMessage('c1', 'wire prompt', { onDone }, 'n1', undefined, {
+      displayText: 'visible text',
+      userMetadata: { quotedText: 'quote' },
+    });
+
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      text: 'wire prompt',
+      displayText: 'visible text',
+      userMetadata: { quotedText: 'quote' },
+      nodeId: 'n1',
+    });
+    expect(onDone).toHaveBeenCalledWith('end_turn', undefined, undefined, true);
   });
 
   it('finalizes via onError when the stream goes silent past the watchdog timeout', async () => {

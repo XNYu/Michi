@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'node:crypto';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import { log } from './services/logger';
 import { setupMichiRoutes } from './routes/michi';
@@ -36,7 +37,8 @@ import type { KiroRuntime } from './agents/kiro/KiroRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
-import { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission } from './services/dbRepository';
+import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns } from './services/dbRepository';
+import { ensureDurableGraphNode } from './services/graphCommands';
 import { getMichiDataDir } from './services/dataDir';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
 import { FileRuntimeModelCache } from './agents/runtimeModelCache';
@@ -99,6 +101,10 @@ const port = process.env.PORT || 3000;
 
 // Initialize SQLite before anything that might need it
 initDb();
+const interruptedTurns = recoverInterruptedTurns();
+if (interruptedTurns > 0) {
+  log.warn('boot', 'recovered interrupted turns', { count: interruptedTurns });
+}
 log.info('boot', 'db initialized');
 
 // Load persisted agent runtime/provider/model config (with env overrides)
@@ -131,13 +137,61 @@ for (const factory of getEnabledFactories()) {
     let runtime!: AgentRuntime;
     const bridge = createAgentToolBridge({
         createChild: async (args) => {
+            const parentBinding = getNodeSessionBinding(args.parentChatId);
+            const parentNode = parentBinding ? getNode(parentBinding.nodeId) : getNode(args.parentChatId);
+            if (!parentNode) throw new Error(`spawn parent node not found for ${args.parentChatId}`);
+            const workspace = getWorkspace(parentNode.workspace_id);
+            if (!workspace) throw new Error(`spawn workspace ${parentNode.workspace_id} not found`);
+            const tree = parentNode.tree_id
+              ? listTrees(parentNode.workspace_id).find((candidate) => candidate.id === parentNode.tree_id)
+              : undefined;
+            const nodeId = `n-${randomUUID()}`;
+            ensureDurableGraphNode({
+              workspace: {
+                id: workspace.id,
+                name: workspace.name,
+                cwd: workspace.cwd ?? null,
+                createdAt: workspace.created_at,
+                activeTreeId: workspace.active_tree_id ?? parentNode.tree_id ?? null,
+              },
+              ...(tree ? {
+                tree: {
+                  id: tree.id,
+                  rootNodeId: tree.root_node_id,
+                  name: tree.name ?? null,
+                  archivedAt: tree.archived_at ?? null,
+                  pinnedAt: tree.pinned_at ?? null,
+                  lastActiveAt: tree.last_active_at,
+                  createdAt: tree.created_at,
+                },
+              } : {}),
+              node: {
+                id: nodeId,
+                treeId: parentNode.tree_id ?? null,
+                parentNodeId: parentNode.id,
+                kind: 'chat',
+                spawnedByAgent: true,
+                createdAt: Date.now(),
+              },
+              edges: [{
+                id: `branch-${parentNode.id}-${nodeId}`,
+                sourceNodeId: parentNode.id,
+                targetNodeId: nodeId,
+                kind: 'branch',
+                createdAt: Date.now(),
+              }],
+              ownerUserId: workspace.owner_user_id ?? null,
+            });
             const child = await runtime.newSession({
                 cwd: args.cwd,
                 parentChatId: args.parentChatId,
                 enableFollowUps: args.enableFollowUps,
+                sessionId: nodeId,
+                workspaceId: parentNode.workspace_id,
+                ownerUserId: workspace.owner_user_id ?? null,
             });
-            sessionRegistry.registerSession(child);
-            return child.id;
+            sessionRegistry.registerSession(child, workspace.owner_user_id ?? null);
+            return { chatId: child.id, nodeId };
         },
     });
     runtime = factory.create({

@@ -6,8 +6,11 @@ import {
   collectBaseRevs,
   collectSentRowIds,
   advanceAcceptedRevs,
+  advanceWorkspaceSyncRev,
   adoptConflictsIntoState,
   populateRevsFromBackend,
+  recordConflictRevs,
+  shouldAdoptSyncConflicts,
   type WorkspaceDirtyDelta,
 } from './workspacePersistence';
 import type { ChatMessage, ChatNodeState, Project } from './chatTypes';
@@ -255,6 +258,12 @@ describe('advanceAcceptedRevs — self-conflict elimination', () => {
     expect(ref.get('n2')).toBe(1); // conflicted → left for the adopt path
   });
 
+  it('never regresses an entity rev when an older response arrives late', () => {
+    const ref = new Map<string, number>([['n1', 12]]);
+    advanceAcceptedRevs(ref, ['n1'], [], 9);
+    expect(ref.get('n1')).toBe(12);
+  });
+
   it('N sequential edits to the SAME row produce ZERO conflicts (no oscillation)', () => {
     const ref = new Map<string, number>();
     let serverStored: number | null = null; // backend has never seen the row yet
@@ -285,6 +294,48 @@ describe('advanceAcceptedRevs — self-conflict elimination', () => {
     expect(ref.get('n1')).toBe(N);
     expect(serverStored).toBe(N);
     expect(accepts(serverStored, ref.get('n1')!)).toBe(true);
+  });
+});
+
+describe('workspace sync response ordering', () => {
+  it('never regresses the accepted workspace sync revision', () => {
+    const ref = new Map<string, number>([['ws1', 12]]);
+    advanceWorkspaceSyncRev(ref, 'ws1', 9);
+    expect(ref.get('ws1')).toBe(12);
+    advanceWorkspaceSyncRev(ref, 'ws1', 15);
+    expect(ref.get('ws1')).toBe(15);
+  });
+
+  it('does not adopt conflicts from a stale response', () => {
+    expect(shouldAdoptSyncConflicts({
+      currentSyncRev: 12,
+      incomingSyncRev: 9,
+      hasNewerLocalWork: false,
+    })).toBe(false);
+  });
+
+  it('does not adopt conflicts while newer local work is queued', () => {
+    expect(shouldAdoptSyncConflicts({
+      currentSyncRev: 8,
+      incomingSyncRev: 9,
+      hasNewerLocalWork: true,
+    })).toBe(false);
+  });
+
+  it('adopts a current conflict when there is no newer local work', () => {
+    expect(shouldAdoptSyncConflicts({
+      currentSyncRev: 8,
+      incomingSyncRev: 9,
+      hasNewerLocalWork: false,
+    })).toBe(true);
+  });
+
+  it('records conflict revs without adopting stale server row contents', () => {
+    const ref = new Map<string, number>([['n1', 4]]);
+    recordConflictRevs([
+      { id: 'n1', table: 'nodes', serverRow: { id: 'n1', rev: 11, title: 'STALE' } },
+    ], ref);
+    expect(ref.get('n1')).toBe(11);
   });
 });
 
@@ -328,6 +379,26 @@ describe('adoptConflictsIntoState', () => {
 
     // No project-row change for a node-only conflict → same project reference.
     expect(projects[0]).toBe(project);
+  });
+
+  it('does not regress an entity rev while adopting a conflict row', () => {
+    const project = makeProject('ws1', ['n1']);
+    const nodes = { n1: makeNode('n1', 'ws1', { title: 'LOCAL' }) };
+    const ref = new Map<string, number>([['n1', 12]]);
+
+    adoptConflictsIntoState(
+      [project],
+      nodes,
+      [{
+        id: 'n1',
+        table: 'nodes',
+        serverRow: { id: 'n1', workspace_id: 'ws1', title: 'SERVER', kind: 'chat', rev: 9 },
+      }],
+      'ws1',
+      ref,
+    );
+
+    expect(ref.get('n1')).toBe(12);
   });
 
   it('adopts a conflicted edge into the project edge list and sets its rev', () => {

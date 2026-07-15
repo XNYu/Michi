@@ -15,9 +15,22 @@ import {
 } from '../services/dbRepository';
 import { normalizeIncomingMessageRow } from '../services/messageSerialization';
 import { requireWorkspaceOwner, requireNodeOwner } from './middleware/ownership';
+import { ensureDurableGraphNode } from '../services/graphCommands';
+import { applyWorkspaceCommands } from '../services/domainCommands';
 
 export function setupPersistenceRoutes(): express.Router {
   const router = express.Router();
+
+  router.get('/persistence/capabilities', (_req, res) => {
+    res.json({
+      protocolVersion: 2,
+      authoritativeTurnPersistence: true,
+      durableNodePrerequisite: true,
+      explicitCommands: true,
+      backgroundWorkspaceSync: false,
+      legacySyncAccepted: process.env.MICHI_LEGACY_SYNC_ACCEPTED !== '0',
+    });
+  });
 
   // List all workspaces (lightweight, no messages)
   router.get('/workspaces', (req, res) => {
@@ -50,6 +63,50 @@ export function setupPersistenceRoutes(): express.Router {
       res.json(data);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Backend-first graph prerequisite. Creates only the workspace/tree/node
+  // slice required by one chat-capable node; safe to retry with the same IDs.
+  router.post('/workspaces/:id/graph/nodes/ensure', (req, res, next) => {
+    if (process.env.MICHI_CLOUD === '1' && getWorkspace(req.params.id)) {
+      return requireWorkspaceOwner(req, res, next);
+    }
+    next();
+  }, (req, res) => {
+    try {
+      if (!req.body?.workspace || req.body.workspace.id !== req.params.id || !req.body?.node) {
+        return res.status(400).json({ error: 'workspace and node are required and workspace.id must match the route' });
+      }
+      const result = ensureDurableGraphNode({
+        ...req.body,
+        ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const message = (err as Error).message;
+      const status = /not found/i.test(message) ? 404 : /must|different|same workspace|same tree/i.test(message) ? 409 : 500;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  router.post('/workspaces/:id/commands', (req, res, next) => {
+    if (process.env.MICHI_CLOUD === '1' && getWorkspace(req.params.id)) {
+      return requireWorkspaceOwner(req, res, next);
+    }
+    next();
+  }, (req, res) => {
+    try {
+      const result = applyWorkspaceCommands(req.params.id, {
+        operationId: String(req.body?.operationId ?? ''),
+        commands: Array.isArray(req.body?.commands) ? req.body.commands : [],
+        ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const message = (err as Error).message;
+      const status = /not found/i.test(message) ? 404 : /must|different|same workspace|same tree|reused/i.test(message) ? 409 : 500;
+      res.status(status).json({ error: message });
     }
   });
 
@@ -126,6 +183,18 @@ export function setupPersistenceRoutes(): express.Router {
     try {
       const workspaceId = req.params.id;
       const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      if (process.env.MICHI_LEGACY_SYNC_ACCEPTED === '0') {
+        return res.status(410).json({ error: 'legacy_workspace_sync_disabled', reloadRequired: true });
+      }
+      const existingWorkspace = getWorkspace(workspaceId, userId);
+      if ((existingWorkspace?.persistence_version ?? 1) >= 2) {
+        return res.status(409).json({
+          error: 'persistence_v2_reload_required',
+          reloadRequired: true,
+          protocolVersion: 2,
+        });
+      }
+      log.warn('workspace', 'legacy sync accepted', { id: workspaceId, deprecated: true });
 
       // Two write shapes on the same endpoint, routed by `mode`:
       //   - mode === 'delta' → incremental: apply upserts + explicit deletes

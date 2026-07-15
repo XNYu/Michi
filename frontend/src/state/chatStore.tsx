@@ -59,6 +59,61 @@ export function makeBranchEdge(params: {
   };
 }
 
+function durableNodePrerequisite(project: Project, node: ChatNodeState): Record<string, unknown> {
+  const directTreeId = findTreeIdForNode(node.nodeId, project);
+  const parentTreeId = node.parentNodeId ? findTreeIdForNode(node.parentNodeId, project) : null;
+  const treeId = directTreeId ?? parentTreeId;
+  const tree = treeId ? project.trees.find((candidate) => candidate.id === treeId) : undefined;
+  const existingEdges = project.edges.filter((edge) => edge.target === node.nodeId);
+  const graphEdges: ProjectEdge[] = existingEdges.length > 0
+    ? existingEdges
+    : node.parentNodeId
+      ? [{ source: node.parentNodeId, target: node.nodeId, kind: 'branch' as const }]
+      : (node.mergeSources ?? []).map((source) => ({ source, target: node.nodeId, kind: 'merge' as const }));
+  return {
+    workspace: {
+      id: project.id,
+      name: project.name,
+      cwd: project.cwd ?? null,
+      createdAt: project.createdAt ?? Date.now(),
+      activeTreeId: project.activeTreeId ?? treeId ?? null,
+      settings: {
+        ...(project.instructions ? { instructions: project.instructions } : {}),
+        ...(project.aiGlobalContext === false ? { aiGlobalContext: false } : {}),
+      },
+    },
+    ...(tree ? {
+      tree: {
+        id: tree.id,
+        rootNodeId: tree.rootNodeId,
+        name: tree.name ?? null,
+        archivedAt: tree.archivedAt ?? null,
+        pinnedAt: tree.pinnedAt ?? null,
+        lastActiveAt: tree.lastActiveAt,
+        createdAt: tree.createdAt,
+      },
+    } : {}),
+    node: {
+      id: node.nodeId,
+      treeId: treeId ?? null,
+      parentNodeId: node.parentNodeId ?? null,
+      kind: node.kind,
+      title: node.title ?? null,
+      spawnedByAgent: node.spawnedByAgent ?? false,
+      currentModeId: node.currentModeId ?? null,
+      createdAt: node.messages[0]?.createdAt ?? project.createdAt ?? Date.now(),
+    },
+    edges: graphEdges.map((edge) => ({
+      id: `${edge.kind || 'branch'}-${edge.source}-${edge.target}`,
+      sourceNodeId: edge.source,
+      targetNodeId: edge.target,
+      kind: edge.kind || 'branch',
+      anchorMessageId: edge.anchorMessageId ?? null,
+      createdAt: edge.createdAt ?? null,
+    })),
+  };
+}
+
 export { hydrateBackendWorkspaces, hydrateSavedState, STATE_SCHEMA_VERSION } from './chatHydration';
 export { parseTitle } from './assistantParsing';
 export { reduceProject } from './chatReducers';
@@ -1073,6 +1128,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       let outgoingText = text;
       const tEnsureStart = perf.now();
       try {
+        if (!owningProject) throw new Error('workspace not found for node');
         const ensured = await ensureSession({
           nodeId,
           chatId,
@@ -1093,6 +1149,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           // first prompt streams. Ignored on resume (node already has a chatId).
           modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
           resumeFingerprint: n.resumeFingerprint,
+          graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
         });
         perf.measure('client:ensure_session', tEnsureStart, { nodeId, strategy: ensured.resumeStrategy });
         perf.measure('client:submit_to_ensured', tSubmit, { nodeId });
@@ -1163,6 +1220,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         cancelFns,
         requestNodeId: nodeId,
         ownerToken: ownerTokenRef.current,
+        displayText,
+        userMetadata: {
+          quotedText: meta?.quotedText,
+          attachments: meta?.attachments,
+          comments: meta?.comments as Array<Record<string, unknown>> | undefined,
+        },
         onTurnEnd: (reason, endedNodeId) => {
           if (reason === 'error') {
             // Evict session from the bound set so the next retry re-runs
@@ -1254,7 +1317,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           if (!parent) return;
           const projectId = parent.projectId;
           const spawned = topics.map((t) => ({
-            nodeId: newNodeId(),
+            nodeId: t.nodeId ?? newNodeId(),
             chatId: t.chatId,
             title: t.title,
             prompt: t.prompt,

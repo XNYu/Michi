@@ -24,6 +24,7 @@ export interface SpawnBranchTopic {
   title: string;
   prompt: string;
   chatId: string;
+  nodeId?: string;
 }
 
 export interface PermissionOption {
@@ -100,9 +101,9 @@ export interface ChatStreamPayloads {
   context_usage: { contextUsagePercentage: number };
   usage_summary: { contextUsagePercentage: number; totalCredits: number; turnDurationMs: number };
   mcp_server_error: { serverName: string; error: string };
-  done: { stopReason?: string };
-  error: { message: string };
-  turn_start: { turnId: string; assistantId: string; nodeId: string; userText: string };
+  done: { stopReason?: string; persisted?: boolean; completedAt?: number };
+  error: { message: string; code?: string; recoverable?: boolean; completedAt?: number };
+  turn_start: { turnId: string; assistantId: string; nodeId: string; userText: string; selfInitiated?: boolean; startedAt?: number };
   image: { path: string; caption?: string; mimeType: string; size: number };
 }
 
@@ -181,6 +182,7 @@ function parseSpawnTopics(value: unknown): SpawnBranchTopic[] {
         title: stringOrEmpty(raw.title),
         prompt: stringOrEmpty(raw.prompt),
         chatId: stringOrEmpty(raw.chatId),
+        nodeId: optionalString(raw.nodeId),
       };
     })
     .filter((topic) => topic.title || topic.prompt || topic.chatId);
@@ -273,13 +275,24 @@ const parsers = {
     serverName: stringOrEmpty(data.serverName),
     error: stringOrEmpty(data.error),
   }),
-  done: (data) => ({ stopReason: optionalString(data.stopReason) }),
-  error: (data) => ({ message: stringOrEmpty(data.message) }),
+  done: (data) => ({
+    stopReason: optionalString(data.stopReason),
+    ...(typeof data.persisted === 'boolean' ? { persisted: data.persisted } : {}),
+    completedAt: optionalFiniteNumber(data.completedAt),
+  }),
+  error: (data) => ({
+    message: stringOrEmpty(data.message),
+    code: optionalString(data.code),
+    ...(data.recoverable === true ? { recoverable: true } : {}),
+    completedAt: optionalFiniteNumber(data.completedAt),
+  }),
   turn_start: (data) => ({
     turnId: stringOrEmpty(data.turnId),
     assistantId: stringOrEmpty(data.assistantId),
     nodeId: stringOrEmpty(data.nodeId),
     userText: stringOrEmpty(data.userText),
+    ...(data.selfInitiated ? { selfInitiated: true } : {}),
+    startedAt: optionalFiniteNumber(data.startedAt),
   }),
   image: (d) => ({
     path: stringOrEmpty(d.path),

@@ -26,6 +26,7 @@ export const workspaces = sqliteTable('workspaces', {
   // syncRev: per-workspace monotonic version counter (sync L2). Bumped once per
   // sync txn; every row written by that txn is stamped with the new value.
   syncRev:      integer('sync_rev').notNull().default(0),
+  persistenceVersion: integer('persistence_version').notNull().default(1),
   // ownerUserId: nullable in SQLite (NOT NULL enforced in app code only —
   // SQLite cannot add a NOT NULL column via ALTER TABLE ADD COLUMN).
   // Set by the route layer on INSERT; checked by ownership middleware.
@@ -117,12 +118,45 @@ export const messages = sqliteTable('messages', {
   content:   text('content').notNull().default(''),
   blocks:    text('blocks'),
   toolCalls: text('tool_calls'),
+  metadata:  text('metadata'),
   seq:       integer('seq').notNull(),
   createdAt: integer('created_at').notNull(),
   // rev: per-row sync version (sync L2). Nullable — NULL = predates versioning.
   rev:       integer('rev'),
 }, (t) => ({
   nodeIdx: index('idx_messages_node').on(t.nodeId),
+}));
+
+// ---------------------------------------------------------------------------
+// turns
+// ---------------------------------------------------------------------------
+export const turns = sqliteTable('turns', {
+  turnId:             text('turn_id').primaryKey(),
+  nodeId:             text('node_id').notNull().references(() => nodes.id),
+  userMessageId:      text('user_message_id'),
+  assistantMessageId: text('assistant_message_id').notNull(),
+  status:             text('status').notNull(),
+  lastSeq:            integer('last_seq').notNull().default(-1),
+  stopReason:         text('stop_reason'),
+  error:              text('error'),
+  startedAt:          integer('started_at').notNull(),
+  checkpointAt:       integer('checkpoint_at'),
+  completedAt:        integer('completed_at'),
+  updatedAt:          integer('updated_at').notNull(),
+}, (t) => ({
+  nodeIdx: index('idx_turns_node').on(t.nodeId),
+  assistantMessageUq: uniqueIndex('idx_turns_assistant_message').on(t.assistantMessageId),
+}));
+
+export const commandReceipts = sqliteTable('command_receipts', {
+  workspaceId: text('workspace_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  payloadHash: text('payload_hash').notNull(),
+  resultJson:  text('result_json').notNull(),
+  createdAt:   integer('created_at').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.workspaceId, t.operationId] }),
+  createdIdx: index('idx_command_receipts_created').on(t.createdAt),
 }));
 
 // NOTE: messages_fts (FTS5 virtual table) exists in the database but is NOT

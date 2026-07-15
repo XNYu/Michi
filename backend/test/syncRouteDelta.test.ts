@@ -18,7 +18,7 @@ import path from 'node:path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 
-import { initDb, closeDb } from '../src/services/db';
+import { initDb, closeDb, getDb } from '../src/services/db';
 import {
   saveWorkspace, saveNode, saveMessage,
   listMessages,
@@ -154,6 +154,27 @@ describe('POST /workspaces/:id/sync — delta route forwarding', () => {
       contexts: [],
     });
     assert.equal(res.ok, true);
+    assert.equal(listMessages('n1').length, 1);
+  });
+
+  test('v2 workspace rejects a stale legacy sync before it can overwrite messages', async () => {
+    saveWorkspace(makeWorkspace('ws1'));
+    saveNode(makeNode('ws1', 'n1'));
+    saveMessage(makeMessage('n1', 'msg-a'));
+    getDb().prepare('UPDATE workspaces SET persistence_version = 2 WHERE id = ?').run('ws1');
+
+    const response = await fetch(`${baseUrl}/workspaces/ws1/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'delta',
+        upserts: { nodes: [makeNode('ws1', 'n1')] },
+        messageReconcileNodeIds: ['n1'],
+      }),
+    });
+    const body = await response.json() as Record<string, unknown>;
+    assert.equal(response.status, 409);
+    assert.equal(body.error, 'persistence_v2_reload_required');
     assert.equal(listMessages('n1').length, 1);
   });
 

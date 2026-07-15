@@ -42,7 +42,7 @@ export interface StreamHandlers {
   onContextUsage?: (data: ChatStreamPayloads['context_usage']) => void;
   onUsageSummary?: (data: ChatStreamPayloads['usage_summary']) => void;
   onMcpServerError?: (data: ChatStreamPayloads['mcp_server_error']) => void;
-  onDone?: (stopReason?: string, assistantId?: string, turnId?: string) => void;
+  onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean) => void;
   onAborted?: () => void;
   onError?: (msg: string, assistantId?: string, turnId?: string) => void;
 }
@@ -136,7 +136,20 @@ export function dispatchChatStreamEvent(
       handlers.onMcpServerError?.(streamEvent.data);
       return;
     case CHAT_STREAM_EVENTS.done:
-      handlers.onDone?.(streamEvent.data.stopReason, streamEvent.data.assistantId, streamEvent.data.turnId);
+      if (typeof streamEvent.data.persisted === 'boolean') {
+        handlers.onDone?.(
+          streamEvent.data.stopReason,
+          streamEvent.data.assistantId,
+          streamEvent.data.turnId,
+          streamEvent.data.persisted,
+        );
+      } else {
+        handlers.onDone?.(
+          streamEvent.data.stopReason,
+          streamEvent.data.assistantId,
+          streamEvent.data.turnId,
+        );
+      }
       return;
     case CHAT_STREAM_EVENTS.error:
       handlers.onError?.(streamEvent.data.message, streamEvent.data.assistantId, streamEvent.data.turnId);
