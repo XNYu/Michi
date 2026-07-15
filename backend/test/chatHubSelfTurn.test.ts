@@ -370,3 +370,56 @@ describe('ChatHub.startSelfTurn', () => {
     assert(selfEvents.length > 0);
   });
 });
+
+describe('ChatHub.cancel', () => {
+  it('treats a runtime error after cancel as cancelled, not error', async () => {
+    const hub = hubWithPersistence();
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('cancel-chat', {
+      send: (ev) => received.push(ev),
+      close: () => {},
+    });
+
+    // Create a session whose send() throws after cancel is called
+    let rejectSend: (err: Error) => void;
+    const sendPromise = new Promise<NormalizedEvent>((_, reject) => {
+      rejectSend = reject;
+    });
+    const session: AgentSession = {
+      id: 'session-cancel',
+      runtimeId: 'kiro',
+      getHistory: () => [],
+      getPendingAssistant: () => undefined,
+      async *send() {
+        yield { kind: 'chunk', text: 'partial answer' } as NormalizedEvent;
+        await sendPromise; // will reject after cancel
+      },
+      cancel: () => {
+        // Simulate kiro-cli behavior: cancel causes the prompt RPC to error
+        rejectSend(new Error('session/prompt RPC cancelled'));
+      },
+    };
+
+    const { done } = hub.startTurn({
+      chatId: 'cancel-chat',
+      nodeId: 'cancel-node',
+      text: 'hello',
+      session,
+    });
+
+    // Give the stream time to emit the chunk
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Now cancel
+    hub.cancel('cancel-chat');
+
+    await done;
+
+    // Should have a done event with stopReason 'cancelled', not an error event
+    const doneEv = received.find((ev) => ev.event === 'done');
+    const errorEv = received.find((ev) => ev.event === 'error');
+    assert(doneEv, 'expected a done event (cancel should be treated as graceful)');
+    assert.equal(errorEv, undefined, 'should NOT have an error event after cancel');
+    assert.equal(doneEv?.data.stopReason, 'cancelled');
+  });
+});

@@ -81,6 +81,7 @@ export class ChatHub {
   private readonly turns = new Map<string, TurnLog>();
   private readonly subscribers = new Map<string, Set<HubSubscriber>>();
   private readonly activeSessions = new Map<string, AgentSession>();
+  private readonly cancelledChats = new Set<string>();
   private readonly retentionMs: number;
   private readonly persistence: TurnPersistence;
   private readonly checkpointIntervalMs: number;
@@ -163,6 +164,7 @@ export class ChatHub {
   cancel(chatId: string): void {
     const log = this.turns.get(chatId);
     if (!log || log.status !== "active") return;
+    this.cancelledChats.add(chatId);
     void Promise.resolve(this.activeSessions.get(chatId)?.cancel()).catch(() => {});
   }
 
@@ -255,8 +257,13 @@ export class ChatHub {
         this.finishWithDone(chatId, log, 'end_turn');
       }
     } catch (err) {
-      this.finishWithError(chatId, log, err);
+      if (this.cancelledChats.has(chatId)) {
+        this.finishWithDone(chatId, log, 'cancelled');
+      } else {
+        this.finishWithError(chatId, log, err);
+      }
     } finally {
+      this.cancelledChats.delete(chatId);
       this.scheduleEvict(chatId, log);
     }
   }
@@ -431,8 +438,15 @@ export class ChatHub {
         this.finishWithDone(chatId, log, 'end_turn');
       }
     } catch (err) {
-      this.finishWithError(chatId, log, err);
+      if (this.cancelledChats.has(chatId)) {
+        // Cancel was requested — treat the resulting runtime error as a
+        // graceful cancellation rather than a hard error.
+        this.finishWithDone(chatId, log, 'cancelled');
+      } else {
+        this.finishWithError(chatId, log, err);
+      }
     } finally {
+      this.cancelledChats.delete(chatId);
       this.activeSessions.delete(chatId);
       for (const sub of this.subscribers.get(chatId) ?? []) {
         try {
