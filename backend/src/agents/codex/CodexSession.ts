@@ -8,6 +8,14 @@ import { createCodexTranslator } from './codexEventTranslator';
 import { resolveShowImage } from '../claude/showImage';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission } from '../../services/dbRepository';
+import { followUpReminder } from '../preamble';
+import { log } from '../../services/logger';
+import { buildCodexFollowUpsHookPocInstruction } from './codexFollowUpsHookPoc';
+import {
+  FOLLOW_UPS_SENTINEL_TURN_REMINDER,
+  resolveFollowUpsExperimentMode,
+  type FollowUpsExperimentMode,
+} from '../followUpsExperiment';
 
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
 
@@ -27,6 +35,8 @@ export interface CodexSessionDeps {
   firstTurnPrefix?: string;
   effort?: string | null;
   model?: string | null;
+  followUpsHookPocEnabled?: boolean;
+  followUpsExperimentMode?: FollowUpsExperimentMode;
 }
 
 export class CodexSession implements AgentSession {
@@ -45,6 +55,8 @@ export class CodexSession implements AgentSession {
   private readonly bridge: AgentToolBridge;
   private readonly mcpPort: number;
   private readonly ownerUserId: string | null;
+  private readonly followUpsHookPocEnabled: boolean;
+  private readonly followUpsExperimentMode: FollowUpsExperimentMode;
 
   private state: SessionState = 'idle';
   private slotId: string | null = null;
@@ -56,6 +68,15 @@ export class CodexSession implements AgentSession {
 
   private firstTurnPrefix: string;
   private firstTurnPrefixConsumed = false;
+
+  private followUpsValidationActive = false;
+  private followUpsSetThisTurn = false;
+  private branchOverviewSetThisTurn = false;
+  private followUpsStopBlockUsed = false;
+  private followUpsRepairMode = false;
+  private followUpsSuppressedChunkEvents = 0;
+  private followUpsSuppressedThoughtEvents = 0;
+  private followUpsOutputBoundaryPending = false;
 
   // Turn mutex
   private turnLock: Promise<void> | null = null;
@@ -83,6 +104,9 @@ export class CodexSession implements AgentSession {
     this.bridge = deps.bridge;
     this.mcpPort = deps.mcpPort;
     this.ownerUserId = deps.ownerUserId ?? null;
+    this.followUpsHookPocEnabled = deps.followUpsHookPocEnabled ?? false;
+    this.followUpsExperimentMode =
+      deps.followUpsExperimentMode ?? resolveFollowUpsExperimentMode();
     this.firstTurnPrefix = deps.firstTurnPrefix ?? '';
     this.effort = deps.effort ?? null;
     this.currentModelId = deps.model ?? null;
@@ -122,7 +146,19 @@ export class CodexSession implements AgentSession {
           : `${this.firstTurnPrefix}\n\n---\n\n${text}`;
       this.firstTurnPrefixConsumed = true;
 
+      // Append follow-up reminder for the model only — history stays clean.
+      const userTurnCount = this.history.filter(m => m.role === 'user').length + 1;
+      const reminder = this.followUpsHookPocEnabled && this.followUpsExperimentMode === 'sentinel'
+        ? FOLLOW_UPS_SENTINEL_TURN_REMINDER
+        : followUpReminder(userTurnCount, true);
+      const textForModel = outgoingText
+        + (reminder || '')
+        + (this.followUpsHookPocEnabled
+          ? buildCodexFollowUpsHookPocInstruction(this.followUpsExperimentMode)
+          : '');
+
       this.state = 'in_turn';
+      this.armFollowUpsHookPoc(userTurnCount);
       this.history.push({ role: 'user', content: outgoingText });
       this.markTranslatorTurnStart?.();
 
@@ -146,6 +182,7 @@ export class CodexSession implements AgentSession {
         this.state = 'idle';
       }
     } finally {
+      this.finishFollowUpsHookPocTurn();
       this.releaseTurnLock();
     }
   }
@@ -250,6 +287,149 @@ export class CodexSession implements AgentSession {
 
   // ---- MCP slot setup -------------------------------------------------------
 
+  private armFollowUpsHookPoc(userTurnCount: number): void {
+    if (!this.followUpsHookPocEnabled) return;
+    this.followUpsValidationActive = true;
+    this.followUpsSetThisTurn = false;
+    this.branchOverviewSetThisTurn = false;
+    this.followUpsStopBlockUsed = false;
+    this.followUpsRepairMode = false;
+    this.followUpsSuppressedChunkEvents = 0;
+    this.followUpsSuppressedThoughtEvents = 0;
+    this.followUpsOutputBoundaryPending = false;
+    log.info('chat', 'codex follow-ups hook poc turn armed', {
+      nodeId: this.id,
+      threadId: this.threadId,
+      userTurnCount,
+    });
+  }
+
+  private followUpsHookCallbacks(): {
+    onSetFollowUps?: (followUps: string[]) => void;
+    onSetBranchOverview: (overview: string) => void;
+    onValidateFollowUps: () => Record<string, unknown>;
+  } {
+    return {
+      ...(this.followUpsExperimentMode === 'hook-tool' ? {
+        onSetFollowUps: (followUps: string[]) => {
+          const cleaned = followUps.map((value) => value.trim()).filter(Boolean).slice(0, 3);
+          if (cleaned.length === 0) return;
+          if (this.followUpsValidationActive) this.followUpsSetThisTurn = true;
+          log.info('mcp', 'codex follow-ups hook poc set_follow_ups received', {
+            nodeId: this.id,
+            threadId: this.threadId,
+            count: cleaned.length,
+            validationActive: this.followUpsValidationActive,
+          });
+          this.followUpsOutputBoundaryPending = true;
+          this.queue.push({ kind: 'follow_ups_status', status: 'in_progress' });
+          this.queue.push({ kind: 'follow_ups', followUps: cleaned });
+        },
+      } : {}),
+      onSetBranchOverview: (overview) => {
+        const cleaned = overview.trim();
+        if (!cleaned) return;
+        if (this.followUpsValidationActive) this.branchOverviewSetThisTurn = true;
+        log.info('mcp', 'codex follow-ups hook poc set_branch_overview received', {
+          nodeId: this.id,
+          threadId: this.threadId,
+          length: cleaned.length,
+          validationActive: this.followUpsValidationActive,
+        });
+        this.queue.push({ kind: 'branch_overview', overview: cleaned });
+      },
+      onValidateFollowUps: () => {
+        if (!this.followUpsValidationActive) {
+          log.info('mcp', 'codex follow-ups hook poc validator skipped', {
+            nodeId: this.id,
+            threadId: this.threadId,
+            reason: 'non-user-turn',
+          });
+          return {};
+        }
+        const missingTools: string[] = [];
+        if (!this.branchOverviewSetThisTurn) missingTools.push('set_branch_overview');
+        if (this.followUpsExperimentMode === 'hook-tool' && !this.followUpsSetThisTurn) {
+          missingTools.push('set_follow_ups');
+        }
+        if (missingTools.length === 0) {
+          log.info('mcp', 'codex follow-ups hook poc validator passed', {
+            nodeId: this.id,
+            threadId: this.threadId,
+          });
+          return {};
+        }
+        if (!this.followUpsStopBlockUsed) {
+          this.followUpsStopBlockUsed = true;
+          this.followUpsRepairMode = true;
+          log.warn('mcp', 'codex follow-ups hook poc blocked stop', {
+            nodeId: this.id,
+            threadId: this.threadId,
+            attempt: 1,
+          });
+          const repairInstructions = missingTools.map((tool) => tool === 'set_branch_overview'
+            ? 'For set_branch_overview, provide 1-3 concise sentences about the branch state.'
+            : 'For set_follow_ups, provide exactly three user-voice questions.');
+          return {
+            decision: 'block',
+            reason:
+              `Before finishing, call the missing Michi metadata tools: ${missingTools.join(', ')}. `
+              + `${repairInstructions.join(' ')} Do not repeat the user-facing answer.`,
+          };
+        }
+        log.warn('mcp', 'codex follow-ups hook poc fail-open', {
+          nodeId: this.id,
+          threadId: this.threadId,
+          reason: `${missingTools.join(', ')} still missing after one continuation`,
+        });
+        return {};
+      },
+    };
+  }
+
+  private suppressFollowUpsRepairEvent(ev: NormalizedEvent): boolean {
+    if (!this.followUpsHookPocEnabled || !this.followUpsRepairMode) return false;
+    if (ev.kind === 'chunk') {
+      this.followUpsSuppressedChunkEvents += 1;
+      return true;
+    }
+    if (ev.kind === 'thought') {
+      this.followUpsSuppressedThoughtEvents += 1;
+      return true;
+    }
+    return false;
+  }
+
+  private completeFollowUpsOutputBoundary(reason: 'agent-message-completed' | 'turn-completed'): void {
+    if (!this.followUpsOutputBoundaryPending) return;
+    this.followUpsOutputBoundaryPending = false;
+    log.info('chat', 'codex follow-ups visible output boundary completed', {
+      nodeId: this.id,
+      threadId: this.threadId,
+      reason,
+    });
+    this.queue.push({ kind: 'follow_ups_status', status: 'completed' });
+  }
+
+  private finishFollowUpsHookPocTurn(): void {
+    if (this.followUpsHookPocEnabled && (
+      this.followUpsSuppressedChunkEvents > 0
+      || this.followUpsSuppressedThoughtEvents > 0
+    )) {
+      log.info('chat', 'codex follow-ups hook poc repair output suppressed', {
+        nodeId: this.id,
+        threadId: this.threadId,
+        chunks: this.followUpsSuppressedChunkEvents,
+        thoughts: this.followUpsSuppressedThoughtEvents,
+      });
+    }
+    this.followUpsValidationActive = false;
+    this.followUpsRepairMode = false;
+    this.followUpsSuppressedChunkEvents = 0;
+    this.followUpsSuppressedThoughtEvents = 0;
+    this.followUpsOutputBoundaryPending = false;
+  }
+
   createMcpSlot(): string {
     const slot = this.mcpRegistry.create(
       this.id,
@@ -302,6 +482,7 @@ export class CodexSession implements AgentSession {
           });
           return { relPath: r.relPath, mimeType: r.mimeType, size: r.size };
         },
+        ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       },
       { nodeId: this.id, workspaceId: this.workspaceId },
     );
@@ -313,6 +494,7 @@ export class CodexSession implements AgentSession {
 
   wireNotifications(): void {
     const translator = createCodexTranslator((ev) => {
+      if (this.suppressFollowUpsRepairEvent(ev)) return;
       if (ev.kind === 'turn_end' && this.state === 'in_turn') {
         this.state = 'idle';
       }
@@ -322,7 +504,18 @@ export class CodexSession implements AgentSession {
 
     this.unsubscribeNotification = this.client.onNotification(
       this.threadId,
-      (method, params) => translator.feed(method, params),
+      (method, params) => {
+        if (method === 'turn/completed') {
+          this.completeFollowUpsOutputBoundary('turn-completed');
+        }
+        translator.feed(method, params);
+        if (method === 'item/completed') {
+          const item = (params['item'] ?? params) as Record<string, unknown>;
+          if (item['type'] === 'agentMessage') {
+            this.completeFollowUpsOutputBoundary('agent-message-completed');
+          }
+        }
+      },
     );
   }
 

@@ -35,6 +35,10 @@ export interface SpawnClaudeArgs {
   mcpConfigInline: string;
   strictMcpConfig?: boolean;
   permissionPromptTool?: string;
+  /** Inline Claude settings JSON, used by Michi-owned lifecycle hooks. */
+  settingsInline?: string;
+  /** Include hook_started/progress/response envelopes in stream-json output. */
+  includeHookEvents?: boolean;
   systemPromptAppend?: string;
   addDirs?: string[];
   /**
@@ -169,6 +173,10 @@ export function buildClaudeArgv(args: SpawnClaudeArgs): string[] {
     '--permission-mode', args.permissionMode ?? 'acceptEdits',
   ];
 
+  if (args.includeHookEvents) {
+    argv.push('--include-hook-events');
+  }
+
   if (args.bare) {
     argv.push('--bare');
   }
@@ -203,6 +211,10 @@ export function buildClaudeArgv(args: SpawnClaudeArgs): string[] {
 
   if (args.systemPromptAppend) {
     argv.push('--append-system-prompt', args.systemPromptAppend);
+  }
+
+  if (args.settingsInline) {
+    argv.push('--settings', args.settingsInline);
   }
 
   if (args.addDirs) {

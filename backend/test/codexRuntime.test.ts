@@ -164,6 +164,62 @@ test('newSession with empty model resolves isDefault from model/list', async () 
   assert.equal(threadStartParams.length, 1, 'thread/start should be called once');
   const startParams = threadStartParams[0];
   assert.equal(startParams['model'], 'codex-default', 'thread/start should pass the isDefault model');
+  const defaultConfig = startParams['config'] as Record<string, unknown>;
+  assert.equal(defaultConfig['hooks'], undefined, 'Hook POC must stay off by default');
+  assert.equal(defaultConfig['bypass_hook_trust'], undefined);
+
+  await runtime.shutdown();
+});
+
+test('Codex follow-ups Hook POC injects temporary Hook config alongside the MCP slot', async () => {
+  const capturedStartParams: Record<string, unknown>[] = [];
+  const client = makeStubClient({
+    request: async (method: string, params: unknown): Promise<unknown> => {
+      if (method === 'model/list') {
+        return {
+          data: [{
+            id: 'codex-default',
+            displayName: 'Codex Default',
+            description: '',
+            hidden: false,
+            isDefault: true,
+            supportedReasoningEfforts: [],
+            defaultReasoningEffort: 'medium',
+          }],
+        };
+      }
+      if (method === 'thread/start') {
+        capturedStartParams.push(params as Record<string, unknown>);
+        return { threadId: 'thread-hook-poc' };
+      }
+      return {};
+    },
+  });
+  const runtime = new CodexRuntime(
+    makeStubBridge(),
+    makeStubMcpRegistry(),
+    3456,
+    { client, followUpsHookPocEnabled: true, followUpsExperimentMode: 'sentinel' },
+  );
+
+  await runtime.newSession({
+    sessionId: 'node-hook-poc',
+    cwd: '/tmp/test',
+    model: '',
+  });
+
+  assert.equal(capturedStartParams.length, 1);
+  const config = capturedStartParams[0].config as Record<string, unknown>;
+  assert.ok(config.mcp_servers, 'existing MCP config must be preserved');
+  assert.deepEqual(config.features, { hooks: true });
+  assert.equal(config.bypass_hook_trust, true);
+  const hooks = config.hooks as { Stop: Array<{ hooks: Array<Record<string, unknown>> }> };
+  assert.equal(hooks.Stop[0].hooks[0].type, 'command');
+  assert.match(String(hooks.Stop[0].hooks[0].command), /127\.0\.0\.1:3456/);
+  const mcpServers = config.mcp_servers as Record<string, { tools: Record<string, unknown> }>;
+  assert.deepEqual(mcpServers.__michi_internal__.tools, {
+    set_branch_overview: { approval_mode: 'approve' },
+  });
 
   await runtime.shutdown();
 });

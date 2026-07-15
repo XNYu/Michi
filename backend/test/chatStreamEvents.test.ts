@@ -12,6 +12,13 @@ describe('chatStreamEvents route mapping', () => {
         expected: { event: CHAT_STREAM_EVENTS.chunk, data: { text: 'hello' } },
       },
       {
+        input: { kind: 'branch_overview', overview: 'Current branch state.' },
+        expected: {
+          event: CHAT_STREAM_EVENTS.branchOverview,
+          data: { overview: 'Current branch state.' },
+        },
+      },
+      {
         input: {
           kind: 'tool_call',
           toolCallId: 'tc_1',

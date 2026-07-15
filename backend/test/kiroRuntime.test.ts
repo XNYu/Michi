@@ -1,6 +1,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { KiroSession } from '../src/agents/kiro/KiroSession';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { AgentSession } from '../src/agents/types';
 import type { ModelInfo } from '../src/agents/types';
@@ -107,5 +108,59 @@ describe('KiroRuntime model catalog cache', () => {
 
   assert.deepEqual(fresh.map((m) => m.id), ['fresh-kiro']);
   assert.deepEqual(saved, fresh);
+  });
+});
+
+describe('Kiro branch overview metadata tool', () => {
+  test('KiroSession reminds the agent and translates injected overview updates', async () => {
+    const prompts: string[] = [];
+    const fakeRuntime = {
+      ensureClient: async () => ({
+        prompt: async function* (_sessionId: string, text: string) {
+          prompts.push(text);
+          yield { sessionUpdate: 'branch_overview', overview: 'Current Kiro branch state.' };
+          yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+        },
+      }),
+      getCurrentMode: () => undefined,
+      getCurrentModel: () => undefined,
+    } as unknown as KiroRuntime;
+    const session = new KiroSession('kiro-overview-session', fakeRuntime, '/tmp/a');
+
+    const events: any[] = [];
+    for await (const event of session.send('hello')) events.push(event);
+
+    assert.match(prompts[0], /set_branch_overview/);
+    assert.deepEqual(events.find((event) => event.kind === 'branch_overview'), {
+      kind: 'branch_overview',
+      overview: 'Current Kiro branch state.',
+    });
+  });
+
+  test('Kiro MCP callback injects the overview into the matching ACP session', () => {
+    let injected: { sessionId: string; update: Record<string, unknown> } | null = null;
+    const registry = {
+      get: (slotId: string) => slotId === 'slot-overview'
+        ? { parentChatId: 'kiro-session-a', cwd: '/tmp/a' }
+        : undefined,
+    } as any;
+    const runtime = new KiroRuntime(bridge, registry, 0, '/tmp/default');
+    const rt = runtime as any;
+    rt.pool.set('/tmp/a', {
+      injectUpdate: (sessionId: string, update: Record<string, unknown>) => {
+        injected = { sessionId, update };
+      },
+    });
+    const callbacks = rt.makeSlotCallbacks(() => 'slot-overview');
+
+    callbacks.onSetBranchOverview('  Current Kiro branch state.  ');
+
+    assert.deepEqual(injected, {
+      sessionId: 'kiro-session-a',
+      update: {
+        sessionUpdate: 'branch_overview',
+        overview: 'Current Kiro branch state.',
+      },
+    });
   });
 });

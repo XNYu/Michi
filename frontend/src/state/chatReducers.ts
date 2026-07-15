@@ -892,7 +892,11 @@ export function reduceNodes(
         [action.nodeId]: {
           ...n,
           followUps: cleaned,
-          followUpsGenerating: false,
+          // Keep an explicit runtime-owned output-boundary wait active. The
+          // matching follow_ups_status=completed event clears it after the
+          // final visible answer block; legacy producers that never send an
+          // in_progress status remain false here.
+          followUpsGenerating: n.followUpsGenerating ?? false,
           followUpsSourceMessageId: lastAssistant?.id,
         },
       };

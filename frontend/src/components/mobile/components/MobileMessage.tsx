@@ -11,6 +11,7 @@ interface Props {
   onLongPress?: (msg: ChatMessage) => void;
   highlightTerm?: string | null;
   runtimeId?: string | null;
+  onVisibleSmoothingChange?: (isSmoothing: boolean) => void;
 }
 
 /**
@@ -23,7 +24,13 @@ interface Props {
  * segments mixing text and tool-group chips. User messages bypass the hook
  * (no sentinels, no tool calls) and render m.text directly.
  */
-export default function MobileMessage({ message, onLongPress, highlightTerm, runtimeId }: Props) {
+export default function MobileMessage({
+  message,
+  onLongPress,
+  highlightTerm,
+  runtimeId,
+  onVisibleSmoothingChange,
+}: Props) {
   const longPress = useLongPress<HTMLDivElement>({
     enabled: message.role === 'assistant' && !!onLongPress,
     onLongPress: () => onLongPress?.(message),
@@ -31,7 +38,10 @@ export default function MobileMessage({ message, onLongPress, highlightTerm, run
   });
 
   const isUser = message.role === 'user';
-  const { segments } = useVisibleStream(message, runtimeId);
+  const { segments, isSmoothing } = useVisibleStream(message, runtimeId);
+  React.useEffect(() => {
+    if (message.role === 'assistant') onVisibleSmoothingChange?.(isSmoothing);
+  }, [isSmoothing, message.role, onVisibleSmoothingChange]);
 
   return (
     <div className="m-msg" data-role={message.role} {...longPress.handlers}>

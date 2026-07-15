@@ -84,6 +84,11 @@ export interface McpSlot {
     onSaveContext: (name: string, body: string) => BridgeContextResult | null;
     onUpdateContext: (name: string, body: string) => BridgeContextResult | null;
     onShowImage: (inputPath: string, caption?: string) => { relPath: string; mimeType: string; size: number } | { error: string };
+    /** Structured turn metadata callbacks. Optional so runtimes expose only
+     * the metadata tools they can route back into their own event stream. */
+    onSetFollowUps?: (followUps: string[]) => void;
+    onSetBranchOverview?: (overview: string) => void;
+    onValidateFollowUps?: () => Record<string, unknown>;
     onApprove?: (params: {
         toolName: string;
         input: unknown;
@@ -99,6 +104,9 @@ export interface McpSlotCallbacks {
     onSaveContext: McpSlot["onSaveContext"];
     onUpdateContext: McpSlot["onUpdateContext"];
     onShowImage: McpSlot["onShowImage"];
+    onSetFollowUps?: McpSlot["onSetFollowUps"];
+    onSetBranchOverview?: McpSlot["onSetBranchOverview"];
+    onValidateFollowUps?: McpSlot["onValidateFollowUps"];
     onApprove?: (params: {
         toolName: string;
         input: unknown;
@@ -237,6 +245,79 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         );
     }
 
+    if (slot.onSetFollowUps) {
+        server.registerTool(
+            "set_follow_ups",
+            {
+                description:
+                    "Set exactly three follow-up questions for this turn. Write them from the user's point of view and in the user's language. Call near the end of the reply.",
+                inputSchema: {
+                    follow_ups: z.array(z.string().min(1)).min(1).max(3),
+                },
+            },
+            async (args) => {
+                const cleaned = (Array.isArray(args?.follow_ups) ? args.follow_ups : [])
+                    .map((value: unknown) => typeof value === "string" ? value.trim() : "")
+                    .filter((value: string) => value.length > 0)
+                    .slice(0, 3);
+                if (cleaned.length > 0) slot.onSetFollowUps?.(cleaned);
+                return {
+                    content: [{ type: "text", text: `Follow-ups set: ${cleaned.length}` }],
+                };
+            },
+        );
+    }
+
+    if (slot.onSetBranchOverview) {
+        server.registerTool(
+            "set_branch_overview",
+            {
+                description:
+                    "Update this branch's durable overview. Summarize what the branch is about and where it currently stands in 1-3 concise sentences, matching the user's language. Call near the end of every reply.",
+                inputSchema: {
+                    overview: z.string().min(1).max(4000),
+                },
+            },
+            async (args) => {
+                const overview = typeof args?.overview === "string" ? args.overview.trim() : "";
+                if (overview) slot.onSetBranchOverview?.(overview);
+                return {
+                    content: [{
+                        type: "text",
+                        text: overview ? "Branch overview updated." : "Branch overview was empty; no update applied.",
+                    }],
+                };
+            },
+        );
+    }
+
+    if (slot.onValidateFollowUps) {
+        const validateTurnMetadata = async () => ({
+            content: [{
+                type: "text" as const,
+                text: JSON.stringify(slot.onValidateFollowUps?.() ?? {}),
+            }],
+        });
+        server.registerTool(
+            "validate_follow_ups",
+            {
+                description:
+                    "Legacy internal Stop-hook validator alias. The model must not call it directly.",
+                inputSchema: {},
+            },
+            validateTurnMetadata,
+        );
+        server.registerTool(
+            "validate_turn_metadata",
+            {
+                description:
+                    "Internal Claude Stop-hook validator for required turn metadata. Claude invokes this automatically; the model must not call it directly.",
+                inputSchema: {},
+            },
+            validateTurnMetadata,
+        );
+    }
+
     server.registerTool(
         "list_threads",
         {
@@ -331,6 +412,32 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
 }
 
 /**
+ * Capability-URL validator used by the Codex command Stop Hook POC. The
+ * unguessable MCP slot id binds the external Hook process to exactly one
+ * Michi node/session, avoiding any global "current node" lookup when several
+ * branches are running concurrently.
+ */
+export function validateCodexStopHookForSlot(
+    registry: McpSlotRegistry,
+    slotId: string,
+    payload: unknown,
+): Record<string, unknown> {
+    const slot = registry.get(slotId);
+    if (!slot?.onValidateFollowUps) return {};
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+    const eventName = (payload as Record<string, unknown>).hook_event_name;
+    if (eventName !== "Stop") return {};
+    return slot.onValidateFollowUps();
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+    if (!address) return false;
+    return address === "127.0.0.1"
+        || address === "::1"
+        || address === "::ffff:127.0.0.1";
+}
+
+/**
  * Mount the MCP HTTP endpoint under /mcp/:slotId on the provided Express router.
  *
  * Stateless transport: a fresh McpServer + StreamableHTTPServerTransport is
@@ -347,6 +454,31 @@ export function mountMcp(
     router: express.Router,
     registry: McpSlotRegistry,
 ): void {
+    router.post("/codex-hooks/:slotId/stop", (req: Request<{ slotId: string }>, res: Response) => {
+        const slotId = req.params.slotId;
+        if (!isLoopbackAddress(req.socket.remoteAddress)) {
+            log.warn("mcp", "codex stop hook rejected non-loopback request", {
+                slotId,
+                remoteAddress: req.socket.remoteAddress,
+            });
+            res.status(403).json({});
+            return;
+        }
+
+        const slot = registry.get(slotId);
+        const result = validateCodexStopHookForSlot(registry, slotId, req.body);
+        log.info("mcp", "codex follow-ups hook poc validator request", {
+            slotId,
+            nodeId: slot?.nodeId ?? null,
+            decision: typeof result.decision === "string" ? result.decision : "allow",
+            stopHookActive:
+                !!req.body && typeof req.body === "object"
+                    ? (req.body as Record<string, unknown>).stop_hook_active === true
+                    : false,
+        });
+        res.json(result);
+    });
+
     const handlePost = async (req: Request<{ slotId: string }>, res: Response) => {
         const slotId = req.params.slotId;
         const slot = registry.get(slotId);

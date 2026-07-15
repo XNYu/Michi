@@ -290,6 +290,8 @@ describe('claudeBinary', () => {
       resumeSessionId: 'resume-id-abc',
       forkSession: true,
       addDirs: ['/dir/A', '/dir/B'],
+      settingsInline: '{"hooks":{}}',
+      includeHookEvents: true,
     });
 
     // Required flags present
@@ -299,6 +301,7 @@ describe('claudeBinary', () => {
     assert.ok(hasFlag('--output-format'), 'missing --output-format');
     assert.ok(hasFlag('--verbose'), 'missing --verbose');
     assert.ok(hasFlag('--include-partial-messages'), 'missing --include-partial-messages');
+    assert.ok(hasFlag('--include-hook-events'), 'missing --include-hook-events');
     assert.ok(hasFlag('--print'), 'missing --print');
 
     // --print appears exactly once (D1 fix)
@@ -331,11 +334,16 @@ describe('claudeBinary', () => {
     assert.equal(argv[addDirIndices[0] + 1], '/dir/A');
     assert.equal(argv[addDirIndices[1] + 1], '/dir/B');
 
+    const settingsIdx = argv.indexOf('--settings');
+    assert.ok(settingsIdx !== -1, 'missing --settings');
+    assert.equal(argv[settingsIdx + 1], '{"hooks":{}}');
+
     // D2: --mcp-config is the last flag (or followed only by its value at end of argv)
     const mcpIdx = argv.indexOf('--mcp-config');
     assert.ok(mcpIdx !== -1, 'missing --mcp-config');
     assert.equal(argv[mcpIdx + 1], '{}');
     assert.equal(mcpIdx + 2, argv.length, '--mcp-config value should be the last element');
+    assert.ok(settingsIdx < mcpIdx, '--settings must appear before variadic --mcp-config');
 
     // --input-format before --output-format before --verbose before --print
     const ifIdx = argv.indexOf('--input-format');

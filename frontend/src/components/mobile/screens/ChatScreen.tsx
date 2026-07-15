@@ -19,6 +19,7 @@ import SpawnCard from '../components/SpawnCard';
 import { FollowUpRow } from '../../FollowUpRow';
 import { useNodeNavigation } from '../hooks/useNodeNavigation';
 import type { ChatMessage } from '../../../state/chatTypes';
+import { shouldShowFollowUps } from '../../../state/followUpsVisibility';
 
 interface Props {
   nodeId: string;
@@ -65,6 +66,19 @@ export default function ChatScreen({ nodeId, onNavigateNode, onExit }: Props) {
   const [actionMsg, setActionMsg] = React.useState<ChatMessage | null>(null);
   const [draft, setDraftLocal] = React.useState<string>(
     () => node?.composerDraft?.value ?? '',
+  );
+  const tailAssistantId = React.useMemo(
+    () => [...(node?.messages ?? [])].reverse().find((message) => message.role === 'assistant')?.id,
+    [node?.messages],
+  );
+  const [tailAnswerSmoothing, setTailAnswerSmoothing] = React.useState(false);
+  const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
+    setTailAnswerSmoothing(isSmoothing);
+  }, []);
+  const showFollowUps = shouldShowFollowUps(
+    node?.followUps.length ?? 0,
+    tailAnswerSmoothing,
+    !!node?.followUpsGenerating,
   );
 
   const streamRef = React.useRef<HTMLDivElement>(null);
@@ -324,6 +338,11 @@ export default function ChatScreen({ nodeId, onNavigateNode, onExit }: Props) {
             message={m}
             runtimeId={node.runtimeId}
             onLongPress={(msg) => setActionMsg(msg)}
+            onVisibleSmoothingChange={
+              m.role === 'assistant' && m.id === tailAssistantId
+                ? handleTailSmoothingChange
+                : undefined
+            }
           />
         ))}
 
@@ -348,7 +367,7 @@ export default function ChatScreen({ nodeId, onNavigateNode, onExit }: Props) {
           />
         )}
         <SpawnCard spawnedChildren={spawnedChildren} onPick={onNavigateNode} />
-        {prefs.enableFollowUps && !streaming && node.followUps.length > 0 && (
+        {prefs.enableFollowUps && showFollowUps && (
           <div className="m-followups">
             <div className="m-followups-label">Follow ups</div>
             {node.followUps.map((q, i) => (

@@ -442,12 +442,24 @@ interface AnswerRunViewProps {
   isDark: boolean;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
+  onSmoothingChange?: (isSmoothing: boolean) => void;
 }
 
-function AnswerRunViewInner({ blocks, tools, incomingCarry, isDark, subagents, runtimeId }: AnswerRunViewProps) {
+function AnswerRunViewInner({
+  blocks,
+  tools,
+  incomingCarry,
+  isDark,
+  subagents,
+  runtimeId,
+  onSmoothingChange,
+}: AnswerRunViewProps) {
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const { segments, isSmoothing } = useAnswerRunStream(blocks, toolsById, incomingCarry, runtimeId);
   const streaming = blocks.some((b) => b.kind === 'answer' && b.streaming);
+  useEffect(() => {
+    onSmoothingChange?.(isSmoothing);
+  }, [isSmoothing, onSmoothingChange]);
   return (
     <>
       {renderSegments(segments, isDark, subagents, { streamingMarkdownBlocks: streaming || isSmoothing })}
@@ -461,7 +473,8 @@ const AnswerRunView = React.memo(AnswerRunViewInner, (prev, next) =>
   carryEqual(prev.incomingCarry, next.incomingCarry) &&
   prev.isDark === next.isDark &&
   prev.subagents === next.subagents &&
-  prev.runtimeId === next.runtimeId,
+  prev.runtimeId === next.runtimeId &&
+  prev.onSmoothingChange === next.onSmoothingChange,
 );
 
 interface ThinkingRunViewProps {
@@ -504,13 +517,18 @@ function LegacyAssistantBody({
   isDark,
   subagents,
   runtimeId,
+  onSmoothingChange,
 }: {
   m: ChatMessage;
   isDark: boolean;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
+  onSmoothingChange?: (isSmoothing: boolean) => void;
 }) {
   const { segments, isSmoothing } = useVisibleStream(m, runtimeId);
+  useEffect(() => {
+    onSmoothingChange?.(isSmoothing);
+  }, [isSmoothing, onSmoothingChange]);
   return (
     <>
       {renderSegments(segments, isDark, subagents, { streamingMarkdownBlocks: !!m.streaming || isSmoothing })}
@@ -524,21 +542,30 @@ function BlockAssistantBody({
   showThoughts,
   subagents,
   runtimeId,
+  onSmoothingChange,
 }: {
   m: ChatMessage;
   isDark: boolean;
   showThoughts: boolean;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
+  onSmoothingChange?: (isSmoothing: boolean) => void;
 }) {
   const runs = useMemo(() => splitAssistantRuns(m.blocks), [m.blocks]);
   const byId = useMemo(() => toolMap(m.toolCalls), [m.toolCalls]);
+  const tailAnswerRunId = useMemo(
+    () => [...runs].reverse().find((run) => run.kind === 'answer')?.id,
+    [runs],
+  );
   const liveThinkingId = useMemo(
     () => [...runs].reverse().find((run) =>
       run.kind === 'thinking' && run.blocks.some((b) => b.kind === 'thinking' && b.streaming),
     )?.id,
     [runs],
   );
+  useEffect(() => {
+    if (!tailAnswerRunId) onSmoothingChange?.(false);
+  }, [onSmoothingChange, tailAnswerRunId]);
   return (
     <>
       {runs.map((run: AssistantRun) => {
@@ -567,11 +594,118 @@ function BlockAssistantBody({
             isDark={isDark}
             subagents={subagents}
             runtimeId={runtimeId}
+            onSmoothingChange={run.id === tailAnswerRunId ? onSmoothingChange : undefined}
           />
         );
       })}
       {m.streaming && runs.length === 0 && <ThinkingIndicator />}
     </>
+  );
+}
+
+// User messages taller than this many lines collapse behind a "Show more"
+// toggle with a fade-out gradient. Measured against the content's computed
+// line-height so it tracks the (slider-driven) message font size.
+const USER_COLLAPSE_MAX_LINES = 8;
+
+// The user bubble's paper-card background — kept in sync with the color-mix
+// in `.terminal-message-user` (index.css) so the collapse gradient fades into
+// the bubble instead of a flat neutral.
+const USER_BUBBLE_BG = 'color-mix(in srgb, var(--term-accent) 4%, var(--term-surface))';
+
+/**
+ * Clamps long user message bodies to USER_COLLAPSE_MAX_LINES with a bottom
+ * fade + "Show more"/"Show less" toggle. Measurement uses scrollHeight (which
+ * ignores the max-height clamp) against `lineHeight * MAX_LINES`, re-run via a
+ * ResizeObserver so wrapping changes (pane resize, font slider) stay correct.
+ */
+function CollapsibleUserText({
+  contentKey,
+  children,
+}: {
+  contentKey: string;
+  children: React.ReactNode;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [clampHeight, setClampHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = window.getComputedStyle(el);
+      let lineHeight = parseFloat(cs.lineHeight);
+      if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+        lineHeight = (parseFloat(cs.fontSize) || 14) * 1.6;
+      }
+      const threshold = Math.round(lineHeight * USER_COLLAPSE_MAX_LINES);
+      // scrollHeight reports the full content height regardless of the clamp,
+      // so this stays stable across the collapsed/expanded toggle (no loop).
+      const isOver = el.scrollHeight > threshold + 2;
+      setOverflowing(isOver);
+      setClampHeight(isOver ? threshold : null);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [contentKey]);
+
+  const collapsed = overflowing && !expanded;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div
+        ref={contentRef}
+        style={
+          collapsed && clampHeight != null
+            ? { maxHeight: clampHeight, overflow: 'hidden' }
+            : undefined
+        }
+      >
+        {children}
+      </div>
+      {collapsed && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '2.6em',
+            pointerEvents: 'none',
+            background: `linear-gradient(to bottom, transparent, ${USER_BUBBLE_BG})`,
+          }}
+        />
+      )}
+      {overflowing && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="t-hover-fg"
+          style={{
+            marginTop: 4,
+            padding: 0,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            fontFamily: 'var(--ui-font)',
+            fontSize: 11.5,
+            color: 'var(--term-muted)',
+            letterSpacing: '.02em',
+          }}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -606,6 +740,12 @@ interface MessageBlockProps {
   turnAnchors?: ChildAnchor[];
   /** Called when user clicks a turn marker title or a quote-underline anchor. */
   onOpenBranch?: (childNodeId: string) => void;
+  /** Lowercased context names for highlighting @mentions in user messages. */
+  contextNames?: ReadonlySet<string>;
+  /** Called when user clicks a mention chip in a user message. */
+  onMentionClick?: (name: string) => void;
+  /** Reports whether the visible typewriter is still catching up to raw text. */
+  onVisibleSmoothingChange?: (isSmoothing: boolean) => void;
 }
 
 function MessageBlockInner({
@@ -625,6 +765,9 @@ function MessageBlockInner({
   runtimeId,
   turnAnchors,
   onOpenBranch,
+  contextNames,
+  onMentionClick,
+  onVisibleSmoothingChange,
 }: MessageBlockProps) {
   const [hover, setHover] = useState(false);
   const isUser = m.role === 'user';
@@ -692,12 +835,27 @@ function MessageBlockInner({
             {m.attachments && m.attachments.length > 0 && (
               <AttachmentPills items={m.attachments} />
             )}
-            <MarkdownContent
-              text={userTextToMarkdown(m.text)}
-              size="sm"
-              className={isDark ? 'prose-invert' : ''}
-              style={proseVars}
-            />
+            {m.streaming ? (
+              <MarkdownContent
+                text={userTextToMarkdown(
+                  contextNames && contextNames.size > 0 ? highlightMentions(m.text, contextNames) : m.text,
+                )}
+                size="sm"
+                className={isDark ? 'prose-invert' : ''}
+                style={proseVars}
+              />
+            ) : (
+              <CollapsibleUserText contentKey={m.text}>
+                <MarkdownContent
+                  text={userTextToMarkdown(
+                    contextNames && contextNames.size > 0 ? highlightMentions(m.text, contextNames) : m.text,
+                  )}
+                  size="sm"
+                  className={isDark ? 'prose-invert' : ''}
+                  style={proseVars}
+                />
+              </CollapsibleUserText>
+            )}
             {m.streaming && (
               <span
                 style={{
@@ -747,9 +905,16 @@ function MessageBlockInner({
               showThoughts={showThoughts}
               subagents={subagents}
               runtimeId={runtimeId}
+              onSmoothingChange={onVisibleSmoothingChange}
             />
           ) : (
-            <LegacyAssistantBody m={m} isDark={isDark} subagents={subagents} runtimeId={runtimeId} />
+            <LegacyAssistantBody
+              m={m}
+              isDark={isDark}
+              subagents={subagents}
+              runtimeId={runtimeId}
+              onSmoothingChange={onVisibleSmoothingChange}
+            />
           )}
         </div>
       )}
@@ -914,7 +1079,10 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   prev.runtimeId === next.runtimeId &&
   childAnchorsEqual(prev.quoteAnchors, next.quoteAnchors) &&
   childAnchorsEqual(prev.turnAnchors, next.turnAnchors) &&
-  prev.onOpenBranch === next.onOpenBranch,
+  prev.onOpenBranch === next.onOpenBranch &&
+  prev.contextNames === next.contextNames &&
+  prev.onMentionClick === next.onMentionClick &&
+  prev.onVisibleSmoothingChange === next.onVisibleSmoothingChange,
 );
 
 export { MessageBlock };

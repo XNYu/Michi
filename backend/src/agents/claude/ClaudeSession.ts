@@ -17,6 +17,19 @@ import { grantPermission, setNodeExternalSessionId } from '../../services/dbRepo
 import { getAgentConfig, resolveReasoning } from '../../services/agentConfig';
 import type { AgentReasoning } from '../types';
 import { EventQueue } from '../eventQueue';
+import { followUpReminder } from '../preamble';
+import { AsyncGate } from '../asyncGate';
+import { log } from '../../services/logger';
+import {
+  buildClaudeFollowUpsHookPocSettings,
+  buildClaudeFollowUpsHookPocInstruction,
+  isClaudeFollowUpsHookPocEnabled,
+} from './claudeFollowUpsHookPoc';
+import {
+  FOLLOW_UPS_SENTINEL_TURN_REMINDER,
+  resolveFollowUpsExperimentMode,
+  type FollowUpsExperimentMode,
+} from '../followUpsExperiment';
 
 // claude --effort accepts low|medium|high|xhigh|max. Pi's "minimal" tier
 // has no claude equivalent, so it maps to the next-lowest claude level.
@@ -88,7 +101,18 @@ export class ClaudeSession implements AgentSession {
   private slotId: string | null = null;
   private externalSessionId: string | null = null;
   private lastUsedAt = Date.now();
-  private awsCredentialNoticeSent = false;
+  private mwinitNoticeSent = false;
+  private readonly followUpsHookPocEnabled = isClaudeFollowUpsHookPocEnabled();
+  private readonly followUpsExperimentMode: FollowUpsExperimentMode =
+    resolveFollowUpsExperimentMode();
+  private followUpsValidationActive = false;
+  private followUpsSetThisTurn = false;
+  private branchOverviewSetThisTurn = false;
+  private followUpsStopBlockUsed = false;
+  private followUpsRepairMode = false;
+  private followUpsSuppressedChunkEvents = 0;
+  private followUpsSuppressedThoughtEvents = 0;
+  private followUpsOutputBoundaryPending = false;
 
   private queue: EventQueue;
   private readonly history: ChatMessage[] = [];
@@ -192,6 +216,16 @@ export class ClaudeSession implements AgentSession {
         : `${this.firstTurnPrefix}\n\n---\n\n${text}`;
       this.firstTurnPrefixConsumed = true;
 
+      // Append follow-up reminder for the model only — keep history clean so
+      // fork/branch transcripts don't accumulate reminder noise.
+      const userTurnCount = this.history.filter(m => m.role === 'user').length + 1;
+      const reminder = this.followUpsHookPocEnabled && this.followUpsExperimentMode === 'sentinel'
+        ? FOLLOW_UPS_SENTINEL_TURN_REMINDER
+        : followUpReminder(userTurnCount, true);
+      const textForModel = reminder ? outgoingText + reminder : outgoingText;
+
+      this.armFollowUpsHookPoc(userTurnCount);
+
       this.history.push({ role: 'user', content: outgoingText });
       this.markTranslatorTurnStart?.();
       this.writeStdin(userEnvelope(outgoingText));
@@ -210,6 +244,7 @@ export class ClaudeSession implements AgentSession {
       }
       this.lastUsedAt = Date.now();
     } finally {
+      this.finishFollowUpsHookPocTurn();
       this.releaseTurnLock();
     }
   }
@@ -418,6 +453,7 @@ export class ClaudeSession implements AgentSession {
         this.queue.push({ kind: 'image', path: r.relPath, caption, mimeType: r.mimeType, size: r.size });
         return { relPath: r.relPath, mimeType: r.mimeType, size: r.size };
       },
+      ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       onApprove: this.makeOnApprove(),
     }, {
       nodeId: this.nodeId,
@@ -472,6 +508,7 @@ export class ClaudeSession implements AgentSession {
         this.queue.push({ kind: 'image', path: r.relPath, caption, mimeType: r.mimeType, size: r.size });
         return { relPath: r.relPath, mimeType: r.mimeType, size: r.size };
       },
+      ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       onApprove: this.makeOnApprove(),
     }, {
       nodeId: this.nodeId,
@@ -497,6 +534,7 @@ export class ClaudeSession implements AgentSession {
     });
 
     const translator = createTranslator((ev) => {
+      if (this.suppressFollowUpsRepairEvent(ev)) return;
       // Drive the idle transition from the claude process's own end-of-turn
       // signal (the `result` envelope, which the translator turns into
       // turn_end) rather than from whether the HTTP consumer drains the
@@ -519,6 +557,8 @@ export class ClaudeSession implements AgentSession {
 
     const parser = createClaudeEnvelopeParser(
       (envelope) => {
+        this.logFollowUpsHookEnvelope(envelope);
+        this.completeFollowUpsOutputBoundaryFromEnvelope(envelope);
         // Invariant 6: persist external_session_id on init before forwarding events
         if (envelope['type'] === 'system' && envelope['subtype'] === 'init') {
           const sessionId = envelope['session_id'] as string | undefined;
@@ -543,6 +583,21 @@ export class ClaudeSession implements AgentSession {
       },
     );
 
+    const systemPromptAppend = [
+      this.systemPromptAppend,
+      this.followUpsHookPocEnabled
+        ? buildClaudeFollowUpsHookPocInstruction(this.followUpsExperimentMode)
+        : '',
+    ].filter(Boolean).join('\n');
+    if (this.followUpsHookPocEnabled) {
+      log.info('chat', 'claude follow-ups hook poc enabled', {
+        nodeId: this.nodeId,
+        sessionId: this.id,
+        slotId: this.slotId ?? undefined,
+        followUpsMode: this.followUpsExperimentMode,
+      });
+    }
+
     const child = spawnClaude({
       cwd: this.cwd,
       sessionId: opts.sessionId,
@@ -550,6 +605,10 @@ export class ClaudeSession implements AgentSession {
       permissionMode: 'default',
       permissionPromptTool: 'mcp____michi_internal____approve',
       mcpConfigInline: opts.mcpConfig,
+      settingsInline: this.followUpsHookPocEnabled
+        ? buildClaudeFollowUpsHookPocSettings()
+        : undefined,
+      includeHookEvents: this.followUpsHookPocEnabled,
       // Default: let claude auto-discover the user's own MCP servers
       // (~/.claude/settings.json, project .mcp.json, plugin MCPs). __michi_internal__
       // is still injected via --mcp-config so the agent↔Michi protocol (approve,
@@ -561,10 +620,10 @@ export class ClaudeSession implements AgentSession {
       // Without it, configs with many plugins (financial-services, superpowers)
       // take 10-20s to emit system/init. Tests / CI / smoke runs opt in via env.
       // Production toggle is a follow-up; default to bare=false until then.
-      bare: process.env.MICHI_CLAUDE_BARE === '1',
+      bare: this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1',
       model: this.model,
       effort: reasoningToClaudeEffort(resolveReasoning(getAgentConfig().runtime)),
-      systemPromptAppend: this.systemPromptAppend,
+      systemPromptAppend,
     });
     this.child = child;
 
@@ -628,6 +687,173 @@ export class ClaudeSession implements AgentSession {
     // crashed), the user's send() will naturally time out via the heartbeat
     // / turn-level supervision. The 5s spawn-init timeout no longer applies.
     this.state = 'idle';
+  }
+
+  private armFollowUpsHookPoc(userTurnCount: number): void {
+    if (!this.followUpsHookPocEnabled) return;
+    this.followUpsValidationActive = true;
+    this.followUpsSetThisTurn = false;
+    this.branchOverviewSetThisTurn = false;
+    this.followUpsStopBlockUsed = false;
+    this.followUpsRepairMode = false;
+    this.followUpsSuppressedChunkEvents = 0;
+    this.followUpsSuppressedThoughtEvents = 0;
+    this.followUpsOutputBoundaryPending = false;
+    log.info('chat', 'claude follow-ups hook poc turn armed', {
+      nodeId: this.nodeId,
+      sessionId: this.id,
+      userTurnCount,
+    });
+  }
+
+  private followUpsHookCallbacks(): {
+    onSetFollowUps?: (followUps: string[]) => void;
+    onSetBranchOverview: (overview: string) => void;
+    onValidateFollowUps: () => Record<string, unknown>;
+  } {
+    return {
+      ...(this.followUpsExperimentMode === 'hook-tool' ? {
+        onSetFollowUps: (followUps: string[]) => {
+          const cleaned = followUps.map((value) => value.trim()).filter(Boolean).slice(0, 3);
+          if (cleaned.length === 0) return;
+          if (this.followUpsValidationActive) this.followUpsSetThisTurn = true;
+          log.info('mcp', 'claude follow-ups hook poc set_follow_ups received', {
+            nodeId: this.nodeId,
+            sessionId: this.id,
+            count: cleaned.length,
+            validationActive: this.followUpsValidationActive,
+          });
+          this.followUpsOutputBoundaryPending = true;
+          this.queue.push({ kind: 'follow_ups_status', status: 'in_progress' });
+          this.queue.push({ kind: 'follow_ups', followUps: cleaned });
+        },
+      } : {}),
+      onSetBranchOverview: (overview) => {
+        const cleaned = overview.trim();
+        if (!cleaned) return;
+        if (this.followUpsValidationActive) this.branchOverviewSetThisTurn = true;
+        log.info('mcp', 'claude follow-ups hook poc set_branch_overview received', {
+          nodeId: this.nodeId,
+          sessionId: this.id,
+          length: cleaned.length,
+          validationActive: this.followUpsValidationActive,
+        });
+        this.queue.push({ kind: 'branch_overview', overview: cleaned });
+      },
+      onValidateFollowUps: () => {
+        if (!this.followUpsValidationActive) {
+          log.info('mcp', 'claude follow-ups hook poc validator skipped', {
+            nodeId: this.nodeId,
+            sessionId: this.id,
+            reason: 'non-user-turn',
+          });
+          return {};
+        }
+        const missingTools: string[] = [];
+        if (!this.branchOverviewSetThisTurn) missingTools.push('set_branch_overview');
+        if (this.followUpsExperimentMode === 'hook-tool' && !this.followUpsSetThisTurn) {
+          missingTools.push('set_follow_ups');
+        }
+        if (missingTools.length === 0) {
+          log.info('mcp', 'claude follow-ups hook poc validator passed', {
+            nodeId: this.nodeId,
+            sessionId: this.id,
+          });
+          return {};
+        }
+        if (!this.followUpsStopBlockUsed) {
+          this.followUpsStopBlockUsed = true;
+          this.followUpsRepairMode = true;
+          log.warn('mcp', 'claude follow-ups hook poc blocked stop', {
+            nodeId: this.nodeId,
+            sessionId: this.id,
+            attempt: 1,
+          });
+          const repairInstructions = missingTools.map((tool) => tool === 'set_branch_overview'
+            ? 'For set_branch_overview, provide 1-3 concise sentences about the branch state.'
+            : 'For set_follow_ups, provide exactly three user-voice questions.');
+          return {
+            decision: 'block',
+            reason:
+              `Before finishing, call the missing Michi metadata tools: ${missingTools.join(', ')}. `
+              + `${repairInstructions.join(' ')} Do not repeat the user-facing answer.`,
+          };
+        }
+        log.warn('mcp', 'claude follow-ups hook poc fail-open', {
+          nodeId: this.nodeId,
+          sessionId: this.id,
+          reason: `${missingTools.join(', ')} still missing after one continuation`,
+        });
+        return {};
+      },
+    };
+  }
+
+  private suppressFollowUpsRepairEvent(ev: NormalizedEvent): boolean {
+    if (!this.followUpsHookPocEnabled || !this.followUpsRepairMode) return false;
+    if (ev.kind === 'chunk') {
+      this.followUpsSuppressedChunkEvents += 1;
+      return true;
+    }
+    if (ev.kind === 'thought') {
+      this.followUpsSuppressedThoughtEvents += 1;
+      return true;
+    }
+    return false;
+  }
+
+  private completeFollowUpsOutputBoundaryFromEnvelope(
+    envelope: Record<string, unknown>,
+  ): void {
+    if (!this.followUpsOutputBoundaryPending) return;
+    const type = typeof envelope.type === 'string' ? envelope.type : '';
+    const streamEvent = envelope.event as Record<string, unknown> | undefined;
+    const streamEventType = typeof streamEvent?.type === 'string' ? streamEvent.type : '';
+    if (type !== 'result' && !(type === 'stream_event' && streamEventType === 'message_stop')) {
+      return;
+    }
+    this.followUpsOutputBoundaryPending = false;
+    log.info('chat', 'claude follow-ups visible output boundary completed', {
+      nodeId: this.nodeId,
+      sessionId: this.id,
+      reason: type === 'result' ? 'turn-result' : 'message-stop',
+    });
+    this.queue.push({ kind: 'follow_ups_status', status: 'completed' });
+  }
+
+  private finishFollowUpsHookPocTurn(): void {
+    if (this.followUpsHookPocEnabled && (
+      this.followUpsSuppressedChunkEvents > 0 ||
+      this.followUpsSuppressedThoughtEvents > 0
+    )) {
+      log.info('chat', 'claude follow-ups hook poc repair output suppressed', {
+        nodeId: this.nodeId,
+        sessionId: this.id,
+        chunks: this.followUpsSuppressedChunkEvents,
+        thoughts: this.followUpsSuppressedThoughtEvents,
+      });
+    }
+    this.followUpsValidationActive = false;
+    this.followUpsRepairMode = false;
+    this.followUpsSuppressedChunkEvents = 0;
+    this.followUpsSuppressedThoughtEvents = 0;
+    this.followUpsOutputBoundaryPending = false;
+  }
+
+  private logFollowUpsHookEnvelope(envelope: Record<string, unknown>): void {
+    if (!this.followUpsHookPocEnabled) return;
+    const type = typeof envelope.type === 'string' ? envelope.type : '';
+    const subtype = typeof envelope.subtype === 'string' ? envelope.subtype : '';
+    const hookName = typeof envelope.hook_name === 'string' ? envelope.hook_name : '';
+    if (type !== 'system' || !subtype.startsWith('hook_') || hookName !== 'Stop') return;
+    log.info('chat', 'claude follow-ups hook poc lifecycle event', {
+      nodeId: this.nodeId,
+      sessionId: this.id,
+      type: subtype,
+      hookName,
+      hookId: typeof envelope.hook_id === 'string' ? envelope.hook_id : undefined,
+      outcome: typeof envelope.outcome === 'string' ? envelope.outcome : undefined,
+    });
   }
 
   private awaitInit(translator: ReturnType<typeof createTranslator>): Promise<void> {

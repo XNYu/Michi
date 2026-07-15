@@ -19,7 +19,7 @@ test.describe('chat stream', () => {
     await expect(page.getByText('Mock turn').first()).toBeVisible();
   });
 
-  test('follow-up chips appear after done', async ({ page }) => {
+  test('follow-up chips render from stream metadata', async ({ page }) => {
     await installMockApi(page);
     await bootWithWorkspace(page);
 

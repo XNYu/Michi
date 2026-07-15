@@ -2,6 +2,10 @@ import type { AgentSession, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { KiroRuntime } from "./KiroRuntime";
 
+const BRANCH_OVERVIEW_TOOL_REMINDER = `
+
+[Before ending this turn, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this branch is about and where it currently stands. Match the user's language. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
+
 /**
  * KiroSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
  * generator. Each instance corresponds to one ACP sessionId on a specific
@@ -65,6 +69,12 @@ export class KiroSession implements AgentSession {
 
     async *send(text: string): AsyncIterableIterator<NormalizedEvent> {
         this.history.push({ role: "user", content: text });
+
+        // Append follow-up reminder for the model only — history stays clean.
+        const userTurnCount = this.history.filter(m => m.role === "user").length;
+        const reminder = followUpReminder(userTurnCount, this.enableFollowUps);
+        const textForModel = text + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
+
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${text}`
             : text;
@@ -169,6 +179,13 @@ export class KiroSession implements AgentSession {
                         name: update.name,
                         filePath: update.filePath,
                         size: typeof update.size === "number" ? update.size : undefined,
+                    };
+                }
+            } else if (kind === "branch_overview") {
+                if (typeof update.overview === "string" && update.overview.trim()) {
+                    yield {
+                        kind: "branch_overview",
+                        overview: update.overview.trim(),
                     };
                 }
             } else if (kind === "permission_request") {

@@ -29,6 +29,8 @@ export type ServerRequestHandler = (
 export interface CodexAppServerClientDeps {
   /** Test seam: returns a ChildProcess-like. Default spawns the real binary. */
   spawnFn?: () => ChildProcessWithoutNullStreams;
+  /** Optional isolated environment for the app-server child. */
+  spawnEnv?: NodeJS.ProcessEnv;
   rpcTimeoutMs?: number;
   initTimeoutMs?: number;
 }
@@ -64,13 +66,14 @@ export class CodexAppServerClient {
   constructor(deps: CodexAppServerClientDeps = {}) {
     this.rpcTimeoutMs = deps.rpcTimeoutMs ?? RPC_TIMEOUT_MS;
     this.initTimeoutMs = deps.initTimeoutMs ?? INIT_TIMEOUT_MS;
+    const spawnEnv = deps.spawnEnv ? { ...deps.spawnEnv } : { ...process.env };
     this.spawnFn =
       deps.spawnFn ??
       (() => {
         preflightCodexAuth();
         warnIfCodexVersionBelowMinimum();
         return spawn(findCodexBinary(), ['app-server', '-c', 'mcp_servers={}'], {
-          env: { ...process.env },
+          env: spawnEnv,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       });

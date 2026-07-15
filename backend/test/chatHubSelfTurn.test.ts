@@ -52,6 +52,35 @@ describe('ChatHub.startTurn', () => {
     assert(overviewIndex >= 0, 'expected a branch_overview event');
     assert(doneIndex > overviewIndex, 'branch_overview must arrive before done');
   });
+
+  it('uses structured overview metadata without emitting a duplicate sentinel fallback', async () => {
+    const hub = new ChatHub({ retentionMs: 100 });
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('structured-overview-chat', {
+      send: (ev) => received.push(ev),
+      close: () => {},
+    });
+
+    const { done } = hub.startTurn({
+      chatId: 'structured-overview-chat',
+      nodeId: 'structured-overview-node',
+      text: 'Update the overview',
+      session: sessionFrom([
+        { kind: 'chunk', text: 'Visible answer body.' },
+        { kind: 'branch_overview', overview: 'Structured Tool overview.' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    const overviewEvents = received.filter((ev) => ev.event === 'branch_overview');
+    assert.equal(overviewEvents.length, 1);
+    assert.equal((overviewEvents[0].data as any).overview, 'Structured Tool overview.');
+    assert(
+      received.findIndex((ev) => ev.event === 'done') > received.findIndex((ev) => ev.event === 'branch_overview'),
+      'structured overview must arrive before done',
+    );
+  });
 });
 
 describe('ChatHub.startSelfTurn', () => {

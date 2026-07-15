@@ -63,12 +63,29 @@ export interface CodexModel {
   defaultReasoningEffort: string;
 }
 
-export function buildCodexMcpConfig(slotId: string, port: number): Record<string, unknown> {
+export function buildCodexMcpConfig(
+  slotId: string,
+  port: number,
+  options: { enableFollowUpsTool?: boolean } = {},
+): Record<string, unknown> {
   return {
     mcp_servers: {
       __michi_internal__: {
         url: `http://127.0.0.1:${port}/api/mcp/${slotId}`,
-        auth: 'none',
+        // Codex 0.144+ rejects the legacy `auth: "none"` value. An
+        // unauthenticated local HTTP MCP omits auth and still requires the
+        // headers array to be present, even when empty.
+        headers: [],
+        // Structured metadata is an internal, non-destructive callback. If
+        // Codex prompts for it, a Stop-hook repair cannot complete headlessly.
+        // Keep the exemption tool-specific; all other MCP tools retain Codex's
+        // normal approval behavior.
+        tools: {
+          set_branch_overview: { approval_mode: 'approve' },
+          ...(options.enableFollowUpsTool
+            ? { set_follow_ups: { approval_mode: 'approve' } }
+            : {}),
+        },
       },
     },
   };

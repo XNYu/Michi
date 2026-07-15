@@ -20,6 +20,15 @@ import { resolveModel, resolveReasoning } from '../../services/agentConfig';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { preflightCodexAuth } from './codexBinary';
 import type { RuntimeModelCache } from '../runtimeModelCache';
+import {
+  buildCodexFollowUpsHookPocConfig,
+  isCodexFollowUpsHookPocEnabled,
+  prepareCodexFollowUpsHookPocEnv,
+} from './codexFollowUpsHookPoc';
+import {
+  resolveFollowUpsExperimentMode,
+  type FollowUpsExperimentMode,
+} from '../followUpsExperiment';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -68,6 +77,8 @@ const CODEX_APPROVAL_ALIASES: Record<string, string> = {
 export interface CodexRuntimeTestSeams {
   client?: CodexAppServerClient;
   modelCache?: RuntimeModelCache;
+  followUpsHookPocEnabled?: boolean;
+  followUpsExperimentMode?: FollowUpsExperimentMode;
 }
 
 export class CodexRuntime implements AgentRuntime {
@@ -80,6 +91,8 @@ export class CodexRuntime implements AgentRuntime {
   private readonly mcpRegistry: McpSlotRegistry;
   private readonly mcpPort: number;
   private readonly concurrencyCap: number;
+  private readonly followUpsHookPocEnabled: boolean;
+  private readonly followUpsExperimentMode: FollowUpsExperimentMode;
 
   private readonly sessions = new Map<string, CodexSession>();
   private readonly threadToSession = new Map<string, CodexSession>();
@@ -101,6 +114,11 @@ export class CodexRuntime implements AgentRuntime {
     this.modelCacheStore = testSeams?.modelCache;
     this.modelCache = this.modelCacheStore?.load(this.id) ?? null;
 
+    let followUpsHookPocEnabled =
+      testSeams?.followUpsHookPocEnabled ?? isCodexFollowUpsHookPocEnabled();
+    this.followUpsExperimentMode =
+      testSeams?.followUpsExperimentMode ?? resolveFollowUpsExperimentMode();
+
     if (testSeams?.client) {
       this.client = testSeams.client;
     } else {
@@ -110,8 +128,24 @@ export class CodexRuntime implements AgentRuntime {
       } catch (err) {
         console.warn('[CodexRuntime] Auth pre-flight warning:', (err as Error).message);
       }
-      this.client = new CodexAppServerClient();
+      let spawnEnv: NodeJS.ProcessEnv | undefined;
+      if (followUpsHookPocEnabled) {
+        try {
+          spawnEnv = prepareCodexFollowUpsHookPocEnv();
+          console.info('[CodexRuntime] follow-ups Hook POC using isolated CODEX_HOME', {
+            codexHome: spawnEnv.CODEX_HOME,
+          });
+        } catch (err) {
+          followUpsHookPocEnabled = false;
+          console.warn(
+            '[CodexRuntime] follow-ups Hook POC disabled because isolation setup failed:',
+            (err as Error).message,
+          );
+        }
+      }
+      this.client = new CodexAppServerClient({ spawnEnv });
     }
+    this.followUpsHookPocEnabled = followUpsHookPocEnabled;
 
     // Wire server-request (approval) handler once, shared across all sessions.
     this.client.onServerRequest((method, params, respond) => {
@@ -205,10 +239,12 @@ export class CodexRuntime implements AgentRuntime {
       firstTurnPrefix,
       effort: effort ? String(effort) : null,
       model: modelId || null,
+      followUpsHookPocEnabled: this.followUpsHookPocEnabled,
+      followUpsExperimentMode: this.followUpsExperimentMode,
     });
 
     const slotId = session.createMcpSlot();
-    const mcpConfig = buildCodexMcpConfig(slotId, this.mcpPort);
+    const threadConfig = this.buildThreadConfig(slotId);
 
     // Start the thread on codex app-server
     const threadStartResult = await this.client.request('thread/start', {
@@ -218,7 +254,7 @@ export class CodexRuntime implements AgentRuntime {
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user',
       sandbox: 'workspace-write',
-      config: mcpConfig,
+      config: threadConfig,
       ...(effort ? { reasoningEffort: String(effort) } : {}),
     }) as Record<string, unknown>;
 
@@ -288,10 +324,12 @@ export class CodexRuntime implements AgentRuntime {
       ownerUserId: opts.ownerUserId ?? null,
       effort: effort ? String(effort) : null,
       model: modelId || null,
+      followUpsHookPocEnabled: this.followUpsHookPocEnabled,
+      followUpsExperimentMode: this.followUpsExperimentMode,
     });
 
     const slotId = session.createMcpSlot();
-    const mcpConfig = buildCodexMcpConfig(slotId, this.mcpPort);
+    const threadConfig = this.buildThreadConfig(slotId);
 
     // Resume the thread
     let resumeResult: Record<string, unknown>;
@@ -303,7 +341,7 @@ export class CodexRuntime implements AgentRuntime {
         approvalPolicy: 'on-request',
         approvalsReviewer: 'user',
         sandbox: 'workspace-write',
-        config: mcpConfig,
+        config: threadConfig,
         ...(effort ? { reasoningEffort: String(effort) } : {}),
       }) as Record<string, unknown>;
     } catch (err) {
@@ -335,6 +373,18 @@ export class CodexRuntime implements AgentRuntime {
     sessionRegistry.registerSession(session, opts.ownerUserId);
 
     return session;
+  }
+
+  private buildThreadConfig(slotId: string): Record<string, unknown> {
+    return {
+      ...buildCodexMcpConfig(slotId, this.mcpPort, {
+        enableFollowUpsTool:
+          this.followUpsHookPocEnabled && this.followUpsExperimentMode === 'hook-tool',
+      }),
+      ...(this.followUpsHookPocEnabled
+        ? buildCodexFollowUpsHookPocConfig(slotId, this.mcpPort)
+        : {}),
+    };
   }
 
   // ---- releaseSession ------------------------------------------------------

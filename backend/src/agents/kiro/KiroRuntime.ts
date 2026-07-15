@@ -172,6 +172,7 @@ export class KiroRuntime implements AgentRuntime {
             onSpawnBranches: async (topics) => this.handleSpawnBranches(getSlotId()!, topics),
             onSaveContext: (name, body) => this.handleSaveContext(getSlotId()!, name, body),
             onUpdateContext: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
+            onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
             // show_image is a Claude-runtime side-effect tool; the Kiro runtime
             // does not expose it. Satisfy the required callback with a stub.
             onShowImage: () => ({ error: "show_image is not supported on the Kiro runtime" }),
@@ -238,6 +239,83 @@ export class KiroRuntime implements AgentRuntime {
             size: result.size,
         });
         return result;
+    }
+
+    private handleSetBranchOverview(slotId: string, overview: string): void {
+        const slot = this.mcpRegistry?.get(slotId);
+        if (!slot) return;
+        const parentChatId = slot.parentChatId;
+        if (parentChatId === "__pending__") return;
+        const cleaned = overview.trim();
+        if (!cleaned) return;
+        this.getClient(slot.cwd)?.injectUpdate(parentChatId, {
+            sessionUpdate: "branch_overview",
+            overview: cleaned,
+        });
+    }
+
+    private async handleAskUser(
+        slotId: string,
+        questions: Array<{
+            question: string;
+            header?: string;
+            options: Array<{ label: string; description?: string }>;
+            multiSelect: boolean;
+        }>,
+    ): Promise<Record<string, string> | null> {
+        const slot = this.mcpRegistry?.get(slotId);
+        if (!slot) return null;
+        const parentChatId = slot.parentChatId;
+        if (parentChatId === "__pending__") return null;
+
+        const requestId = ++this.nextUserInputRequestId;
+        const client = this.getClient(slot.cwd);
+
+        // Push user_input_request so frontend renders the banner
+        client?.injectUpdate(parentChatId, {
+            sessionUpdate: "user_input_request",
+            requestId,
+            questions,
+        });
+
+        const TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? "300000", 10);
+        const answers = await new Promise<Array<{ question: string; answer: string }> | null>((resolve) => {
+            const timer = setTimeout(() => {
+                this.pendingUserInputs.delete(requestId);
+                resolve(null);
+            }, TIMEOUT_MS);
+            this.pendingUserInputs.set(requestId, { resolve, timer });
+        });
+
+        // Push resolved event so frontend clears the banner
+        client?.injectUpdate(parentChatId, {
+            sessionUpdate: "user_input_resolved",
+            requestId,
+            answers: answers ?? [],
+        });
+
+        if (answers) {
+            const result: Record<string, string> = {};
+            for (const a of answers) result[a.question] = a.answer;
+            return result;
+        }
+        return null;
+    }
+
+    respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>): void {
+        const entry = this.pendingUserInputs.get(requestId);
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        this.pendingUserInputs.delete(requestId);
+        entry.resolve(answers);
+    }
+
+    skipUserInput(requestId: number): void {
+        const entry = this.pendingUserInputs.get(requestId);
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        this.pendingUserInputs.delete(requestId);
+        entry.resolve(null);
     }
 
     ensureClient(cwd: string, model?: string): Promise<AcpClient> {

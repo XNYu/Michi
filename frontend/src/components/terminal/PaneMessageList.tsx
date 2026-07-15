@@ -8,6 +8,8 @@ import { MessageBlock } from './MessageBlock';
 import { StreamActivityIndicator } from './StreamActivityIndicator';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
+import { ResolvedUserInput } from './UserInputBanner';
+import { shouldShowFollowUps } from '../../state/followUpsVisibility';
 
 interface PaneMessageListProps {
   node: ChatNodeState;
@@ -51,6 +53,20 @@ function PaneMessageListInner({
   anchorsByMessage,
   onOpenBranch,
 }: PaneMessageListProps) {
+  const tailAssistantId = React.useMemo(
+    () => [...node.messages].reverse().find((message) => message.role === 'assistant')?.id,
+    [node.messages],
+  );
+  const [tailAnswerSmoothing, setTailAnswerSmoothing] = React.useState(false);
+  const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
+    setTailAnswerSmoothing(isSmoothing);
+  }, []);
+  const showFollowUps = shouldShowFollowUps(
+    node.followUps.length,
+    tailAnswerSmoothing,
+    !!node.followUpsGenerating,
+  );
+
   countRender('PaneMessageList', node.nodeId, {
     status: node.status,
     messages: node.messages.length,
@@ -145,6 +161,11 @@ function PaneMessageListInner({
                 runtimeId={node.runtimeId}
                 turnAnchors={anchorsForMsg.length > 0 ? anchorsForMsg : undefined}
                 onOpenBranch={onOpenBranch}
+                contextNames={contextNames}
+                onMentionClick={onMentionClick}
+                onVisibleSmoothingChange={
+                  !isUser && m.id === tailAssistantId ? handleTailSmoothingChange : undefined
+                }
               />
             </div>
           </React.Fragment>
@@ -161,6 +182,7 @@ function PaneMessageListInner({
         onContinueFollowUp={onContinueFollowUp}
         onBranchFollowUp={onBranchFollowUp}
         disabled={followUpsDisabled}
+        showFollowUps={showFollowUps}
       />
     </div>
   );
@@ -297,12 +319,14 @@ function FollowUpsSection({
   onContinueFollowUp,
   onBranchFollowUp,
   disabled,
+  showFollowUps,
 }: {
   node: ChatNodeState;
   prefs: Prefs;
   onContinueFollowUp: (question: string) => void;
   onBranchFollowUp: (question: string) => void;
   disabled: boolean;
+  showFollowUps: boolean;
 }) {
   if (!prefs.enableFollowUps) return null;
 
@@ -351,7 +375,7 @@ function FollowUpsSection({
     );
   }
 
-  if (node.status === 'streaming' || node.followUps.length === 0) return null;
+  if (!showFollowUps) return null;
 
   return (
     <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed var(--term-line)' }}>

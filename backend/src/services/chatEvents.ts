@@ -19,6 +19,7 @@ export type NormalizedEvent =
     | { kind: "heartbeat"; idleMs: number }
     | { kind: "spawn_branches"; topics: SpawnBranchTopic[] }
     | { kind: "title"; title: string }
+    | { kind: "branch_overview"; overview: string }
     | { kind: "follow_ups"; followUps: string[] }
     | { kind: "follow_ups_status"; status: "in_progress" | "completed" | "failed" }
     | { kind: "commands"; commands: AgentCommand[] }

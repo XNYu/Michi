@@ -81,12 +81,13 @@ describe('PaneMessageList render performance', () => {
     expect(renderedTexts).toContain('stream two');
   });
 
-  it('does not show follow-ups while the turn is still streaming', () => {
+  it('does not flash follow-ups before a post-arrival answer run finishes', () => {
     const u1 = makeMsg('u1', 'user', 'question');
     const a1 = makeMsg('a1', 'assistant', 'partial answer', true);
     const node = {
       ...makeNode([u1, a1]),
       followUps: ['Which risk would most likely create a production incident?'],
+      followUpsGenerating: true,
       status: 'streaming',
     } as ChatNodeState;
 
@@ -94,5 +95,22 @@ describe('PaneMessageList render performance', () => {
 
     expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
     expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
+  });
+
+  it('shows completed follow-ups while the wider runtime turn is still finishing', () => {
+    const u1 = makeMsg('u1', 'user', 'question');
+    const a1 = makeMsg('a1', 'assistant', 'complete visible answer');
+    const node = {
+      ...makeNode([u1, a1]),
+      followUps: ['Which risk would most likely create a production incident?'],
+      followUpsGenerating: false,
+      status: 'streaming',
+    } as ChatNodeState;
+
+    render(renderList(node, vi.fn()));
+
+    expect(screen.getByText('Which risk would most likely create a production incident?')).toBeTruthy();
+    expect(screen.getByText('▸ FOLLOW-UPS')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /Continue follow-up 1/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -18,6 +18,10 @@ rmSync(dist, { recursive: true, force: true });
 // schema change since P0 stays unapplied.
 cpSync(resolve(root, "src/db/migrations"), resolve(dist, "db/migrations"), { recursive: true });
 cpSync(resolve(root, "src/db/auditMigrations"), resolve(dist, "db/auditMigrations"), { recursive: true });
+cpSync(
+  resolve(root, "src/agents/codex/codexStopHookRunner.cjs"),
+  resolve(dist, "codexStopHookRunner.cjs"),
+);
 
 await build({
   entryPoints: [resolve(root, "src/server.ts")],

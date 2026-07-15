@@ -145,9 +145,12 @@ export class ChatHub {
       for await (const ev of events) {
         if (ev.kind === "chunk") log.assistantChunks.push(ev.text);
         if (ev.kind === "title") persistNodeTitle(log.nodeId, ev.title);
-        if (ev.kind === "turn_end") {
-          this.publishBranchOverview(chatId, log);
-          branchOverviewPublished = true;
+        if (ev.kind === "branch_overview") {
+          branchOverviewPublished = this.persistStructuredBranchOverview(log.nodeId, ev.overview)
+            || branchOverviewPublished;
+        }
+        if (ev.kind === "turn_end" && !branchOverviewPublished) {
+          branchOverviewPublished = this.publishBranchOverview(chatId, log);
         }
         this.append(chatId, log, toChatStreamEvent(ev));
         if (ev.kind === "turn_end") break;
@@ -193,19 +196,25 @@ export class ChatHub {
     }
   }
 
-  /**
-   * Branch Overview is an app-level projection of the final assistant reply,
-   * rather than a runtime-specific event. Publishing it here gives the owner
-   * stream, observers, and replay exactly the same ordered event.
-   */
-  private publishBranchOverview(chatId: string, log: TurnLog): void {
+  /** Persist structured Tool metadata immediately; sentinel extraction below
+   * remains the rollout fallback. Keeping both in ChatHub gives owner streams,
+   * observers, and replay the same ordered branch_overview event. */
+  private persistStructuredBranchOverview(nodeId: string, rawOverview: string): boolean {
+    const overview = rawOverview.trim();
+    if (!overview) return false;
+    persistNodeBranchOverview(nodeId, overview);
+    return true;
+  }
+
+  private publishBranchOverview(chatId: string, log: TurnLog): boolean {
     const overview = extractBranchOverview(log.assistantChunks.join(""));
-    if (!overview) return;
+    if (!overview) return false;
     persistNodeBranchOverview(log.nodeId, overview);
     this.append(chatId, log, {
       event: CHAT_STREAM_EVENTS.branchOverview,
       data: { overview },
     });
+    return true;
   }
 
   private async runTurn(chatId: string, log: TurnLog, session: AgentSession): Promise<void> {
@@ -215,9 +224,12 @@ export class ChatHub {
       for await (const ev of session.send(log.userText)) {
         if (ev.kind === "chunk") log.assistantChunks.push(ev.text);
         if (ev.kind === "title") persistNodeTitle(log.nodeId, ev.title);
-        if (ev.kind === "turn_end") {
-          this.publishBranchOverview(chatId, log);
-          branchOverviewPublished = true;
+        if (ev.kind === "branch_overview") {
+          branchOverviewPublished = this.persistStructuredBranchOverview(log.nodeId, ev.overview)
+            || branchOverviewPublished;
+        }
+        if (ev.kind === "turn_end" && !branchOverviewPublished) {
+          branchOverviewPublished = this.publishBranchOverview(chatId, log);
         }
         this.append(chatId, log, toChatStreamEvent(ev));
         if (ev.kind === "turn_end") break;

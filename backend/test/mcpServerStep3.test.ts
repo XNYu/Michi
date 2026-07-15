@@ -14,7 +14,11 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { McpSlotRegistry, buildMcpServerForSlot } from '../src/services/mcpServer';
+import {
+    McpSlotRegistry,
+    buildMcpServerForSlot,
+    validateCodexStopHookForSlot,
+} from '../src/services/mcpServer';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -47,6 +51,23 @@ function getApproveHandler(
     const toolEntry = registeredTools['approve'];
     assert.ok(toolEntry, 'approve tool must be registered on the McpServer');
     return toolEntry.handler as (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>;
+}
+
+function getToolHandler(
+    registry: McpSlotRegistry,
+    slotId: string,
+    toolName: string,
+): (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }> {
+    const slot = registry.get(slotId)!;
+    const server = buildMcpServerForSlot(slot);
+    const registeredTools = (server as unknown as {
+        _registeredTools: Record<string, { handler: (a: Record<string, unknown>) => Promise<unknown> }>;
+    })._registeredTools;
+    const toolEntry = registeredTools[toolName];
+    assert.ok(toolEntry, `${toolName} tool must be registered on the McpServer`);
+    return toolEntry.handler as (args: Record<string, unknown>) => Promise<{
+        content: Array<{ type: string; text: string }>;
+    }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +179,145 @@ describe('McpSlotRegistry', () => {
         assert.ok(registered['approve'], 'approve tool must be registered');
         assert.ok(registered['save_context'], 'save_context tool must be registered');
         assert.ok(registered['spawn_branches'], 'spawn_branches tool must be registered');
+        assert.equal(registered['set_follow_ups'], undefined, 'POC tool stays hidden without callback');
+        assert.equal(registered['set_branch_overview'], undefined, 'overview tool stays hidden without callback');
+        assert.equal(registered['validate_follow_ups'], undefined, 'POC validator stays hidden without callback');
+        assert.equal(registered['validate_turn_metadata'], undefined, 'metadata validator stays hidden without callback');
+    });
+
+    test('registers metadata POC tools only when callbacks are supplied', () => {
+        const slot = registry.create('chat-follow-ups', '/tmp', null, {
+            ...makeCallbacks(),
+            onSetFollowUps: () => {},
+            onSetBranchOverview: () => {},
+            onValidateFollowUps: () => ({}),
+        } as never);
+
+        const server = buildMcpServerForSlot(slot);
+        const registered = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
+        assert.ok(registered['set_follow_ups']);
+        assert.ok(registered['set_branch_overview']);
+        assert.ok(registered['validate_follow_ups']);
+        assert.ok(registered['validate_turn_metadata']);
+    });
+});
+
+describe('Claude follow-up POC MCP tools', () => {
+    let registry: McpSlotRegistry;
+
+    beforeEach(() => {
+        registry = new McpSlotRegistry();
+    });
+
+    test('set_follow_ups trims values and forwards at most three questions', async () => {
+        let captured: string[] = [];
+        const slot = registry.create('chat-follow-ups-set', '/tmp', null, {
+            ...makeCallbacks(),
+            onSetFollowUps: (followUps: string[]) => { captured = followUps; },
+        } as never);
+        const handler = getToolHandler(registry, slot.slotId, 'set_follow_ups');
+
+        const result = await handler({
+            follow_ups: [' first? ', '', 'second?', ' third? ', 'fourth?'],
+        });
+
+        assert.deepEqual(captured, ['first?', 'second?', 'third?']);
+        assert.equal(result.content[0].text, 'Follow-ups set: 3');
+    });
+
+    test('set_branch_overview trims and forwards the durable text block', async () => {
+        let captured = '';
+        const slot = registry.create('chat-overview-set', '/tmp', null, {
+            ...makeCallbacks(),
+            onSetBranchOverview: (overview: string) => { captured = overview; },
+        } as never);
+        const handler = getToolHandler(registry, slot.slotId, 'set_branch_overview');
+
+        const result = await handler({ overview: '  Current branch state.  ' });
+
+        assert.equal(captured, 'Current branch state.');
+        assert.equal(result.content[0].text, 'Branch overview updated.');
+    });
+
+    test('validate_follow_ups returns callback JSON for Claude Stop-hook decision parsing', async () => {
+        const decision = {
+            decision: 'block',
+            reason: 'Call set_follow_ups before stopping.',
+        };
+        const slot = registry.create('chat-follow-ups-validate', '/tmp', null, {
+            ...makeCallbacks(),
+            onValidateFollowUps: () => decision,
+        } as never);
+        const handler = getToolHandler(registry, slot.slotId, 'validate_follow_ups');
+
+        const result = await handler({});
+
+        assert.deepEqual(JSON.parse(result.content[0].text), decision);
+    });
+
+    test('validate_turn_metadata uses the same bounded validator callback', async () => {
+        const decision = {
+            decision: 'block',
+            reason: 'Call missing metadata tools before stopping.',
+        };
+        const slot = registry.create('chat-metadata-validate', '/tmp', null, {
+            ...makeCallbacks(),
+            onValidateFollowUps: () => decision,
+        } as never);
+        const handler = getToolHandler(registry, slot.slotId, 'validate_turn_metadata');
+
+        const result = await handler({});
+
+        assert.deepEqual(JSON.parse(result.content[0].text), decision);
+    });
+});
+
+describe('Codex follow-up POC Stop Hook routing', () => {
+    test('random slot capability routes concurrent branches to the correct validator', () => {
+        const registry = new McpSlotRegistry();
+        let branchACalls = 0;
+        let branchBCalls = 0;
+        const slotA = registry.create('branch-a', '/tmp', null, {
+            ...makeCallbacks(),
+            onValidateFollowUps: () => {
+                branchACalls += 1;
+                return { decision: 'block', reason: 'branch-a' };
+            },
+        } as never);
+        const slotB = registry.create('branch-b', '/tmp', null, {
+            ...makeCallbacks(),
+            onValidateFollowUps: () => {
+                branchBCalls += 1;
+                return { decision: 'block', reason: 'branch-b' };
+            },
+        } as never);
+
+        const result = validateCodexStopHookForSlot(registry, slotB.slotId, {
+            hook_event_name: 'Stop',
+            session_id: 'codex-thread-b',
+        });
+
+        assert.deepEqual(result, { decision: 'block', reason: 'branch-b' });
+        assert.equal(branchACalls, 0);
+        assert.equal(branchBCalls, 1);
+        assert.notEqual(slotA.slotId, slotB.slotId);
+    });
+
+    test('unknown slot and non-Stop payload fail open', () => {
+        const registry = new McpSlotRegistry();
+        const slot = registry.create('branch-a', '/tmp', null, {
+            ...makeCallbacks(),
+            onValidateFollowUps: () => ({ decision: 'block' }),
+        } as never);
+
+        assert.deepEqual(
+            validateCodexStopHookForSlot(registry, 'missing-slot', { hook_event_name: 'Stop' }),
+            {},
+        );
+        assert.deepEqual(
+            validateCodexStopHookForSlot(registry, slot.slotId, { hook_event_name: 'PostToolUse' }),
+            {},
+        );
     });
 });
 

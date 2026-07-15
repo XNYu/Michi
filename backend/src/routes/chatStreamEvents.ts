@@ -48,6 +48,8 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
             return { event: CHAT_STREAM_EVENTS.spawnBranches, data: { topics: ev.topics } };
         case "title":
             return { event: CHAT_STREAM_EVENTS.title, data: { title: ev.title } };
+        case "branch_overview":
+            return { event: CHAT_STREAM_EVENTS.branchOverview, data: { overview: ev.overview } };
         case "follow_ups":
             return { event: CHAT_STREAM_EVENTS.followUps, data: { followUps: ev.followUps } };
         case "follow_ups_status":
