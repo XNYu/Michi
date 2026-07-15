@@ -11,6 +11,7 @@ import {
   filterSubagentRelayedTools,
   findOwningSubagent,
   prettifyToolTitle,
+  isHiddenInternalTool,
   type SubagentToolInfo,
 } from './toolCallGrouping';
 
@@ -34,7 +35,7 @@ function anyFailed(tools: ToolCallState[]): boolean {
 
 function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
   const visibleTools = useMemo(
-    () => filterSubagentRelayedTools(tools, subagents),
+    () => filterSubagentRelayedTools(tools, subagents).filter((t) => !isHiddenInternalTool(t.title)),
     [tools, subagents],
   );
   const [expanded, setExpanded] = useState(defaultExpanded);

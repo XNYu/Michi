@@ -4,6 +4,34 @@ const RUNNING_STATUSES = new Set(['running', 'in_progress', 'pending']);
 const FAILED_STATUSES = new Set(['error', 'failed']);
 const SUBAGENT_TOOL_TITLES = new Set(['agent', 'task', 'subagent']);
 
+/**
+ * Internal metadata tools that Michi injects for structured data extraction
+ * (title, follow-ups, branch overview). These are invisible plumbing — the
+ * user sees their *effects* (a title appears, follow-up buttons render) but
+ * should never see a "Running set_branch_overview" banner or a chip in the
+ * tool group. Matches both raw MCP names and the prefixed variants from
+ * different runtimes (mcp__michi-tools__*, mcp____michi_internal____*).
+ */
+const HIDDEN_INTERNAL_TOOLS = new Set([
+  'set_branch_overview',
+  'set_title',
+  'set_follow_ups',
+  'validate_follow_ups',
+]);
+
+export function isHiddenInternalTool(title: string): boolean {
+  // Direct match (Kiro ACP reports the bare tool name)
+  if (HIDDEN_INTERNAL_TOOLS.has(title)) return true;
+  // Claude prefixed: mcp____michi_internal____<tool>
+  // Kiro MCP prefixed: mcp__michi-tools__<tool> or @michi/<tool>
+  const stripped = prettifyToolTitle(title);
+  if (HIDDEN_INTERNAL_TOOLS.has(stripped)) return true;
+  // @server/tool format (some runtimes)
+  const slashIdx = title.lastIndexOf('/');
+  if (slashIdx >= 0 && HIDDEN_INTERNAL_TOOLS.has(title.slice(slashIdx + 1))) return true;
+  return false;
+}
+
 export function isRunningStatus(status: string | undefined): boolean {
   if (!status) return true;
   return RUNNING_STATUSES.has(status);

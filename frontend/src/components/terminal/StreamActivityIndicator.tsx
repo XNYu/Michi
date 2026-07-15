@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ChatNodeState } from '../../state/chatTypes';
 import type { PlanEntry } from '../../services/api';
-import { isRunningStatus } from './toolCallGrouping';
+import { isRunningStatus, isHiddenInternalTool } from './toolCallGrouping';
 
 /**
  * Phase 1 "backend is working" indicator — runtime-agnostic.
@@ -81,7 +81,7 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
   // A tool actively executing is the most common silent gap (long bash / MCP
   // call). Name it so the user sees what's churning. Most immediate signal,
   // so it outranks the plan step below.
-  const runningTool = [...last.toolCalls].reverse().find((t) => isRunningStatus(t.status));
+  const runningTool = [...last.toolCalls].reverse().find((t) => isRunningStatus(t.status) && !isHiddenInternalTool(t.title));
   if (runningTool) {
     return {
       label: runningTool.title ? `Running ${truncate(runningTool.title, MAX_TOOL_TITLE)}` : 'Running tool',

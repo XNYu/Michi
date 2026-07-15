@@ -3,6 +3,7 @@ import MarkdownContent from '../../MarkdownContent';
 import { userTextToMarkdown } from '../../terminal/MessageBlock';
 import type { ChatMessage } from '../../../state/chatTypes';
 import ToolChip from './ToolChip';
+import { isHiddenInternalTool } from '../../terminal/toolCallGrouping';
 import { useLongPress } from '../hooks/useLongPress';
 import { useVisibleStream } from '../../../state/streamingProjection';
 
@@ -77,7 +78,7 @@ export default function MobileMessage({
               // expand the group here.
               return (
                 <React.Fragment key={groupKey}>
-                  {seg.tools.map((call) => (
+                  {seg.tools.filter((call) => !isHiddenInternalTool(call.title)).map((call) => (
                     <ToolChip key={call.id} call={call} />
                   ))}
                 </React.Fragment>
