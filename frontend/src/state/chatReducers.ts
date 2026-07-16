@@ -644,6 +644,28 @@ export function reduceNodes(
       if (!n) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, pendingPermission: null } };
     }
+    case 'user-input-request': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, pendingUserInput: action.userInput } };
+    }
+    case 'user-input-resolved': {
+      const n = nodes[action.nodeId];
+      if (!n || !n.pendingUserInput) return nodes;
+      // If already resolved with answers (user submitted locally), don't let the
+      // SSE server-side confirmation (which has no answers) clobber them.
+      if (n.pendingUserInput.resolved && n.pendingUserInput.answers?.length && !action.answers?.length) {
+        return nodes;
+      }
+      const answers = action.answers ?? [];
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          pendingUserInput: { ...n.pendingUserInput, resolved: true, answers },
+        },
+      };
+    }
     case 'set-minimized': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
