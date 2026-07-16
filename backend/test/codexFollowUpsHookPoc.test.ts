@@ -34,17 +34,8 @@ test('Codex HTTP MCP config uses the current unauthenticated schema', () => {
   assert.deepEqual(server.headers, []);
   assert.equal(server.auth, undefined);
   assert.equal(server.url, 'http://127.0.0.1:3456/api/mcp/slot-current-schema');
-  assert.deepEqual(server.tools, {
-    set_branch_overview: { approval_mode: 'approve' },
-  });
-
-  const controlConfig = buildCodexMcpConfig('slot-control', 3456, {
-    enableFollowUpsTool: true,
-  }) as { mcp_servers: Record<string, Record<string, unknown>> };
-  assert.deepEqual(controlConfig.mcp_servers.__michi_internal__.tools, {
-    set_branch_overview: { approval_mode: 'approve' },
-    set_follow_ups: { approval_mode: 'approve' },
-  });
+  assert.equal(server.default_tools_approval_mode, 'approve');
+  assert.equal(server.tools, undefined);
 });
 
 test('builds a temporary sessionFlags Stop Hook overlay bound to one slot', () => {

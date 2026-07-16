@@ -216,10 +216,9 @@ test('Codex follow-ups Hook POC injects temporary Hook config alongside the MCP 
   const hooks = config.hooks as { Stop: Array<{ hooks: Array<Record<string, unknown>> }> };
   assert.equal(hooks.Stop[0].hooks[0].type, 'command');
   assert.match(String(hooks.Stop[0].hooks[0].command), /127\.0\.0\.1:3456/);
-  const mcpServers = config.mcp_servers as Record<string, { tools: Record<string, unknown> }>;
-  assert.deepEqual(mcpServers.__michi_internal__.tools, {
-    set_branch_overview: { approval_mode: 'approve' },
-  });
+  const mcpServers = config.mcp_servers as Record<string, Record<string, unknown>>;
+  assert.equal(mcpServers.__michi_internal__.default_tools_approval_mode, 'approve');
+  assert.equal(mcpServers.__michi_internal__.tools, undefined);
 
   await runtime.shutdown();
 });

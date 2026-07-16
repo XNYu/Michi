@@ -155,6 +155,59 @@ test('unknown approval method always asks — never auto-allows', async () => {
   await runtime.shutdown();
 });
 
+test('MCP elicitation approval uses the Codex action response contract', async () => {
+  const { runtime, session, client } = await makeRuntimeWithSession();
+
+  const responsePromise = client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.mcpElicitation,
+    {
+      threadId: 'thread-approval-test',
+      turnId: 'turn-1',
+      serverName: 'external-mcp',
+      mode: 'form',
+      message: 'Allow this MCP request?',
+      requestedSchema: { type: 'object', properties: {} },
+      _meta: null,
+    },
+  );
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(session.pendingPermissions.size, 1);
+  const [requestId] = session.pendingPermissions.keys();
+  session.respondToPermission(requestId, 'allow_once');
+
+  assert.deepEqual(await responsePromise, {
+    action: 'accept',
+    content: null,
+    _meta: null,
+  });
+  await runtime.shutdown();
+});
+
+test('MCP elicitation without a matching session declines with its own contract', async () => {
+  const client = makeStubClient();
+  makeRuntime(client);
+
+  const result = await client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.mcpElicitation,
+    {
+      threadId: 'missing-thread',
+      turnId: null,
+      serverName: 'external-mcp',
+      mode: 'form',
+      message: 'Allow this MCP request?',
+      requestedSchema: { type: 'object', properties: {} },
+      _meta: null,
+    },
+  );
+
+  assert.deepEqual(result, {
+    action: 'decline',
+    content: null,
+    _meta: null,
+  });
+});
+
 test('allow_once → { decision: accept } for commandExecution and fileChange', async () => {
   const { runtime, session, client } = await makeRuntimeWithSession();
 

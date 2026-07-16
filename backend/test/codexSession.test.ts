@@ -218,6 +218,51 @@ test('markCrashed terminates an in-flight drain with turn_end (terminal safety)'
   assert.equal(turnEnd, 'turn_end', 'turn_end should be last event');
 });
 
+test('Codex MCP slot routes ask_user through the session user-input flow', async () => {
+  let callbacks: Record<string, (...args: any[]) => any> = {};
+  const registry = {
+    create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, cbs: typeof callbacks) => {
+      callbacks = cbs;
+      return { slotId: 'codex-ask-user-slot', ...cbs };
+    },
+    dispose: async () => {},
+    get: () => undefined,
+  } as unknown as McpSlotRegistry;
+  const session = new CodexSession({
+    nodeId: 'node-ask-user',
+    threadId: 'thread-ask-user',
+    cwd: '/tmp/test',
+    workspaceId: null,
+    client: makeStubClient(),
+    mcpRegistry: registry,
+    bridge: makeStubBridge(),
+    mcpPort: 3001,
+  });
+  session.createMcpSlot();
+
+  assert.equal(typeof callbacks.onAskUser, 'function');
+  const answerPromise = callbacks.onAskUser([{
+    question: 'Pick one',
+    header: 'Choice',
+    options: [
+      { label: 'A', description: 'First option' },
+      { label: 'B', description: 'Second option' },
+    ],
+    multiSelect: false,
+  }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(session.pendingPermissions.size, 0);
+  const pendingUserInputs = (session as any).pendingUserInputs as Map<number, unknown>;
+  assert.equal(pendingUserInputs.size, 1);
+  const [requestId] = pendingUserInputs.keys();
+  session.respondToUserInput(requestId, [{ question: 'Pick one', answer: 'A' }]);
+
+  assert.deepEqual(await answerPromise, { 'Pick one': 'A' });
+  assert.equal(pendingUserInputs.size, 0);
+  await session.dispose();
+});
+
 test('Codex metadata Hook POC requires overview and follow-ups while hiding repair text', async () => {
   let callbacks: Record<string, (...args: any[]) => any> = {};
   const capturedTurnStartParams: Record<string, unknown>[] = [];

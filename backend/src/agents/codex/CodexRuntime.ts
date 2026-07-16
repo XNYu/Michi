@@ -149,6 +149,14 @@ export class CodexRuntime implements AgentRuntime {
 
     // Wire server-request (approval) handler once, shared across all sessions.
     this.client.onServerRequest((method, params, respond) => {
+      if (method === CODEX_SERVER_REQUESTS.requestUserInput) {
+        this.handleUserInputRequest(params, respond);
+        return;
+      }
+      if (method === CODEX_SERVER_REQUESTS.mcpElicitation) {
+        this.handleMcpElicitationRequest(params, respond);
+        return;
+      }
       this.handleApprovalRequest(method, params, respond);
     });
 
@@ -377,10 +385,7 @@ export class CodexRuntime implements AgentRuntime {
 
   private buildThreadConfig(slotId: string): Record<string, unknown> {
     return {
-      ...buildCodexMcpConfig(slotId, this.mcpPort, {
-        enableFollowUpsTool:
-          this.followUpsHookPocEnabled && this.followUpsExperimentMode === 'hook-tool',
-      }),
+      ...buildCodexMcpConfig(slotId, this.mcpPort),
       ...(this.followUpsHookPocEnabled
         ? buildCodexFollowUpsHookPocConfig(slotId, this.mcpPort)
         : {}),
@@ -449,6 +454,34 @@ export class CodexRuntime implements AgentRuntime {
       await this.releaseSession(session.id);
     }
     await this.client.shutdown();
+  }
+
+  // ---- User input handler ---------------------------------------------------
+
+  private handleUserInputRequest(
+    params: Record<string, unknown>,
+    respond: (result: unknown) => void,
+  ): void {
+    const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
+    const session = threadId ? this.threadToSession.get(threadId) : null;
+    if (!session) {
+      respond({ answers: null });
+      return;
+    }
+    void session.askUserInput(params, respond);
+  }
+
+  private handleMcpElicitationRequest(
+    params: Record<string, unknown>,
+    respond: (result: unknown) => void,
+  ): void {
+    const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
+    const session = threadId ? this.threadToSession.get(threadId) : null;
+    if (!session) {
+      respond({ action: 'decline', content: null, _meta: null });
+      return;
+    }
+    void session.askMcpElicitation(params, respond);
   }
 
   // ---- Approval handler ----------------------------------------------------

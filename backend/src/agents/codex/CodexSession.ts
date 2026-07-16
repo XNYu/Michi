@@ -1,5 +1,5 @@
 import type { AgentSession, ChatMessage } from '../types';
-import type { NormalizedEvent, PermissionOption } from '../../services/chatEvents';
+import type { NormalizedEvent, PermissionOption, UserInputQuestion } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
 import type { CodexAppServerClient } from './CodexAppServerClient';
@@ -211,6 +211,102 @@ export class CodexSession implements AgentSession {
     clearTimeout(entry.timer);
     this.pendingPermissions.delete(requestId);
     entry.resolve(null);
+  }
+
+  respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>): void {
+    const entry = this.pendingUserInputs.get(requestId);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.pendingUserInputs.delete(requestId);
+    entry.resolve(answers);
+  }
+
+  skipUserInput(requestId: number): void {
+    const entry = this.pendingUserInputs.get(requestId);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.pendingUserInputs.delete(requestId);
+    entry.resolve(null);
+  }
+
+  async askUserInput(
+    params: Record<string, unknown>,
+    respond: (result: unknown) => void,
+  ): Promise<void> {
+    const questions = Array.isArray(params.questions) ? params.questions : [];
+    const parsedQuestions: UserInputQuestion[] = questions.map((q: Record<string, unknown>) => ({
+      question: String(q.question ?? ''),
+      header: typeof q.header === 'string' ? q.header : undefined,
+      options: Array.isArray(q.options)
+        ? (q.options as Array<Record<string, unknown>>).map((o) => ({
+            label: String(o.label ?? ''),
+            description: typeof o.description === 'string' ? o.description : undefined,
+          }))
+        : [],
+      multiSelect: q.multiSelect === true,
+    }));
+
+    const answers = await this.requestUserInput(parsedQuestions);
+
+    if (answers) {
+      const responseObj: Record<string, string> = {};
+      for (const a of answers) {
+        responseObj[a.question] = a.answer;
+      }
+      respond({ answers: responseObj });
+    } else {
+      respond({ answers: null });
+    }
+  }
+
+  private async requestUserInput(
+    questions: UserInputQuestion[],
+  ): Promise<Array<{ question: string; answer: string }> | null> {
+    const requestId = ++this.nextRequestId;
+    this.queue.push({ kind: 'user_input_request', requestId, questions });
+
+    const answers = await new Promise<Array<{ question: string; answer: string }> | null>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingUserInputs.delete(requestId);
+        resolve(null);
+      }, APPROVE_TIMEOUT_MS);
+      this.pendingUserInputs.set(requestId, { resolve, timer });
+    });
+
+    this.queue.push({ kind: 'user_input_resolved', requestId, answers: answers ?? [] });
+    return answers;
+  }
+
+  async askMcpElicitation(
+    params: Record<string, unknown>,
+    respond: (result: unknown) => void,
+  ): Promise<void> {
+    const requestId = ++this.nextRequestId;
+    const serverName = typeof params['serverName'] === 'string' ? params['serverName'] : 'MCP server';
+    const message = typeof params['message'] === 'string' ? params['message'] : 'Approve this MCP request?';
+
+    const options: PermissionOption[] = [
+      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
+    ];
+    this.queue.push({
+      kind: 'permission_request',
+      requestId,
+      title: `Approve request from ${serverName}?`,
+      detail: message,
+      options,
+    });
+
+    const result = await this.awaitPermission(requestId);
+    if (result !== null && result.startsWith('allow')) {
+      respond({ action: 'accept', content: null, _meta: null });
+      return;
+    }
+    if (result === null) {
+      respond({ action: 'cancel', content: null, _meta: null });
+      return;
+    }
+    respond({ action: 'decline', content: null, _meta: null });
   }
 
   // ---- Approval handling (called by CodexRuntime) ---------------------------
@@ -481,6 +577,15 @@ export class CodexSession implements AgentSession {
             size: r.size,
           });
           return { relPath: r.relPath, mimeType: r.mimeType, size: r.size };
+        },
+        onAskUser: async (questions) => {
+          const answers = await this.requestUserInput(questions);
+          if (!answers) return null;
+          const result: Record<string, string> = {};
+          for (const answer of answers) {
+            result[answer.question] = answer.answer;
+          }
+          return result;
         },
         ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       },

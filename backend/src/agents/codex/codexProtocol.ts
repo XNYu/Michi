@@ -1,6 +1,6 @@
 /**
  * Hand-curated wire surface of the codex app-server v2 protocol — the ONLY
- * protocol import for runtime code. Strings pinned against codex-cli 0.138.0-alpha.7.
+ * protocol import for runtime code. Strings verified against codex-cli 0.144.2.
  */
 
 export const CODEX_NOTIFICATIONS = {
@@ -25,6 +25,8 @@ export const CODEX_SERVER_REQUESTS = {
   commandApproval: 'item/commandExecution/requestApproval',
   fileChangeApproval: 'item/fileChange/requestApproval',
   permissionsApproval: 'item/permissions/requestApproval',
+  requestUserInput: 'item/tool/requestUserInput',
+  mcpElicitation: 'mcpServer/elicitation/request',
 } as const;
 
 export type CodexApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
@@ -66,7 +68,6 @@ export interface CodexModel {
 export function buildCodexMcpConfig(
   slotId: string,
   port: number,
-  options: { enableFollowUpsTool?: boolean } = {},
 ): Record<string, unknown> {
   return {
     mcp_servers: {
@@ -76,16 +77,10 @@ export function buildCodexMcpConfig(
         // unauthenticated local HTTP MCP omits auth and still requires the
         // headers array to be present, even when empty.
         headers: [],
-        // Structured metadata is an internal, non-destructive callback. If
-        // Codex prompts for it, a Stop-hook repair cannot complete headlessly.
-        // Keep the exemption tool-specific; all other MCP tools retain Codex's
-        // normal approval behavior.
-        tools: {
-          set_branch_overview: { approval_mode: 'approve' },
-          ...(options.enableFollowUpsTool
-            ? { set_follow_ups: { approval_mode: 'approve' } }
-            : {}),
-        },
+        // This server is implemented and scoped by Michi itself. Its tools
+        // still enforce workspace/user boundaries internally, so Codex should
+        // not add a second approval prompt in front of every invocation.
+        default_tools_approval_mode: 'approve',
       },
     },
   };
