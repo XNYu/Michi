@@ -472,6 +472,37 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
     if (!dt) return;
+
+    // Long text paste → save as .txt file attachment instead of inline.
+    const plainText = dt.getData('text/plain');
+    if (plainText && plainText.length >= PASTE_AS_FILE_THRESHOLD) {
+      const hasFiles = Array.from(dt.items).some(i => i.kind === 'file');
+      if (!hasFiles) {
+        e.preventDefault();
+        try {
+          const cwd = await resolveAttachCwd();
+          if (!cwd || !activeProject?.id) {
+            toast.error('No workspace folder for text attachment');
+            return;
+          }
+          const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const fileName = `pasted-text-${ts}.txt`;
+          const result = await importWorkspaceFile(activeProject.id, cwd, fileName, plainText, {
+            subdir: '.attachments',
+          });
+          const abs = result.filePath.startsWith('/')
+            ? result.filePath
+            : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
+          addPendingPaths([{ abs, displayName: fileName }]);
+        } catch (err) {
+          toast.error('Failed to save pasted text as file', {
+            description: (err as Error).message,
+          });
+        }
+        return;
+      }
+    }
+
     const items: File[] = [];
     for (const item of Array.from(dt.items)) {
       if (item.kind !== 'file') continue;
@@ -724,6 +755,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // and PaneFind navigation.
   useEffect(() => {
     let cancelFlash: (() => void) | null = null;
+    let retryRaf = 0;
     const onScroll = (e: Event) => {
       const detail = (e as CustomEvent).detail as {
         nodeId?: string;
@@ -734,8 +766,20 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       };
       if (detail?.nodeId !== nodeId) return;
       if (!detail.messageId) return;
-      const el = document.querySelector(`[data-msg-id="${detail.messageId}"]`) as HTMLElement | null;
-      if (!el) return;
+      const messageId = detail.messageId;
+      const el = document.querySelector(`[data-msg-id="${messageId}"]`) as HTMLElement | null;
+      // Opening a search result can target a tree whose message bodies are
+      // still lazy-loading, so the message DOM may not exist yet. Retry across
+      // a few frames (~1s), re-dispatching the same handler once it renders.
+      if (!el) {
+        let tries = 0;
+        const retry = () => {
+          if (document.querySelector(`[data-msg-id="${messageId}"]`)) { onScroll(e); return; }
+          if (++tries < 60) retryRaf = window.requestAnimationFrame(retry);
+        };
+        retryRaf = window.requestAnimationFrame(retry);
+        return;
+      }
 
       // In-pane find (flash: false): scroll to the specific match within this
       // message and flash ONLY that match's text — not the whole message. We
@@ -768,6 +812,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     return () => {
       window.removeEventListener('michi:scroll-to-message', onScroll as EventListener);
       cancelFlash?.();
+      if (retryRaf) window.cancelAnimationFrame(retryRaf);
     };
   }, [nodeId]);
 
@@ -950,9 +995,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     //      from the top of the viewport, leaving ~70% for the agent reply
     //      to grow into. Re-engages follow mode so streaming output that
     //      arrives next will keep tailing the bottom.
-    //   2. Streaming assistant content → if follow mode is on, hard-pin
-    //      to the bottom each tick (wrapped in rAF so layout has flushed
-    //      before we measure scrollHeight).
+    //   2. Streaming assistant content → if follow mode is on, schedule a
+    //      pinFollow via rAF. The ResizeObserver below handles keeping
+    //      scroll pinned as content height grows (line breaks).
     // Find the most-recent user message — the reducer pairs every user
     // send with an empty assistant placeholder on the same tick, so
     // `lastMsg.role` is usually 'assistant' even right after a send.
@@ -1063,11 +1108,23 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // column), or streamed markdown grows/reflows between network chunks, the
   // scroll position no longer reads as "at bottom" even though the user was.
   // Re-pin if follow-mode is still active.
+  //
+  // ResizeObserver fires BEFORE paint in modern browsers (after layout, before
+  // the next composite/paint step). By calling pinFnRef.current() synchronously
+  // here (no rAF wrapper), the scrollTop adjustment lands in the same frame as
+  // the height change — eliminating the 1-frame flash where new content appears
+  // below the viewport before scroll catches up.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     let frame: number | null = null;
     const pin = () => {
+      // Synchronous pin — ResizeObserver already fires after layout/before paint,
+      // so this scrollTop write takes effect within the same frame.
+      pinFnRef.current?.();
+    };
+    // Fallback rAF pin for animation-end callbacks (non-critical path)
+    const pinDeferred = () => {
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
@@ -1082,11 +1139,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setViewportH(el.clientHeight);
     ro.observe(el);
     if (el.firstElementChild) ro.observe(el.firstElementChild);
-    animationEndCallbacks.add(pin);
+    animationEndCallbacks.add(pinDeferred);
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
       ro.disconnect();
-      animationEndCallbacks.delete(pin);
+      animationEndCallbacks.delete(pinDeferred);
     };
   }, []);
 
@@ -1701,6 +1758,25 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           onCancel={() => denyPermission(nodeId)}
           readOnly={observing}
         />
+      )}
+      {n.pendingUserInput && !n.pendingUserInput.resolved && (
+        <div style={{
+          position: 'absolute',
+          left: prefs.terminalDensity === 'dense' ? 18 : prefs.terminalDensity === 'compact' ? 20 : 26,
+          right: prefs.terminalDensity === 'dense' ? 18 : prefs.terminalDensity === 'compact' ? 20 : 26,
+          bottom: 12,
+          zIndex: 1,
+          ...(contentMaxWidth != null
+            ? { maxWidth: contentMaxWidth, marginLeft: 'auto', marginRight: 'auto' }
+            : {}),
+        }}>
+          <UserInputBanner
+            userInput={n.pendingUserInput}
+            onSubmit={(answers) => resolveUserInputRequest(nodeId, answers)}
+            onSkip={() => skipUserInputRequest(nodeId)}
+            readOnly={observing}
+          />
+        </div>
       )}
       <PaneAgentMenus
         agentMenu={agentMenu}
