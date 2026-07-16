@@ -25,7 +25,10 @@ const TRAFFIC_LIGHT_PAD = 96;
 // (pos 16 + 6 radius). Horizontal rhythm intentionally differs from the dots.
 const ZONE1_BUTTON_W = 26;
 const ZONE1_BUTTON_GAP = 4;
-const ZONE1_BUTTON_CLUSTER_WIDTH = 4 * ZONE1_BUTTON_W + 3 * ZONE1_BUTTON_GAP;
+// toggle + new-chat + search + unread + back + forward = 6 buttons.
+const ZONE1_BUTTON_COUNT = 6;
+const ZONE1_BUTTON_CLUSTER_WIDTH =
+  ZONE1_BUTTON_COUNT * ZONE1_BUTTON_W + (ZONE1_BUTTON_COUNT - 1) * ZONE1_BUTTON_GAP;
 const ZONE1_RIGHT_PAD = 8;
 const ZONE1_WIDTH = TRAFFIC_LIGHT_PAD + ZONE1_BUTTON_CLUSTER_WIDTH + ZONE1_RIGHT_PAD;
 const BROWSER_BRAND_WIDTH = 76;
@@ -58,6 +61,8 @@ export default function TerminalTopbar({
     focusedPane,
     focusedNodeId,
     unreadFilterOn,
+    canNavBack,
+    canNavForward,
   } = useChatProjects();
   const {
     focusPane,
@@ -65,6 +70,8 @@ export default function TerminalTopbar({
     reorderPane,
     setPaneWidth,
     setUnreadFilterOn,
+    navBack,
+    navForward,
   } = useChatActions();
   const { prefs } = usePrefs();
 
@@ -306,7 +313,7 @@ export default function TerminalTopbar({
       <div
         aria-hidden
         style={{
-          width: sidebarCollapsed ? 0 : 'var(--term-sidebar-width, 232px)',
+          width: sidebarCollapsed ? 0 : 'var(--term-sidebar-width, 280px)',
           flexShrink: 0,
           background: 'var(--term-sidebar-bg, var(--term-surface))',
           borderRight: sidebarCollapsed ? 'none' : '1px solid color-mix(in srgb, var(--term-line) 50%, transparent)',
@@ -376,6 +383,24 @@ export default function TerminalTopbar({
               {unreadDisplay}
             </span>
           )}
+        </Zone1IconButton>
+        <Zone1IconButton
+          onClick={navBack}
+          disabled={!canNavBack}
+          tooltip="Back"
+          tooltipKbd={kbd('mod', '[')}
+          aria-label="Navigate back"
+        >
+          <NavBackIcon />
+        </Zone1IconButton>
+        <Zone1IconButton
+          onClick={navForward}
+          disabled={!canNavForward}
+          tooltip="Forward"
+          tooltipKbd={kbd('mod', ']')}
+          aria-label="Navigate forward"
+        >
+          <NavForwardIcon />
         </Zone1IconButton>
       </div>
 
@@ -645,6 +670,7 @@ function Zone1IconButton({
   'aria-label': ariaLabel,
   className,
   active,
+  disabled,
   children,
 }: {
   onClick: () => void;
@@ -653,17 +679,21 @@ function Zone1IconButton({
   'aria-label': string;
   className?: string;
   active?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   const [hover, setHover] = React.useState(false);
   const btnRef = React.useRef<HTMLButtonElement>(null);
+  const showHover = hover && !disabled;
   return (
     <>
       <button
         ref={btnRef}
         type="button"
         onClick={onClick}
+        disabled={disabled}
         aria-label={ariaLabel}
+        aria-disabled={disabled || undefined}
         className={className}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
@@ -676,20 +706,21 @@ function Zone1IconButton({
           padding: '0 6px',
           background: active
             ? 'var(--term-select-f)'
-            : hover
+            : showHover
             ? 'var(--term-hover-bg, var(--term-alt))'
             : 'transparent',
           border: 'none',
           borderRadius: 4,
-          color: active ? 'var(--term-select)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
-          cursor: 'pointer',
-          transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
+          color: active ? 'var(--term-select)' : showHover ? 'var(--term-mid)' : 'var(--term-faint)',
+          cursor: disabled ? 'default' : 'pointer',
+          opacity: disabled ? 0.3 : 1,
+          transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease), opacity var(--t-quick) var(--t-ease)',
           flexShrink: 0,
         }}
       >
         {children}
       </button>
-      {hover && (
+      {showHover && (
         <HeaderTooltip anchorRef={btnRef} label={tooltip} kbd={tooltipKbd} />
       )}
     </>
@@ -859,6 +890,42 @@ function UnreadIcon() {
     >
       <circle cx="8" cy="8" r="3" fill="currentColor" stroke="none" />
       <circle cx="8" cy="8" r="6" />
+    </svg>
+  );
+}
+
+function NavBackIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M10 3 L5 8 L10 13" />
+    </svg>
+  );
+}
+
+function NavForwardIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 3 L11 8 L6 13" />
     </svg>
   );
 }

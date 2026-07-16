@@ -19,6 +19,8 @@ import { joinMessageParts } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
+import { useNavHistory, type NavEntry } from './navHistory';
+import { navigateToNode } from './navigateToNode';
 import { NODE_ACTIVITY_ACTIONS, reduceNodes, reduceProject } from './chatReducers';
 import {
   LEGACY_STATE_KEY,
@@ -28,6 +30,7 @@ import {
   useWorkspacePersistence,
   writeActiveProjectId,
 } from './workspacePersistence';
+import { useLazyTreeMessages } from './useLazyTreeMessages';
 import { useContextActions } from './contextActions';
 import { useProjectActions, useTreeActions } from './projectTreeActions';
 import { useTrashActions } from './trashActions';
@@ -325,6 +328,20 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     openPaneInTree,
     prunePaneIds,
   } = usePaneState({ projects, activeProjectId });
+  // Latest active workspace id, read synchronously by the back/forward nav
+  // callbacks (which must stay referentially stable for the actions context).
+  const activeProjectIdRef = useRef(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
+  // Back/forward navigation history (per-window, in-memory only — reload clears
+  // it). Wired to the focused-location observer + navBack/navForward below.
+  const {
+    record: recordNav,
+    back: navHistoryBack,
+    forward: navHistoryForward,
+    prune: pruneNav,
+    canBack: canNavBack,
+    canForward: canNavForward,
+  } = useNavHistory();
   // Agent runtime descriptors, fetched on mount and refreshed on the
   // `michi:reload-agent-status` window event (dispatched by chatStreamRunner on
   // auth errors and by Settings when keys change). Not persisted.
@@ -843,6 +860,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       );
     }
   }, []);
+
+  // Lazy-load: fetch the active tree's message bodies on demand when it's a
+  // placeholder (hydration only eager-loads the initially-active tree).
+  // Mounted after `dispatch` is defined so it can dispatch `messages-loaded`.
+  useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch });
 
   const dispatchOwner = useCallback((ev: OwnerEvent) => {
     const next = ownerStateReducer(ownerStateRef.current, ev);
@@ -2169,6 +2191,65 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     [projects, activeProjectId],
   );
 
+  // ── Back/forward navigation ──────────────────────────────────────────────
+  // A nav entry is live only if its workspace and node still exist and aren't
+  // soft-deleted; back/forward skip dead ones (like a browser skipping a closed
+  // tab). Reads refs so the callbacks stay stable across chunk-driven renders.
+  const isNavEntryLive = useCallback((entry: NavEntry): boolean => {
+    const proj = projectsRef.current.find((p) => p.id === entry.projectId);
+    if (!proj || proj.deletedAt) return false;
+    if (!proj.chatIds.includes(entry.nodeId)) return false;
+    if (nodesRef.current[entry.nodeId]?.deletedAt) return false;
+    return true;
+  }, []);
+
+  // All cross-boundary movement goes through navigateToNode so back/forward
+  // inherit its stale-slot fix (seed the destination pane before switching
+  // workspace/tree). navBack/navForward arm the history's suppression window so
+  // the focus change they cause isn't re-recorded as a new location.
+  const runNavTo = useCallback(
+    (entry: NavEntry | null) => {
+      if (!entry) return;
+      navigateToNode(
+        {
+          projects: projectsRef.current,
+          activeProjectId: activeProjectIdRef.current,
+          selectProject,
+          openPane,
+          openPaneInTree,
+          activateTree,
+          setFocusedNodeId,
+        },
+        entry.nodeId,
+        entry.projectId,
+      );
+    },
+    [selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId],
+  );
+
+  const navBack = useCallback(() => {
+    runNavTo(navHistoryBack(isNavEntryLive));
+  }, [runNavTo, navHistoryBack, isNavEntryLive]);
+
+  const navForward = useCallback(() => {
+    runNavTo(navHistoryForward(isNavEntryLive));
+  }, [runNavTo, navHistoryForward, isNavEntryLive]);
+
+  // Observe the focused-location triple (workspace, active tree, focused pane)
+  // and record a nav entry whenever it lands somewhere new. Gated on `hydrated`
+  // so boot-time workspace churn (seed → hydrated) doesn't seed a bogus entry.
+  const activeTreeIdForNav = activeProject?.activeTreeId ?? null;
+  useEffect(() => {
+    if (!hydrated || !activeProjectId || !activeTreeIdForNav || !focusedPane) return;
+    recordNav({ nodeId: focusedPane, projectId: activeProjectId, treeId: activeTreeIdForNav });
+  }, [hydrated, activeProjectId, activeTreeIdForNav, focusedPane, recordNav]);
+
+  // Drop nav entries whose node was deleted (reuses the trashed-id signal).
+  useEffect(() => {
+    if (!deletedIdsKey) return;
+    pruneNav(isNavEntryLive);
+  }, [deletedIdsKey, pruneNav, isNavEntryLive]);
+
   const projectsValue = useMemo<ChatProjectsValue>(
     () => ({
       projects,
@@ -2195,6 +2276,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       treeSelection,
       searchHighlightTerm,
       unreadFilterOn,
+      canNavBack,
+      canNavForward,
     }),
     [
       projects,
@@ -2214,6 +2297,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       treeSelection,
       searchHighlightTerm,
       unreadFilterOn,
+      canNavBack,
+      canNavForward,
     ],
   );
 
@@ -2330,6 +2415,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      navBack,
+      navForward,
+      canNavBack,
+      canNavForward,
     }),
     [
       projects,
@@ -2436,6 +2525,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      navBack,
+      navForward,
+      canNavBack,
+      canNavForward,
     ],
   );
 
@@ -2501,6 +2594,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      navBack,
+      navForward,
       dispatch,
     }),
     [
@@ -2564,6 +2659,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      navBack,
+      navForward,
       dispatch,
     ],
   );

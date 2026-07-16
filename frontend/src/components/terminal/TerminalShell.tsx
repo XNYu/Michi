@@ -83,6 +83,7 @@ export default function TerminalShell() {
     focusedPane,
     treeSelection,
     projects, hydrated,
+    canNavBack, canNavForward,
   } = useChatProjects();
   const {
     createProject,
@@ -95,6 +96,8 @@ export default function TerminalShell() {
     clearSelection,
     clearTreeSelection,
     selectAllTrees,
+    navBack,
+    navForward,
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
 
@@ -188,6 +191,26 @@ export default function TerminalShell() {
         if (focusedPane) {
           e.preventDefault();
           closePane(focusedPane);
+        }
+        return;
+      }
+      // ⌘[ / ⌘] step back / forward through focused-chat history (browser-style;
+      // crosses trees + workspaces). Placed before the isEditable gate — like
+      // ⌘K/⌘W — so it works while a pane's composer is auto-focused. Guarded by
+      // the store: no-op when the respective stack is empty.
+      if (meta && !e.shiftKey && !e.altKey && e.key === '[') {
+        e.preventDefault();
+        if (canNavBack) {
+          navBack();
+          setPage('dashboard');
+        }
+        return;
+      }
+      if (meta && !e.shiftKey && !e.altKey && e.key === ']') {
+        e.preventDefault();
+        if (canNavForward) {
+          navForward();
+          setPage('dashboard');
         }
         return;
       }
@@ -287,7 +310,7 @@ export default function TerminalShell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav]);
+  }, [page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav, navBack, navForward, canNavBack, canNavForward]);
 
   useEffect(() => {
     const onEvt = () => setNewWsOpen(true);
@@ -361,6 +384,37 @@ export default function TerminalShell() {
     handleNav(p);
     if (narrowMode) setNarrowOverlayOpen(false);
   }, [handleNav, narrowMode]);
+
+  // Hydration gate. Until the store finishes loading from the backend,
+  // `projects` is empty — rendering the full shell here would paint a bogus
+  // "no workspace" empty state (and race the auto-open dialog) during the
+  // cold-start window where the backend isn't listening yet. Hold on a minimal
+  // splash that reuses the shell's own background so there is no flash when the
+  // real content lands. This is the view-layer half of the hydration barrier:
+  // `hydrated` stays false until the backend actually answered, so an
+  // unreachable backend keeps us here rather than flashing empty.
+  if (!hydrated) {
+    return (
+      <div
+        className="terminal-shell"
+        style={{
+          ...cssVars,
+          width: '100%',
+          height: '100%',
+          background: 'var(--term-shell-bg, var(--term-bg))',
+          color: 'var(--term-faint)',
+          fontFamily: 'var(--ui-font)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '12px',
+          letterSpacing: '.04em',
+        }}
+      >
+        <span className="term-hydrating">loading workspaces…</span>
+      </div>
+    );
+  }
 
   return (
     <div

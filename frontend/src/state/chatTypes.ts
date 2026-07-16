@@ -216,6 +216,24 @@ export interface ChatNodeState {
   /** For merge nodes: additional source node ids whose context seeds the first message. parentNodeId is the first one; mergeSources holds the rest. */
   mergeSources?: string[];
   messages: ChatMessage[];
+  /**
+   * Lazy-load marker (in-memory only, NEVER persisted or sent in any write-back
+   * command payload). `false`/`undefined` = placeholder: this node's `messages`
+   * are NOT the authoritative set — the bodies live in the DB and have not been
+   * fetched yet (the tree hasn't been opened). `true` = bodies are loaded and
+   * `messages` is authoritative.
+   *
+   * The distinction between "placeholder" (messagesLoaded:false, messages:[])
+   * and "genuinely empty" (messagesLoaded:true, messages:[]) is what keeps a
+   * placeholder node from ever being treated as if it truly has no messages.
+   */
+  messagesLoaded?: boolean;
+  /**
+   * Message count from the meta hydration payload, shown by Map/Digest/Branches
+   * while bodies are unloaded. In-memory only; never persisted / written back.
+   * Once messages load, `messages.length` is authoritative and this is ignored.
+   */
+  messageCount?: number;
   followUps: string[];
   /** id of the assistant message whose reply produced the current `followUps[]`.
    *  Set by `set-follow-ups` AND `done`. Cleared by `retry-trim` if its target is gone.
@@ -511,6 +529,19 @@ export type ChatAction =
   | { type: 'apply-seq'; nodeId: string; turnId: string; seq: number }
   | { type: 'block-reset'; nodeId: string; assistantId: string }
   | { type: 'realign-assistant-id'; nodeId: string; fromId: string; toId: string }
+  | {
+      /**
+       * Lazy-load: install fetched message bodies for the nodes of one tree.
+       * `messagesByNode` maps nodeId → its full ordered message list. Every
+       * listed node flips to `messagesLoaded: true`. Nodes not in the map are
+       * untouched. This action MUST NOT dirty the node for write-back — the
+       * bodies just came FROM the backend and re-sending them is a no-op the
+       * write-back layer isn't even capable of (messages are backend-authored).
+       */
+      type: 'messages-loaded';
+      nodeIds: string[];
+      messagesByNode: Record<string, ChatMessage[]>;
+    }
   | { type: 'retry-trim'; nodeId: string; fromIndex?: number }
   | { type: 'heartbeat'; nodeId: string; idleMs: number }
   | { type: 'set-minimized'; nodeId: string; minimized: boolean }
@@ -778,6 +809,15 @@ export interface ChatContextValue {
   focusPane: (nodeId: string) => void;
   /** Reorder open panes: move `fromId` to the index of `toId`. */
   reorderPane: (fromId: string, toId: string) => void;
+  /** Step back to the previously focused chat location (browser-style; crosses
+   *  trees/workspaces). No-op when the back stack is empty. In-memory only. */
+  navBack: () => void;
+  /** Step forward again after navBack. No-op when the forward stack is empty. */
+  navForward: () => void;
+  /** Whether navBack has a destination — drives the topbar button enabled state. */
+  canNavBack: boolean;
+  /** Whether navForward has a destination. */
+  canNavForward: boolean;
   setViewMode: (mode: ViewMode) => void;
   /** Node ids currently selected for multi-node operations. In-memory only; clears on project switch. */
   selection: ReadonlySet<string>;
@@ -884,6 +924,8 @@ export type ChatProjectsValue = Pick<
   | 'treeSelection'
   | 'searchHighlightTerm'
   | 'unreadFilterOn'
+  | 'canNavBack'
+  | 'canNavForward'
 >;
 
 /** Callback-only slice for hot chat surfaces. It intentionally excludes the
@@ -947,6 +989,8 @@ export type ChatActionsValue = Pick<
   | 'setComposerDraft'
   | 'createContext'
   | 'reorderPane'
+  | 'navBack'
+  | 'navForward'
   | 'setUnreadFilterOn'
   | 'markAllRead'
   | 'renameNode'

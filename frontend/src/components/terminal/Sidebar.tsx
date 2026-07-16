@@ -17,9 +17,12 @@ import {
 } from './icons';
 import type { PageId } from '../../state/commands';
 
-const MIN_SIDEBAR_WIDTH = 180;
+// Min must cover the Topbar Zone 1 button cluster so drag-resizing can't
+// push the sidebar narrower than its header icons.  ZONE1_WIDTH (topbar.tsx)
+// is TRAFFIC_LIGHT_PAD(96) + 6×26 + 5×4 + RIGHT_PAD(8) = 280px.
+const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 400;
-const DEFAULT_SIDEBAR_WIDTH = 232;
+const DEFAULT_SIDEBAR_WIDTH = 280;
 
 /** Sidebar row density → the `--sb-*` CSS vars consumed by WorkspaceRow /
  *  ThreadRow / BranchRow / merge rows / BottomNav. `compact` reproduces the
@@ -54,12 +57,18 @@ export default function TerminalSidebar({
   const asideRef = useRef<HTMLElement>(null);
   const [isResizing, setIsResizing] = useState(false);
 
+  // Clamp persisted width to current MIN so legacy narrower values auto-correct.
+  const effectiveWidth = Math.max(prefs.terminalSidebarWidth, MIN_SIDEBAR_WIDTH);
   useEffect(() => {
     document.documentElement.style.setProperty(
       '--term-sidebar-width',
-      `${prefs.terminalSidebarWidth}px`,
+      `${effectiveWidth}px`,
     );
-  }, [prefs.terminalSidebarWidth]);
+    // Persist the correction so we don't recompute every render.
+    if (prefs.terminalSidebarWidth < MIN_SIDEBAR_WIDTH) {
+      setPref('terminalSidebarWidth', MIN_SIDEBAR_WIDTH);
+    }
+  }, [effectiveWidth, prefs.terminalSidebarWidth, setPref]);
 
   // Broadcast a window of "sidebar is animating its width" so panes can pause
   // ResizeObserver-driven reflows for the duration of the toggle and resume
@@ -109,7 +118,7 @@ export default function TerminalSidebar({
       aria-hidden={collapsed || undefined}
       style={{
         ...densityVars,
-        width: overlayMode ? prefs.terminalSidebarWidth : (collapsed ? 0 : prefs.terminalSidebarWidth),
+        width: overlayMode ? effectiveWidth : (collapsed ? 0 : effectiveWidth),
         flexShrink: 0,
         background: 'var(--term-sidebar-bg, var(--term-surface))',
         border: 'var(--term-sidebar-outline, none)',
