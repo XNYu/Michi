@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useChatStore, useChatNodesSnapshot, selectAllChats } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { buildCommands, filterCommands, Command, PageId } from '../../state/commands';
-import { searchMessages, type MessageMatch } from '../../state/search';
+import { type MessageMatch } from '../../state/search';
+import { useServerSearch } from '../../state/useServerSearch';
 import { requestDigest } from '../../lib/digestPrompt';
 import { navigateToNode } from '../../state/navigateToNode';
 
@@ -204,11 +205,10 @@ export default function CommandPalette({
     return () => clearTimeout(t);
   }, [query]);
 
-  // In-memory message search over current store state — same source as ⌘⇧F.
-  const searchResult = useMemo(
-    () => searchMessages(nodesSnapshot, projects, debouncedQuery),
-    [nodesSnapshot, projects, debouncedQuery],
-  );
+  // Server-side FTS search — complete regardless of which trees' message
+  // bodies are lazily loaded into memory. (The old in-memory scan missed
+  // unloaded trees.)
+  const searchResult = useServerSearch(debouncedQuery, projects);
   const searchMatches = searchResult.matches;
 
   const navDeps = useMemo(
