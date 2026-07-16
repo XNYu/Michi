@@ -522,7 +522,17 @@ const gracefulShutdown = async (): Promise<void> => {
   await Promise.allSettled(listRuntimes().map((runtime) => runtime.shutdown()));
   closeDb();
   closeAuditDb();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+    // server.close() only stops accepting new connections; it then WAITS for
+    // every in-flight connection to drain. An ACP subprocess (kiro-cli) holds a
+    // persistent keep-alive connection to /api/mcp/:slotId that never closes on
+    // its own, so close() would hang indefinitely (its callback never fires) —
+    // which is exactly what left orphaned backend + kiro-cli processes holding
+    // the port on every dev restart. Force those sockets shut so close()
+    // completes. runtime.shutdown() above has already signalled the children.
+    server.closeAllConnections();
+  });
 };
 
 // SIGINT/SIGTERM → terminate (Ctrl-C, container stop, Railway redeploy).
