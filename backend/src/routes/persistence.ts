@@ -6,6 +6,7 @@ import {
   listTrees, saveTree, listNodes, saveNode, updateNodeTitle,
   listEdges, saveEdge, listMessages, saveMessage, getMessageCount,
   listContexts, saveContext, loadFullWorkspace, loadAllWorkspaces,
+  loadAllWorkspacesMeta, loadTreeMessages,
   deleteEdge, deleteTree, moveTreeToWorkspace, softDeleteNode, restoreNode, deleteContext,
   getAiGlobalContext, setAiGlobalContext,
   emptyWorkspaceTrash, purgeWorkspaceNodes,
@@ -42,12 +43,28 @@ export function setupPersistenceRoutes(): express.Router {
     }
   });
 
-  // Bulk-load all workspaces in a single request
+  // Bulk-load all workspaces in a single request.
+  //   ?meta=1 → structure + per-node message_count, NO message bodies (the
+  //             lazy-load hydration payload; bodies come per-tree below).
+  //   (default) → full snapshot including every message body (legacy path).
   router.get('/workspaces/all', (req, res) => {
     try {
       const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
-      const data = loadAllWorkspaces(userId);
+      const meta = req.query.meta === '1' || req.query.meta === 'true';
+      const data = meta ? loadAllWorkspacesMeta(userId) : loadAllWorkspaces(userId);
       res.json({ workspaces: data });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Lazy-load: all message bodies for ONE tree. Fetched when a tree is
+  // activated / opened and its nodes are still unloaded placeholders.
+  router.get('/workspaces/:id/trees/:treeId/messages', requireWorkspaceOwner, (req, res) => {
+    try {
+      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const messages = loadTreeMessages(req.params.id, req.params.treeId, userId);
+      res.json({ messages });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

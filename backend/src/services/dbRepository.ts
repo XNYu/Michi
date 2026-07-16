@@ -1318,6 +1318,79 @@ export function loadAllWorkspaces(userId?: string): FullWorkspaceData[] {
   return workspaces.map(ws => loadFullWorkspace(ws.id, userId)).filter((d): d is FullWorkspaceData => d !== null);
 }
 
+/**
+ * Structure + per-node message COUNT, with NO message bodies. This is the
+ * lazy-load hydration payload: the frontend loads every workspace's structural
+ * graph (trees/nodes/edges/contexts) plus a `message_count` per node, then
+ * fetches the actual message bodies one tree at a time via `loadTreeMessages`.
+ *
+ * `messages` is intentionally always `[]` here so the shape stays assignable to
+ * FullWorkspaceData — the count rides on each NodeRow as `message_count`.
+ */
+export interface NodeRowWithCount extends NodeRow {
+  message_count: number;
+}
+export interface MetaWorkspaceData extends Omit<FullWorkspaceData, 'nodes' | 'messages'> {
+  nodes: NodeRowWithCount[];
+  messages: never[];
+}
+
+export function loadWorkspaceMeta(id: string, userId?: string): MetaWorkspaceData | null {
+  const workspace = getWorkspace(id, userId);
+  if (!workspace) return null;
+  const trees = listTrees(id, userId);
+  const nodes = listNodes(id, userId);
+  const edges = listEdges(id, userId);
+  const contexts = listContexts(id, userId);
+
+  // One grouped COUNT for the whole workspace instead of N per-node queries.
+  const countByNode = new Map<string, number>();
+  const nodeIds = nodes.map(n => n.id);
+  if (nodeIds.length > 0) {
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const rows = getDb().prepare(
+      `SELECT node_id, COUNT(*) as cnt FROM messages WHERE node_id IN (${placeholders}) GROUP BY node_id`
+    ).all(...nodeIds) as unknown as Array<{ node_id: string; cnt: number }>;
+    for (const r of rows) countByNode.set(r.node_id, r.cnt);
+  }
+
+  const nodesWithCount: NodeRowWithCount[] = nodes.map(n => ({
+    ...n,
+    message_count: countByNode.get(n.id) ?? 0,
+  }));
+
+  return { workspace, trees, nodes: nodesWithCount, edges, messages: [], contexts };
+}
+
+export function loadAllWorkspacesMeta(userId?: string): MetaWorkspaceData[] {
+  const workspaces = listWorkspaces(userId);
+  return workspaces
+    .map(ws => loadWorkspaceMeta(ws.id, userId))
+    .filter((d): d is MetaWorkspaceData => d !== null);
+}
+
+/**
+ * Message bodies for every node in ONE tree, ordered by (node, seq). This is
+ * the on-demand fetch behind lazy loading: the caller already has the tree's
+ * structure from the meta payload and asks for its bodies when the tree is
+ * activated / opened.
+ *
+ * Scoped to the tree via `nodes.tree_id`, so it never over-fetches sibling
+ * trees. In cloud mode the workspace-owner check gates access (the route
+ * applies `requireWorkspaceOwner`); the query itself is workspace-scoped.
+ */
+export function loadTreeMessages(workspaceId: string, treeId: string, userId?: string): MessageRow[] {
+  // Resolve the tree's node ids first (workspace + user scoped via listNodes).
+  const nodeIds = listNodes(workspaceId, userId)
+    .filter(n => n.tree_id === treeId)
+    .map(n => n.id);
+  if (nodeIds.length === 0) return [];
+  const placeholders = nodeIds.map(() => '?').join(',');
+  return getDb().prepare(
+    `SELECT * FROM messages WHERE node_id IN (${placeholders}) ORDER BY node_id ASC, seq ASC`
+  ).all(...nodeIds) as unknown as MessageRow[];
+}
+
 // --- Bulk sync (reconcile) ---
 
 /**

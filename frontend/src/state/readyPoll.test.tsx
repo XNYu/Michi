@@ -25,6 +25,8 @@ vi.mock('../services/api', () => ({
   cancelChat: vi.fn().mockResolvedValue(undefined),
   // workspacePersistence dependencies — return empty so hydration finishes quickly.
   fetchAllWorkspaces: vi.fn().mockResolvedValue([]),
+  fetchAllWorkspacesMeta: vi.fn().mockResolvedValue([]),
+  fetchTreeMessages: vi.fn().mockResolvedValue([]),
   fetchWorkspaces: vi.fn().mockResolvedValue([]),
   fetchWorkspace: vi.fn().mockResolvedValue(null),
   syncWorkspace: vi.fn().mockResolvedValue({ ok: true }),

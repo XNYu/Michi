@@ -277,6 +277,56 @@ export function mapContextRow(row: Record<string, unknown>): ContextEntry | null
 
 /** Map one `messages` row → ChatMessage. `fallbackSeq` derives the id when the
  *  row carries no explicit id (mirrors the inline hydration default). */
+/**
+ * Group raw backend message rows into a { nodeId → ordered ChatMessage[] } map.
+ * Used by the lazy-load path: the per-tree message fetch returns a flat row
+ * list (ordered by node, then seq), which this folds into the per-node shape
+ * the `messages-loaded` action and the hydration eager-load both consume.
+ * Rows already arrive ordered, so we preserve arrival order per node.
+ */
+export function buildMessagesByNode(rawRows: unknown[]): Record<string, ChatMessage[]> {
+  const byNode: Record<string, ChatMessage[]> = {};
+  if (!Array.isArray(rawRows)) return byNode;
+  for (const raw of rawRows) {
+    if (!raw || typeof raw !== 'object') continue;
+    const row = raw as Record<string, unknown>;
+    const nodeId = asString(row.node_id);
+    if (!nodeId) continue;
+    const list = byNode[nodeId] ?? (byNode[nodeId] = []);
+    list.push(mapMessageRow(row, list.length));
+  }
+  return byNode;
+}
+
+/**
+ * Install fetched message bodies onto placeholder nodes. Pure: returns a new
+ * nodes map (only touched nodes get new object identities). Each node in
+ * `messagesByNode` gets its messages replaced and `messagesLoaded` flipped to
+ * true; `messageCount` is synced to the loaded length. Nodes absent from the
+ * map are returned by reference (untouched). Shared by the hydration
+ * eager-load and the `messages-loaded` reducer action so both converge.
+ */
+export function applyTreeMessages(
+  nodes: Record<string, ChatNodeState>,
+  messagesByNode: Record<string, ChatMessage[]>,
+): Record<string, ChatNodeState> {
+  const ids = Object.keys(messagesByNode);
+  if (ids.length === 0) return nodes;
+  const next = { ...nodes };
+  for (const nodeId of ids) {
+    const prev = next[nodeId];
+    if (!prev) continue; // node not present locally (e.g. trimmed) — skip
+    const messages = messagesByNode[nodeId];
+    next[nodeId] = {
+      ...prev,
+      messages,
+      messagesLoaded: true,
+      messageCount: messages.length,
+    };
+  }
+  return next;
+}
+
 export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): ChatMessage {
   const nodeId = asString(row.node_id) ?? '';
   const role = row.role === 'assistant' ? 'assistant' : 'user';
@@ -471,12 +521,24 @@ export function hydrateBackendWorkspaces(
           status: 'idle',
         };
       }
+      // Lazy-load markers. The meta payload carries `message_count` on each row
+      // and NO bodies; the full payload carries bodies and no count. A node is a
+      // placeholder (messagesLoaded:false) only in meta mode — i.e. when the row
+      // reports a count but no bodies were assembled for it. In full mode every
+      // node is authoritative (messagesLoaded:true), including genuinely-empty
+      // ones. This is the placeholder-vs-empty distinction the write-back guard
+      // and the lazy trigger both key off of.
+      const assembled = messagesByNode.get(nodeId) ?? [];
+      const rawCount = asOptionalNumber(row.message_count);
+      const isMetaRow = rawCount !== undefined && assembled.length === 0;
       nodes[nodeId] = {
         ...scalars,
         // Cross-row derived fields the single-row scalar mapper cannot know:
         projectId,
         mergeSources: mergeSourcesByTarget.get(nodeId),
-        messages: messagesByNode.get(nodeId) ?? [],
+        messages: assembled,
+        messagesLoaded: !isMetaRow,
+        messageCount: rawCount ?? assembled.length,
         digest,
       } as ChatNodeState;
     }

@@ -871,6 +871,29 @@ export async function fetchAllWorkspaces(): Promise<unknown[]> {
   return body.workspaces ?? [];
 }
 
+/**
+ * Lazy-load hydration payload: every workspace's structure + per-node
+ * message_count, with NO message bodies. Bodies are fetched per-tree on demand
+ * via {@link fetchTreeMessages}. Throws on unreachability (same as
+ * fetchAllWorkspaces) so the hydration barrier can retry.
+ */
+export async function fetchAllWorkspacesMeta(): Promise<unknown[]> {
+  const res = await fetch(`${API_BASE_URL}/workspaces/all?meta=1`);
+  if (!res.ok) throw new Error(`fetchAllWorkspacesMeta failed: ${res.status}`);
+  const body = await res.json();
+  return body.workspaces ?? [];
+}
+
+/** Lazy-load: all message-body rows for one tree. Backend orders by (node, seq). */
+export async function fetchTreeMessages(workspaceId: string, treeId: string): Promise<unknown[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/trees/${encodeURIComponent(treeId)}/messages`,
+  );
+  if (!res.ok) throw new Error(`fetchTreeMessages failed: ${res.status}`);
+  const body = await res.json();
+  return body.messages ?? [];
+}
+
 export async function fetchWorkspace(id: string): Promise<unknown> {
   const res = await fetch(`${API_BASE_URL}/workspaces/${id}`);
   if (!res.ok) throw new Error(`fetchWorkspace failed: ${res.status}`);

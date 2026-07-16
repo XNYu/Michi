@@ -63,6 +63,12 @@ export function staleSources(
       out.push(sid);
       continue;
     }
+    // A lazy-load placeholder's `messages` is empty but NOT authoritative — its
+    // real trail is unfetched in the DB. Fingerprinting it would compare an
+    // empty trail against the stored hash and report a FALSE stale (and a
+    // rebuild would summarize nothing). Skip until its bodies load; the digest
+    // keeps its current content. Re-evaluated once messages-loaded fires.
+    if (node.messagesLoaded === false) continue;
     const fp = computeSourceFingerprint(node);
     if (fp !== digest.sourceFingerprints[sid]) out.push(sid);
   }

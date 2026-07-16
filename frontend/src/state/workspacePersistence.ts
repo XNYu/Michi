@@ -1,6 +1,7 @@
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
-  fetchAllWorkspaces,
+  fetchAllWorkspacesMeta,
+  fetchTreeMessages,
   fetchPersistenceCapabilities,
   fetchWorkspace,
   fetchWorkspaces,
@@ -12,6 +13,8 @@ import { findTreeIdForNode } from './tree';
 import {
   hydrateBackendWorkspaces,
   hydrateSavedState,
+  applyTreeMessages,
+  buildMessagesByNode,
   mapContextRow,
   mapEdgeRow,
   mapMessageRow,
@@ -142,6 +145,13 @@ export function mergeIndexProjectIds(diskIds: string[], memIds: string[]): strin
 }
 
 const EMPTY_HYDRATED: HydratedState = { projects: [], activeProjectId: null, nodes: {} };
+
+/**
+ * Backoff between hydration reachability retries while the backend is still
+ * starting. Short enough that a cold start feels instant once the backend
+ * binds; the loop only runs while every probe is rejecting.
+ */
+export const HYDRATION_RETRY_DELAY_MS = 250;
 
 /**
  * Read the raw (pre-hydration) SavedState from localStorage. Prefers the new
@@ -570,7 +580,11 @@ export function accumulateWorkspaceDirtyDelta(
     d.workspaceChanged = true;
     for (const nid of cur.chatIds) {
       d.nodeIds.add(nid);
-      d.messageNodeIds.add(nid);
+      // Never mark a lazy-load placeholder's messages dirty: its `messages:[]`
+      // is NOT authoritative (bodies live unfetched in the DB). Only a node
+      // whose bodies are loaded may drive message reconcile. See the
+      // messagesLoaded invariant in chatTypes.
+      if (curNodes[nid]?.messagesLoaded !== false) d.messageNodeIds.add(nid);
     }
     for (const e of cur.edges || []) {
       const id = serializedEdgeId(e);
@@ -672,7 +686,10 @@ export function accumulateWorkspaceDirtyDelta(
     if (curN !== prevN) {
       d.nodeIds.add(nid);
       // New node (no prev) or message array reference changed → full message send.
-      if (!prevN || curN?.messages !== prevN?.messages) {
+      // But never for a placeholder: its `messages:[]` is not authoritative.
+      // The `messages-loaded` install flips messagesLoaded→true, so a genuine
+      // load transition is picked up on the tick after loading, not suppressed.
+      if (curN?.messagesLoaded !== false && (!prevN || curN?.messages !== prevN?.messages)) {
         d.messageNodeIds.add(nid);
       }
     }
@@ -1519,26 +1536,53 @@ export function useWorkspacePersistence({
       setHydrated(true);
     };
     startupMarkOnce('state_hydrate_start');
+    // The hydration barrier: never finalize hydration until the backend has
+    // actually answered. On cold start the renderer runs before the backend is
+    // listening, so the first fetch rejects (ECONNREFUSED). A REJECTED fetch is
+    // "not ready yet" → wait and retry; it is NEVER interpreted as an empty
+    // database. A RESOLVED value (even []) means the backend answered → proceed
+    // and finalize. This is what keeps a startup race from wiping the UI to
+    // empty over a DB that holds every workspace.
+    const awaitBackendSnapshot = async (): Promise<unknown[] | null> => {
+      for (;;) {
+        if (cancelled) return null;
+        try {
+          // Capability probe is advisory: we log a v2 mismatch but do not gate
+          // on it. Sharing the same attempt as the workspace fetch keeps the
+          // readiness signal single-sourced — if the backend is up enough to
+          // answer /workspaces/all, we proceed.
+          try {
+            const capabilities = await fetchPersistenceCapabilities();
+            const v2Available =
+              capabilities.protocolVersion >= 2
+              && capabilities.authoritativeTurnPersistence
+              && capabilities.durableNodePrerequisite
+              && capabilities.explicitCommands
+              && capabilities.backgroundWorkspaceSync === false;
+            if (!v2Available) {
+              console.warn('backend does not advertise the required persistence v2 capabilities');
+            }
+          } catch {
+            // Capability endpoint unreachable → fall through to the workspace
+            // fetch, which throws on the same unreachability and triggers retry.
+          }
+          // Meta mode: structure + per-node counts, NO message bodies. Bodies
+          // for the active tree are eager-loaded below; other trees load on
+          // demand when opened. This is what shrinks the boot payload from the
+          // whole-forest 13MB to a ~structural fraction.
+          return await fetchAllWorkspacesMeta();
+        } catch {
+          if (cancelled) return null;
+          // Connection-level failure: the backend is still starting. Wait and
+          // retry — do NOT finalize as empty.
+          await new Promise<void>((resolve) => window.setTimeout(resolve, HYDRATION_RETRY_DELAY_MS));
+        }
+      }
+    };
     (async () => {
       try {
-        try {
-          const capabilities = await fetchPersistenceCapabilities();
-          const v2Available =
-            capabilities.protocolVersion >= 2
-            && capabilities.authoritativeTurnPersistence
-            && capabilities.durableNodePrerequisite
-            && capabilities.explicitCommands
-            && capabilities.backgroundWorkspaceSync === false;
-          if (!v2Available) {
-            console.warn('backend does not advertise the required persistence v2 capabilities');
-          }
-        } catch {
-          // Backend startup may briefly race the renderer. Persistence v2 is
-          // still the only supported path; readiness retries elsewhere will
-          // reconnect without enabling the removed legacy snapshot writer.
-        }
-        const fullWorkspaces = await fetchAllWorkspaces();
-        if (cancelled) return;
+        const fullWorkspaces = await awaitBackendSnapshot();
+        if (cancelled || fullWorkspaces === null) return;
         if (Array.isArray(fullWorkspaces) && fullWorkspaces.length > 0) {
           const rawBackend = fullWorkspaces.filter(
             (w): w is Record<string, unknown> => !!w && typeof w === 'object',
@@ -1548,9 +1592,25 @@ export function useWorkspacePersistence({
             initialActiveProjectIdRef.current,
           );
           if (backendState.projects.length > 0) {
+            // Eager-load the active workspace's active tree so first paint shows
+            // real messages, not placeholders. Best-effort: a failure here just
+            // leaves that tree to the on-demand path (it does not block boot).
+            const resolvedActiveId = resolveActiveProjectForWindow(backendState.activeProjectId);
+            const activeProject = backendState.projects.find((p) => p.id === resolvedActiveId);
+            let nodes = backendState.nodes;
+            if (activeProject?.activeTreeId) {
+              try {
+                const rows = await fetchTreeMessages(activeProject.id, activeProject.activeTreeId);
+                if (cancelled) return;
+                const byNode = buildMessagesByNode(rows);
+                nodes = applyTreeMessages(nodes, byNode);
+              } catch {
+                // active tree stays placeholder → loads on first open.
+              }
+            }
             setProjects(backendState.projects);
-            setActiveProjectId(resolveActiveProjectForWindow(backendState.activeProjectId));
-            installNodes(backendState.nodes);
+            setActiveProjectId(resolvedActiveId);
+            installNodes(nodes);
             clearDurableLocalStorageMirror(storageKeyRef.current);
           }
           finishHydration('backend');

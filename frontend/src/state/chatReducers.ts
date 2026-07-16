@@ -1,4 +1,5 @@
 import type { ChatAction, ChatNodeState, ComposerDraft, ContextEntry, Project, ProjectAction, Tree } from './chatTypes';
+import { applyTreeMessages } from './chatHydration';
 import { computeTranscriptFingerprint } from './transcriptFingerprint';
 import {
   appendToolBlock,
@@ -595,6 +596,14 @@ export function reduceNodes(
       });
       if (!changed) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs } };
+    }
+    case 'messages-loaded': {
+      // Lazy-load install. Flip the listed placeholder nodes to loaded and
+      // install their fetched bodies. Uses the same helper as hydration so the
+      // two converge. NOT in NODE_ACTIVITY_ACTIONS → does not bump tree
+      // lastActiveAt, and the persistence layer treats messagesLoaded/messages
+      // as memory-only (never written back — messages are backend-authored).
+      return applyTreeMessages(nodes, action.messagesByNode);
     }
     case 'retry-trim': {
       const n = nodes[action.nodeId];

@@ -22,7 +22,7 @@ export default function MobileShell() {
   const cssVars = useTerminalColors();
   const [tab, setTab] = useState<MobileTab>('threads');
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null);
-  const { activeProjectId, setFocusedNodeId, focusedNodeId } = useChatStore();
+  const { activeProjectId, setFocusedNodeId, focusedNodeId, hydrated } = useChatStore();
 
   // Mirror palette vars onto <html> so portal-rendered popups (sonner toaster)
   // resolve var(--term-*) correctly. Same trick TerminalShell uses.
@@ -60,6 +60,17 @@ export default function MobileShell() {
     setCurrentNodeId(null);
     setTab('threads');
   }, []);
+
+  // Hydration gate — same rationale as TerminalShell: hold on a splash until
+  // the store has actually loaded from the backend, so a cold-start window
+  // (backend not yet listening) doesn't flash an empty "no threads" state.
+  if (!hydrated) {
+    return (
+      <div className="m-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--term-faint)', fontSize: '13px' }}>
+        <span className="term-hydrating">loading…</span>
+      </div>
+    );
+  }
 
   // When a chat is open, ChatScreen takes the whole shell (no tab bar).
   if (currentNodeId) {
