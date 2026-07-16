@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AcpClient } from '../src/services/acpClient';
+import { AcpClient, ACPError } from '../src/services/acpClient';
 
 describe('AcpClient prompt timeout policy', () => {
   test('does not arm an ACP idle timeout for session/prompt turns', async () => {
@@ -30,5 +30,41 @@ describe('AcpClient prompt timeout policy', () => {
     }
 
     assert.deepEqual(updates, ['turn_end']);
+  });
+});
+
+describe('AcpClient RPC error diagnostics', () => {
+  test('preserves RPC method, session, code, and data on ACP errors', async () => {
+    const client = new AcpClient('/bin/false', '/tmp', 'test-model') as any;
+    const rejection = new Promise((_resolve, reject) => {
+      client.pending.set(42, {
+        method: 'session/prompt',
+        sessionId: 'session-1',
+        timeoutMs: 0,
+        resolve: () => {},
+        reject,
+        timer: null,
+      });
+    });
+
+    client.dispatch({
+      jsonrpc: '2.0',
+      id: 42,
+      error: {
+        code: -32603,
+        message: 'Internal error',
+        data: { provider: 'test-provider', requestId: 'req-123' },
+      },
+    });
+
+    await assert.rejects(rejection, (err: unknown) => {
+      assert.ok(err instanceof ACPError);
+      assert.equal(err.message, 'Internal error');
+      assert.equal(err.method, 'session/prompt');
+      assert.equal(err.sessionId, 'session-1');
+      assert.equal(err.rpcCode, -32603);
+      assert.deepEqual(err.rpcData, { provider: 'test-provider', requestId: 'req-123' });
+      return true;
+    });
   });
 });

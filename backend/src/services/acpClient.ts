@@ -28,9 +28,31 @@ const DEFAULT_TIMEOUT_MS = (() => {
 // ACP session/update traffic. The SSE layer emits synthetic heartbeats for UI
 // liveness, and users can still cancel the turn explicitly.
 const PROMPT_TIMEOUT_MS = 0;
+const MAX_RPC_ERROR_DATA_CHARS = 4 * 1024;
 
 
-export class ACPError extends Error {}
+export interface ACPErrorDetails {
+    method?: string;
+    sessionId?: string;
+    rpcCode?: unknown;
+    rpcData?: unknown;
+}
+
+export class ACPError extends Error {
+    readonly method?: string;
+    readonly sessionId?: string;
+    readonly rpcCode?: unknown;
+    readonly rpcData?: unknown;
+
+    constructor(message: string, details: ACPErrorDetails = {}) {
+        super(message);
+        this.name = new.target.name;
+        this.method = details.method;
+        this.sessionId = details.sessionId;
+        this.rpcCode = details.rpcCode;
+        this.rpcData = details.rpcData;
+    }
+}
 export class ACPNotRunningError extends ACPError {}
 export class ACPProcessExitedError extends ACPError {}
 
@@ -76,6 +98,18 @@ function summarizeAcpUpdate(update: unknown): Record<string, unknown> {
     if (typeof row.status === "string") out.status = row.status;
     if (typeof row.kind === "string") out.kindType = row.kind;
     return out;
+}
+
+function rpcErrorDataForLog(value: unknown): string | undefined {
+    if (value === undefined) return undefined;
+    let serialized: string;
+    try {
+        serialized = typeof value === "string" ? value : JSON.stringify(value);
+    } catch {
+        serialized = String(value);
+    }
+    if (serialized.length <= MAX_RPC_ERROR_DATA_CHARS) return serialized;
+    return `${serialized.slice(0, MAX_RPC_ERROR_DATA_CHARS)}…[truncated]`;
 }
 
 function findKiroCli(): string {
@@ -249,6 +283,13 @@ export class AcpClient {
         });
         startupMark("kiro_spawn_done", { cwd: this.cwd, pid: this.proc.pid });
         perf.mark("acp:spawn_requested", { cwd: this.cwd, pid: this.proc.pid });
+        const pid = this.proc.pid;
+        log.info("acp", "kiro process spawned", {
+            pid,
+            cwd: this.cwd,
+            model: this.model,
+            binaryPath: this.binaryPath,
+        });
 
         this.proc.stdout!.on("data", (chunk: Buffer) => this.onStdout(chunk));
         this.proc.stderr!.on("data", (chunk: Buffer) => {
@@ -258,11 +299,32 @@ export class AcpClient {
         });
 
         this.proc.on("error", (err) => {
+            log.error("acp", "kiro process error", {
+                pid,
+                cwd: this.cwd,
+                model: this.model,
+                errorName: err.name,
+                errorMessage: err.message,
+                errorCode: (err as NodeJS.ErrnoException).code,
+            });
             this.exitError = err;
             this.failAllPending(err);
         });
 
-        this.proc.on("exit", (code) => {
+        this.proc.on("exit", (code, signal) => {
+            const expected = this.stopped;
+            const exitMeta = {
+                pid,
+                cwd: this.cwd,
+                model: this.model,
+                code,
+                signal,
+                expected,
+                pendingRpcCount: this.pending.size,
+                sessionCount: this.sessionQueues.size,
+            };
+            if (expected) log.info("acp", "kiro process exited", exitMeta);
+            else log.error("acp", "kiro process exited unexpectedly", exitMeta);
             this.stopped = true;
             const err = new ACPProcessExitedError(`ACP process exited with code ${code}`);
             this.exitError = err;
@@ -323,8 +385,30 @@ export class AcpClient {
             if (!p) return;
             this.pending.delete(msg.id);
             if (p.timer) clearTimeout(p.timer);
-            if (msg.error) p.reject(new ACPError(msg.error.message || "unknown ACP error"));
-            else p.resolve(msg.result);
+            if (msg.error) {
+                const message = typeof msg.error?.message === "string" && msg.error.message
+                    ? msg.error.message
+                    : "unknown ACP error";
+                log.error("acp", "rpc request failed", {
+                    pid: this.proc?.pid,
+                    cwd: this.cwd,
+                    model: this.model,
+                    rpcId: msg.id,
+                    method: p.method,
+                    sessionId: p.sessionId,
+                    rpcCode: msg.error?.code,
+                    rpcMessage: message,
+                    rpcData: rpcErrorDataForLog(msg.error?.data),
+                });
+                p.reject(new ACPError(message, {
+                    method: p.method,
+                    sessionId: p.sessionId,
+                    rpcCode: msg.error?.code,
+                    rpcData: msg.error?.data,
+                }));
+            } else {
+                p.resolve(msg.result);
+            }
             return;
         }
 
@@ -423,6 +507,14 @@ export class AcpClient {
         if (msg?.method === "_kiro.dev/mcp/server_init_failure") {
             const params = msg.params ?? {};
             const sid: string | undefined = typeof params.sessionId === "string" ? params.sessionId : undefined;
+            log.error("mcp", "kiro mcp server initialization failed", {
+                pid: this.proc?.pid,
+                cwd: this.cwd,
+                model: this.model,
+                sessionId: sid,
+                serverName: params.serverName ?? "",
+                error: rpcErrorDataForLog(params.error),
+            });
             const q = sid ? this.sessionQueues.get(sid) : undefined;
             if (q) {
                 q.push({ update: {
