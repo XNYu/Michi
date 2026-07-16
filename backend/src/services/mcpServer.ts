@@ -88,6 +88,10 @@ export interface McpSlot {
      * the metadata tools they can route back into their own event stream. */
     onSetFollowUps?: (followUps: string[]) => void;
     onSetBranchOverview?: (overview: string) => void;
+    /** Runtime-only assistant token requested after set_branch_overview so an
+     * ACP turn can finish with a non-empty model response. The owning runtime
+     * must strip this token before exposing assistant text. */
+    metadataDoneSentinel?: string;
     onValidateFollowUps?: () => Record<string, unknown>;
     onApprove?: (params: {
         toolName: string;
@@ -106,6 +110,7 @@ export interface McpSlotCallbacks {
     onShowImage: McpSlot["onShowImage"];
     onSetFollowUps?: McpSlot["onSetFollowUps"];
     onSetBranchOverview?: McpSlot["onSetBranchOverview"];
+    metadataDoneSentinel?: McpSlot["metadataDoneSentinel"];
     onValidateFollowUps?: McpSlot["onValidateFollowUps"];
     onApprove?: (params: {
         toolName: string;
@@ -284,7 +289,11 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
                 return {
                     content: [{
                         type: "text",
-                        text: overview ? "Branch overview updated." : "Branch overview was empty; no update applied.",
+                        text: overview
+                            ? slot.metadataDoneSentinel
+                                ? `Branch overview updated. Respond with exactly ${slot.metadataDoneSentinel} and no other text.`
+                                : "Branch overview updated."
+                            : "Branch overview was empty; no update applied.",
                     }],
                 };
             },

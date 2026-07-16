@@ -10,7 +10,7 @@ import type {
     NewAgentSessionOptions,
     SessionMode,
 } from "../types";
-import { KiroSession } from "./KiroSession";
+import { KIRO_METADATA_DONE_SENTINEL, KiroSession } from "./KiroSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble } from "../preamble";
 import type { AgentToolBridge, BridgeContextResult, SpawnedBranch } from "../toolBridge";
@@ -173,6 +173,7 @@ export class KiroRuntime implements AgentRuntime {
             onSaveContext: (name, body) => this.handleSaveContext(getSlotId()!, name, body),
             onUpdateContext: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
             onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
+            metadataDoneSentinel: KIRO_METADATA_DONE_SENTINEL,
             // show_image is a Claude-runtime side-effect tool; the Kiro runtime
             // does not expose it. Satisfy the required callback with a stub.
             onShowImage: () => ({ error: "show_image is not supported on the Kiro runtime" }),

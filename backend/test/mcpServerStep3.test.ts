@@ -239,6 +239,22 @@ describe('Claude follow-up POC MCP tools', () => {
         assert.equal(result.content[0].text, 'Branch overview updated.');
     });
 
+    test('set_branch_overview requests a hidden completion response for Kiro slots', async () => {
+        const slot = registry.create('chat-overview-kiro', '/tmp', null, {
+            ...makeCallbacks(),
+            onSetBranchOverview: () => {},
+            metadataDoneSentinel: '[MICHI_METADATA_DONE]',
+        } as never);
+        const handler = getToolHandler(registry, slot.slotId, 'set_branch_overview');
+
+        const result = await handler({ overview: 'Current branch state.' });
+
+        assert.equal(
+            result.content[0].text,
+            'Branch overview updated. Respond with exactly [MICHI_METADATA_DONE] and no other text.',
+        );
+    });
+
     test('validate_follow_ups returns callback JSON for Claude Stop-hook decision parsing', async () => {
         const decision = {
             decision: 'block',

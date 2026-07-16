@@ -2,6 +2,56 @@ import type { AgentSession, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { KiroRuntime } from "./KiroRuntime";
 
+export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
+
+const KIRO_METADATA_DONE_TOOL_RESULT =
+    `Branch overview updated. Respond with exactly ${KIRO_METADATA_DONE_SENTINEL} and no other text.`;
+
+function stripMetadataCompletionInstruction(output: string): string {
+    return output.split(KIRO_METADATA_DONE_TOOL_RESULT).join("Branch overview updated.");
+}
+
+class StreamingSentinelStripper {
+    private held = "";
+
+    constructor(private readonly sentinel: string) {}
+
+    push(chunk: string): string {
+        let remaining = this.held + chunk;
+        this.held = "";
+        let text = "";
+
+        while (remaining.length > 0) {
+            const markerIndex = remaining.indexOf(this.sentinel);
+            if (markerIndex >= 0) {
+                text += remaining.slice(0, markerIndex);
+                remaining = remaining.slice(markerIndex + this.sentinel.length);
+                continue;
+            }
+
+            let heldLength = 0;
+            const maxPrefixLength = Math.min(this.sentinel.length - 1, remaining.length);
+            for (let length = maxPrefixLength; length > 0; length -= 1) {
+                if (this.sentinel.startsWith(remaining.slice(-length))) {
+                    heldLength = length;
+                    break;
+                }
+            }
+            text += remaining.slice(0, remaining.length - heldLength);
+            this.held = remaining.slice(remaining.length - heldLength);
+            break;
+        }
+
+        return text;
+    }
+
+    flush(): string {
+        const text = this.held;
+        this.held = "";
+        return text;
+    }
+}
+
 const BRANCH_OVERVIEW_TOOL_REMINDER = `
 
 [Before ending this turn, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this branch is about and where it currently stands. Match the user's language. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
@@ -97,17 +147,20 @@ export class KiroSession implements AgentSession {
 
     private async *streamUpdates(text: string): AsyncIterableIterator<NormalizedEvent> {
         const c = await this.runtime.ensureClient(this.cwd);
-        for await (const update of c.prompt(this.id, text)) {
-            const kind = update.sessionUpdate;
-            if (kind === "agent_message_chunk") {
-                const content = update.content;
-                const blocks = Array.isArray(content) ? content : content ? [content] : [];
-                for (const b of blocks) {
-                    if (b && b.type === "text" && b.text) {
-                        yield { kind: "chunk", text: b.text };
+        const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
+        try {
+            for await (const update of c.prompt(this.id, text)) {
+                const kind = update.sessionUpdate;
+                if (kind === "agent_message_chunk") {
+                    const content = update.content;
+                    const blocks = Array.isArray(content) ? content : content ? [content] : [];
+                    for (const b of blocks) {
+                        if (b && b.type === "text" && b.text) {
+                            const filtered = completionStripper.push(b.text);
+                            if (filtered) yield { kind: "chunk", text: filtered };
+                        }
                     }
-                }
-            } else if (kind === "agent_thought_chunk") {
+                } else if (kind === "agent_thought_chunk") {
                 // Same ContentChunk shape as agent_message_chunk, but it's
                 // the agent's internal reasoning — do NOT append to the
                 // assistant's visible history. Stream it through for UI to
@@ -142,8 +195,11 @@ export class KiroSession implements AgentSession {
                 const inputStr = rawInput != null
                     ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
                     : undefined;
-                const outputStr = update.rawOutput != null
+                const rawOutputStr = update.rawOutput != null
                     ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
+                    : undefined;
+                const outputStr = rawOutputStr
+                    ? stripMetadataCompletionInstruction(rawOutputStr)
                     : undefined;
                 const MAX_PAYLOAD = 16 * 1024;
                 yield {
@@ -261,11 +317,20 @@ export class KiroSession implements AgentSession {
                     }))
                     .filter((c: { name: string }) => c.name.length > 0);
                 yield { kind: "commands", commands };
-            } else if (kind === "turn_end") {
-                yield { kind: "turn_end", stopReason: update.stopReason };
-                break;
+                } else if (kind === "turn_end") {
+                    const held = completionStripper.flush();
+                    if (held) yield { kind: "chunk", text: held };
+                    yield { kind: "turn_end", stopReason: update.stopReason };
+                    break;
+                }
             }
+        } catch (err) {
+            const held = completionStripper.flush();
+            if (held) yield { kind: "chunk", text: held };
+            throw err;
         }
+        const held = completionStripper.flush();
+        if (held) yield { kind: "chunk", text: held };
     }
 
     async cancel(): Promise<void> {
