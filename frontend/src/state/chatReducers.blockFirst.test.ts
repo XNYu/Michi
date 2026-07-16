@@ -39,6 +39,29 @@ describe('block-first assistant reducer', () => {
     ]);
   });
 
+  it('keeps consecutive streamed tools in one thinking section', () => {
+    let state = node();
+    state = reduceNodes(state, { type: 'thought', nodeId: 'n1', assistantId: 'a1', text: 'thinking' });
+    state = reduceNodes(state, {
+      type: 'tool-call',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: { id: 't1', title: 'first', status: 'running' },
+    });
+    state = reduceNodes(state, {
+      type: 'tool-call',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: { id: 't2', title: 'second', status: 'running' },
+    });
+
+    expect(state.n1.messages[0].blocks).toEqual([
+      { id: 'a1-b-0', kind: 'thinking', rawText: 'thinking', streaming: true },
+      { id: 'a1-b-1', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 8 },
+      { id: 'a1-b-2', kind: 'tool', toolCallId: 't2', section: 'thinking', rawOffset: 8 },
+    ]);
+  });
+
   it('adds a visible tool block when an update arrives before the initial tool call', () => {
     const state = reduceNodes(node(), {
       type: 'tool-call-update',

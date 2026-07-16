@@ -259,7 +259,15 @@ function nextBlockId(snapshot: DurableTurnSnapshot, blocks: DurableAssistantBloc
 }
 
 function currentSection(blocks: DurableAssistantBlock[]): 'answer' | 'thinking' {
-  return blocks[blocks.length - 1]?.kind === 'thinking' ? 'thinking' : 'answer';
+  // Tool blocks do not start a new semantic section. Consecutive tools must
+  // inherit the section established by the preceding text/tool block, or the
+  // second tool after a thought would incorrectly jump back to the answer.
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.kind === 'answer' || block.kind === 'thinking') return block.kind;
+    if (block.kind === 'tool') return block.section;
+  }
+  return 'answer';
 }
 
 function currentRunLength(blocks: DurableAssistantBlock[], section: 'answer' | 'thinking'): number {

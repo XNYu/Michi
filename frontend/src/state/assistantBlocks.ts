@@ -146,7 +146,15 @@ export function projectAssistantStreamEvent(
 }
 
 function currentSection(blocks: readonly AssistantBlock[]): AssistantSection {
-  return blocks[blocks.length - 1]?.kind === 'thinking' ? 'thinking' : 'answer';
+  // Tool blocks preserve the current semantic section. Consecutive tools after
+  // a thought must remain inside that thinking run instead of the second tool
+  // falling back to the answer section.
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.kind === 'answer' || block.kind === 'thinking') return block.kind;
+    if (block.kind === 'tool') return block.section;
+  }
+  return 'answer';
 }
 
 function currentRunRawLength(blocks: readonly AssistantBlock[], section: AssistantSection): number {
