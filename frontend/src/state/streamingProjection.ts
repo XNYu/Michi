@@ -7,7 +7,8 @@ import type { AssistantBlock, ChatMessage, ToolCallState } from './chatTypes';
 
 export type Segment =
   | { kind: 'text'; text: string; revealTailChars?: number }
-  | { kind: 'tool-group'; tools: ToolCallState[] };
+  | { kind: 'tool-group'; tools: ToolCallState[] }
+  | { kind: 'user-input'; requestId: number };
 
 export type AssistantRunKind = 'answer' | 'thinking' | 'image';
 
@@ -58,7 +59,9 @@ function textBlockKind(block: AssistantBlock): AssistantRunKind | null {
 }
 
 function toolSection(block: AssistantBlock): AssistantRunKind | null {
-  return block.kind === 'tool' ? block.section : null;
+  if (block.kind === 'tool') return block.section;
+  if (block.kind === 'user-input') return block.section;
+  return null;
 }
 
 function runKindForBlock(block: AssistantBlock): AssistantRunKind {
@@ -235,18 +238,24 @@ export function weaveRunToolBlocks(
   remapOffset: (rawOff: number) => number,
   opts: WeaveOptions,
 ): Segment[] {
-  type Resolved = { tool: ToolCallState; at: number; order: number };
-  const resolved: Resolved[] = [];
+  type ResolvedItem =
+    | { type: 'tool'; tool: ToolCallState; at: number; order: number }
+    | { type: 'user-input'; requestId: number; at: number; order: number };
+  const resolved: ResolvedItem[] = [];
   blocks.forEach((block, order) => {
-    if (block.kind !== 'tool') return;
-    const tool = toolsById.get(block.toolCallId);
-    if (!tool) return;
-    if (block.rawOffset > rawTextLen) return;
-    const visibleOff = remapOffset(block.rawOffset);
-    if (visibleOff > smoothText.length) return;
-    // Block-first streams already carry the model/tool event boundary. Keep it
-    // exact so Kiro's message -> tool -> message cadence does not collapse.
-    resolved.push({ tool, at: visibleOff, order });
+    if (block.kind === 'tool') {
+      const tool = toolsById.get(block.toolCallId);
+      if (!tool) return;
+      if (block.rawOffset > rawTextLen) return;
+      const visibleOff = remapOffset(block.rawOffset);
+      if (visibleOff > smoothText.length) return;
+      resolved.push({ type: 'tool', tool, at: visibleOff, order });
+    } else if (block.kind === 'user-input') {
+      if (block.rawOffset > rawTextLen) return;
+      const visibleOff = remapOffset(block.rawOffset);
+      if (visibleOff > smoothText.length) return;
+      resolved.push({ type: 'user-input', requestId: block.requestId, at: visibleOff, order });
+    }
   });
 
   resolved.sort((a, b) => (a.at - b.at) || (a.order - b.order));
@@ -263,14 +272,19 @@ export function weaveRunToolBlocks(
     const revealTailChars = revealTailCharsForSlice(start, start + text.length, opts.revealFrom);
     out.push(revealTailChars ? { kind: 'text', text, revealTailChars } : { kind: 'text', text });
   };
-  for (const { tool, at } of resolved) {
-    const clamped = Math.max(cursor, Math.min(at, smoothText.length));
+  for (const item of resolved) {
+    const clamped = Math.max(cursor, Math.min(item.at, smoothText.length));
     if (clamped > cursor) {
       pushText(smoothText.slice(cursor, clamped), cursor);
       cursor = clamped;
     }
-    if (!currentGroup) currentGroup = [];
-    currentGroup.push(tool);
+    if (item.type === 'tool') {
+      if (!currentGroup) currentGroup = [];
+      currentGroup.push(item.tool);
+    } else {
+      flushGroup();
+      out.push({ kind: 'user-input', requestId: item.requestId });
+    }
   }
   if (cursor < smoothText.length) pushText(smoothText.slice(cursor), cursor);
   flushGroup();

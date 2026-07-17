@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo } from '../../state/chatTypes';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
 import { isRunningStatus } from './toolCallGrouping';
 import { ToolCallGroup } from './ToolCallGroup';
 import { type TerminalDensity } from '../../state/prefs';
@@ -24,8 +24,25 @@ import type { ChildAnchor } from '../../state/branchAnchors';
 import { BranchAnchorRow } from './BranchAnchorRow';
 import { ImageBlockView } from './ImageBlockView';
 import { streamingMarkdownBlocksEnabled } from './streamingMarkdownBlocksFlag';
+import { ResolvedUserInput } from './UserInputBanner';
 
 const StreamingMarkdownContent = React.lazy(() => import('./StreamingMarkdownContent'));
+
+/**
+ * Context providing the current node's pendingUserInput so that inline
+ * user-input segments can render without prop-drilling through memoized layers.
+ */
+export const NodeUserInputContext = createContext<UserInputRequest | null | undefined>(undefined);
+
+/** Renders a user-input segment inline within the weave pipeline. */
+function InlineUserInputSegment({ requestId }: { requestId: number }) {
+  const ui = useContext(NodeUserInputContext);
+  if (ui && ui.requestId === requestId && ui.resolved) {
+    return <ResolvedUserInput userInput={ui} />;
+  }
+  // Not resolved yet — the interactive banner is rendered as a TPane overlay.
+  return null;
+}
 
 function formatMessageTime(ms: number | undefined): string {
   if (!ms) return '';
@@ -389,6 +406,10 @@ function renderSegments(
           revealTailChars={seg.revealTailChars}
         />
       );
+    }
+    if (seg.kind === 'user-input') {
+      chipIdx += 1;
+      return <InlineUserInputSegment key={`ui-${seg.requestId}`} requestId={seg.requestId} />;
     }
     const groupKey = seg.tools[0].id;
     const defaultExpanded = seg.tools.some((t) => isRunningStatus(t.status));

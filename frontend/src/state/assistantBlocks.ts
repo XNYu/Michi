@@ -32,6 +32,14 @@ function cloneBlocks(blocks: readonly AssistantBlock[] | undefined): AssistantBl
   return (blocks ?? []).slice();
 }
 
+function closeTrailingTextBlock(blocks: AssistantBlock[]): void {
+  const index = blocks.length - 1;
+  const last = blocks[index];
+  if (last && isTextBlock(last) && last.streaming !== false) {
+    blocks[index] = { ...last, streaming: false };
+  }
+}
+
 export function isValidAssistantBlocks(value: unknown): value is AssistantBlock[] {
   if (!Array.isArray(value)) return false;
   return value.every((item) => {
@@ -40,6 +48,14 @@ export function isValidAssistantBlocks(value: unknown): value is AssistantBlock[
     if (typeof b.id !== 'string' || b.id.length === 0) return false;
     if (b.kind === 'answer' || b.kind === 'thinking') return typeof b.rawText === 'string';
     if (b.kind === 'image') return typeof (b as { path?: unknown }).path === 'string';
+    if (b.kind === 'user-input') {
+      return (
+        typeof b.requestId === 'number' &&
+        b.section === 'answer' &&
+        typeof b.rawOffset === 'number' &&
+        Number.isFinite(b.rawOffset)
+      );
+    }
     return (
       b.kind === 'tool' &&
       typeof b.toolCallId === 'string' &&
@@ -152,13 +168,13 @@ export function projectAssistantStreamEvent(
 }
 
 function currentSection(blocks: readonly AssistantBlock[]): AssistantSection {
-  // Tool blocks preserve the current semantic section. Consecutive tools after
-  // a thought must remain inside that thinking run instead of the second tool
-  // falling back to the answer section.
+  // Non-text blocks preserve the current semantic section. In particular,
+  // consecutive tools after a thought must all remain inside that thinking
+  // run instead of the second tool falling back to the answer section.
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index];
     if (block.kind === 'answer' || block.kind === 'thinking') return block.kind;
-    if (block.kind === 'tool') return block.section;
+    if (block.kind === 'tool' || block.kind === 'user-input') return block.section;
   }
   return 'answer';
 }
@@ -190,6 +206,7 @@ export function appendAnswerBlockText(message: ChatMessage, text: string): ChatM
   if (last?.kind === 'answer') {
     blocks[blocks.length - 1] = { ...last, rawText: last.rawText + text, streaming: message.streaming };
   } else {
+    closeTrailingTextBlock(blocks);
     blocks.push({ id: nextBlockId(message, blocks), kind: 'answer', rawText: text, streaming: message.streaming });
   }
   return { ...message, blocks };
@@ -201,6 +218,7 @@ export function appendThinkingBlockText(message: ChatMessage, text: string): Cha
   if (last?.kind === 'thinking') {
     blocks[blocks.length - 1] = { ...last, rawText: last.rawText + text, streaming: message.streaming };
   } else {
+    closeTrailingTextBlock(blocks);
     blocks.push({ id: nextBlockId(message, blocks), kind: 'thinking', rawText: text, streaming: message.streaming });
   }
   return { ...message, blocks };
@@ -209,6 +227,7 @@ export function appendThinkingBlockText(message: ChatMessage, text: string): Cha
 export function appendToolBlock(message: ChatMessage, toolCallId: string): ChatMessage {
   const blocks = cloneBlocks(message.blocks);
   const { section, rawOffset } = nextToolBlockPlacement({ ...message, blocks });
+  closeTrailingTextBlock(blocks);
   blocks.push({
     id: nextBlockId(message, blocks),
     kind: 'tool',
@@ -219,11 +238,26 @@ export function appendToolBlock(message: ChatMessage, toolCallId: string): ChatM
   return { ...message, blocks };
 }
 
+export function appendUserInputBlock(message: ChatMessage, requestId: number): ChatMessage {
+  const blocks = cloneBlocks(message.blocks);
+  const rawOffset = currentRunRawLength(blocks, 'answer');
+  closeTrailingTextBlock(blocks);
+  blocks.push({
+    id: nextBlockId(message, blocks),
+    kind: 'user-input',
+    requestId,
+    section: 'answer',
+    rawOffset,
+  });
+  return { ...message, blocks };
+}
+
 export function appendImageBlock(
   message: ChatMessage,
   img: { workspaceId: string; path: string; caption?: string; mimeType: string; size: number },
 ): ChatMessage {
   const blocks = cloneBlocks(message.blocks);
+  closeTrailingTextBlock(blocks);
   const block: AssistantBlock = {
     id: nextBlockId(message, blocks),
     kind: 'image',

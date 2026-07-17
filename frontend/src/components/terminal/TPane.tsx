@@ -984,7 +984,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         ? `t:${b.toolCallId}`
         : b.kind === 'image'
           ? `i:${b.path}`
-          : `${b.kind[0]}:${b.rawText.length}`,
+          : b.kind === 'user-input'
+            ? `u:${b.requestId}`
+            : `${b.kind[0]}:${b.rawText.length}`,
     )
     .join('|');
   useEffect(() => {

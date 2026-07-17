@@ -3,6 +3,7 @@ import { applyTreeMessages } from './chatHydration';
 import { computeTranscriptFingerprint } from './transcriptFingerprint';
 import {
   appendToolBlock,
+  appendUserInputBlock,
   assistantMetadata,
   projectAssistantStreamEvent,
   nextToolBlockPlacement,
@@ -656,7 +657,14 @@ export function reduceNodes(
     case 'user-input-request': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
-      return { ...nodes, [action.nodeId]: { ...n, pendingUserInput: action.userInput } };
+      // Append a user-input block to the current streaming message so it
+      // appears inline at the correct position in the weave pipeline.
+      const msgs = [...n.messages];
+      const lastIdx = msgs.length - 1;
+      if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
+        msgs[lastIdx] = appendUserInputBlock(msgs[lastIdx], action.userInput.requestId);
+      }
+      return { ...nodes, [action.nodeId]: { ...n, messages: msgs, pendingUserInput: action.userInput } };
     }
     case 'user-input-resolved': {
       const n = nodes[action.nodeId];

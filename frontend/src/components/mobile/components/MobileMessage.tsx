@@ -71,6 +71,9 @@ export default function MobileMessage({
                   />
                 );
               }
+              if (seg.kind === 'user-input') {
+                return null;
+              }
               const groupKey = seg.tools[0].id;
               chipIdx += 1;
               // Mobile renders each tool as its own chip (no collapse UI);

@@ -60,7 +60,14 @@ export type AssistantBlock =
       section: 'answer' | 'thinking';
       rawOffset: number;
     }
-  | { id: string; kind: 'image'; workspaceId: string; path: string; caption?: string; mimeType: string; size: number };
+  | { id: string; kind: 'image'; workspaceId: string; path: string; caption?: string; mimeType: string; size: number }
+  | {
+      id: string;
+      kind: 'user-input';
+      requestId: number;
+      section: 'answer';
+      rawOffset: number;
+    };
 
 export interface MessageAttachment {
   /** File name (basename), e.g. `MessageBlock.tsx`. */

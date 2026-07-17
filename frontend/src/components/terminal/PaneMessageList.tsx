@@ -4,11 +4,10 @@ import type { Prefs } from '../../state/prefs';
 import { visibleMessageText } from '../../state/assistantBlocks';
 import { FollowUpRow } from '../FollowUpRow';
 import { DARK_PALETTES } from './tokens';
-import { MessageBlock } from './MessageBlock';
+import { MessageBlock, NodeUserInputContext } from './MessageBlock';
 import { StreamActivityIndicator } from './StreamActivityIndicator';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
-import { ResolvedUserInput } from './UserInputBanner';
 import { shouldShowFollowUps } from '../../state/followUpsVisibility';
 
 interface PaneMessageListProps {
@@ -75,6 +74,7 @@ function PaneMessageListInner({
   const isDark = DARK_PALETTES.has(prefs.terminalPalette);
 
   return (
+    <NodeUserInputContext.Provider value={node.pendingUserInput}>
     <div style={contentStyle}>
       <MergeSourcesNotice node={node} sourceLabels={mergeSourceLabels} />
 
@@ -185,6 +185,7 @@ function PaneMessageListInner({
         showFollowUps={showFollowUps}
       />
     </div>
+    </NodeUserInputContext.Provider>
   );
 }
 
