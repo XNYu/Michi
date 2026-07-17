@@ -699,7 +699,14 @@ export function useSmooth(
     return stopFrame;
   }, [streaming, profile]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Register visibility/focus listeners only while the smoothing loop is
+  // active (streaming or draining). Completed messages skip registration
+  // entirely, avoiding hundreds of redundant listeners in long threads.
   useEffect(() => {
+    if (!streaming && cursorRef.current >= boundariesRef.current.length) {
+      return; // fully displayed — no listener needed
+    }
+
     const markBackgrounded = () => {
       isBackgroundedRef.current = true;
       wasBackgroundedRef.current = true;
@@ -732,7 +739,7 @@ export function useSmooth(
         window.removeEventListener('focus', markForegrounded);
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [streaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When new text arrives, estimate agent speed and ensure the frame loop runs.
   useEffect(() => {
