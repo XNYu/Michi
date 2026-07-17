@@ -280,4 +280,28 @@ describe('StreamActivityIndicator (render)', () => {
     expect(getByText('parse tokens')).toBeTruthy();
     expect(getByRole('status').getAttribute('aria-label')).toContain('Step 2/2');
   });
+
+  it('does not run a 1Hz elapsed timer while the node is not streaming', () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    // An idle node produces no activity; the elapsed ticker must not run.
+    render(<StreamActivityIndicator node={node({ status: 'idle' })} />);
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+    setIntervalSpy.mockRestore();
+  });
+
+  it('stops the elapsed timer once the node leaves the streaming state', () => {
+    vi.useFakeTimers();
+    const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
+    const streamingNode = node({
+      messages: [assistant({
+        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'reasoning', streaming: true }],
+      })],
+    });
+    const { rerender } = render(<StreamActivityIndicator node={streamingNode} />);
+    // Flip to idle — the interval effect must tear its timer down.
+    rerender(<StreamActivityIndicator node={{ ...streamingNode, status: 'idle' }} />);
+    expect(clearIntervalSpy).toHaveBeenCalled();
+    clearIntervalSpy.mockRestore();
+  });
 });

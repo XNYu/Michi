@@ -123,13 +123,20 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
     startRef.current = node.streamingStartedAt;
   }
   const [elapsedMs, setElapsedMs] = useState(() => Date.now() - startRef.current);
+  const isStreaming = node.status === 'streaming';
   useEffect(() => {
+    // Only tick while the turn is actually streaming. The component stays
+    // mounted across label flips within a turn (and renders null when idle),
+    // but once the node goes idle/error there is nothing to count — leaving the
+    // 1Hz setState running on every idle pane that ever streamed was pure
+    // wasted re-render churn.
+    if (!isStreaming) return;
     setElapsedMs(Date.now() - startRef.current);
     const id = window.setInterval(() => {
       setElapsedMs(Date.now() - startRef.current);
     }, 1000);
     return () => window.clearInterval(id);
-  }, [node.streamingStartedAt]);
+  }, [node.streamingStartedAt, isStreaming]);
 
   // Render nothing (but stay mounted, preserving the timer across label flips
   // within a turn) when there's no standalone activity to show.
