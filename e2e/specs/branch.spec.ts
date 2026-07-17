@@ -3,14 +3,14 @@ import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
 
 test.describe('branch', () => {
   test('clicking branch button after typing creates a child chat', async ({ page }) => {
-    let chatCreateCalls = 0;
+    let sessionEnsureCalls = 0;
     await installMockApi(page, {
       custom: async (route) => {
         if (
           route.request().method() === 'POST' &&
-          new URL(route.request().url()).pathname.endsWith('/api/chats')
+          /\/api\/nodes\/[^/]+\/ensure-session$/.test(new URL(route.request().url()).pathname)
         ) {
-          chatCreateCalls += 1;
+          sessionEnsureCalls += 1;
         }
         return false; // let built-in handler respond
       },
@@ -18,9 +18,8 @@ test.describe('branch', () => {
     await bootWithWorkspace(page);
 
     // First turn — sends on the root node, opens chat 1.
-    const composer = page.locator('textarea').first();
-    await composer.click();
-    await page.keyboard.type('first message');
+    const composer = page.locator('[contenteditable="true"]').first();
+    await composer.fill('first message');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
     await expect(page.getByText('Hello from mock kiro.').first()).toBeVisible({ timeout: 5_000 });
 
@@ -28,15 +27,14 @@ test.describe('branch', () => {
     // path as the Branch button click but without depending on the button
     // becoming visible (which requires draft.value.trim() — fragile against
     // React state propagation timing through MentionTextarea's overlay).
-    await composer.click();
-    await page.keyboard.type('branch from here');
+    await composer.fill('branch from here');
     await page.keyboard.press('Meta+Enter');
 
     // The branched message text should render as a new user message bubble.
     await expect(page.getByText('branch from here').first()).toBeVisible({ timeout: 5_000 });
 
     // Two distinct chats should have been created (root + branched).
-    expect(chatCreateCalls).toBeGreaterThanOrEqual(2);
+    expect(sessionEnsureCalls).toBeGreaterThanOrEqual(2);
   });
 
   // Slash-command branch trigger ("/btw ..." or "/branch ..." per AGENTS.md).

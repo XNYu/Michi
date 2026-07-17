@@ -53,9 +53,8 @@ test.describe('cancel + resume', () => {
     await bootWithWorkspace(page);
 
     // Fire first turn, then stop while it's still streaming.
-    const composer = page.locator('textarea').first();
-    await composer.click();
-    await page.keyboard.type('start the long turn');
+    const composer = page.locator('[contenteditable="true"]').first();
+    await composer.fill('start the long turn');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 
     // While streaming with an empty composer, the primary button morphs from
@@ -65,8 +64,7 @@ test.describe('cancel + resume', () => {
     await stopBtn.click();
 
     // Now send a second turn — should produce a clean reply.
-    await composer.click();
-    await page.keyboard.type('second turn');
+    await composer.fill('second turn');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 
     await expect(page.getByText('FRESH reply after cancel')).toBeVisible({ timeout: 6_000 });
