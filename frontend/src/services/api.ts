@@ -1036,16 +1036,6 @@ export async function saveNodeMessage(nodeId: string, msg: Record<string, unknow
   if (!res.ok) throw new Error(`saveNodeMessage failed: ${res.status}`);
 }
 
-export async function migrateLocalStorage(blob: unknown): Promise<{ migrated: boolean }> {
-  const res = await fetch(`${API_BASE_URL}/migrate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(blob),
-  });
-  if (!res.ok) throw new Error(`migrateLocalStorage failed: ${res.status}`);
-  return res.json();
-}
-
 // ── Prefs API (SQLite-backed, survives port changes) ──
 
 export async function fetchPrefs(): Promise<Record<string, unknown> | null> {

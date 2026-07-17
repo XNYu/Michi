@@ -31,7 +31,6 @@ vi.mock('../services/api', () => ({
   fetchWorkspace: vi.fn().mockResolvedValue(null),
   syncWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   deleteWorkspace: vi.fn().mockResolvedValue({ ok: true }),
-  migrateLocalStorage: vi.fn().mockResolvedValue({ migrated: false }),
   fetchPrefs: vi.fn().mockResolvedValue(null),
   savePrefs: vi.fn().mockResolvedValue(undefined),
 }));

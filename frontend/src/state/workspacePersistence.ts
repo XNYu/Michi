@@ -5,7 +5,6 @@ import {
   fetchPersistenceCapabilities,
   fetchWorkspace,
   fetchWorkspaces,
-  migrateLocalStorage,
   applyWorkspaceCommands,
 } from '../services/api';
 import type { WorkspaceCommand } from '../services/api';
@@ -157,8 +156,7 @@ export const HYDRATION_RETRY_DELAY_MS = 250;
  * Read the raw (pre-hydration) SavedState from localStorage. Prefers the new
  * per-project layout (index + per-project blobs) and falls back to the legacy
  * single-key blob. Returns null when nothing is stored. Does NOT run
- * hydrateSavedState — `readLocalStorageState` wraps the result for live state,
- * and the /migrate path forwards it raw, so both consume the same shape.
+ * hydrateSavedState — `readLocalStorageState` wraps the result for live state.
  */
 export function readLocalStoragePayload(userId?: string): SavedState | null {
   if (typeof window === 'undefined') return null;
@@ -214,12 +212,6 @@ export function readLocalStorageState(userId?: string): HydratedState {
 }
 
 export const readInitialHydrated = readLocalStorageState;
-
-function readWorkspaceRowId(row: unknown): string | undefined {
-  if (!row || typeof row !== 'object') return undefined;
-  const id = (row as Record<string, unknown>).id;
-  return typeof id === 'string' && id.length > 0 ? id : undefined;
-}
 
 // ── Shared row-mapping helpers ─────────────────────────────────────────────
 // Both the full serializer (serializeWorkspaceForSync) and the delta serializer
@@ -1233,9 +1225,9 @@ export function writeScopedLocalStorage({
   }
 
   // After a successful seed, reclaim the legacy single-key blob for this
-  // namespace. The /migrate path now reads via readLocalStoragePayload, so the
-  // data is still reachable. LEGACY_STATE_KEY (if different) is left for the
-  // migrate sentinel logic and is cleared by signOut.
+  // namespace. Hydration reads via readLocalStoragePayload, so the data is
+  // still reachable. LEGACY_STATE_KEY (if different) is left for the
+  // legacy-shared→per-user key migration sentinel and is cleared by signOut.
   if (seeding) {
     try {
       ls.removeItem(baseKey);
@@ -1615,42 +1607,13 @@ export function useWorkspacePersistence({
           }
           finishHydration('backend');
         } else {
-          const alreadyMigrated = window.localStorage.getItem(MIGRATED_KEY) === '1';
-          // Raw payload (new per-project layout OR legacy single key). Used for
-          // both the /migrate POST (raw shape) and local install (hydrated).
+          // Backend has no workspaces for this user. Michi has always shipped
+          // with the SQLite backend, so there is no pre-SQLite localStorage
+          // corpus to migrate — this path just hydrates from whatever local
+          // payload exists (offline/fresh-install fallback) or lands empty.
           const payload = readLocalStoragePayload(userId);
           const lsState = payload ? hydrateSavedState(payload) : EMPTY_HYDRATED;
-          if (!alreadyMigrated && payload && payload.projects.length > 0) {
-            try {
-              await migrateLocalStorage(payload);
-              window.localStorage.setItem(MIGRATED_KEY, '1');
-              const wsAfter = await fetchWorkspaces();
-              if (cancelled) return;
-              if (Array.isArray(wsAfter) && wsAfter.length > 0) {
-                const full = (
-                  await Promise.all(
-                    wsAfter.map(async (row) => {
-                      const id = readWorkspaceRowId(row);
-                      return id ? fetchWorkspace(id) : null;
-                    }),
-                  )
-                ).filter((w): w is Record<string, unknown> => !!w && typeof w === 'object');
-                if (cancelled) return;
-                const migrated = hydrateBackendWorkspaces(full, lsState.activeProjectId);
-                setProjects(migrated.projects);
-                setActiveProjectId(resolveActiveProjectForWindow(migrated.activeProjectId));
-                installNodes(migrated.nodes);
-                clearDurableLocalStorageMirror(storageKeyRef.current);
-                finishHydration('migration');
-              }
-            } catch {
-              if (cancelled) return;
-              setProjects(lsState.projects);
-              setActiveProjectId(resolveActiveProjectForWindow(lsState.activeProjectId));
-              installNodes(lsState.nodes);
-              finishHydration('localStorage');
-            }
-          } else if (lsState.projects.length > 0) {
+          if (lsState.projects.length > 0) {
             if (cancelled) return;
             setProjects(lsState.projects);
             setActiveProjectId(resolveActiveProjectForWindow(lsState.activeProjectId));

@@ -25,7 +25,6 @@ const apiMocks = vi.hoisted(() => ({
   fetchTreeMessages: vi.fn(async () => []),
   fetchWorkspaces: vi.fn(),
   fetchWorkspace: vi.fn(),
-  migrateLocalStorage: vi.fn(),
   applyWorkspaceCommands: vi.fn(async () => {}),
 }));
 
@@ -35,7 +34,6 @@ vi.mock('../services/api', () => ({
   fetchTreeMessages: apiMocks.fetchTreeMessages,
   fetchWorkspaces: apiMocks.fetchWorkspaces,
   fetchWorkspace: apiMocks.fetchWorkspace,
-  migrateLocalStorage: apiMocks.migrateLocalStorage,
   applyWorkspaceCommands: apiMocks.applyWorkspaceCommands,
 }));
 
@@ -87,7 +85,6 @@ describe('cold-start hydration barrier', () => {
     apiMocks.fetchAllWorkspacesMeta.mockReset();
     apiMocks.fetchTreeMessages.mockResolvedValue([]);
     apiMocks.fetchWorkspaces.mockResolvedValue([]);
-    apiMocks.migrateLocalStorage.mockResolvedValue({ migrated: false });
     Object.defineProperty(window, 'requestIdleCallback', { configurable: true, value: undefined });
   });
 

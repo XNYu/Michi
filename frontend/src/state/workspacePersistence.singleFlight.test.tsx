@@ -12,7 +12,6 @@ vi.mock('../services/api', () => ({
   fetchAllWorkspaces: vi.fn(() => new Promise(() => {})),
   fetchWorkspace: vi.fn(),
   fetchWorkspaces: vi.fn(),
-  migrateLocalStorage: vi.fn(),
   applyWorkspaceCommands: apiMocks.applyWorkspaceCommands,
 }));
 
