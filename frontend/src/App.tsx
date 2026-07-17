@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import TerminalShell from './components/terminal/TerminalShell';
-import MobileShell from './components/mobile/MobileShell';
+const MobileShell = React.lazy(() => import('./components/mobile/MobileShell'));
 import { useMediaQuery, MOBILE_QUERY } from './components/mobile/hooks/useMediaQuery';
 import ApiKeyGate from './components/ApiKeyGate';
 import { LandingPage } from './components/LandingPage';
@@ -206,7 +206,12 @@ function AppToaster() {
 
 function ShellSwitcher() {
   const isMobile = useMediaQuery(MOBILE_QUERY);
-  return isMobile ? <MobileShell /> : <TerminalShell />;
+  if (!isMobile) return <TerminalShell />;
+  return (
+    <React.Suspense fallback={null}>
+      <MobileShell />
+    </React.Suspense>
+  );
 }
 
 function StartupInteractiveMark({ surface }: { surface: string }) {

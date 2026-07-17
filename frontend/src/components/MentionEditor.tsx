@@ -354,8 +354,10 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   const acceptSlashRef = useRef<(idx: number) => void>(() => {});
   const escapeSlashRef = useRef<() => void>(() => {});
 
-  const editor = useEditor({
-    extensions: [
+  // Memoize the extensions array so TipTap doesn't diff/setOptions() every render.
+  // All dynamic data inside suggestion callbacks is accessed via refs, so [] deps is safe.
+  const extensions = useMemo(
+    () => [
       composerStarterKit,
       MentionNode.configure({
         HTMLAttributes: { class: 'mention-chip' },
@@ -422,6 +424,12 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
         },
       }),
     ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const editor = useEditor({
+    extensions,
     content: draftToDoc(value, mentions),
     editable: !disabled,
     editorProps: {
