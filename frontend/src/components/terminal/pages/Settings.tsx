@@ -14,6 +14,8 @@ import {
   type VerifyProviderKeyResult,
 } from '../../../services/api';
 import { Tab, BorderBtn, Row as ClickableRow } from '../primitives';
+import { Switch } from '../../ui/controls';
+import { confirmDialog } from '../../ui/ConfirmDialog';
 import { resolveAccent } from '../tokens';
 import { authClient } from '../../../services/auth';
 import { signOutAndReset } from '../../../services/signOut';
@@ -850,7 +852,11 @@ function ProviderKeyControls({
 
   const clearKey = async () => {
     if (!hasKey) return;
-    if (!confirm(`Clear the saved ${provider.label} API key?`)) return;
+    if (!(await confirmDialog({
+      title: 'Clear API key',
+      message: `Clear the saved ${provider.label} API key?`,
+      confirmLabel: 'Clear',
+    }))) return;
     await clearProviderKey(provider.id);
     setVerifyResult(null);
     onChanged();
@@ -1006,28 +1012,8 @@ function FollowUpsToggle() {
           margin: '0 -6px',
         }}
       >
-        <span
-          style={{
-            width: 28,
-            height: 16,
-            border: '1px solid var(--term-line-s)',
-            background: enabled ? 'var(--term-accent)' : 'var(--term-surface)',
-            position: 'relative',
-            display: 'inline-block',
-            flexShrink: 0,
-            marginTop: 1,
-          }}
-        >
-          <span
-            style={{
-              position: 'absolute',
-              top: 1,
-              left: enabled ? 13 : 1,
-              width: 12,
-              height: 12,
-              background: enabled ? 'var(--term-surface)' : 'var(--term-line-s)',
-            }}
-          />
+        <span style={{ marginTop: 1 }}>
+          <Switch on={enabled} onChange={(v) => setPref('enableFollowUps', v)} aria-label="Generate follow-up questions" />
         </span>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span
@@ -1079,28 +1065,8 @@ function BypassPermissionsToggle() {
           margin: '0 -6px',
         }}
       >
-        <span
-          style={{
-            width: 28,
-            height: 16,
-            border: '1px solid var(--term-line-s)',
-            background: enabled ? 'var(--term-accent)' : 'var(--term-surface)',
-            position: 'relative',
-            display: 'inline-block',
-            flexShrink: 0,
-            marginTop: 1,
-          }}
-        >
-          <span
-            style={{
-              position: 'absolute',
-              top: 1,
-              left: enabled ? 13 : 1,
-              width: 12,
-              height: 12,
-              background: enabled ? 'var(--term-surface)' : 'var(--term-line-s)',
-            }}
-          />
+        <span style={{ marginTop: 1 }}>
+          <Switch on={enabled} onChange={(v) => setPref('bypassPermissions', v)} aria-label="Bypass all permissions" />
         </span>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span
@@ -1788,27 +1754,7 @@ function Toggle({
       }}
       onClick={() => onChange(!on)}
     >
-      <span
-        style={{
-          width: 28,
-          height: 16,
-          border: '1px solid var(--term-line-s)',
-          background: on ? 'var(--term-accent)' : 'var(--term-surface)',
-          position: 'relative',
-          display: 'inline-block',
-        }}
-      >
-        <span
-          style={{
-            position: 'absolute',
-            top: 1,
-            left: on ? 13 : 1,
-            width: 12,
-            height: 12,
-            background: on ? 'var(--term-surface)' : 'var(--term-line-s)',
-          }}
-        />
-      </span>
+      <Switch on={on} onChange={onChange} aria-label={label} />
       <span style={{ fontSize: 11.5, color: 'var(--term-mid)', fontFamily: 'var(--ui-font)' }}>
         {label}
       </span>

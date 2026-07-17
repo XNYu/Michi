@@ -282,7 +282,9 @@
 .m-drawer-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  /* Warm palette-tinted scrim, matching the desktop drawer/modal scrims
+     (var(--scrim-drawer)) instead of a flat black wash. */
+  background: color-mix(in srgb, var(--term-bg) 46%, transparent);
   z-index: 40;
   animation: m-fade-in 120ms ease-out;
 }
@@ -293,7 +295,8 @@
   left: 0;
   width: 280px;
   max-width: 80vw;
-  background: var(--term-bg);
+  /* Frosted glass, matching the desktop drawers. .term-glass supplies the
+     blur + wash + cast; keep a right border as the panel edge. */
   border-right: 1px solid var(--term-line);
   z-index: 41;
   display: flex;

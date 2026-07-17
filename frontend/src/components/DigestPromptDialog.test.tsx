@@ -6,7 +6,9 @@ import DigestPromptDialog from './DigestPromptDialog';
 describe('DigestPromptDialog', () => {
   it('states the digest scope and default behavior', () => {
     render(<DigestPromptDialog open onConfirm={() => {}} onCancel={() => {}} />);
-    const dialog = screen.getByRole('dialog', { name: 'CREATE DIGEST' });
+    // The header renders "Create digest"; it's visually uppercased via CSS
+    // text-transform, so the accessible name stays sentence-case.
+    const dialog = screen.getByRole('dialog', { name: 'Create digest' });
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(screen.getByText(/selected conversations into one digest/i)).toBeTruthy();
     expect(screen.getByText(/leave it blank for a balanced summary/i)).toBeTruthy();

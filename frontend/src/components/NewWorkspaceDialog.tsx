@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { getElectron } from '../lib/electronBridge';
+import { ModalShell } from './ui/ModalShell';
+import { Button } from './ui/controls';
 
 interface NewWorkspaceDialogProps {
   open: boolean;
@@ -12,86 +14,26 @@ interface NewWorkspaceDialogProps {
 // showDirectoryPicker is not in the default TS lib; narrow type.
 type DirectoryPicker = (opts?: { mode?: 'read' | 'readwrite' }) => Promise<{ name: string }>;
 
-const SCRIM: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(28,25,23,0.18)',
-  zIndex: 50,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  animation: 'fadeIn 150ms ease-out both',
-};
-
-const PANE: React.CSSProperties = {
-  position: 'relative',
-  width: 480,
-  background: 'var(--surface)',
-  border: '1px solid var(--line-strong)',
-  borderRadius: 0,
-  boxShadow:
-    '0 1px 0 rgba(0,0,0,.02), 0 1px 2px rgba(0,0,0,.04), 0 14px 28px -12px rgba(28,25,23,.28), inset 0 0 0 1px var(--surface)',
-  fontFamily: 'var(--ui-font)',
-  animation: 'scaleIn 180ms cubic-bezier(.2,.8,.2,1) both',
-};
-
-const TAB_BAR: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  height: 30,
-  padding: '0 8px 0 12px',
-  background: 'var(--surface-muted)',
-  borderBottom: '1px solid var(--line)',
-};
-
-const TAB_TAG: React.CSSProperties = {
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  fontSize: 10.5,
-  letterSpacing: '.14em',
-  textTransform: 'uppercase',
-  color: 'var(--accent)',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-};
-
-const X_BTN: React.CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  color: 'var(--fg-subtle, var(--fg-muted))',
-  cursor: 'pointer',
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  fontSize: 14,
-  lineHeight: 1,
-  padding: 0,
-  width: 18,
-  height: 18,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-
 const promptRow = (active: boolean): React.CSSProperties => ({
   display: 'flex',
   alignItems: 'center',
   gap: 10,
   padding: '10px 14px',
-  borderBottom: '1px solid var(--line)',
-  background: active ? 'var(--surface)' : 'var(--app-bg)',
+  borderBottom: '1px solid var(--term-line)',
+  background: active ? 'var(--term-surface)' : 'var(--term-alt)',
 });
 
 const PROMPT_GLYPH: React.CSSProperties = {
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
   fontSize: 12.5,
-  color: 'var(--accent)',
+  color: 'var(--term-accent)',
   flexShrink: 0,
 };
 
 const PROMPT_LABEL: React.CSSProperties = {
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
   fontSize: 11,
-  color: 'var(--fg-muted)',
+  color: 'var(--term-mid)',
   flexShrink: 0,
   width: 56,
 };
@@ -104,48 +46,8 @@ const PROMPT_INPUT: React.CSSProperties = {
   background: 'transparent',
   fontFamily: 'var(--ui-font)',
   fontSize: 14,
-  color: 'var(--fg)',
+  color: 'var(--term-fg)',
   padding: 0,
-};
-
-const FOOTER: React.CSSProperties = {
-  padding: '14px 14px 16px',
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: 8,
-};
-
-const BTN_GHOST: React.CSSProperties = {
-  fontFamily: 'var(--ui-font)',
-  fontSize: 12,
-  border: 'none',
-  background: 'transparent',
-  color: 'var(--fg-muted)',
-  padding: '6px 10px',
-  cursor: 'pointer',
-};
-
-const BTN_SECONDARY: React.CSSProperties = {
-  fontFamily: 'var(--ui-font)',
-  fontSize: 12,
-  border: '1px solid var(--line-strong)',
-  background: 'var(--surface)',
-  color: 'var(--fg)',
-  padding: '6px 12px',
-  cursor: 'pointer',
-  borderRadius: 0,
-};
-
-const BTN_PRIMARY: React.CSSProperties = {
-  fontFamily: 'var(--ui-font)',
-  fontSize: 12,
-  fontWeight: 600,
-  border: '1px solid var(--accent)',
-  background: 'var(--accent)',
-  color: 'var(--accent-fg)',
-  padding: '6px 14px',
-  cursor: 'pointer',
-  borderRadius: 0,
 };
 
 export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: NewWorkspaceDialogProps) {
@@ -232,15 +134,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const folderDisplay = absolutePath || (folderName ? `${folderName} — not linked` : null);
 
   return (
-    <div style={SCRIM} onClick={onClose}>
-      <div style={PANE} onClick={(e) => e.stopPropagation()}>
-        <div style={TAB_BAR}>
-          <span style={TAB_TAG}>
-            <span aria-hidden>▸</span> NEW WORKSPACE
-          </span>
-          <button type="button" onClick={onClose} aria-label="Close" style={X_BTN}>×</button>
-        </div>
-
+    <ModalShell open={open} onClose={onClose} title="New workspace" titleGlyph="▸" width={480}>
         <div style={promptRow(true)}>
           <span style={PROMPT_GLYPH} aria-hidden>›_</span>
           <span style={PROMPT_LABEL}>name</span>
@@ -256,9 +150,6 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
               if (e.key === 'Enter') {
                 e.preventDefault();
                 handleCreate();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                onClose();
               }
             }}
           />
@@ -272,10 +163,10 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
             style={{
               ...PROMPT_INPUT,
               fontFamily: folderDisplay
-                ? 'var(--font-mono, ui-monospace, monospace)'
+                ? 'var(--mono-font, ui-monospace, monospace)'
                 : 'var(--ui-font)',
               fontSize: folderDisplay ? 12.5 : 13.5,
-              color: folderDisplay ? 'var(--fg)' : 'var(--fg-muted)',
+              color: folderDisplay ? 'var(--term-fg)' : 'var(--term-mid)',
               fontStyle: folderDisplay ? 'normal' : 'italic',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -284,23 +175,9 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
           >
             {folderDisplay ?? '(optional)'}
           </span>
-          <button
-            type="button"
-            onClick={pickFolder}
-            style={{
-              fontFamily: 'var(--ui-font)',
-              fontSize: 11,
-              border: '1px solid var(--line-strong)',
-              background: 'var(--surface)',
-              color: 'var(--fg)',
-              padding: '2px 8px',
-              cursor: 'pointer',
-              borderRadius: 0,
-              flexShrink: 0,
-            }}
-          >
+          <Button variant="secondary" size="sm" onClick={pickFolder} style={{ flexShrink: 0 }}>
             browse…
-          </button>
+          </Button>
         </div>
 
         {error && (
@@ -308,7 +185,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
             style={{
               padding: '8px 14px 0',
               fontSize: 12,
-              color: 'var(--term-danger, #dc2626)',
+              color: 'var(--term-danger)',
               fontFamily: 'var(--ui-font)',
             }}
           >
@@ -323,7 +200,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
               padding: '9px 14px 0',
               fontSize: 11.5,
               lineHeight: 1.45,
-              color: 'var(--fg-muted)',
+              color: 'var(--term-mid)',
               fontFamily: 'var(--ui-font)',
             }}
           >
@@ -342,14 +219,13 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
           onChange={onFallbackChange}
         />
 
-        <div style={FOOTER}>
-          <button type="button" onClick={onClose} style={BTN_GHOST}>cancel</button>
-          <button type="button" onClick={onSkip} style={BTN_SECONDARY}>open quick chat</button>
-          <button type="button" onClick={handleCreate} style={BTN_PRIMARY}>
+        <div style={{ padding: '14px 14px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button variant="ghost" onClick={onClose}>cancel</Button>
+          <Button variant="secondary" onClick={onSkip}>open quick chat</Button>
+          <Button variant="primary" onClick={handleCreate}>
             {browserNameOnly ? 'create without folder' : 'create'}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

@@ -21,7 +21,7 @@ interface Props {
   subagents?: readonly SubagentInfo[];
 }
 
-const FAIL_COLOR = '#e06c75';
+const FAIL_COLOR = 'var(--term-danger)';
 const SCROLL_THRESHOLD = 5;
 const SCROLL_MAX_HEIGHT = 130;
 

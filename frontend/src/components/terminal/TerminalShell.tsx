@@ -7,6 +7,7 @@ import WarmFailedBanner from './WarmFailedBanner';
 import TerminalDashboard from './pages/Dashboard';
 import TerminalHome from './pages/Home';
 import NewWorkspaceDialog from '../NewWorkspaceDialog';
+import { DrawerShell } from '../ui/DrawerShell';
 import { usePrefs } from '../../state/prefs';
 import type { PageId } from '../../state/commands';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
@@ -510,94 +511,13 @@ export default function TerminalShell() {
 }
 
 function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void }) {
-  React.useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
-
   return (
-    <>
-      <div
-        onMouseDown={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          /* Faint dim so the frosted drawer reads as elevated above the panes. */
-          background: 'color-mix(in srgb, var(--term-bg) 22%, transparent)',
-          zIndex: 39,
-        }}
-      />
-      <div
-        className="terminal-settings-drawer term-glass"
-        style={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: 420,
-          maxWidth: '50vw',
-          /* background comes from .term-glass (frosted); no opaque fill here. */
-          borderLeft: 'var(--term-pane-divider, 1px solid var(--term-line))',
-          borderTopLeftRadius: 'var(--term-pane-radius, 0px)',
-          borderBottomLeftRadius: 'var(--term-pane-radius, 0px)',
-          /* elevation (cast + inner highlight) comes from .term-glass box-shadow */
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 40,
-          animation: 'slideInRight 200ms ease-out both',
-        }}
-      >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 14px',
-          borderBottom: '1px solid var(--term-line)',
-          /* Transparent so the drawer frost runs continuously under the header;
-             only the hairline divider marks the header band. */
-          background: 'transparent',
-        }}
-      >
-        <span
-          style={{
-            fontFamily: 'var(--ui-font)',
-            fontSize: 11,
-            letterSpacing: '.14em',
-            color: 'var(--term-muted)',
-          }}
-        >
-          ▸ SETTINGS
-        </span>
-        <span
-          onClick={onClose}
-          title="Close (esc)"
-          style={{
-            cursor: 'pointer',
-            fontFamily: 'var(--ui-font)',
-            fontSize: 14,
-            color: 'var(--term-mid)',
-            padding: '0 4px',
-          }}
-        >
-          ×
-        </span>
-      </div>
+    <DrawerShell open={open} onClose={onClose} title="Settings">
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <LazyPage>
           <TerminalSettings onNav={onNav} onClose={onClose} />
         </LazyPage>
       </div>
-      </div>
-    </>
+    </DrawerShell>
   );
 }

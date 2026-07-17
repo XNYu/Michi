@@ -6,6 +6,7 @@ import type { PageId } from '../../../state/commands';
 import { workspaceAccent, initialOf } from '../workspaceAccent';
 import { kbd } from '../../../lib/platform';
 import { isArchiveGroupId } from '../../../state/trashActions';
+import { confirmDialog } from '../../ui/ConfirmDialog';
 
 interface TrashGroup {
   id: string;
@@ -162,7 +163,11 @@ export default function TerminalTrash({ onNav }: { onNav?: (p: PageId) => void }
             disabled={purging}
             onClick={async () => {
               if (purging) return;
-              if (!window.confirm(`Permanently delete all ${totalCount} items from trash?`)) return;
+              if (!(await confirmDialog({
+                title: 'Empty trash',
+                message: `Permanently delete all ${totalCount} items from trash?`,
+                confirmLabel: 'Empty',
+              }))) return;
               setPurging(true);
               try {
                 // Run the per-workspace /trash/empty calls AND any whole-workspace
@@ -232,7 +237,11 @@ export default function TerminalTrash({ onNav }: { onNav?: (p: PageId) => void }
                 }
               }}
               onPurgeGroup={async (g) => {
-                if (!window.confirm(`Permanently delete "${g.rootTitle}" (${g.memberCount} node${g.memberCount === 1 ? '' : 's'})?`)) return;
+                if (!(await confirmDialog({
+                  title: 'Delete thread',
+                  message: `Permanently delete "${g.rootTitle}" (${g.memberCount} node${g.memberCount === 1 ? '' : 's'})?`,
+                  confirmLabel: 'Delete',
+                }))) return;
                 try {
                   await purgeDeletionAsync(g.id);
                 } catch (err) {
@@ -247,7 +256,11 @@ export default function TerminalTrash({ onNav }: { onNav?: (p: PageId) => void }
               onPurgeWorkspace={async () => {
                 const extra = s.groups.length;
                 const tail = extra > 0 ? ` and ${extra} trashed thread${extra === 1 ? '' : 's'} inside it` : '';
-                if (!window.confirm(`Permanently delete workspace "${s.project.name}"${tail}?`)) return;
+                if (!(await confirmDialog({
+                  title: 'Delete workspace',
+                  message: `Permanently delete workspace "${s.project.name}"${tail}?`,
+                  confirmLabel: 'Delete',
+                }))) return;
                 try {
                   await purgeProject(s.project.id);
                 } catch (err) {

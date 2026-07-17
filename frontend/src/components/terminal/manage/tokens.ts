@@ -9,6 +9,9 @@ export const MANAGE_COLORS = {
   selectSoft: '#fef3db',
   mauve: '#6d4aa8',
   ok: '#3a8767',
+  // Link/URL badge color. Shared here so ArtifactsDrawer + ContextList stop
+  // inlining the same '#0b6cb6' literal in two places.
+  link: '#0b6cb6',
   digestSoftAlpha33: 'rgba(215, 231, 223, 0.33)',
 } as const;
 

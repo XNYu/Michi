@@ -52,10 +52,16 @@ function PaneMessageListInner({
   anchorsByMessage,
   onOpenBranch,
 }: PaneMessageListProps) {
-  const tailAssistantId = React.useMemo(
-    () => [...node.messages].reverse().find((message) => message.role === 'assistant')?.id,
-    [node.messages],
-  );
+  const tailAssistantId = React.useMemo(() => {
+    // Backward scan (no array copy) — this recomputes on every stream chunk
+    // since the reducer hands a fresh messages array each chunk, so the old
+    // [...messages].reverse().find() copied+reversed the whole conversation
+    // many times per second.
+    for (let i = node.messages.length - 1; i >= 0; i--) {
+      if (node.messages[i].role === 'assistant') return node.messages[i].id;
+    }
+    return undefined;
+  }, [node.messages]);
   const [tailAnswerSmoothing, setTailAnswerSmoothing] = React.useState(false);
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);

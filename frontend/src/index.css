@@ -2420,3 +2420,245 @@ html[data-vibrancy="on"],
   color: var(--term-mid);
   font-style: italic;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Shared overlay design system — drawers, modals, controls
+   ────────────────────────────────────────────────────────────────────────
+   One place that owns: the z-index ladder every floating surface sits on, the
+   scrim behind them, and the button / input primitives that were previously
+   re-inlined per call site. See components/ui/DrawerShell.tsx, ModalShell.tsx,
+   ConfirmDialog.tsx, and controls.tsx for the React shells that consume these.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* Managed z-index ladder. Before this, scrims/panels/popovers/overlays used
+     ad-hoc values (39, 40, 50, 60, 100, 1000, 9000, 9999) and which surface won
+     when stacked was accidental. Everything floating now references a rung. */
+  --z-drawer-scrim: 40;
+  --z-drawer: 41;
+  --z-popover: 1000;
+  --z-tooltip: 1050;
+  --z-context-menu: 1100;
+  --z-modal-scrim: 1200;
+  --z-modal: 1201;
+  --z-lightbox: 1300;
+  --z-toast: 1400;
+
+  /* One scrim recipe for every dim-behind surface. Warm-tinted off the app bg
+     so it reads as part of the palette (not a flat black wash) and adapts to
+     light/dark themes. Drawers historically used a lighter 22% dim; modals a
+     denser one — keep both rungs, one token each. */
+  --scrim-drawer: color-mix(in srgb, var(--term-bg) 22%, transparent);
+  --scrim-modal: color-mix(in srgb, var(--term-bg) 46%, transparent);
+
+  /* Text/glyph color that sits ON an accent-filled surface (primary buttons,
+     "always allow"). Was hardcoded '#fff' in ~6 places, which can't guarantee
+     contrast on light accents (gruvbox amber). --term-bg tracks the palette's
+     base, which every palette pairs for contrast against its accent. */
+  --on-accent: var(--term-bg);
+}
+
+/* ── Button primitive · .ui-btn ──────────────────────────────────────────────
+   variant = secondary (bordered, transparent) | primary (accent fill) |
+   ghost (no border) | action (small bordered). `data-danger` recolors to the
+   danger token; `disabled` dims uniformly. Consumed by components/ui/controls
+   Button. Hover is CSS-driven (call sites used to have no hover at all). */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--ui-font);
+  font-size: 11.5px;
+  line-height: 1.2;
+  padding: 6px 12px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-popover-radius, 4px);
+  background: transparent;
+  color: var(--term-fg);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t-soft) var(--t-ease),
+              border-color var(--t-soft) var(--t-ease),
+              color var(--t-soft) var(--t-ease),
+              opacity var(--t-soft) var(--t-ease);
+}
+.ui-btn:hover:not(:disabled) {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.ui-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.ui-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* primary — accent fill */
+.ui-btn--primary {
+  border-color: var(--term-accent);
+  background: var(--term-accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.ui-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--term-accent) 88%, var(--term-fg));
+}
+/* ghost — no border, quiet */
+.ui-btn--ghost {
+  border-color: transparent;
+  color: var(--term-mid);
+}
+.ui-btn--ghost:hover:not(:disabled) {
+  color: var(--term-fg);
+  background: var(--term-hover-bg, var(--term-alt));
+}
+/* action — small bordered, used inside dense drawer rows */
+.ui-btn--action {
+  font-size: 11px;
+  padding: 3px 8px;
+  color: var(--term-mid);
+}
+.ui-btn--sm {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+/* danger recolor — applies to any variant via data-danger */
+.ui-btn[data-danger='true']:not(.ui-btn--primary) {
+  color: var(--term-danger);
+}
+.ui-btn--primary[data-danger='true'] {
+  border-color: var(--term-danger);
+  background: var(--term-danger);
+  color: var(--on-accent);
+}
+.ui-btn--primary[data-danger='true']:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--term-danger) 88%, var(--term-fg));
+}
+
+/* ── Text input / select primitive · .ui-input / .ui-select ──────────────────
+   The --term-alt + --term-line recipe that recurred across ~13 files, with one
+   consistent focus ring (call sites disagreed on outline handling). */
+.ui-input,
+.ui-select {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--term-alt);
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-popover-radius, 4px);
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color var(--t-soft) var(--t-ease),
+              box-shadow var(--t-soft) var(--t-ease);
+}
+.ui-input:focus,
+.ui-select:focus {
+  border-color: color-mix(in srgb, var(--term-accent) 70%, var(--term-line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--term-accent) 22%, transparent);
+}
+.ui-input::placeholder {
+  color: var(--term-faint);
+}
+
+/* ── Shared drawer / modal scrim + panel classes ─────────────────────────────
+   The React shells (DrawerShell / ModalShell) apply these; they own layering,
+   the scrim, and the enter animation so every side drawer and centered modal
+   is identical by construction. The panel material itself comes from the
+   existing .term-glass primitive (blur + wash + cast). */
+.ui-scrim {
+  position: fixed;
+  inset: 0;
+  animation: fadeIn 150ms ease-out both;
+}
+.ui-scrim--drawer {
+  background: var(--scrim-drawer);
+  z-index: var(--z-drawer-scrim);
+}
+.ui-scrim--modal {
+  background: var(--scrim-modal);
+  z-index: var(--z-modal-scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.ui-scrim--modal[data-anchor='top'] {
+  align-items: flex-start;
+  padding-top: 80px;
+}
+/* Full-height right-anchored drawer panel. Dimensions unified across Settings /
+   Artifacts / Export (they used to disagree: 420/50vw vs 480/60vw vs bottom:22).
+   Material is .term-glass, applied alongside this class by DrawerShell. */
+.ui-drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  max-width: 50vw;
+  display: flex;
+  flex-direction: column;
+  z-index: var(--z-drawer);
+  border-left: 1px solid var(--term-line);
+  animation: slideInRight 200ms ease-out both;
+  -webkit-app-region: no-drag;
+}
+/* Centered modal card. Material is .term-glass (applied by ModalShell); this
+   class owns sizing + enter animation. */
+.ui-modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 640px);
+  border: 1px solid var(--term-line-s);
+  border-radius: var(--ui-popover-radius, 4px);
+  font-family: var(--ui-font);
+  animation: scaleIn 180ms cubic-bezier(.2, .8, .2, 1) both;
+  -webkit-app-region: no-drag;
+}
+/* Shared header band for drawers + modals: '▸ TITLE' mono tag + × close. */
+.ui-overlay-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--term-line);
+  background: transparent;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.ui-overlay-title {
+  font-family: var(--ui-font);
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--term-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-overlay-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--term-mid);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background var(--t-soft) var(--t-ease), color var(--t-soft) var(--t-ease);
+}
+.ui-overlay-close:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-scrim, .ui-drawer-panel, .ui-modal-panel { animation: none; }
+}

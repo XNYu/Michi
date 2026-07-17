@@ -4,6 +4,7 @@ import TerminalShell from './components/terminal/TerminalShell';
 const MobileShell = React.lazy(() => import('./components/mobile/MobileShell'));
 import { useMediaQuery, MOBILE_QUERY } from './components/mobile/hooks/useMediaQuery';
 import ApiKeyGate from './components/ApiKeyGate';
+import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
 import { LandingPage } from './components/LandingPage';
 import { authClient, fetchAuthConfig } from './services/auth';
 import DigestPromptDialog from './components/DigestPromptDialog';
@@ -290,6 +291,7 @@ function App() {
         <ApiKeyGate />
         <DigestPromptListener />
         <ExportPanelManager />
+        <ConfirmDialogHost />
       </AuthGate>
     </PrefsProvider>
   );

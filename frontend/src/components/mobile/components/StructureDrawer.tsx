@@ -41,7 +41,7 @@ export default function StructureDrawer({
   return (
     <>
       <div className="m-drawer-scrim" onClick={onClose} />
-      <aside className="m-drawer" role="dialog" aria-label="Structure">
+      <aside className="m-drawer term-glass" role="dialog" aria-label="Structure">
         <div className="m-drawer-header">Structure</div>
         <div className="m-drawer-tree">
           {items.map(({ depth, node }) => {

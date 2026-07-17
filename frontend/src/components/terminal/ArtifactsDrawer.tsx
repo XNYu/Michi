@@ -6,9 +6,12 @@ import { getElectron } from '../../lib/electronBridge';
 import { importWorkspaceFile } from '../../services/api';
 import { relativeTime } from '../../lib/relativeTime';
 import { Lightbox } from './Lightbox';
-import { manageFileType } from './manage/tokens';
+import { manageFileType, MANAGE_COLORS } from './manage/tokens';
 import ContextMenu from '../ContextMenu';
 import type { MenuSection } from '../ContextMenu';
+import { DrawerShell } from '../ui/DrawerShell';
+import { Button } from '../ui/controls';
+import { confirmDialog } from '../ui/ConfirmDialog';
 
 /**
  * 3a "Artifacts" sidebar — a right drawer (⌘⇧A) mirroring the Settings drawer
@@ -108,21 +111,10 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     setRenameId(null);
   }, [updateContext]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      // Close the lightbox first if it's up; otherwise the drawer. The
-      // Lightbox has its own Escape handler too, so guard against acting when
-      // it's open by reading state directly (no side-effects in a setState
-      // updater — that double-fires under StrictMode).
-      if (lightbox) setLightbox(null);
-      else onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, lightbox]);
+  // Escape handling is owned by DrawerShell (drawer) and Lightbox (image
+  // viewer). DrawerShell's Escape is disabled while the lightbox is open
+  // (closeOnEscape={!lightbox}) so the first Escape closes the lightbox, the
+  // next closes the drawer — the original behavior, now without a local handler.
 
   const filtered = useMemo(() => {
     const norm = filter.trim().toLowerCase();
@@ -153,7 +145,6 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   const openArtifact = useCallback(
     (c: ContextEntry) => {
       const t = artifactType(c);
-      console.log('[ArtifactsDrawer] openArtifact', { name: c.name, type: c.type, resolved: t, filePath: c.filePath });
       if (t === 'link') {
         if (c.url) window.open(c.url, '_blank', 'noopener,noreferrer');
         return;
@@ -290,57 +281,16 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   const total = contexts.length;
 
   return (
-    <>
-      <div
-        onMouseDown={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'color-mix(in srgb, var(--term-bg) 22%, transparent)',
-          zIndex: 39,
-          WebkitAppRegion: 'no-drag',
-        } as React.CSSProperties}
-      />
-      <div
-        className="terminal-settings-drawer term-glass"
-        style={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: 420,
-          maxWidth: '50vw',
-          borderLeft: 'var(--term-pane-divider, 1px solid var(--term-line))',
-          borderTopLeftRadius: 'var(--term-pane-radius, 0px)',
-          borderBottomLeftRadius: 'var(--term-pane-radius, 0px)',
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 40,
-          animation: 'slideInRight 200ms ease-out both',
-          // The drawer starts at top:0, overlapping the macOS hiddenInset
-          // titlebar drag region (electron/main.ts). Without no-drag the OS
-          // eats real clicks on the header (+, file, ×) as window-drags — which
-          // is why they felt dead. Mirrors the Topbar's no-drag treatment.
-          WebkitAppRegion: 'no-drag',
-        } as React.CSSProperties}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 14px',
-            borderBottom: '1px solid var(--term-line)',
-            background: 'transparent',
-            WebkitAppRegion: 'no-drag',
-          } as React.CSSProperties}
-        >
-          <span style={{ fontFamily: 'var(--ui-font)', fontSize: 11, letterSpacing: '.14em', color: 'var(--term-muted)' }}>
-            ▸ ARTIFACTS
-          </span>
-          <span style={{ fontSize: 11, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)' }}>{total}</span>
-          <span style={{ flex: 1 }} />
+    <DrawerShell
+      open={open}
+      onClose={onClose}
+      closeOnEscape={!lightbox}
+      title="Artifacts"
+      titleBadge={
+        <span style={{ fontSize: 11, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)' }}>{total}</span>
+      }
+      headerActions={
+        <>
           <button
             type="button"
             className="ws-action-btn"
@@ -361,34 +311,17 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
           >
             +
           </button>
-          <button
-            type="button"
-            className="ws-action-btn"
-            onClick={onClose}
-            title="Close (esc)"
-            aria-label="Close"
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            ×
-          </button>
-        </div>
-
+        </>
+      }
+    >
+      <>
         {/* Search */}
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--term-line)' }}>
           <input
+            className="ui-input"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="Search artifacts…"
-            style={{
-              width: '100%',
-              background: 'var(--term-alt)',
-              border: '1px solid var(--term-line)',
-              color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)',
-              fontSize: 12,
-              padding: '5px 8px',
-              boxSizing: 'border-box',
-            }}
           />
         </div>
 
@@ -396,6 +329,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
         {adding && (
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--term-line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <textarea
+              className="ui-input"
               autoFocus
               value={pasteVal}
               onChange={(e) => setPasteVal(e.target.value)}
@@ -407,30 +341,20 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
               }}
               placeholder="Paste a URL to save a link, or text to save a doc…  (⌘↵)"
               rows={2}
-              style={{
-                width: '100%',
-                background: 'var(--term-alt)',
-                border: '1px solid var(--term-line)',
-                color: 'var(--term-fg)',
-                fontFamily: 'var(--ui-font)',
-                fontSize: 12,
-                padding: '5px 8px',
-                boxSizing: 'border-box',
-                resize: 'vertical',
-              }}
+              style={{ resize: 'vertical' }}
             />
             {pasteErr && <div style={{ fontSize: 10.5, color: 'var(--term-danger)' }}>{pasteErr}</div>}
             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => { setAdding(false); setPasteVal(''); setPasteErr(null); }}
-                style={btnGhost}
               >
                 Cancel
-              </button>
-              <button type="button" onClick={() => void handlePaste()} style={btnSolid}>
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => void handlePaste()}>
                 Save
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -493,7 +417,11 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
                       onRename={() => { setRenameId(c.id); setRenameDraft(c.name); }}
                       onOpenInFolder={artifactType(c) !== 'link' ? () => openInFolder(c) : undefined}
                       onDelete={() => {
-                        if (window.confirm(`Delete artifact "${c.name}"?`)) deleteContext(c.id);
+                        void confirmDialog({
+                          title: 'Delete artifact',
+                          message: `Delete artifact "${c.name}"?`,
+                          confirmLabel: 'Delete',
+                        }).then((ok) => { if (ok) deleteContext(c.id); });
                       }}
                       onContextMenu={(e) => {
                         e.preventDefault();
@@ -505,7 +433,6 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
             );
           })}
         </div>
-      </div>
 
       {lightbox && (
         <Lightbox src={lightbox.src} filename={lightbox.name} onClose={() => setLightbox(null)} />
@@ -536,7 +463,11 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
                 keys: 'D',
                 danger: true,
                 run: () => {
-                  if (window.confirm(`Delete artifact "${ctxMenu.ctx.name}"?`)) deleteContext(ctxMenu.ctx.id);
+                  void confirmDialog({
+                    title: 'Delete artifact',
+                    message: `Delete artifact "${ctxMenu.ctx.name}"?`,
+                    confirmLabel: 'Delete',
+                  }).then((ok) => { if (ok) deleteContext(ctxMenu.ctx.id); });
                   setCtxMenu(null);
                 },
               },
@@ -544,7 +475,8 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
           }]}
         />
       )}
-    </>
+      </>
+    </DrawerShell>
   );
 }
 
@@ -583,7 +515,7 @@ function ArtifactRow({
 }) {
   const t = artifactType(c);
   const isLink = t === 'link';
-  const ft = isLink ? { label: 'url', color: '#0b6cb6' } : manageFileType(c.name);
+  const ft = isLink ? { label: 'url', color: MANAGE_COLORS.link } : manageFileType(c.name);
 
   return (
     <div
@@ -610,13 +542,14 @@ function ArtifactRow({
           {ft.label}
         </span>
         {c.source === 'agent' && (
-          <span title="agent-created" style={{ width: 5, height: 5, borderRadius: 99, background: '#6d4aa8', flexShrink: 0 }} />
+          <span title="agent-created" style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--term-mauve)', flexShrink: 0 }} />
         )}
         {c.pinnedAt && (
           <span title="favorite" style={{ fontSize: 10, color: 'var(--term-accent)', flexShrink: 0 }}>★</span>
         )}
         {renaming ? (
           <input
+            className="ui-input"
             autoFocus
             value={renameDraft}
             onChange={(e) => onRenameDraftChange(e.target.value)}
@@ -626,16 +559,7 @@ function ArtifactRow({
             }}
             onBlur={onRenameCancel}
             onClick={(e) => e.stopPropagation()}
-            style={{
-              flex: 1,
-              fontSize: 12,
-              fontFamily: 'var(--ui-font)',
-              background: 'var(--term-alt)',
-              border: '1px solid var(--term-accent)',
-              color: 'var(--term-fg)',
-              padding: '1px 4px',
-              minWidth: 0,
-            }}
+            style={{ flex: 1, padding: '1px 4px', minWidth: 0 }}
           />
         ) : (
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
@@ -662,46 +586,35 @@ function ArtifactRow({
             </div>
           )}
           <div style={{ display: 'flex', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
-            <button type="button" onClick={onOpen} style={btnAction}>
+            <Button variant="action" onClick={onOpen}>
               {isLink ? 'Open ↗' : 'Open'}
-            </button>
+            </Button>
             {onOpenInFolder && (
-              <button type="button" onClick={onOpenInFolder} style={btnAction}>
+              <Button variant="action" onClick={onOpenInFolder}>
                 Open in Folder
-              </button>
+              </Button>
             )}
             {onCite && (
-              <button type="button" onClick={onCite} style={btnAction}>
+              <Button variant="action" onClick={onCite}>
                 Cite
-              </button>
+              </Button>
             )}
-            <button type="button" onClick={onRename} style={btnAction}>
+            <Button variant="action" onClick={onRename}>
               Rename
-            </button>
-            <button type="button" onClick={onPin} style={btnAction}>
+            </Button>
+            <Button variant="action" onClick={onPin}>
               {c.pinnedAt ? 'Remove from favorites' : 'Add to favorites'}
-            </button>
+            </Button>
             <span style={{ flex: 1 }} />
-            <button type="button" onClick={onDelete} style={{ ...btnAction, color: 'var(--term-danger)' }}>
+            <Button variant="action" danger onClick={onDelete}>
               Delete
-            </button>
+            </Button>
           </div>
         </div>
       )}
     </div>
   );
 }
-
-const btnAction: React.CSSProperties = {
-  border: '1px solid var(--term-line)',
-  background: 'transparent',
-  color: 'var(--term-mid)',
-  fontFamily: 'var(--ui-font)',
-  fontSize: 11,
-  padding: '3px 8px',
-  cursor: 'pointer',
-};
-
 
 function FileAddIcon() {
   return (
@@ -712,24 +625,3 @@ function FileAddIcon() {
     </svg>
   );
 }
-
-const btnGhost: React.CSSProperties = {
-  border: '1px solid var(--term-line)',
-  background: 'transparent',
-  color: 'var(--term-mid)',
-  fontFamily: 'var(--ui-font)',
-  fontSize: 11.5,
-  padding: '4px 10px',
-  cursor: 'pointer',
-};
-
-const btnSolid: React.CSSProperties = {
-  border: 'none',
-  background: 'var(--term-fg)',
-  color: 'var(--term-bg, #fff)',
-  fontFamily: 'var(--ui-font)',
-  fontSize: 11.5,
-  fontWeight: 500,
-  padding: '4px 12px',
-  cursor: 'pointer',
-};

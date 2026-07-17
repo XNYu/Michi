@@ -574,16 +574,24 @@ function BlockAssistantBody({
 }) {
   const runs = useMemo(() => splitAssistantRuns(m.blocks), [m.blocks]);
   const byId = useMemo(() => toolMap(m.toolCalls), [m.toolCalls]);
-  const tailAnswerRunId = useMemo(
-    () => [...runs].reverse().find((run) => run.kind === 'answer')?.id,
-    [runs],
-  );
-  const liveThinkingId = useMemo(
-    () => [...runs].reverse().find((run) =>
-      run.kind === 'thinking' && run.blocks.some((b) => b.kind === 'thinking' && b.streaming),
-    )?.id,
-    [runs],
-  );
+  // Backward scans (no array copy). `runs` is rebuilt every chunk as blocks
+  // grow, so the old [...runs].reverse().find() copied+reversed on every
+  // streamed token of the actively-rendering message.
+  const tailAnswerRunId = useMemo(() => {
+    for (let i = runs.length - 1; i >= 0; i--) {
+      if (runs[i].kind === 'answer') return runs[i].id;
+    }
+    return undefined;
+  }, [runs]);
+  const liveThinkingId = useMemo(() => {
+    for (let i = runs.length - 1; i >= 0; i--) {
+      const run = runs[i];
+      if (run.kind === 'thinking' && run.blocks.some((b) => b.kind === 'thinking' && b.streaming)) {
+        return run.id;
+      }
+    }
+    return undefined;
+  }, [runs]);
   useEffect(() => {
     if (!tailAnswerRunId) onSmoothingChange?.(false);
   }, [onSmoothingChange, tailAnswerRunId]);

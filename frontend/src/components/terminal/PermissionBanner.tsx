@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import type { PermissionRequest } from '../../state/chatTypes';
 import { KBD } from './primitives';
+import { Button } from '../ui/controls';
 import { kbd } from '../../lib/platform';
 
 interface PermissionBannerProps {
@@ -107,52 +108,30 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
         <>
         <div style={{ display: 'flex', gap: 6 }}>
           {rejectOptions.map((o) => (
-            <button
+            <Button
               key={o.optionId}
+              variant="secondary"
+              danger
               onClick={() => onRespond(o.optionId)}
-              style={{
-                border: '1px solid var(--term-line)',
-                background: 'transparent',
-                color: 'var(--term-danger)',
-                fontFamily: 'var(--ui-font)',
-                fontSize: 11,
-                padding: '6px 12px',
-                borderRadius: 4,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
             >
               {o.kind === 'reject_once' ? 'Deny' : 'Never allow'}
               {o.kind === 'reject_once' && <KBD>esc</KBD>}
-            </button>
+            </Button>
           ))}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {allowOptions.map((o) => {
             const isAlways = o.kind === 'allow_always';
             return (
-              <button
+              <Button
                 key={o.optionId}
+                variant={isAlways ? 'primary' : 'secondary'}
                 onClick={() => onRespond(o.optionId)}
-                style={{
-                  border: isAlways ? 'none' : '1px solid var(--term-accent)',
-                  background: isAlways ? 'var(--term-accent)' : 'transparent',
-                  color: isAlways ? '#fff' : 'var(--term-accent)',
-                  fontFamily: 'var(--ui-font)',
-                  fontSize: 11,
-                  padding: '6px 12px',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
+                style={isAlways ? undefined : { color: 'var(--term-accent)', borderColor: 'var(--term-accent)' }}
               >
                 {isAlways ? 'Always allow' : 'Allow once'}
                 <KBD>{isAlways ? kbd('mod', 'enter') : kbd('mod', 'shift', 'enter')}</KBD>
-              </button>
+              </Button>
             );
           })}
         </div>

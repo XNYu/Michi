@@ -1,5 +1,7 @@
 import React from 'react';
 import type { Project } from '../../../state/chatTypes';
+import type { BulkActions } from './ChatTreeList';
+import { confirmDialog } from '../../ui/ConfirmDialog';
 
 interface Props {
   workspace: Project;
@@ -130,6 +132,83 @@ export default function ManageSidebar({ workspace, onSaveInstructions }: Props) 
           >
             Save
           </button>
+        </div>
+      </div>
+      {/* Manage panel */}
+      <div style={panelStyle}>
+        <div style={panelHeader}>
+          <h3 style={panelTitle}>Manage</h3>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {!manageMode ? (
+            <button
+              type="button"
+              onClick={onToggleManageMode}
+              style={{
+                border: '1px solid var(--term-line)',
+                background: 'transparent',
+                color: 'var(--term-fg)',
+                padding: '6px 14px',
+                fontFamily: 'var(--ui-font)',
+                fontSize: 12,
+                cursor: 'pointer',
+                letterSpacing: '.02em',
+                width: '100%',
+                textAlign: 'left',
+              }}
+            >
+              ☐ Select threads…
+            </button>
+          ) : (
+            <>
+              <div style={{ ...bodyText, fontSize: 12, fontWeight: 600, color: 'var(--term-fg)' }}>
+                {bulkActions?.treeSelection.size ?? 0} selected
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <SidebarManageBtn label="Select all" onClick={() => bulkActions?.selectAllTrees()} />
+                {(bulkActions?.treeSelection.size ?? 0) > 0 && (
+                  <>
+                    {hasArchivedSelection ? (
+                      <SidebarManageBtn label="Unarchive" onClick={() => bulkActions?.bulkUnarchiveTrees()} />
+                    ) : (
+                      <SidebarManageBtn label="Archive" onClick={() => bulkActions?.bulkArchiveTrees()} />
+                    )}
+                    <SidebarManageBtn
+                      label="Delete"
+                      danger
+                      onClick={() => {
+                        const count = bulkActions?.treeSelection.size ?? 0;
+                        void confirmDialog({
+                          title: 'Move to trash',
+                          message: `Move ${count} thread${count === 1 ? '' : 's'} to trash?`,
+                          confirmLabel: 'Move',
+                        }).then((ok) => {
+                          if (ok) bulkActions?.bulkDeleteTrees();
+                        });
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={onToggleManageMode}
+                style={{
+                  border: '1px solid var(--term-line)',
+                  background: 'transparent',
+                  color: 'var(--term-fg)',
+                  padding: '5px 14px',
+                  fontFamily: 'var(--ui-font)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  width: '100%',
+                  marginTop: 4,
+                }}
+              >
+                Done
+              </button>
+            </>
+          )}
         </div>
       </div>
     </aside>

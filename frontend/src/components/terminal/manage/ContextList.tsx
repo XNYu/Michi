@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ContextEntry } from '../../../state/chatTypes';
-import { manageFileType } from './tokens';
+import { manageFileType, MANAGE_COLORS } from './tokens';
 
 interface Props {
   contexts: ContextEntry[];
@@ -195,7 +195,9 @@ function Section({
         </span>
       </div>
       {rows.map((c) => {
-        const ft = manageFileType(c.name);
+        const isLink = artifactType(c) === 'link';
+        const ft = isLink ? { label: 'url', color: MANAGE_COLORS.link } : manageFileType(c.name);
+        const metaLine = isLink ? c.url ?? '' : `${c.kind === 'reference' ? '↗ ' : ''}${c.filePath}`;
         const selected = selectedId === c.id;
         const hovered = hoverId === c.id;
         return (

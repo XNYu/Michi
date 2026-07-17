@@ -16,6 +16,8 @@ import {
   type ActivityMetric,
   type ProfileActivity,
 } from './profileActivity';
+import { providerRequiresUserKey } from '../../../lib/providerCapabilities';
+import { confirmDialog } from '../../ui/ConfirmDialog';
 
 /**
  * Profile page — implementation of the Claude-Design profile.html mock.
@@ -509,7 +511,11 @@ function KeyRow({
   };
 
   const remove = async () => {
-    if (!confirm(`Clear the saved ${provider.label} API key?`)) return;
+    if (!(await confirmDialog({
+      title: 'Clear API key',
+      message: `Clear the saved ${provider.label} API key?`,
+      confirmLabel: 'Clear',
+    }))) return;
     setBusy(true);
     setError(null);
     const res = await clearProviderKey(provider.id);

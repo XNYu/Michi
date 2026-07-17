@@ -4,6 +4,7 @@ import type { Project } from '../../../state/chatTypes';
 import type { PageId } from '../../../state/commands';
 import { workspaceAccent, initialOf } from '../workspaceAccent';
 import { isArchiveGroupId } from '../../../state/trashActions';
+import { confirmDialog } from '../../ui/ConfirmDialog';
 
 /**
  * Archived-nodes surface. Sibling to Trash, but scoped to the archive lane
@@ -126,7 +127,11 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
                 }
               }}
               onPurgeGroup={async (g) => {
-                if (!window.confirm(`Permanently delete "${g.rootTitle}" (${g.memberCount} node${g.memberCount === 1 ? '' : 's'})?`)) return;
+                if (!(await confirmDialog({
+                  title: 'Delete thread',
+                  message: `Permanently delete "${g.rootTitle}" (${g.memberCount} node${g.memberCount === 1 ? '' : 's'})?`,
+                  confirmLabel: 'Delete',
+                }))) return;
                 try {
                   await purgeDeletionAsync(g.id);
                 } catch (err) {

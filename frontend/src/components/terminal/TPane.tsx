@@ -1003,9 +1003,14 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // Find the most-recent user message — the reducer pairs every user
     // send with an empty assistant placeholder on the same tick, so
     // `lastMsg.role` is usually 'assistant' even right after a send.
-    const latestUser = n?.messages
-      ? [...n.messages].reverse().find((mm) => mm.role === 'user')
-      : undefined;
+    // Backward scan (no array copy): this effect re-runs on nearly every
+    // stream chunk, so a full [...messages].reverse() per chunk is wasteful.
+    let latestUser: NonNullable<typeof n>['messages'][number] | undefined;
+    if (n?.messages) {
+      for (let i = n.messages.length - 1; i >= 0; i--) {
+        if (n.messages[i].role === 'user') { latestUser = n.messages[i]; break; }
+      }
+    }
     if (latestUser && latestUser.id !== prevSentMsgIdRef.current) {
       prevSentMsgIdRef.current = latestUser.id;
       followRef.current = true;

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useChatActions, useChatProjects, useStructuralSelector } from '../../state/chatStore';
+import { confirmDialog } from '../ui/ConfirmDialog';
 
 export default function TreeSelectionBar() {
   const {
@@ -82,7 +83,13 @@ export default function TreeSelectionBar() {
         Archive
       </span>
       <span
-        onClick={() => { if (window.confirm(`Move ${count} thread${count === 1 ? '' : 's'} to trash?`)) bulkDeleteTrees(); }}
+        onClick={() => {
+          void confirmDialog({
+            title: 'Move to trash',
+            message: `Move ${count} thread${count === 1 ? '' : 's'} to trash?`,
+            confirmLabel: 'Move',
+          }).then((ok) => { if (ok) bulkDeleteTrees(); });
+        }}
         style={{ cursor: 'pointer', color: 'var(--term-danger, #e55)', fontSize: 10 }}
       >
         Delete

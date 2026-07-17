@@ -9,6 +9,7 @@ import ContextsPopover from '../ContextsPopover';
 import PaneCaption from './PaneCaption';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
+import { confirmDialog } from '../ui/ConfirmDialog';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
@@ -212,7 +213,11 @@ export default function TerminalTopbar({
           result.reason === 'ahead'
             ? `${result.aheadCount} local commit(s) ahead of ${target} would be hard-reset away.\n\nProceed anyway? A backup ref will be created so the prior tip is recoverable.`
             : `Tracked files have uncommitted changes that reset --hard will discard.\n\nProceed anyway?`;
-        if (!window.confirm(detail)) {
+        if (!(await confirmDialog({
+          title: 'Update Michi',
+          message: detail,
+          confirmLabel: 'Update anyway',
+        }))) {
           setUpdating(false);
           return;
         }

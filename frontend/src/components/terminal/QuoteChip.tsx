@@ -32,7 +32,7 @@ export function QuoteChip({ text }: Props) {
         display: 'flex',
         gap: 8,
         borderLeft: '2px solid var(--term-mauve)',
-        background: 'rgba(183,148,246,0.10)',
+        background: 'color-mix(in srgb, var(--term-mauve) 10%, transparent)',
         padding: '6px 8px 6px 10px',
         marginBottom: 8,
         fontSize: 12,

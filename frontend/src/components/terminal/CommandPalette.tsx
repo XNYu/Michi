@@ -6,13 +6,14 @@ import { type MessageMatch } from '../../state/search';
 import { useServerSearch } from '../../state/useServerSearch';
 import { requestDigest } from '../../lib/digestPrompt';
 import { navigateToNode } from '../../state/navigateToNode';
+import { ModalShell } from '../ui/ModalShell';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
   const [s, e] = range;
   return (
     <>
       {text.slice(0, s)}
-      <mark style={{ background: 'var(--accent)', color: 'var(--accent-fg)', padding: '0 2px' }}>
+      <mark style={{ background: 'var(--term-accent)', color: 'var(--on-accent)', padding: '0 2px' }}>
         {text.slice(s, e)}
       </mark>
       {text.slice(e)}
@@ -25,9 +26,9 @@ function PaletteSearchGlyph() {
     <span
       aria-hidden
       style={{
-        fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+        fontFamily: 'var(--mono-font, ui-monospace, monospace)',
         fontSize: 12.5,
-        color: 'var(--accent)',
+        color: 'var(--term-accent)',
         flexShrink: 0,
       }}
     >
@@ -36,77 +37,13 @@ function PaletteSearchGlyph() {
   );
 }
 
-const SCRIM: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(28,25,23,0.18)',
-  zIndex: 50,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  animation: 'fadeIn 150ms ease-out both',
-};
-
-const PANE: React.CSSProperties = {
-  position: 'relative',
-  width: 620,
-  maxHeight: '70vh',
-  display: 'flex',
-  flexDirection: 'column',
-  background: 'var(--surface)',
-  border: '1px solid var(--line-strong)',
-  borderRadius: 0,
-  boxShadow:
-    '0 1px 0 rgba(0,0,0,.02), 0 1px 2px rgba(0,0,0,.04), 0 14px 28px -12px rgba(28,25,23,.28), inset 0 0 0 1px var(--surface)',
-  fontFamily: 'var(--ui-font)',
-  animation: 'scaleIn 180ms cubic-bezier(.2,.8,.2,1) backwards',
-};
-
-const TAB_BAR: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  height: 30,
-  padding: '0 8px 0 12px',
-  background: 'var(--surface-muted)',
-  borderBottom: '1px solid var(--line)',
-  flexShrink: 0,
-};
-
-const TAB_TAG: React.CSSProperties = {
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  fontSize: 10.5,
-  letterSpacing: '.14em',
-  textTransform: 'uppercase',
-  color: 'var(--accent)',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-};
-
-const X_BTN: React.CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  color: 'var(--fg-subtle, var(--fg-muted))',
-  cursor: 'pointer',
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  fontSize: 14,
-  lineHeight: 1,
-  padding: 0,
-  width: 18,
-  height: 18,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-
 const PROMPT_ROW: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 10,
   padding: '10px 14px',
-  borderBottom: '1px solid var(--line)',
-  background: 'var(--surface)',
+  borderBottom: '1px solid var(--term-line)',
+  background: 'transparent',
   flexShrink: 0,
 };
 
@@ -118,17 +55,17 @@ const PROMPT_INPUT: React.CSSProperties = {
   background: 'transparent',
   fontFamily: 'var(--ui-font)',
   fontSize: 14,
-  color: 'var(--fg)',
+  color: 'var(--term-fg)',
   padding: 0,
 };
 
 const GROUP_LABEL: React.CSSProperties = {
   padding: '10px 14px 4px',
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
   fontSize: 10,
   letterSpacing: '.14em',
   textTransform: 'uppercase',
-  color: 'var(--fg-subtle, var(--fg-muted))',
+  color: 'var(--term-muted)',
 };
 
 const rowStyle = (active: boolean): React.CSSProperties => ({
@@ -136,16 +73,16 @@ const rowStyle = (active: boolean): React.CSSProperties => ({
   alignItems: 'center',
   gap: 10,
   padding: '8px 14px',
-  background: active ? 'var(--surface-hover)' : 'transparent',
-  borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+  background: active ? 'var(--term-alt)' : 'transparent',
+  borderLeft: active ? '2px solid var(--term-accent)' : '2px solid transparent',
   cursor: 'pointer',
 });
 
 const ROW_GLYPH = (active: boolean): React.CSSProperties => ({
   width: 18,
   textAlign: 'center',
-  color: active ? 'var(--accent)' : 'var(--fg-subtle, var(--fg-muted))',
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  color: active ? 'var(--term-accent)' : 'var(--term-muted)',
+  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
   fontSize: 12,
   fontWeight: 600,
   flexShrink: 0,
@@ -154,7 +91,7 @@ const ROW_GLYPH = (active: boolean): React.CSSProperties => ({
 const ROW_LABEL = (active: boolean): React.CSSProperties => ({
   fontFamily: 'var(--ui-font)',
   fontSize: 13,
-  color: 'var(--fg)',
+  color: 'var(--term-fg)',
   flex: 1,
   fontWeight: active ? 600 : 400,
   overflow: 'hidden',
@@ -364,15 +301,14 @@ export default function CommandPalette({
   ];
 
   return (
-    <div style={SCRIM} onClick={onClose}>
-      <div style={PANE} onClick={(e) => e.stopPropagation()}>
-        <div style={TAB_BAR}>
-          <span style={TAB_TAG}>
-            <span aria-hidden>▸</span> COMMAND PALETTE
-          </span>
-          <button type="button" onClick={onClose} aria-label="Close" style={X_BTN}>×</button>
-        </div>
-
+    <ModalShell
+      open
+      onClose={onClose}
+      title="Command palette"
+      titleGlyph="▸"
+      width={620}
+      anchor="top"
+    >
         <div style={PROMPT_ROW}>
           <PaletteSearchGlyph />
           <input
@@ -387,7 +323,7 @@ export default function CommandPalette({
 
         <div
           ref={listRef}
-          style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--app-bg)' }}
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
           className="hide-sb"
         >
           {groups.map(([g, label]) => {
@@ -412,9 +348,9 @@ export default function CommandPalette({
                       {c.keys && (
                         <span
                           style={{
-                            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                            fontFamily: 'var(--mono-font, ui-monospace, monospace)',
                             fontSize: 10.5,
-                            color: 'var(--fg-subtle, var(--fg-muted))',
+                            color: 'var(--term-muted)',
                             letterSpacing: '.04em',
                           }}
                         >
@@ -428,7 +364,7 @@ export default function CommandPalette({
             );
           })}
           {visible.length === 0 && searchMatches.length === 0 && (
-            <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--fg-muted)', fontStyle: 'italic' }}>
+            <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--term-mid)', fontStyle: 'italic' }}>
               {showRecents ? 'no commands available' : 'no matches'}
             </div>
           )}
@@ -451,13 +387,13 @@ export default function CommandPalette({
                   >
                     <span style={ROW_GLYPH(isActive)}>⌕</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: 'var(--ui-font)', fontSize: 12, color: 'var(--fg)', fontWeight: isActive ? 600 : 500 }}>
+                      <div style={{ fontFamily: 'var(--ui-font)', fontSize: 12, color: 'var(--term-fg)', fontWeight: isActive ? 600 : 500 }}>
                         {m.threadName || 'Untitled'}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: 11, color: 'var(--term-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {renderSnippetWithMark(m.snippet, m.matchOffsetInSnippet)}
                       </div>
-                      <div style={{ fontSize: 9.5, color: 'var(--fg-subtle, var(--fg-muted))' }}>{m.workspaceName}</div>
+                      <div style={{ fontSize: 9.5, color: 'var(--term-muted)' }}>{m.workspaceName}</div>
                     </div>
                   </div>
                 );
@@ -465,7 +401,6 @@ export default function CommandPalette({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

@@ -105,23 +105,15 @@ export default function ApiKeyGate() {
   if (backendUnreachable) {
     return (
       <div
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 1000,
-          background: 'rgba(0,0,0,0.55)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
+        className="ui-scrim ui-scrim--modal"
+        style={{ zIndex: 'var(--z-modal-scrim)' } as React.CSSProperties}
       >
         <div
+          className="ui-modal-panel term-glass"
           style={{
             padding: '24px 32px',
-            background: 'var(--surface)',
-            border: '1px solid var(--line-strong)',
-            color: 'var(--fg)',
-            fontFamily: 'var(--font-sans, ui-sans-serif)',
+            color: 'var(--term-fg)',
+            fontFamily: 'var(--ui-font)',
             fontSize: 14,
             maxWidth: 420,
             lineHeight: 1.6,
@@ -216,24 +208,15 @@ export default function ApiKeyGate() {
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        background: 'rgba(0,0,0,0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
+      className="ui-scrim ui-scrim--modal"
+      style={{ zIndex: 'var(--z-modal-scrim)' } as React.CSSProperties}
     >
       <div
+        className="ui-modal-panel term-glass"
         style={{
           width: 480,
-          background: 'var(--surface)',
-          border: '1px solid var(--line-strong)',
-          boxShadow: '0 32px 80px rgba(0,0,0,0.3)',
+          maxWidth: '92vw',
           padding: '32px 36px',
-          animation: 'scaleIn 180ms cubic-bezier(.2,.8,.2,1) both',
         }}
         onClick={(e) => e.stopPropagation()}
       >
