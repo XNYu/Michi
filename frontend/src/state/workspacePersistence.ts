@@ -42,13 +42,6 @@ export const STATE_KEY_PREFIX = 'michi:v1:state:';
 /** Legacy shared key used before per-user namespacing. Kept for migration + signOut cleanup. */
 export const LEGACY_STATE_KEY = 'michi:v1:state';
 
-/**
- * @deprecated Use buildStateKey(userId) or useStateKey() instead.
- * Kept for backward compatibility with non-hook callsites that have not yet
- * been updated.
- */
-export const STATE_KEY = LEGACY_STATE_KEY;
-
 /** Key set to '1' after the one-time localStorage-to-SQLite migration completes. */
 export const MIGRATED_KEY = 'michi:migrated';
 

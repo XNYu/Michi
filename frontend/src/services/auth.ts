@@ -29,8 +29,6 @@ export const authClient = createAuthClient({
     },
 });
 
-export type AuthClient = typeof authClient;
-
 export interface AuthConfig {
     requireAuth: boolean;
 }

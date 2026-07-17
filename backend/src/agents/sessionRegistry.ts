@@ -105,10 +105,6 @@ export function dropSession(chatId: string): void {
     sessions.delete(chatId);
 }
 
-export function listSessions(): AgentSession[] {
-    return [...sessions.values()].map((e) => e.session);
-}
-
 /**
  * Walk parentChatId chain from root to immediate parent. Stops at missing
  * (evicted) ancestors. Returns oldest-first so callers building a transcript

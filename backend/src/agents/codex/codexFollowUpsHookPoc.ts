@@ -37,9 +37,6 @@ ${followUpsInstruction}
 - Do not call the Stop-hook validator yourself; Michi invokes it automatically.`;
 }
 
-export const CODEX_FOLLOW_UPS_HOOK_POC_INSTRUCTION =
-  buildCodexFollowUpsHookPocInstruction('sentinel');
-
 export interface CodexFollowUpsHookConfigOptions {
   runnerPath?: string;
   nodePath?: string;

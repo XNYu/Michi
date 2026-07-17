@@ -3,24 +3,6 @@
  * protocol import for runtime code. Strings verified against codex-cli 0.144.2.
  */
 
-export const CODEX_NOTIFICATIONS = {
-  threadStarted: 'thread/started',
-  turnStarted: 'turn/started',
-  turnCompleted: 'turn/completed',
-  itemStarted: 'item/started',
-  itemCompleted: 'item/completed',
-  agentMessageDelta: 'item/agentMessage/delta',
-  reasoningTextDelta: 'item/reasoning/textDelta',
-  reasoningSummaryTextDelta: 'item/reasoning/summaryTextDelta',
-  commandOutputDelta: 'item/commandExecution/outputDelta',
-  fileChangeOutputDelta: 'item/fileChange/outputDelta',
-  planDelta: 'item/plan/delta',
-  turnPlanUpdated: 'turn/plan/updated',
-  tokenUsageUpdated: 'thread/tokenUsage/updated',
-  mcpStartupStatus: 'mcpServer/startupStatus/updated',
-  error: 'error',
-} as const;
-
 export const CODEX_SERVER_REQUESTS = {
   commandApproval: 'item/commandExecution/requestApproval',
   fileChangeApproval: 'item/fileChange/requestApproval',
@@ -29,21 +11,8 @@ export const CODEX_SERVER_REQUESTS = {
   mcpElicitation: 'mcpServer/elicitation/request',
 } as const;
 
-export type CodexApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
-
-export const CODEX_TOOL_ITEM_TYPES = new Set([
-  'commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch',
-]);
-export const CODEX_STREAMED_ITEM_TYPES = new Set(['agentMessage', 'reasoning']);
-
 export type CodexRpcId = string | number;
 
-export interface CodexRpcRequest {
-  jsonrpc: '2.0';
-  id: CodexRpcId;
-  method: string;
-  params?: unknown;
-}
 export interface CodexRpcResponse {
   id: CodexRpcId;
   result?: unknown;

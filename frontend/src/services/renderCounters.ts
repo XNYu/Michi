@@ -27,10 +27,6 @@ function getSink(): RenderCounterSink | null {
   return null;
 }
 
-export function renderCountersEnabled(): boolean {
-  return getSink() !== null;
-}
-
 export function countRender(
   component: string,
   key = 'global',

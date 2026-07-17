@@ -220,5 +220,3 @@ export function createCodePlugin(options: { themes?: ThemePair } = {}): CodeHigh
     },
   };
 }
-
-export const code = createCodePlugin();

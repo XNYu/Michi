@@ -63,17 +63,6 @@ export function Tab({
   return <div className={cls} {...rest}>{children}</div>;
 }
 
-/** Small clickable pill — hover lifts background subtly. For agent / model
- *  chips, accent swatches, and similar tag-like controls. */
-export function Chip({
-  className,
-  children,
-  ...rest
-}: React.HTMLAttributes<HTMLSpanElement>) {
-  const cls = ['t-chip-hover', className].filter(Boolean).join(' ');
-  return <span className={cls} {...rest}>{children}</span>;
-}
-
 /** Bordered button — hover lifts background. For topbar map / digest buttons,
  *  retry, reset. */
 export function BorderBtn({

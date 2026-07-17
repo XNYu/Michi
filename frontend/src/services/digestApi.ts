@@ -15,25 +15,6 @@ export interface DigestGenerationPayload {
   customPrompt?: string;
 }
 
-export function generateDigest(
-  payload: DigestGenerationPayload,
-  signal?: AbortSignal,
-): Promise<string> {
-  return fetch(`${API_BASE_URL}/digests/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  }).then(async (res) => {
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
-      throw new Error(err.error || `digest failed: ${res.status}`);
-    }
-    const body = await res.json();
-    return body.markdown as string;
-  });
-}
-
 export interface StreamCallbacks {
   onChunk: (text: string) => void;
   signal?: AbortSignal;

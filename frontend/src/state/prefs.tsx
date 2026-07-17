@@ -34,11 +34,6 @@ export const UI_FONT_OPTS: readonly UiFont[] = [
  *  `--message-cjk-font` (PingFang) tail appended by the .terminal-message CSS. */
 export type MessageFont = 'Source Serif 4' | 'Geist';
 
-export const MESSAGE_FONT_OPTS: readonly MessageFont[] = [
-  'Source Serif 4',
-  'Geist',
-] as const;
-
 export interface Prefs {
   fontFamily: 'sans' | 'serif' | 'mono';
   /** When true, show the agent's streamed reasoning (agent_thought_chunk) + execution plan inside the assistant message. */

@@ -122,10 +122,3 @@ export function finalTerminalEvent(opts: {
     }
     return createChatStreamError("stream ended without a terminal event");
 }
-
-export function writeChatStreamEvent(
-    res: Response,
-    streamEvent: ChatStreamEvent,
-): void {
-    res.write(encodeChatStreamEvent(streamEvent));
-}

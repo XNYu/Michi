@@ -83,7 +83,3 @@ export function warnIfAntigravityVersionBelowMinimum(): void {
     // Version checks are advisory.
   }
 }
-
-export function antigravityDataDir(): string {
-  return process.env.ANTIGRAVITY_CLI_HOME ?? path.join(os.homedir(), ".gemini", "antigravity-cli");
-}

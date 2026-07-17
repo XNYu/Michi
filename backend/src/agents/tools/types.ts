@@ -28,10 +28,6 @@ export interface ToolResult<TDetails = unknown> {
     isError?: boolean;
 }
 
-export function textResult<T = unknown>(text: string, details?: T): ToolResult<T> {
-    return { content: [{ type: "text", text }], details };
-}
-
 export function errorResult<T = unknown>(message: string): ToolResult<T> {
     return { content: [{ type: "text", text: message }], isError: true };
 }

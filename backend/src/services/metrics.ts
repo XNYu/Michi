@@ -58,40 +58,6 @@ export function measure(name: string, startTime: number, attrs?: MetricAttrs): v
     });
 }
 
-export function counter(name: string, value = 1, attrs?: MetricAttrs): void {
-    if (!METRICS_ENABLED) return;
-    writeJson({
-        ...metricRow("counter", name, attrs),
-        value,
-    });
-}
-
-export function span<T>(name: string, attrs: MetricAttrs | undefined, fn: () => T): T {
-    if (!METRICS_ENABLED) return fn();
-    const start = performance.now();
-    mark(`${name}.start`, attrs);
-    try {
-        const result = fn();
-        const maybePromise = result as unknown as Promise<unknown>;
-        if (result && typeof maybePromise.then === "function") {
-            return maybePromise
-                .then((value) => {
-                    measure(name, start, { ...attrs, status: "ok" });
-                    return value;
-                })
-                .catch((err) => {
-                    measure(name, start, { ...attrs, status: "error", error: (err as Error).message });
-                    throw err;
-                }) as T;
-        }
-        measure(name, start, { ...attrs, status: "ok" });
-        return result;
-    } catch (err) {
-        measure(name, start, { ...attrs, status: "error", error: (err as Error).message });
-        throw err;
-    }
-}
-
 export function startupMark(name: string, attrs?: MetricAttrs): void {
     if (!STARTUP_ENABLED) return;
     writeJson({

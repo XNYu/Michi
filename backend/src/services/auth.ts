@@ -157,23 +157,6 @@ export function getAuth(): Auth {
     return getAuthForHost(undefined);
 }
 
-// Property-forwarding proxy so existing `import { auth }` callers can
-// keep using `auth.api.*`, `auth.handler`, etc. without a code change.
-// Resolves to the fallback (BETTER_AUTH_URL) instance.
-export const auth: Auth = new Proxy({} as Auth, {
-    get(_target, prop) {
-        const inst = getAuth() as any;
-        const value = inst[prop];
-        return typeof value === "function" ? value.bind(inst) : value;
-    },
-});
-
-export type AuthInstance = Auth;
-export function getAuthDbPath(): string {
-    if (!authDbPath) getAuth(); // forces init
-    return authDbPath!;
-}
-
 /**
  * Idempotent migration runner. Called from server.ts boot path so a
  * fresh container with an empty `auth.sqlite` builds the user / session

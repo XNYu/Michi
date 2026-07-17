@@ -17,19 +17,6 @@ const base = (size: number): React.SVGProps<SVGSVGElement> => ({
   'aria-hidden': true,
 });
 
-export function BrandMark({ size = 16, className }: IconProps) {
-  return (
-    <svg
-      {...base(size)}
-      viewBox="0 0 24 24"
-      strokeWidth={2.2}
-      className={className}
-    >
-      <path d="M12 2 L4 7 v10 l8 5 8-5 V7 z" />
-    </svg>
-  );
-}
-
 export function HomeIcon({ size = 14, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

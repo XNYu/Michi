@@ -28,11 +28,3 @@ export function notify({ title, body, onClick }: NotifyOptions): void {
     }
   }
 }
-
-/** Request OS notification permission. Returns true if granted (or Electron, which doesn't need it). */
-export async function requestNotificationPermission(): Promise<boolean> {
-  if (getElectron()) return true; // Electron doesn't need web permission
-  if (!('Notification' in window)) return false;
-  const result = await Notification.requestPermission();
-  return result === 'granted';
-}

@@ -20,8 +20,6 @@ const CTRL = IS_MAC ? '⌃' : 'Ctrl';
 const ENTER = IS_MAC ? '↵' : 'Enter';
 const SEP = IS_MAC ? '' : '+';
 
-export const KBD = { MOD, ALT, SHIFT, CTRL, ENTER, SEP } as const;
-
 type Token = 'mod' | 'alt' | 'shift' | 'ctrl' | 'enter' | (string & {});
 
 /**

@@ -78,12 +78,6 @@ export function parseAssistantBlocks(raw: unknown): AssistantBlock[] | undefined
   return isValidAssistantBlocks(value) ? cloneBlocks(value) : undefined;
 }
 
-export function assistantBlocksJson(m: ChatMessage): string | null {
-  if (m.role !== 'assistant') return null;
-  const blocks = migrateAssistantToBlocks(m).blocks;
-  return blocks && blocks.length > 0 ? JSON.stringify(blocks) : null;
-}
-
 export function assistantAnswerRawText(m: ChatMessage): string {
   if (m.role !== 'assistant') return m.text;
   const blocks = m.blocks;
@@ -93,13 +87,6 @@ export function assistantAnswerRawText(m: ChatMessage): string {
 
 export function assistantAnswerVisibleText(m: ChatMessage): string {
   return stripSentinelsStreamingSafe(assistantAnswerRawText(m)).visibleText;
-}
-
-export function assistantThinkingText(m: ChatMessage): string {
-  if (m.role !== 'assistant') return '';
-  const blocks = m.blocks;
-  if (!blocks || blocks.length === 0) return m.thought ?? '';
-  return blocks.map((b) => (b.kind === 'thinking' ? b.rawText : '')).join('');
 }
 
 export function assistantPersistenceContent(m: ChatMessage): string {

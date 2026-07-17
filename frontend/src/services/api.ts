@@ -237,79 +237,6 @@ export async function warmCwd(cwd: string): Promise<void> {
   startupMark('warm_request_done', { cwd, status: res.status, durMs: Date.now() - startedAt });
 }
 
-export async function createChat(
-  parentChatId?: string,
-  cwd?: string,
-  mergeContexts?: string[],
-  model?: string,
-  extraContexts?: Array<{ name: string; filePath: string; size?: number; kind?: 'embedded' | 'reference' }>,
-  enableFollowUps?: boolean,
-  contextManifest?: Array<{ name: string; filePath: string; kind?: 'embedded' | 'reference' }>,
-  nodeId?: string,
-  workspaceId?: string,
-): Promise<{ chatId: string; currentModeId: string | null; runtimeId?: RuntimeId }> {
-  const startedAt = Date.now();
-  startupMark('create_chat_start', { parentChatId, cwd, nodeId, workspaceId });
-  const body: Record<string, unknown> = {};
-  if (parentChatId) body.parentChatId = parentChatId;
-  if (cwd) body.cwd = cwd;
-  if (mergeContexts && mergeContexts.length > 0) body.mergeContexts = mergeContexts;
-  if (model) body.model = model;
-  if (extraContexts && extraContexts.length > 0) body.extraContexts = extraContexts;
-  if (enableFollowUps === false) body.enableFollowUps = false;
-  if (contextManifest && contextManifest.length > 0) body.contextManifest = contextManifest;
-  // Pi runtime adopts nodeId as session.id so chatId === nodeId. Kiro
-  // ignores it (ACP requires server-minted ids).
-  if (nodeId) body.nodeId = nodeId;
-  // Owning workspace — covers the cold-start race where the new node and
-  // its parent haven't been flushed to SQLite yet (graph sync runs every 2s).
-  // Without this, backend's getNode() lookup returns null, slot.workspaceId
-  // stays null, and globalContext tools (list_threads/search_messages/read_node)
-  // report "No active workspace bound to this session yet."
-  if (workspaceId) body.workspaceId = workspaceId;
-  const res = await fetch(`${API_BASE_URL}/chats`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`createChat failed: ${res.status}`);
-  const json = await res.json();
-  startupMark('create_chat_done', { chatId: json.chatId, nodeId, workspaceId, durMs: Date.now() - startedAt });
-  return {
-    chatId: json.chatId as string,
-    currentModeId: json.currentModeId ?? null,
-    runtimeId: json.runtimeId as RuntimeId | undefined,
-  };
-}
-
-export async function loadSession(
-  chatId: string,
-  cwd: string,
-  opts?: { model?: string; workspaceId?: string; nodeId?: string; runtimeId?: RuntimeId },
-): Promise<{ currentModeId: string | null; runtimeId?: RuntimeId }> {
-  const body: Record<string, unknown> = { cwd };
-  if (opts?.model) body.model = opts.model;
-  if (opts?.nodeId) body.nodeId = opts.nodeId;
-  if (opts?.runtimeId) body.runtimeId = opts.runtimeId;
-  // For Kiro sessions, chatId is an ACP-minted sid (not nodes.id), so the
-  // backend's getNode(chatId) lookup returns null and slot.workspaceId stays
-  // null — leaving list_threads/search_messages/read_node permanently broken
-  // after a session reload. Always pass the owning workspace id explicitly.
-  if (opts?.workspaceId) body.workspaceId = opts.workspaceId;
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/load`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const msg = await res.text().catch(() => '');
-    const err: any = new Error(`loadSession failed: ${res.status} ${msg}`);
-    err.status = res.status;
-    throw err;
-  }
-  return res.json();
-}
-
 export type ResumeStrategy = 'fresh' | 'live' | 'exact' | 'compatible';
 
 export interface EnsureSessionOptions {
@@ -511,20 +438,6 @@ export async function setChatMode(chatId: string, modeId: string): Promise<strin
   return json.currentModeId as string;
 }
 
-export async function setChatModel(chatId: string, modelId: string): Promise<string> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/set-model`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ modelId }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
-    throw new Error(err.error || `setModel failed: ${res.status}`);
-  }
-  const json = await res.json();
-  return json.currentModelId as string;
-}
-
 export interface ExportRequestPayload {
   workspace: {
     name: string;
@@ -541,25 +454,6 @@ export interface ExportRequestPayload {
   }>;
   cwd?: string;
   nodeIds?: string[];
-}
-
-export function exportSummary(
-  payload: ExportRequestPayload,
-  signal?: AbortSignal,
-): Promise<string> {
-  return fetch(`${API_BASE_URL}/exports/summary`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  }).then(async (res) => {
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
-      throw new Error(err.error || `export failed: ${res.status}`);
-    }
-    const body = await res.json();
-    return body.markdown as string;
-  });
 }
 
 /**
@@ -915,21 +809,6 @@ export async function fetchPersistenceCapabilities(): Promise<PersistenceCapabil
   return res.json();
 }
 
-export async function ensureDurableGraphNode(
-  workspaceId: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/graph/nodes/ensure`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
-    throw new Error(body.error || `ensureDurableGraphNode failed: ${res.status}`);
-  }
-}
-
 export interface WorkspaceCommand {
   type: 'workspace.upsert' | 'tree.upsert' | 'tree.delete' | 'node.upsert' | 'node.patch'
     | 'edge.upsert' | 'edge.delete' | 'context.upsert' | 'context.delete';
@@ -1018,24 +897,6 @@ export async function moveTreeToWorkspace(
   };
 }
 
-export async function patchNode(nodeId: string, patch: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/nodes/${nodeId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) throw new Error(`patchNode failed: ${res.status}`);
-}
-
-export async function saveNodeMessage(nodeId: string, msg: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/nodes/${nodeId}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(msg),
-  });
-  if (!res.ok) throw new Error(`saveNodeMessage failed: ${res.status}`);
-}
-
 // ── Prefs API (SQLite-backed, survives port changes) ──
 
 export async function fetchPrefs(): Promise<Record<string, unknown> | null> {
@@ -1059,35 +920,6 @@ export async function savePrefs(prefs: Record<string, unknown>): Promise<void> {
   } catch {
     // Best-effort: localStorage is the fallback.
   }
-}
-
-// ── Backup API ──
-
-export async function exportAllBackup(): Promise<Blob> {
-  const res = await fetch(`${API_BASE_URL}/backup/export`);
-  if (!res.ok) throw new Error(`exportAllBackup failed: ${res.status}`);
-  return res.blob();
-}
-
-export async function exportWorkspaceBackup(workspaceId: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE_URL}/backup/export/${workspaceId}`);
-  if (!res.ok) throw new Error(`exportWorkspaceBackup failed: ${res.status}`);
-  return res.blob();
-}
-
-export async function importBackup(
-  file: File,
-  mode: 'merge' | 'replace' = 'merge',
-): Promise<{ imported: boolean; workspaceCount: number }> {
-  const text = await file.text();
-  const json = JSON.parse(text);
-  const res = await fetch(`${API_BASE_URL}/backup/import?mode=${mode}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(json),
-  });
-  if (!res.ok) throw new Error('Import failed');
-  return res.json();
 }
 
 // ── Search API ──

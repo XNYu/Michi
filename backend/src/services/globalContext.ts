@@ -19,8 +19,6 @@ export const DISABLED_MESSAGE =
 export const NO_WORKSPACE_MESSAGE =
     "No active workspace bound to this session yet.";
 
-export type GlobalContextStatus = "ok" | "disabled" | "no_workspace" | "not_found";
-
 export interface ListThreadsResult {
     status: "ok" | "disabled" | "no_workspace";
     text: string;

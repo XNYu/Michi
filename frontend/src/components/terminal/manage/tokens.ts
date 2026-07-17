@@ -12,8 +12,6 @@ export const MANAGE_COLORS = {
   digestSoftAlpha33: 'rgba(215, 231, 223, 0.33)',
 } as const;
 
-export type ManageColorKey = keyof typeof MANAGE_COLORS;
-
 const FILETYPE_LABEL: Record<string, string> = {
   md: 'md', mdx: 'md', markdown: 'md',
   txt: 'txt', log: 'txt', rtf: 'txt',
