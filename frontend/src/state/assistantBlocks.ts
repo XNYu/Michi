@@ -124,7 +124,13 @@ export function projectAssistantStreamEvent(
     assistantMessage: {
       id: message.id,
       role: 'assistant',
-      content: assistantPersistenceContent(message),
+      // Placeholder: `applyTurnEvent` recomputes content from blocks where it
+      // matters (chunk/done/error) and never reads this input, and our return
+      // below discards `projected.assistantMessage.content` entirely. Computing
+      // the real value here would run finalizeTurnContent's full-string scan on
+      // every chunk (O(L²) over a streaming turn) just to throw it away.
+      // Persistence/fingerprints derive content lazily via assistantPersistenceContent.
+      content: '',
       blocks: (message.blocks ?? []) as DurableAssistantBlock[],
       toolCalls: message.toolCalls as DurableToolCall[],
       plan: message.plan,
