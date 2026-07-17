@@ -891,6 +891,13 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Shutdown: kill all clients in pool and reset internal maps. */
     async shutdown(): Promise<void> {
+        // Clear pending user-input requests (avoid leaked timers + dangling promises).
+        for (const [, entry] of this.pendingUserInputs) {
+            clearTimeout(entry.timer);
+            entry.resolve(null);
+        }
+        this.pendingUserInputs.clear();
+
         // Release slots held by warmed (unclaimed) sessions before dropping clients.
         for (const entry of this.warmedSessions.values()) {
             if (entry.slotId) await this.mcpRegistry?.dispose(entry.slotId);

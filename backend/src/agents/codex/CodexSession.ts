@@ -112,7 +112,7 @@ export class CodexSession implements AgentSession {
     this.currentModelId = deps.model ?? null;
 
     this.queue = new EventQueue((idleMs) => {
-      if (this.state === 'idle' || this.state === 'in_turn') {
+      if (this.state === 'in_turn') {
         this.queue.push({ kind: 'heartbeat', idleMs });
       }
     });

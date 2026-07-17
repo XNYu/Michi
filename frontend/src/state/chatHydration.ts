@@ -437,16 +437,24 @@ export function hydrateBackendWorkspaces(
     }
 
     const messageRows = Array.isArray(full.messages) ? full.messages : [];
-    const messagesByNode = new Map<string, ChatMessage[]>();
+    const messageRowsByNode = new Map<string, Array<Record<string, unknown>>>();
     for (const row of messageRows) {
       const nodeId = asString(row.node_id);
       if (!nodeId) continue;
-      const msg = mapMessageRow(row, messagesByNode.get(nodeId)?.length ?? 0);
-      messagesByNode.set(nodeId, [...(messagesByNode.get(nodeId) ?? []), msg]);
+      const arr = messageRowsByNode.get(nodeId) ?? [];
+      arr.push(row as Record<string, unknown>);
+      messageRowsByNode.set(nodeId, arr);
     }
-    messagesByNode.forEach((list, nodeId) => {
-      list.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
-      messagesByNode.set(nodeId, list);
+    const messagesByNode = new Map<string, ChatMessage[]>();
+    messageRowsByNode.forEach((rows, nodeId) => {
+      // Sort by seq (monotonic insert order); fall back to createdAt for legacy data without seq.
+      rows.sort((a, b) => {
+        const seqA = asOptionalNumber(a.seq);
+        const seqB = asOptionalNumber(b.seq);
+        if (seqA != null && seqB != null) return seqA - seqB;
+        return (asNumber(a.created_at, 0)) - (asNumber(b.created_at, 0));
+      });
+      messagesByNode.set(nodeId, rows.map((row, i) => mapMessageRow(row, i)));
     });
 
     const nodeRows = (Array.isArray(full.nodes) ? full.nodes : [])

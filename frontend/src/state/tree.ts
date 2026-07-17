@@ -49,8 +49,10 @@ export function buildTree(
     childrenOf.set(e.source, arr);
   }
 
+  const visited = new Set<string>();
   const visit = (nodeId: string, depth: number): TreeNode => {
-    const childIds = childrenOf.get(nodeId) ?? [];
+    visited.add(nodeId);
+    const childIds = (childrenOf.get(nodeId) ?? []).filter((cid) => !visited.has(cid));
     return {
       nodeId,
       depth,

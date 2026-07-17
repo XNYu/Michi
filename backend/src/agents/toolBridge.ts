@@ -86,8 +86,9 @@ function contextFilePath(name: string): string {
 export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridge {
     return {
         async spawnBranches(args: BridgeSpawnBranchesArgs): Promise<SpawnedBranch[]> {
+            const capped = args.topics.slice(0, 5);
             const result: SpawnedBranch[] = [];
-            for (const t of args.topics) {
+            for (const t of capped) {
                 if (!t?.title || !t?.prompt) continue;
                 try {
                     const child = await deps.createChild({
