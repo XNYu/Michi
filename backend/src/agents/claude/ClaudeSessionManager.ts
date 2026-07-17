@@ -5,8 +5,13 @@ import type { McpSlotRegistry } from '../../services/mcpServer';
 import { setNodeExternalSessionId } from '../../services/dbRepository';
 import { resolveModel } from '../../services/agentConfig';
 import * as sessionRegistry from '../sessionRegistry';
-import { buildStableSystemPrompt } from '../preamble';
-import { ClaudeSession } from './ClaudeSession';
+import { buildStableSystemPrompt, type MetadataOutputMode } from '../preamble';
+import {
+  followUpsMetadataOutputMode,
+  resolveFollowUpsExperimentMode,
+} from '../followUpsExperiment';
+import { ClaudeSession, type SelfTurnCallback } from './ClaudeSession';
+import { isClaudeFollowUpsHookPocEnabled } from './claudeFollowUpsHookPoc';
 import { ClaudeWarmPool } from './ClaudeWarmPool';
 import * as perf from '../../services/perf';
 
@@ -58,10 +63,15 @@ export class ClaudeSessionManager {
   private readonly active = new Map<string, ClaudeSession>();
   private readonly pendingSessions = new Set<ClaudeSession>();
   private readonly pool: ClaudeWarmPool;
+  private readonly metadataOutputMode: MetadataOutputMode;
   private pendingSpawns = 0;
   private shuttingDown = false;
 
   constructor(private readonly deps: ClaudeSessionManagerDeps) {
+    this.metadataOutputMode = followUpsMetadataOutputMode(
+      isClaudeFollowUpsHookPocEnabled(),
+      resolveFollowUpsExperimentMode(),
+    );
     this.pool = new ClaudeWarmPool({
       spawner: (cwd, model) => this.spawnWarmSession(cwd, model),
       currentModel: deps.currentModel,
@@ -137,7 +147,7 @@ export class ClaudeSessionManager {
           workspaceId: opts.workspaceId ?? null,
           parentChatId: opts.parentChatId,
           model: opts.model ?? undefined,
-          systemPromptAppend: buildStableSystemPrompt(),
+          systemPromptAppend: buildStableSystemPrompt(this.metadataOutputMode),
           mcpRegistry: this.deps.mcpRegistry,
           bridge: this.deps.bridge,
           mcpPort: this.deps.mcpPort,
@@ -228,7 +238,7 @@ export class ClaudeSessionManager {
       cwd,
       workspaceId: null,
       model,
-      systemPromptAppend: buildStableSystemPrompt(),
+      systemPromptAppend: buildStableSystemPrompt(this.metadataOutputMode),
       mcpRegistry: this.deps.mcpRegistry,
       bridge: this.deps.bridge,
       mcpPort: this.deps.mcpPort,

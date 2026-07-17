@@ -63,7 +63,7 @@ function planStepActivity(plan: PlanEntry[] | undefined): StreamActivity | null 
  * Exported for unit testing — keep it free of React/timing concerns.
  */
 export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null {
-  if (node.status !== 'streaming') return null;
+  if (node.status !== 'streaming' || node.visibleResponseComplete) return null;
 
   // Kiro subagents get a dedicated, richer panel (SubagentStatus). Don't
   // double up while any of them are working.
@@ -129,7 +129,7 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
     startRef.current = node.streamingStartedAt;
   }
   const [elapsedMs, setElapsedMs] = useState(() => Date.now() - startRef.current);
-  const isStreaming = node.status === 'streaming';
+  const isStreaming = node.status === 'streaming' && !node.visibleResponseComplete;
   useEffect(() => {
     // Only tick while the turn is actually streaming. The component stays
     // mounted across label flips within a turn (and renders null when idle),

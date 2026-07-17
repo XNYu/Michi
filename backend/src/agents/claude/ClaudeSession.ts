@@ -18,7 +18,6 @@ import { grantPermission, setNodeExternalSessionId } from '../../services/dbRepo
 import { getAgentConfig, resolveReasoning } from '../../services/agentConfig';
 import type { AgentReasoning } from '../types';
 import { EventQueue } from '../eventQueue';
-import { followUpReminder } from '../preamble';
 import { AsyncGate } from '../asyncGate';
 import { log } from '../../services/logger';
 import {
@@ -27,7 +26,7 @@ import {
   isClaudeFollowUpsHookPocEnabled,
 } from './claudeFollowUpsHookPoc';
 import {
-  FOLLOW_UPS_SENTINEL_TURN_REMINDER,
+  followUpsTurnReminder,
   resolveFollowUpsExperimentMode,
   type FollowUpsExperimentMode,
 } from '../followUpsExperiment';
@@ -114,6 +113,9 @@ export class ClaudeSession implements AgentSession {
   private followUpsSuppressedChunkEvents = 0;
   private followUpsSuppressedThoughtEvents = 0;
   private followUpsOutputBoundaryPending = false;
+  private followUpsSentinelTail = '';
+  private followUpsSentinelsCompleteThisTurn = false;
+  private followUpsSilentOverviewTail = false;
 
   private queue: EventQueue;
   private readonly history: ChatMessage[] = [];
@@ -220,9 +222,11 @@ export class ClaudeSession implements AgentSession {
       // Append follow-up reminder for the model only — keep history clean so
       // fork/branch transcripts don't accumulate reminder noise.
       const userTurnCount = this.history.filter(m => m.role === 'user').length + 1;
-      const reminder = this.followUpsHookPocEnabled && this.followUpsExperimentMode === 'sentinel'
-        ? FOLLOW_UPS_SENTINEL_TURN_REMINDER
-        : followUpReminder(userTurnCount, true);
+      const reminder = followUpsTurnReminder(
+        userTurnCount,
+        this.followUpsHookPocEnabled,
+        this.followUpsExperimentMode,
+      );
       const textForModel = reminder ? outgoingText + reminder : outgoingText;
 
       this.armFollowUpsHookPoc(userTurnCount);
@@ -462,7 +466,9 @@ export class ClaudeSession implements AgentSession {
     });
     this.slotId = slot.slotId;
 
-    const mcpConfig = buildClaudeMcpConfig(slot.slotId, this.mcpPort);
+    const mcpConfig = buildClaudeMcpConfig(slot.slotId, this.mcpPort, {
+      alwaysLoad: this.followUpsHookPocEnabled,
+    });
     // claude --session-id requires UUID format; michi nodeIds don't conform.
     // The placeholder is overwritten when system/init reports the real session_id.
     await this.doSpawn({ sessionId: randomUUID(), mcpConfig });
@@ -517,7 +523,9 @@ export class ClaudeSession implements AgentSession {
     });
     this.slotId = slot.slotId;
 
-    const mcpConfig = buildClaudeMcpConfig(slot.slotId, this.mcpPort);
+    const mcpConfig = buildClaudeMcpConfig(slot.slotId, this.mcpPort, {
+      alwaysLoad: this.followUpsHookPocEnabled,
+    });
     await this.doSpawn({ resumeSessionId: externalSessionId, mcpConfig });
   }
 
@@ -535,7 +543,8 @@ export class ClaudeSession implements AgentSession {
     });
 
     const translator = createTranslator((ev) => {
-      if (this.suppressFollowUpsRepairEvent(ev)) return;
+      this.observeFollowUpsSentinelEvent(ev);
+      if (this.suppressFollowUpsInternalEvent(ev)) return;
       // Drive the idle transition from the claude process's own end-of-turn
       // signal (the `result` envelope, which the translator turns into
       // turn_end) rather than from whether the HTTP consumer drains the
@@ -703,6 +712,9 @@ export class ClaudeSession implements AgentSession {
     this.followUpsSuppressedChunkEvents = 0;
     this.followUpsSuppressedThoughtEvents = 0;
     this.followUpsOutputBoundaryPending = false;
+    this.followUpsSentinelTail = '';
+    this.followUpsSentinelsCompleteThisTurn = false;
+    this.followUpsSilentOverviewTail = false;
     log.info('chat', 'claude follow-ups hook poc turn armed', {
       nodeId: this.nodeId,
       sessionId: this.id,
@@ -736,6 +748,16 @@ export class ClaudeSession implements AgentSession {
         const cleaned = overview.trim();
         if (!cleaned) return;
         if (this.followUpsValidationActive) this.branchOverviewSetThisTurn = true;
+        if (this.followUpsExperimentMode === 'sentinel') {
+          if (this.followUpsSentinelsCompleteThisTurn) {
+            this.followUpsSilentOverviewTail = true;
+          } else {
+            log.warn('mcp', 'claude branch overview arrived before follow-up sentinels completed', {
+              nodeId: this.nodeId,
+              sessionId: this.id,
+            });
+          }
+        }
         log.info('mcp', 'claude follow-ups hook poc set_branch_overview received', {
           nodeId: this.nodeId,
           sessionId: this.id,
@@ -793,8 +815,11 @@ export class ClaudeSession implements AgentSession {
     };
   }
 
-  private suppressFollowUpsRepairEvent(ev: NormalizedEvent): boolean {
-    if (!this.followUpsHookPocEnabled || !this.followUpsRepairMode) return false;
+  private suppressFollowUpsInternalEvent(ev: NormalizedEvent): boolean {
+    if (!this.followUpsHookPocEnabled) return false;
+    const suppressVisibleMetadataTail =
+      this.followUpsRepairMode || this.followUpsSilentOverviewTail;
+    if (!suppressVisibleMetadataTail) return false;
     if (ev.kind === 'chunk') {
       this.followUpsSuppressedChunkEvents += 1;
       return true;
@@ -804,6 +829,18 @@ export class ClaudeSession implements AgentSession {
       return true;
     }
     return false;
+  }
+
+  private observeFollowUpsSentinelEvent(ev: NormalizedEvent): void {
+    if (
+      !this.followUpsHookPocEnabled
+      || this.followUpsExperimentMode !== 'sentinel'
+      || this.followUpsSentinelsCompleteThisTurn
+      || ev.kind !== 'chunk'
+    ) return;
+    this.followUpsSentinelTail = `${this.followUpsSentinelTail}${ev.text}`.slice(-12_000);
+    this.followUpsSentinelsCompleteThisTurn =
+      /\[FOLLOW-UP\s+3\s*\/\s*3\s*:\s*[^\]\r\n]*\]/i.test(this.followUpsSentinelTail);
   }
 
   private completeFollowUpsOutputBoundaryFromEnvelope(
@@ -830,7 +867,7 @@ export class ClaudeSession implements AgentSession {
       this.followUpsSuppressedChunkEvents > 0 ||
       this.followUpsSuppressedThoughtEvents > 0
     )) {
-      log.info('chat', 'claude follow-ups hook poc repair output suppressed', {
+      log.info('chat', 'claude follow-ups hook poc hidden metadata output suppressed', {
         nodeId: this.nodeId,
         sessionId: this.id,
         chunks: this.followUpsSuppressedChunkEvents,
@@ -842,6 +879,9 @@ export class ClaudeSession implements AgentSession {
     this.followUpsSuppressedChunkEvents = 0;
     this.followUpsSuppressedThoughtEvents = 0;
     this.followUpsOutputBoundaryPending = false;
+    this.followUpsSentinelTail = '';
+    this.followUpsSentinelsCompleteThisTurn = false;
+    this.followUpsSilentOverviewTail = false;
   }
 
   private logFollowUpsHookEnvelope(envelope: Record<string, unknown>): void {

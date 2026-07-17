@@ -1,3 +1,5 @@
+import { followUpReminder, type MetadataOutputMode } from './preamble';
+
 export const FOLLOW_UPS_EXPERIMENT_MODE_ENV = 'MICHI_FOLLOW_UPS_EXPERIMENT_MODE';
 
 export type FollowUpsExperimentMode = 'sentinel' | 'hook-tool';
@@ -26,3 +28,29 @@ export const FOLLOW_UPS_SENTINEL_TURN_REMINDER = `
 [FOLLOW-UP 2/3: a concise next question written in the user's voice and language]
 [FOLLOW-UP 3/3: a concise next question written in the user's voice and language]
 The questions are what the user would ask you next, not questions you ask the user. Do not omit the closing brackets.]`;
+
+/**
+ * Select the per-turn reminder without leaking the legacy sentinel protocol
+ * into structured tool mode. Native runtimes share this helper so Claude and
+ * Codex cannot drift back into generating both metadata forms.
+ */
+export function followUpsTurnReminder(
+  userTurnCount: number,
+  hookPocEnabled: boolean,
+  mode: FollowUpsExperimentMode,
+): string {
+  if (hookPocEnabled) {
+    return mode === 'sentinel' ? FOLLOW_UPS_SENTINEL_TURN_REMINDER : '';
+  }
+  return followUpReminder(userTurnCount, true);
+}
+
+export function followUpsMetadataOutputMode(
+  hookPocEnabled: boolean,
+  mode: FollowUpsExperimentMode,
+): MetadataOutputMode {
+  if (!hookPocEnabled) return 'sentinel';
+  return mode === 'hook-tool'
+    ? 'structured-tool'
+    : 'sentinel-followups-tool-overview';
+}

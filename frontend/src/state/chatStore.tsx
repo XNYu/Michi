@@ -146,6 +146,18 @@ export type {
  */
 export const CHATS_WORKSPACE_ID = 'chats-default';
 
+async function waitForNodeTurnEnd(
+  nodesRef: { current: Record<string, ChatNodeState> },
+  nodeId: string,
+): Promise<void> {
+  while (
+    nodesRef.current[nodeId]?.status === 'streaming'
+    || !!nodesRef.current[nodeId]?.backgroundTurnAssistantId
+  ) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 /**
  * High-frequency action types that throttle React renders to one per animation
  * frame and DO NOT advance the structure version. Streamed token / heartbeat /
@@ -1556,6 +1568,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       // Auto-open in a pane so it's visible in the dashboard view immediately.
       setOpenPanes((prev) => (prev.includes(nodeId) ? prev : [...prev, nodeId]));
       setFocusedPane(nodeId);
+      // The third body-generated follow-up makes the parent visibly complete,
+      // but its hidden overview tool may still be finishing. Create/focus the
+      // child immediately, then wait for the parent session history to settle
+      // before forking so the child receives the complete answer context.
+      if (parent.backgroundTurnAssistantId) {
+        await waitForNodeTurnEnd(nodesRef, parentNodeId);
+      }
       // Pass the original digest parent through to startStream so the digest
       // content lands as a preamble even though we re-anchored the branch edge.
       void startStream(

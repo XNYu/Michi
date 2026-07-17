@@ -14,16 +14,31 @@ Required final answer metadata:
   write the first line before any prose as a single line of the form:
       [TITLE: 4-8 word summary]
   on its own line. The UI strips this line and renders it as the thread title.
-- Near the end of the final answer, immediately before any follow-up sentinels,
+{{BRANCH_OVERVIEW_INSTRUCTIONS}}
+{{METADATA_SCOPE_INSTRUCTIONS}}
+{{FOLLOW_UPS_INSTRUCTIONS}}`;
+
+const BRANCH_OVERVIEW_SENTINEL_INSTRUCTION = `- Near the end of the final answer, immediately before any follow-up sentinels,
   write one single-line overview of the branch in this form:
       [BRANCH-OVERVIEW: 1-3 concise sentences describing what this branch is about and where it currently stands]
   Keep it factual and useful when read later without the conversation. Match the
   user's language. Use inline Markdown if helpful, but no headings, lists, or closing square bracket.
-  The UI strips this line and renders it in the Branches document.
-- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,
+  The UI strips this line and renders it in the Branches document.`;
+
+const SENTINEL_METADATA_SCOPE_INSTRUCTION = `- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,
   progress/status updates, tool plans, or any message before you are ready to
-  deliver the final answer.
-{{FOLLOW_UPS_INSTRUCTIONS}}`;
+  deliver the final answer.`;
+
+const HYBRID_METADATA_SCOPE_INSTRUCTION = `- Do not emit [TITLE:] or [FOLLOW-UP n/3:] sentinel lines in commentary,
+  progress/status updates, tool plans, or any message before you are ready to
+  deliver the final answer. Never emit a [BRANCH-OVERVIEW:] sentinel; the
+  runtime supplies the overview through a hidden metadata tool.`;
+
+const STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION = `- Provide the durable branch overview through the runtime's structured metadata tool.
+  Follow the runtime-specific tool instructions and do not duplicate the overview in the visible answer.`;
+
+const STRUCTURED_METADATA_SCOPE_INSTRUCTION = `- Do not emit title metadata in commentary, progress/status updates, tool plans,
+  or any message before you are ready to deliver the final answer.`;
 
 const FOLLOW_UPS_INSTRUCTION = `- LAST, end your final answer with three lines of the form:
       [FOLLOW-UP 1/3: question 1]
@@ -70,6 +85,10 @@ const FOLLOW_UPS_INSTRUCTION = `- LAST, end your final answer with three lines o
 
 const FOLLOW_UPS_DISABLED = `- Follow-ups are DISABLED for this thread. Do NOT emit [FOLLOW-UP n/3:] or [FOLLOW-UPS:] sentinel lines.`;
 
+const STRUCTURED_FOLLOW_UPS_INSTRUCTION = `- Provide exactly three concise follow-up questions through the runtime's structured metadata tool.
+  Write them from the user's point of view and in the user's language. One question should drill deeper into the answer;
+  the other two should approach it from unexpected or devil's-advocate angles. Do not duplicate them in the visible answer.`;
+
 const CONTEXT_MANIFEST_HEADER = `\nWorkspace context files available (read with your filesystem tools when relevant; the user can also @-mention to inject contents directly):`;
 
 const USER_SPEAK_TAIL = `\nThe user will now speak.\n`;
@@ -94,27 +113,53 @@ export function followUpReminder(userTurnCount: number, enableFollowUps: boolean
     return "";
 }
 
-function renderHead(enableFollowUps: boolean): string {
-    const followUpsLine = enableFollowUps ? FOLLOW_UPS_INSTRUCTION : FOLLOW_UPS_DISABLED;
-    return PREAMBLE_TEMPLATE.replace("{{FOLLOW_UPS_INSTRUCTIONS}}", followUpsLine);
+export type MetadataOutputMode =
+    | 'sentinel'
+    | 'sentinel-followups-tool-overview'
+    | 'structured-tool';
+
+function renderHead(
+    enableFollowUps: boolean,
+    metadataOutputMode: MetadataOutputMode = 'sentinel',
+): string {
+    const structured = metadataOutputMode === 'structured-tool';
+    const toolOverview = metadataOutputMode !== 'sentinel';
+    const branchOverviewLine = toolOverview
+        ? STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION
+        : BRANCH_OVERVIEW_SENTINEL_INSTRUCTION;
+    const metadataScopeLine = structured
+        ? STRUCTURED_METADATA_SCOPE_INSTRUCTION
+        : toolOverview
+            ? HYBRID_METADATA_SCOPE_INSTRUCTION
+            : SENTINEL_METADATA_SCOPE_INSTRUCTION;
+    const followUpsLine = enableFollowUps
+        ? structured ? STRUCTURED_FOLLOW_UPS_INSTRUCTION : FOLLOW_UPS_INSTRUCTION
+        : FOLLOW_UPS_DISABLED;
+    return PREAMBLE_TEMPLATE
+        .replace("{{BRANCH_OVERVIEW_INSTRUCTIONS}}", branchOverviewLine)
+        .replace("{{METADATA_SCOPE_INSTRUCTIONS}}", metadataScopeLine)
+        .replace("{{FOLLOW_UPS_INSTRUCTIONS}}", followUpsLine);
 }
 
 /**
  * Stable system prompt — fed to claude via `--append-system-prompt` at spawn time.
  *
- * MUST be a pure constant so warm-pool entries share byte-identical spawn args
- * (otherwise the pool key `(cwd, model)` is not well-defined). Always includes
- * the FOLLOW_UPS_INSTRUCTION variant; chats that don't want follow-ups in the
- * UI gate at render time (frontend pref), not in the system prompt.
+ * MUST be pure for a given metadata mode so warm-pool entries share
+ * byte-identical spawn args (otherwise the pool key `(cwd, model)` is not
+ * well-defined). The mode is process-wide for the native runtime experiment.
  */
-export function buildStableSystemPrompt(): string {
-    return buildMetadataSystemPrompt() + ASK_USER_INSTRUCTION;
+export function buildStableSystemPrompt(
+    metadataOutputMode: MetadataOutputMode = 'sentinel',
+): string {
+    return buildMetadataSystemPrompt(metadataOutputMode) + ASK_USER_INSTRUCTION;
 }
 
 /** Stable metadata-only prompt for runtimes whose custom-agent layer cannot
  * use Michi's structured ask_user tool. */
-export function buildMetadataSystemPrompt(): string {
-    return renderHead(true);
+export function buildMetadataSystemPrompt(
+    metadataOutputMode: MetadataOutputMode = 'sentinel',
+): string {
+    return renderHead(true, metadataOutputMode);
 }
 
 export interface FirstTurnPrefixInput {

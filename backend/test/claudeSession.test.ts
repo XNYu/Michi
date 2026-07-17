@@ -11,6 +11,7 @@ import { EventEmitter, PassThrough } from 'node:stream';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { buildStableSystemPrompt } from '../src/agents/preamble';
 
 // ---- MockClaudeChild --------------------------------------------------------
 
@@ -963,6 +964,7 @@ describe('ClaudeSession', () => {
     const session = new ClaudeSession('session-hook-poc', makeSessionDeps({
       nodeId: 'node-hook-poc',
       mcpRegistry: registry as any,
+      systemPromptAppend: buildStableSystemPrompt('structured-tool'),
     }) as any);
 
     try {
@@ -970,9 +972,12 @@ describe('ClaudeSession', () => {
       const spawnArgs = capturedSpawnArgs[0] as Record<string, unknown>;
       assert.equal(spawnArgs.includeHookEvents, true);
       assert.equal(spawnArgs.bare, false);
+      assert.match(String(spawnArgs.mcpConfigInline), /"alwaysLoad":true/);
       assert.match(String(spawnArgs.settingsInline), /validate_turn_metadata/);
       assert.match(String(spawnArgs.systemPromptAppend), /set_branch_overview/);
       assert.match(String(spawnArgs.systemPromptAppend), /set_follow_ups/);
+      assert.doesNotMatch(String(spawnArgs.systemPromptAppend), /\[FOLLOW-UP/);
+      assert.doesNotMatch(String(spawnArgs.systemPromptAppend), /\[BRANCH-OVERVIEW:/);
 
       child.send({
         type: 'system',
@@ -1078,7 +1083,7 @@ describe('ClaudeSession', () => {
         [{ role: 'assistant', content: 'original answer' }],
       );
       const suppressionLogs = infoSpy.mock.calls.filter(
-        (call) => call.arguments[1] === 'claude follow-ups hook poc repair output suppressed',
+        (call) => call.arguments[1] === 'claude follow-ups hook poc hidden metadata output suppressed',
       );
       assert.deepEqual(suppressionLogs.map((call) => call.arguments[2]), [{
         nodeId: 'node-hook-poc',
@@ -1114,6 +1119,8 @@ describe('ClaudeSession', () => {
 
     try {
       await session.spawnFresh();
+      const spawnArgs = capturedSpawnArgs[0] as Record<string, unknown>;
+      assert.match(String(spawnArgs.mcpConfigInline), /"alwaysLoad":true/);
       const callbacks = registry.createdCallbacks[0];
       assert.equal(callbacks.onSetFollowUps, undefined);
       assert.equal(typeof callbacks.onSetBranchOverview, 'function');
@@ -1136,12 +1143,18 @@ describe('ClaudeSession', () => {
       assert.match(prompt, /FOLLOW-UP 1\/3/);
       assert.match(prompt, /FOLLOW-UP 3\/3/);
 
+      child.emitChunk('answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]');
+      await new Promise<void>((resolve) => setImmediate(resolve));
       callbacks.onSetBranchOverview('Sentinel experiment overview.');
       assert.deepEqual(callbacks.onValidateFollowUps(), {});
-      child.emitChunk('answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]');
+      child.emitChunk('SHOULD STAY HIDDEN');
       child.emitResult('success');
       const events = await turnPromise;
       assert.equal(events.some((event) => event.kind === 'follow_ups'), false);
+      assert.deepEqual(
+        events.filter((event) => event.kind === 'chunk').map((event) => event.text),
+        ['answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]'],
+      );
       assert.equal(events.some((event) => event.kind === 'turn_end'), true);
     } finally {
       if (previous === undefined) delete process.env.MICHI_CLAUDE_FOLLOW_UPS_HOOK_POC;

@@ -5,6 +5,7 @@ import {
   appendToolBlock,
   appendUserInputBlock,
   assistantMetadata,
+  finalizeAssistantBlocks,
   projectAssistantStreamEvent,
   nextToolBlockPlacement,
 } from './assistantBlocks';
@@ -279,6 +280,7 @@ export function reduceNodes(
           error: undefined,
           followUps: [],
           followUpsGenerating: false,
+          visibleResponseComplete: false,
           subagents: undefined,
           usageSummary: undefined,
           mcpServerError: undefined,
@@ -310,6 +312,7 @@ export function reduceNodes(
             status: 'streaming',
             streamingStartedAt: n.streamingStartedAt ?? Date.now(),
             error: undefined,
+            visibleResponseComplete: false,
             lastAppliedTurnId: action.turnId,
             lastAppliedSeq: Math.max(n.lastAppliedSeq ?? 0, 0),
           },
@@ -356,6 +359,7 @@ export function reduceNodes(
           error: undefined,
           followUps: [],
           followUpsGenerating: false,
+          visibleResponseComplete: false,
           subagents: undefined,
           usageSummary: undefined,
           mcpServerError: undefined,
@@ -410,6 +414,7 @@ export function reduceNodes(
         ...nodes,
         [action.nodeId]: {
           ...n,
+          visibleResponseComplete: false,
           messages: msgs,
           lastAppliedTurnId: undefined,
           lastAppliedSeq: undefined,
@@ -507,6 +512,10 @@ export function reduceNodes(
     case 'done': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
+      const latestAssistantId = [...n.messages]
+        .reverse()
+        .find((message) => message.role === 'assistant')?.id;
+      const isLatestAssistantTurn = latestAssistantId === action.assistantId;
       let extractedTitle: string | null = null;
       let extractedBranchOverview: string | null = null;
       let extractedFollowUps: string[] = [];
@@ -521,6 +530,23 @@ export function reduceNodes(
           data: { stopReason: 'end_turn', persisted: true },
         });
       });
+      // A new user turn may start while the previous turn drains its hidden
+      // overview tail. Finalize only that older assistant message; its late
+      // done must not flip the new foreground turn to idle or clear its state.
+      if (!isLatestAssistantTurn) {
+        return {
+          ...nodes,
+          [action.nodeId]: {
+            ...n,
+            messages: msgs,
+            lastAssistantAt: Date.now(),
+            backgroundTurnAssistantId:
+              n.backgroundTurnAssistantId === action.assistantId
+                ? undefined
+                : n.backgroundTurnAssistantId,
+          },
+        };
+      }
       // Lock the title once it exists — only fill it in if this is the
       // first turn (no title yet). See `set-title` for the same rule on
       // mid-stream title updates.
@@ -531,6 +557,11 @@ export function reduceNodes(
         [action.nodeId]: {
           ...n,
           status: 'idle',
+          visibleResponseComplete: false,
+          backgroundTurnAssistantId:
+            n.backgroundTurnAssistantId === action.assistantId
+              ? undefined
+              : n.backgroundTurnAssistantId,
           streamingStartedAt: undefined,
           error: undefined,
           streamingIdleMs: undefined,
@@ -557,19 +588,48 @@ export function reduceNodes(
     case 'error': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
+      const isBackgroundMetadataTail =
+        n.backgroundTurnAssistantId === action.assistantId;
       const msgs = n.messages.map((m) =>
         m.id === action.assistantId
-          ? projectAssistantStreamEvent(m, n.projectId, {
-              event: CHAT_STREAM_EVENTS.error,
-              data: { message: action.message },
-            })
+          ? projectAssistantStreamEvent(
+              m,
+              n.projectId,
+              isBackgroundMetadataTail
+                ? {
+                    event: CHAT_STREAM_EVENTS.done,
+                    data: { stopReason: 'end_turn', persisted: true },
+                  }
+                : {
+                    event: CHAT_STREAM_EVENTS.error,
+                    data: { message: action.message },
+                  },
+            )
           : m,
       );
+      // Hidden Overview failure must not invalidate an already-complete
+      // visible answer. If a newer turn has started, preserve all of its
+      // foreground status as well.
+      if (isBackgroundMetadataTail) {
+        return {
+          ...nodes,
+          [action.nodeId]: {
+            ...n,
+            status: n.status === 'error' ? 'idle' : n.status,
+            visibleResponseComplete:
+              n.status === 'idle' ? false : n.visibleResponseComplete,
+            backgroundTurnAssistantId: undefined,
+            messages: msgs,
+            followUpsGenerating: false,
+          },
+        };
+      }
       return {
         ...nodes,
         [action.nodeId]: {
           ...n,
           status: 'error',
+          visibleResponseComplete: false,
           streamingStartedAt: undefined,
           error: action.message,
           messages: msgs,
@@ -631,6 +691,7 @@ export function reduceNodes(
         [action.nodeId]: {
           ...n,
           status: 'idle',
+          visibleResponseComplete: false,
           streamingStartedAt: undefined,
           error: undefined,
           streamingIdleMs: undefined,
@@ -973,6 +1034,29 @@ export function reduceNodes(
           // in_progress status remain false here.
           followUpsGenerating: n.followUpsGenerating ?? false,
           followUpsSourceMessageId: lastAssistant?.id,
+        },
+      };
+    }
+    case 'visible-response-complete': {
+      const n = nodes[action.nodeId];
+      if (!n || n.status !== 'streaming' || n.visibleResponseComplete) return nodes;
+      let matched = false;
+      const messages = n.messages.map((message) => {
+        if (message.id !== action.assistantId || message.role !== 'assistant') return message;
+        matched = true;
+        return finalizeAssistantBlocks(message);
+      });
+      if (!matched) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          status: 'idle',
+          visibleResponseComplete: true,
+          backgroundTurnAssistantId: action.assistantId,
+          streamingStartedAt: undefined,
+          streamingIdleMs: undefined,
+          messages,
         },
       };
     }

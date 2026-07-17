@@ -113,6 +113,33 @@ describe('chatStreamRunner — chunk/tool-call ordering', () => {
     expect(tcs[0].textOffset).toBe(6); // after 'first '
     expect(tcs[1].textOffset).toBe(13); // after 'first second ' (raw, no \n\n)
   });
+
+  it('an older hidden tail cannot clear the cancel handle for a newer turn', () => {
+    const firstCancel = vi.fn();
+    const secondCancel = vi.fn();
+    mockStream
+      .mockImplementationOnce(() => firstCancel)
+      .mockImplementationOnce(() => secondCancel);
+    const cancels = { current: {} as Record<string, () => void> };
+    const common = {
+      chatId: 'c1',
+      prompt: 'hi',
+      nodeId: 'n1',
+      dispatch: vi.fn(),
+      assistantTextBufs: { current: {} as Record<string, string> },
+      cancelFns: cancels,
+    };
+
+    const returnedFirst = runChatStream({ ...common, assistantId: 'a1' });
+    cancels.current.n1 = returnedFirst;
+    const firstHandlers = mockStream.mock.calls[0][2];
+
+    const returnedSecond = runChatStream({ ...common, assistantId: 'a2' });
+    cancels.current.n1 = returnedSecond;
+
+    firstHandlers.onDone('end_turn');
+    expect(cancels.current.n1).toBe(secondCancel);
+  });
 });
 
 describe('chatStreamRunner — incremental follow-up sentinels', () => {
@@ -124,7 +151,7 @@ describe('chatStreamRunner — incremental follow-up sentinels', () => {
     vi.useRealTimers();
   });
 
-  it('dispatches follow-ups one at a time as each sentinel closes', () => {
+  it('dispatches follow-ups incrementally and completes visible output only after the third sentinel', () => {
     const dispatched: ChatAction[] = [];
     const bufs = { current: {} as Record<string, string> };
     const cancels = { current: {} as Record<string, () => void> };
@@ -142,6 +169,8 @@ describe('chatStreamRunner — incremental follow-up sentinels', () => {
     const handlers = mockStream.mock.calls[0][2];
     handlers.onChunk('Answer.\n\n[FOLLOW-UP 1');
     handlers.onChunk('/3: Why this path?]\n[FOLLOW-UP 2/3: What could go wrong?]');
+    expect(dispatched.some((a) => a.type === 'visible-response-complete')).toBe(false);
+    handlers.onChunk('\n[FOLLOW-UP 3/3: What is the contrarian view?]');
     vi.runAllTimers();
 
     const followUpActions = dispatched.filter((a) => a.type === 'set-follow-ups');
@@ -152,13 +181,29 @@ describe('chatStreamRunner — incremental follow-up sentinels', () => {
         nodeId: 'n1',
         followUps: ['Why this path?', 'What could go wrong?'],
       },
+      {
+        type: 'set-follow-ups',
+        nodeId: 'n1',
+        followUps: ['Why this path?', 'What could go wrong?', 'What is the contrarian view?'],
+      },
+    ]);
+    expect(dispatched.filter((a) => a.type === 'visible-response-complete')).toEqual([
+      { type: 'visible-response-complete', nodeId: 'n1', assistantId: 'a1' },
     ]);
 
     let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
     for (const a of dispatched) nodes = reduceNodes(nodes, a);
-    expect(nodes.n1.followUps).toEqual(['Why this path?', 'What could go wrong?']);
+    expect(nodes.n1.followUps).toEqual([
+      'Why this path?',
+      'What could go wrong?',
+      'What is the contrarian view?',
+    ]);
+    expect(nodes.n1.visibleResponseComplete).toBe(true);
+    expect(nodes.n1.status).toBe('idle');
+    expect(nodes.n1.backgroundTurnAssistantId).toBe('a1');
+    expect(nodes.n1.messages[0].streaming).toBe(false);
     expect(assistantAnswerRawText(nodes.n1.messages[0])).toBe(
-      'Answer.\n\n[FOLLOW-UP 1/3: Why this path?]\n[FOLLOW-UP 2/3: What could go wrong?]',
+      'Answer.\n\n[FOLLOW-UP 1/3: Why this path?]\n[FOLLOW-UP 2/3: What could go wrong?]\n[FOLLOW-UP 3/3: What is the contrarian view?]',
     );
   });
 
@@ -184,6 +229,11 @@ describe('chatStreamRunner — incremental follow-up sentinels', () => {
       type: 'set-follow-ups',
       nodeId: 'n1',
       followUps: ['a?', 'b?', 'c?'],
+    });
+    expect(dispatched).toContainEqual({
+      type: 'visible-response-complete',
+      nodeId: 'n1',
+      assistantId: 'a1',
     });
   });
 });

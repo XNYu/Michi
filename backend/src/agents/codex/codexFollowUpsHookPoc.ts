@@ -23,16 +23,23 @@ export function buildCodexFollowUpsHookPocInstruction(
   const followUpsInstruction = mode === 'hook-tool'
     ? `- Before ending every real user turn, call mcp____michi_internal____set_follow_ups exactly once.
 - Pass {"follow_ups":["...","...","..."]}: exactly three concise questions written in the user's voice and language.
-- Keep emitting the existing [FOLLOW-UP n/3: ...] sentinel lines as a fallback during this control mode.`
+- The structured tool call is canonical. Do not duplicate the follow-ups as textual fallback metadata.`
     : `- Do not call set_follow_ups. Follow-ups are delivered only through the three [FOLLOW-UP n/3: ...] sentinel lines.
-- A strict sentinel reminder is appended to every real user turn.`;
+- A strict sentinel reminder is appended to every real user turn.
+- Emit all three follow-up sentinel lines before calling set_branch_overview.`;
+
+  const overviewFallbackInstruction = mode === 'hook-tool'
+    ? '- The structured overview tool call is canonical. Do not duplicate the overview as textual fallback metadata.'
+    : `- Never emit a [BRANCH-OVERVIEW: ...] sentinel or put the overview in visible answer text.
+- Call set_branch_overview only after [FOLLOW-UP 3/3: ...] has been emitted and closed.
+- After the set_branch_overview tool result, emit no more visible text. The overview tail is background metadata work.`;
 
   return `
 
 Codex Stop-hook POC — structured turn metadata:
 - Before ending every real user turn, call mcp____michi_internal____set_branch_overview exactly once.
 - Pass {"overview":"..."}: 1-3 concise sentences describing what this branch is about and where it currently stands, matching the user's language.
-- Keep emitting the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.
+${overviewFallbackInstruction}
 ${followUpsInstruction}
 - Do not call the Stop-hook validator yourself; Michi invokes it automatically.`;
 }

@@ -56,4 +56,10 @@ describe('claudeMcpConfig', () => {
     const parsed = JSON.parse(json);
     assert.equal(parsed.mcpServers[MICHI_INTERNAL_MCP_NAME].type, 'http');
   });
+
+  test('can eagerly load only the Michi MCP server for metadata Hook modes', () => {
+    const json = buildClaudeMcpConfig('slot-eager', 3000, { alwaysLoad: true });
+    const parsed = JSON.parse(json);
+    assert.equal(parsed.mcpServers[MICHI_INTERNAL_MCP_NAME].alwaysLoad, true);
+  });
 });

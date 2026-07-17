@@ -107,7 +107,12 @@ export default function TerminalTopbar({
     shallowArrayEqual,
   );
   const paneStatuses = useStructuralSelector(
-    (nodesMap) => openPanes.map((id) => nodesMap[id]?.status ?? 'idle'),
+    (nodesMap) => openPanes.map((id) => {
+      const node = nodesMap[id];
+      return node?.status === 'streaming' && node.visibleResponseComplete
+        ? 'idle'
+        : node?.status ?? 'idle';
+    }),
     shallowArrayEqual,
   );
   const paneKinds = useStructuralSelector(

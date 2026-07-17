@@ -34,8 +34,10 @@ describe('Claude follow-ups Stop-hook POC config', () => {
   test('defaults to sentinel follow-ups while keeping Overview in the Hook', () => {
     assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /set_branch_overview/);
     assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /Do not call set_follow_ups/);
-    assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /BRANCH-OVERVIEW/);
+    assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /Never emit a \[BRANCH-OVERVIEW/);
     assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /FOLLOW-UP n\/3/);
+    assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /after \[FOLLOW-UP 3\/3/);
+    assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /emit no more visible text/);
     assert.match(CLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION, /validate_turn_metadata/);
   });
 
@@ -43,5 +45,10 @@ describe('Claude follow-ups Stop-hook POC config', () => {
     const instruction = buildClaudeFollowUpsHookPocInstruction('hook-tool');
     assert.match(instruction, /call the MCP tool .*set_follow_ups/);
     assert.doesNotMatch(instruction, /Do not call set_follow_ups/);
+    assert.match(instruction, /Do not duplicate the follow-ups/);
+    assert.match(instruction, /Do not duplicate the overview/);
+    assert.doesNotMatch(instruction, /\[FOLLOW-UP/);
+    assert.doesNotMatch(instruction, /\[BRANCH-OVERVIEW:/);
+    assert.doesNotMatch(instruction, /Keep emitting the existing/);
   });
 });

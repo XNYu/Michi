@@ -254,6 +254,19 @@ export interface ChatNodeState {
    * Not persisted.
    */
   followUpsGenerating?: boolean;
+  /**
+   * Transient UI boundary: all three body-generated follow-up sentinels have
+   * arrived, so the user-facing answer is complete even though the backend
+   * turn may still be finishing hidden overview metadata work.
+   */
+  visibleResponseComplete?: boolean;
+  /**
+   * Assistant turn that is still draining hidden metadata after the visible
+   * response has completed. The node itself is idle/user-interactive while
+   * this is set; it exists only to keep a late done/error from an older turn
+   * from overwriting a newer foreground turn. Not persisted.
+   */
+  backgroundTurnAssistantId?: string;
   /** Title parsed from the agent's reply. null/undefined falls back to first user msg. */
   title?: string;
   /** Transient marker for titles created by a user/domain action. Runtime titles
@@ -584,6 +597,7 @@ export type ChatAction =
   | { type: 'set-branch-overview'; nodeId: string; overview: string; assistantId?: string }
   | { type: 'rename-node'; nodeId: string; title: string }
   | { type: 'set-follow-ups'; nodeId: string; followUps: string[] }
+  | { type: 'visible-response-complete'; nodeId: string; assistantId: string }
   | { type: 'follow-ups-status'; nodeId: string; status: 'in_progress' | 'completed' | 'failed' }
   | { type: 'set-commands'; nodeId: string; commands: AgentCommand[] }
   | { type: 'set-current-mode'; nodeId: string; currentModeId: string }

@@ -82,6 +82,10 @@ export function runChatStream({
   // projection (sentinel stripping) is render-time work.
   let bracketHold = '';
   let titleDispatched = false;
+  let visibleResponseCompleteDispatched = false;
+  let currentAssistantId = assistantId;
+  let currentTurnId = '';
+  let streamCancel: (() => void) | null = null;
   const streamedFollowUps: string[] = [];
   const MAX_BRACKET_HOLD = 4096; // safety cap for malformed / unclosed brackets
 
@@ -92,6 +96,17 @@ export function runChatStream({
       .slice(0, 3);
     if (followUps.length > 0) {
       dispatch({ type: 'set-follow-ups', nodeId, followUps });
+    }
+    const completeSet = [0, 1, 2].every(
+      (index) => streamedFollowUps[index]?.trim().length > 0,
+    );
+    if (completeSet && !visibleResponseCompleteDispatched) {
+      visibleResponseCompleteDispatched = true;
+      dispatch({
+        type: 'visible-response-complete',
+        nodeId,
+        assistantId: currentAssistantId,
+      });
     }
   };
 
@@ -121,10 +136,17 @@ export function runChatStream({
   };
 
   const cleanup = () => {
-    delete cancelFns.current[nodeId];
+    if (streamCancel && cancelFns.current[nodeId] === streamCancel) {
+      delete cancelFns.current[nodeId];
+    }
   };
 
-  let currentAssistantId = assistantId;
+  const trackSeq = (seq?: number, turnId?: string): void => {
+    if (turnId) currentTurnId = turnId;
+    if (typeof seq === 'number' && currentTurnId) {
+      dispatch({ type: 'apply-seq', nodeId, turnId: currentTurnId, seq });
+    }
+  };
 
   const handlers: StreamHandlers = {
     onTurnStart: (data) => {
@@ -274,8 +296,9 @@ export function runChatStream({
     ...extraHandlers,
   };
 
-  return streamMessage(chatId, prompt, handlers, requestNodeId, ownerToken, {
+  streamCancel = streamMessage(chatId, prompt, handlers, requestNodeId, ownerToken, {
     displayText,
     userMetadata,
   });
+  return streamCancel;
 }

@@ -124,6 +124,46 @@ test('send streams chunks and ends on turn/completed; history is recorded', asyn
   assert.equal(history[1].content, 'Hello world');
 });
 
+test('internal Michi metadata tool calls never enter the visible event stream', async () => {
+  const { session, client } = makeSession();
+  const events: Array<{ kind: string; title?: string }> = [];
+  const turnPromise = (async () => {
+    for await (const ev of session.send('hello')) {
+      events.push(ev as { kind: string; title?: string });
+    }
+  })();
+
+  await new Promise((r) => setImmediate(r));
+  client._emit('thread-1', 'item/started', {
+    item: {
+      id: 'metadata-tool-1',
+      type: 'mcpToolCall',
+      server: '__michi_internal__',
+      tool: 'michi_internal____set_branch_overview',
+      status: 'inProgress',
+      arguments: { overview: 'hidden' },
+    },
+  });
+  client._emit('thread-1', 'item/completed', {
+    item: {
+      id: 'metadata-tool-1',
+      type: 'mcpToolCall',
+      server: '__michi_internal__',
+      tool: 'michi_internal____set_branch_overview',
+      status: 'completed',
+      result: { content: [] },
+    },
+  });
+  client._emit('thread-1', 'turn/completed', {
+    threadId: 'thread-1',
+    turn: { status: 'completed' },
+  });
+
+  await turnPromise;
+  assert.equal(events.some((event) => event.kind === 'tool_call'), false);
+  assert.equal(events.some((event) => event.kind === 'tool_call_update'), false);
+});
+
 test('cancel issues turn/interrupt', async () => {
   const requests: string[] = [];
   let resolveTurnStart!: () => void;
@@ -392,8 +432,9 @@ test('Codex sentinel experiment reminds every turn and Hook requires only Overvi
   session.createMcpSlot();
   session.wireNotifications();
 
+  const emitted: Array<Record<string, unknown>> = [];
   const turnPromise = (async () => {
-    for await (const _event of session.send('hello')) { /* drain */ }
+    for await (const event of session.send('hello')) emitted.push(event as unknown as Record<string, unknown>);
   })();
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -404,14 +445,26 @@ test('Codex sentinel experiment reminds every turn and Hook requires only Overvi
   assert.match(prompt, /FOLLOW-UP 1\/3/);
   assert.match(prompt, /FOLLOW-UP 3\/3/);
   assert.equal(callbacks.onSetFollowUps, undefined);
+  (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
+    threadId: 'thread-sentinel',
+    delta: 'answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]',
+  });
   callbacks.onSetBranchOverview('Sentinel experiment overview.');
   assert.deepEqual(callbacks.onValidateFollowUps(), {});
+  (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
+    threadId: 'thread-sentinel',
+    delta: 'SHOULD STAY HIDDEN',
+  });
 
   (client as any)._emit('thread-sentinel', 'turn/completed', {
     threadId: 'thread-sentinel',
     turn: { status: 'completed' },
   });
   await turnPromise;
+  assert.deepEqual(
+    emitted.filter((event) => event.kind === 'chunk').map((event) => event.text),
+    ['answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]'],
+  );
 });
 
 test('Codex follow-ups Hook POC fails open after one missing repair attempt', async () => {

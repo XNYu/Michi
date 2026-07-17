@@ -27,6 +27,70 @@ describe('reduceNodes done — unread', () => {
   });
 });
 
+describe('reduceNodes visible-response-complete', () => {
+  it('makes the node interactive while tracking the hidden backend tail separately', () => {
+    const before = {
+      n1: makeNode({
+        messages: [{
+          id: 'a1',
+          role: 'assistant',
+          text: '',
+          toolCalls: [],
+          blocks: [{ id: 'a1-b-0', kind: 'answer', rawText: 'Answer', streaming: true }],
+          streaming: true,
+          createdAt: 1,
+        }],
+      }),
+    };
+    const after = reduceNodes(before, {
+      type: 'visible-response-complete',
+      nodeId: 'n1',
+      assistantId: 'a1',
+    });
+    expect(after.n1.status).toBe('idle');
+    expect(after.n1.visibleResponseComplete).toBe(true);
+    expect(after.n1.backgroundTurnAssistantId).toBe('a1');
+    expect(after.n1.messages[0].streaming).toBe(false);
+    expect(after.n1.messages[0].blocks?.[0]).toMatchObject({ streaming: false });
+  });
+
+  it('actual done clears the transient boundary and finalizes normally', () => {
+    const visibleDone = reduceNodes({ n1: makeNode() }, {
+      type: 'visible-response-complete',
+      nodeId: 'n1',
+      assistantId: 'a1',
+    });
+    const after = reduceNodes(visibleDone, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
+    expect(after.n1.status).toBe('idle');
+    expect(after.n1.visibleResponseComplete).toBe(false);
+    expect(after.n1.backgroundTurnAssistantId).toBeUndefined();
+  });
+
+  it('does not let a hidden older done end a newer foreground turn', () => {
+    const visibleDone = reduceNodes({ n1: makeNode() }, {
+      type: 'visible-response-complete',
+      nodeId: 'n1',
+      assistantId: 'a1',
+    });
+    const withNextTurn = reduceNodes(visibleDone, {
+      type: 'user-send',
+      nodeId: 'n1',
+      userText: 'next question',
+      assistantId: 'a2',
+    });
+    const afterOldDone = reduceNodes(withNextTurn, {
+      type: 'done',
+      nodeId: 'n1',
+      assistantId: 'a1',
+    });
+
+    expect(afterOldDone.n1.status).toBe('streaming');
+    expect(afterOldDone.n1.backgroundTurnAssistantId).toBeUndefined();
+    expect(afterOldDone.n1.messages.at(-1)?.id).toBe('a2');
+    expect(afterOldDone.n1.messages.at(-1)?.streaming).toBe(true);
+  });
+});
+
 describe('reduceNodes done — branch overview', () => {
   it('prefers the structured SSE overview over fallback text parsing for the same turn', () => {
     const before = {

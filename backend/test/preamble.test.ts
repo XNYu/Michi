@@ -63,6 +63,26 @@ describe('buildStableSystemPrompt', () => {
         const s = buildStableSystemPrompt();
         assert.doesNotMatch(s, /Follow-ups are DISABLED/);
     });
+
+    test('structured-tool mode contains no overview or follow-up sentinel protocol', () => {
+        const s = buildStableSystemPrompt('structured-tool');
+        assert.match(s, /runtime's structured metadata tool/);
+        assert.match(s, /\[TITLE:/);
+        assert.doesNotMatch(s, /\[FOLLOW-UP/);
+        assert.doesNotMatch(s, /\[FOLLOW-UPS:/);
+        assert.doesNotMatch(s, /\[BRANCH-OVERVIEW:/);
+        assert.doesNotMatch(s, /STRICT FORMAT RULES/);
+    });
+
+    test('hybrid mode keeps title and follow-up sentinels but removes overview from the body', () => {
+        const s = buildStableSystemPrompt('sentinel-followups-tool-overview');
+        assert.match(s, /\[TITLE:/);
+        assert.match(s, /\[FOLLOW-UP 1\/3:/);
+        assert.match(s, /STRICT FORMAT RULES/);
+        assert.match(s, /runtime's structured metadata tool/);
+        assert.match(s, /Never emit a \[BRANCH-OVERVIEW:\] sentinel/);
+        assert.doesNotMatch(s, /\[BRANCH-OVERVIEW: 1-3 concise sentences/);
+    });
 });
 
 describe('buildFirstTurnPrefix', () => {

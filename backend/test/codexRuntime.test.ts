@@ -199,7 +199,7 @@ test('Codex follow-ups Hook POC injects temporary Hook config alongside the MCP 
     makeStubBridge(),
     makeStubMcpRegistry(),
     3456,
-    { client, followUpsHookPocEnabled: true, followUpsExperimentMode: 'sentinel' },
+    { client, followUpsHookPocEnabled: true, followUpsExperimentMode: 'hook-tool' },
   );
 
   await runtime.newSession({
@@ -209,6 +209,10 @@ test('Codex follow-ups Hook POC injects temporary Hook config alongside the MCP 
   });
 
   assert.equal(capturedStartParams.length, 1);
+  const developerInstructions = String(capturedStartParams[0].developerInstructions ?? '');
+  assert.match(developerInstructions, /runtime's structured metadata tool/);
+  assert.doesNotMatch(developerInstructions, /\[FOLLOW-UP/);
+  assert.doesNotMatch(developerInstructions, /\[BRANCH-OVERVIEW:/);
   const config = capturedStartParams[0].config as Record<string, unknown>;
   assert.ok(config.mcp_servers, 'existing MCP config must be preserved');
   assert.deepEqual(config.features, { hooks: true });

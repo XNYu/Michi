@@ -3,6 +3,7 @@ import {
   isRunningStatus,
   isTerminalStatus,
   isFailedStatus,
+  isHiddenInternalTool,
   subagentToolInfo,
   prettifyToolTitle,
 } from './toolCallGrouping';
@@ -35,6 +36,17 @@ describe('status predicates', () => {
     expect(isFailedStatus('failed')).toBe(true);
     expect(isFailedStatus('completed')).toBe(false);
     expect(isFailedStatus('success')).toBe(false);
+  });
+});
+
+describe('internal metadata tool visibility', () => {
+  it('hides Codex App Server namespace titles', () => {
+    expect(isHiddenInternalTool('michi_internal____set_branch_overview')).toBe(true);
+    expect(isHiddenInternalTool('mcp____michi_internal____set_follow_ups')).toBe(true);
+  });
+
+  it('does not hide similarly named user tools without a namespace separator', () => {
+    expect(isHiddenInternalTool('reset_branch_overview')).toBe(false);
   });
 });
 

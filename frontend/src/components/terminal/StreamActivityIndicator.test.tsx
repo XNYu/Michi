@@ -38,6 +38,7 @@ function node(opts: {
   status?: ChatNodeState['status'];
   messages?: ChatMessage[];
   subagents?: SubagentInfo[];
+  visibleResponseComplete?: boolean;
 }): ChatNodeState {
   return {
     nodeId: 'n1',
@@ -48,6 +49,7 @@ function node(opts: {
     followUps: [],
     status: opts.status ?? 'streaming',
     subagents: opts.subagents,
+    visibleResponseComplete: opts.visibleResponseComplete,
   };
 }
 
@@ -55,6 +57,16 @@ describe('deriveStreamActivity', () => {
   it('returns null when not streaming', () => {
     expect(deriveStreamActivity(node({ status: 'idle' }))).toBeNull();
     expect(deriveStreamActivity(node({ status: 'error' }))).toBeNull();
+  });
+
+  it('returns null while hidden overview metadata finishes after visible completion', () => {
+    const n = node({
+      visibleResponseComplete: true,
+      messages: [assistant({
+        blocks: [{ id: 'b0', kind: 'answer', rawText: 'complete answer', streaming: false }],
+      })],
+    });
+    expect(deriveStreamActivity(n)).toBeNull();
   });
 
   it('returns null for a brand-new empty turn (in-bubble dots own it)', () => {

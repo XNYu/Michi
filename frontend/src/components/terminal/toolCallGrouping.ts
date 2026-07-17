@@ -17,18 +17,29 @@ const HIDDEN_INTERNAL_TOOLS = new Set([
   'set_title',
   'set_follow_ups',
   'validate_follow_ups',
+  'validate_turn_metadata',
 ]);
 
 export function isHiddenInternalTool(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
   // Direct match (Kiro ACP reports the bare tool name)
-  if (HIDDEN_INTERNAL_TOOLS.has(title)) return true;
+  if (HIDDEN_INTERNAL_TOOLS.has(normalized)) return true;
   // Claude prefixed: mcp____michi_internal____<tool>
   // Kiro MCP prefixed: mcp__michi-tools__<tool> or @michi/<tool>
-  const stripped = prettifyToolTitle(title);
+  const stripped = prettifyToolTitle(normalized);
   if (HIDDEN_INTERNAL_TOOLS.has(stripped)) return true;
+  // Codex App Server can report the MCP server and tool as one title without
+  // the leading `mcp__`, e.g. `michi_internal____set_branch_overview`.
+  // Accept only a real namespace separator so similarly-named user tools do
+  // not get hidden accidentally.
+  for (const tool of HIDDEN_INTERNAL_TOOLS) {
+    if (!normalized.endsWith(tool)) continue;
+    const prefix = normalized.slice(0, -tool.length);
+    if (/(?:[/.:]|_{2,})$/.test(prefix)) return true;
+  }
   // @server/tool format (some runtimes)
-  const slashIdx = title.lastIndexOf('/');
-  if (slashIdx >= 0 && HIDDEN_INTERNAL_TOOLS.has(title.slice(slashIdx + 1))) return true;
+  const slashIdx = normalized.lastIndexOf('/');
+  if (slashIdx >= 0 && HIDDEN_INTERNAL_TOOLS.has(normalized.slice(slashIdx + 1))) return true;
   return false;
 }
 

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import {
+  buildCodexFollowUpsHookPocInstruction,
   buildCodexFollowUpsHookPocConfig,
   isCodexFollowUpsHookPocEnabled,
   prepareCodexFollowUpsHookPocEnv,
@@ -23,6 +24,25 @@ test('Codex follow-ups Hook POC flag is explicit and opt-in', () => {
       true,
     );
   }
+});
+
+test('hook-tool instruction makes structured metadata canonical without sentinel fallback', () => {
+  const instruction = buildCodexFollowUpsHookPocInstruction('hook-tool');
+  assert.match(instruction, /call .*set_follow_ups exactly once/);
+  assert.match(instruction, /Do not duplicate the follow-ups/);
+  assert.match(instruction, /Do not duplicate the overview/);
+  assert.doesNotMatch(instruction, /\[FOLLOW-UP/);
+  assert.doesNotMatch(instruction, /\[BRANCH-OVERVIEW:/);
+  assert.doesNotMatch(instruction, /Keep emitting the existing/);
+});
+
+test('sentinel instruction puts the hidden overview tool after body follow-ups', () => {
+  const instruction = buildCodexFollowUpsHookPocInstruction('sentinel');
+  assert.match(instruction, /Do not call set_follow_ups/);
+  assert.match(instruction, /Emit all three follow-up sentinel lines before calling set_branch_overview/);
+  assert.match(instruction, /Never emit a \[BRANCH-OVERVIEW/);
+  assert.match(instruction, /after \[FOLLOW-UP 3\/3/);
+  assert.match(instruction, /emit no more visible text/);
 });
 
 test('Codex HTTP MCP config uses the current unauthenticated schema', () => {

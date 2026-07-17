@@ -26,6 +26,7 @@ import {
   prepareCodexFollowUpsHookPocEnv,
 } from './codexFollowUpsHookPoc';
 import {
+  followUpsMetadataOutputMode,
   resolveFollowUpsExperimentMode,
   type FollowUpsExperimentMode,
 } from '../followUpsExperiment';
@@ -258,7 +259,12 @@ export class CodexRuntime implements AgentRuntime {
     const threadStartResult = await this.client.request('thread/start', {
       model: modelId || undefined,
       cwd: opts.cwd,
-      developerInstructions: [buildStableSystemPrompt(), firstTurnPrefix].filter(Boolean).join('\n\n') || undefined,
+      developerInstructions: buildStableSystemPrompt(
+        followUpsMetadataOutputMode(
+          this.followUpsHookPocEnabled,
+          this.followUpsExperimentMode,
+        ),
+      ) || undefined,
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user',
       sandbox: 'workspace-write',

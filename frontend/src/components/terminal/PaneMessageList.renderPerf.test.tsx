@@ -104,6 +104,7 @@ describe('PaneMessageList render performance', () => {
       ...makeNode([u1, a1]),
       followUps: ['Which risk would most likely create a production incident?'],
       followUpsGenerating: false,
+      visibleResponseComplete: true,
       status: 'streaming',
     } as ChatNodeState;
 
@@ -111,6 +112,6 @@ describe('PaneMessageList render performance', () => {
 
     expect(screen.getByText('Which risk would most likely create a production incident?')).toBeTruthy();
     expect(screen.getByText('▸ FOLLOW-UPS')).toBeTruthy();
-    expect((screen.getByRole('button', { name: /Continue follow-up 1/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Continue follow-up 1/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

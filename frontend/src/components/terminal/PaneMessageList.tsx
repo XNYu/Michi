@@ -60,11 +60,13 @@ function PaneMessageListInner({
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);
   }, []);
-  const showFollowUps = shouldShowFollowUps(
-    node.followUps.length,
-    tailAnswerSmoothing,
-    !!node.followUpsGenerating,
-  );
+  const showFollowUps = node.visibleResponseComplete
+    ? node.followUps.length > 0
+    : shouldShowFollowUps(
+        node.followUps.length,
+        tailAnswerSmoothing,
+        !!node.followUpsGenerating,
+      );
 
   countRender('PaneMessageList', node.nodeId, {
     status: node.status,
@@ -396,7 +398,7 @@ function FollowUpsSection({
           key={i}
           index={i}
           question={q}
-          disabled={disabled || node.status === 'streaming'}
+          disabled={disabled || (node.status === 'streaming' && !node.visibleResponseComplete)}
           onContinue={onContinueFollowUp}
           onBranch={onBranchFollowUp}
         />

@@ -8,16 +8,34 @@ import { createCodexTranslator } from './codexEventTranslator';
 import { resolveShowImage } from '../claude/showImage';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission } from '../../services/dbRepository';
-import { followUpReminder } from '../preamble';
 import { log } from '../../services/logger';
 import { buildCodexFollowUpsHookPocInstruction } from './codexFollowUpsHookPoc';
 import {
-  FOLLOW_UPS_SENTINEL_TURN_REMINDER,
+  followUpsTurnReminder,
   resolveFollowUpsExperimentMode,
   type FollowUpsExperimentMode,
 } from '../followUpsExperiment';
 
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
+
+const INTERNAL_METADATA_TOOLS = new Set([
+  'set_branch_overview',
+  'set_title',
+  'set_follow_ups',
+  'validate_follow_ups',
+  'validate_turn_metadata',
+]);
+
+function isInternalMetadataToolTitle(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
+  if (INTERNAL_METADATA_TOOLS.has(normalized)) return true;
+  for (const tool of INTERNAL_METADATA_TOOLS) {
+    if (!normalized.endsWith(tool)) continue;
+    const prefix = normalized.slice(0, -tool.length);
+    if (/(?:[/.:]|_{2,})$/.test(prefix)) return true;
+  }
+  return false;
+}
 
 type SessionState = 'idle' | 'in_turn' | 'crashed' | 'disposed';
 
@@ -77,6 +95,10 @@ export class CodexSession implements AgentSession {
   private followUpsSuppressedChunkEvents = 0;
   private followUpsSuppressedThoughtEvents = 0;
   private followUpsOutputBoundaryPending = false;
+  private followUpsSentinelTail = '';
+  private followUpsSentinelsCompleteThisTurn = false;
+  private followUpsSilentOverviewTail = false;
+  private readonly hiddenInternalToolCallIds = new Set<string>();
 
   // Turn mutex
   private turnLock: Promise<void> | null = null;
@@ -148,9 +170,11 @@ export class CodexSession implements AgentSession {
 
       // Append follow-up reminder for the model only — history stays clean.
       const userTurnCount = this.history.filter(m => m.role === 'user').length + 1;
-      const reminder = this.followUpsHookPocEnabled && this.followUpsExperimentMode === 'sentinel'
-        ? FOLLOW_UPS_SENTINEL_TURN_REMINDER
-        : followUpReminder(userTurnCount, true);
+      const reminder = followUpsTurnReminder(
+        userTurnCount,
+        this.followUpsHookPocEnabled,
+        this.followUpsExperimentMode,
+      );
       const textForModel = outgoingText
         + (reminder || '')
         + (this.followUpsHookPocEnabled
@@ -393,6 +417,9 @@ export class CodexSession implements AgentSession {
     this.followUpsSuppressedChunkEvents = 0;
     this.followUpsSuppressedThoughtEvents = 0;
     this.followUpsOutputBoundaryPending = false;
+    this.followUpsSentinelTail = '';
+    this.followUpsSentinelsCompleteThisTurn = false;
+    this.followUpsSilentOverviewTail = false;
     log.info('chat', 'codex follow-ups hook poc turn armed', {
       nodeId: this.id,
       threadId: this.threadId,
@@ -426,6 +453,16 @@ export class CodexSession implements AgentSession {
         const cleaned = overview.trim();
         if (!cleaned) return;
         if (this.followUpsValidationActive) this.branchOverviewSetThisTurn = true;
+        if (this.followUpsExperimentMode === 'sentinel') {
+          if (this.followUpsSentinelsCompleteThisTurn) {
+            this.followUpsSilentOverviewTail = true;
+          } else {
+            log.warn('mcp', 'codex branch overview arrived before follow-up sentinels completed', {
+              nodeId: this.id,
+              threadId: this.threadId,
+            });
+          }
+        }
         log.info('mcp', 'codex follow-ups hook poc set_branch_overview received', {
           nodeId: this.id,
           threadId: this.threadId,
@@ -483,8 +520,11 @@ export class CodexSession implements AgentSession {
     };
   }
 
-  private suppressFollowUpsRepairEvent(ev: NormalizedEvent): boolean {
-    if (!this.followUpsHookPocEnabled || !this.followUpsRepairMode) return false;
+  private suppressFollowUpsInternalEvent(ev: NormalizedEvent): boolean {
+    if (!this.followUpsHookPocEnabled) return false;
+    const suppressVisibleMetadataTail =
+      this.followUpsRepairMode || this.followUpsSilentOverviewTail;
+    if (!suppressVisibleMetadataTail) return false;
     if (ev.kind === 'chunk') {
       this.followUpsSuppressedChunkEvents += 1;
       return true;
@@ -494,6 +534,33 @@ export class CodexSession implements AgentSession {
       return true;
     }
     return false;
+  }
+
+  private suppressInternalMetadataToolEvent(ev: NormalizedEvent): boolean {
+    if (ev.kind === 'tool_call') {
+      if (!isInternalMetadataToolTitle(ev.title)) return false;
+      if (ev.toolCallId) this.hiddenInternalToolCallIds.add(ev.toolCallId);
+      return true;
+    }
+    if (ev.kind !== 'tool_call_update') return false;
+    if (
+      !this.hiddenInternalToolCallIds.has(ev.toolCallId)
+      && !isInternalMetadataToolTitle(ev.title)
+    ) return false;
+    if (ev.toolCallId) this.hiddenInternalToolCallIds.add(ev.toolCallId);
+    return true;
+  }
+
+  private observeFollowUpsSentinelEvent(ev: NormalizedEvent): void {
+    if (
+      !this.followUpsHookPocEnabled
+      || this.followUpsExperimentMode !== 'sentinel'
+      || this.followUpsSentinelsCompleteThisTurn
+      || ev.kind !== 'chunk'
+    ) return;
+    this.followUpsSentinelTail = `${this.followUpsSentinelTail}${ev.text}`.slice(-12_000);
+    this.followUpsSentinelsCompleteThisTurn =
+      /\[FOLLOW-UP\s+3\s*\/\s*3\s*:\s*[^\]\r\n]*\]/i.test(this.followUpsSentinelTail);
   }
 
   private completeFollowUpsOutputBoundary(reason: 'agent-message-completed' | 'turn-completed'): void {
@@ -508,11 +575,12 @@ export class CodexSession implements AgentSession {
   }
 
   private finishFollowUpsHookPocTurn(): void {
+    this.hiddenInternalToolCallIds.clear();
     if (this.followUpsHookPocEnabled && (
       this.followUpsSuppressedChunkEvents > 0
       || this.followUpsSuppressedThoughtEvents > 0
     )) {
-      log.info('chat', 'codex follow-ups hook poc repair output suppressed', {
+      log.info('chat', 'codex follow-ups hook poc hidden metadata output suppressed', {
         nodeId: this.id,
         threadId: this.threadId,
         chunks: this.followUpsSuppressedChunkEvents,
@@ -524,6 +592,9 @@ export class CodexSession implements AgentSession {
     this.followUpsSuppressedChunkEvents = 0;
     this.followUpsSuppressedThoughtEvents = 0;
     this.followUpsOutputBoundaryPending = false;
+    this.followUpsSentinelTail = '';
+    this.followUpsSentinelsCompleteThisTurn = false;
+    this.followUpsSilentOverviewTail = false;
   }
 
   createMcpSlot(): string {
@@ -599,7 +670,9 @@ export class CodexSession implements AgentSession {
 
   wireNotifications(): void {
     const translator = createCodexTranslator((ev) => {
-      if (this.suppressFollowUpsRepairEvent(ev)) return;
+      this.observeFollowUpsSentinelEvent(ev);
+      if (this.suppressInternalMetadataToolEvent(ev)) return;
+      if (this.suppressFollowUpsInternalEvent(ev)) return;
       if (ev.kind === 'turn_end' && this.state === 'in_turn') {
         this.state = 'idle';
       }
