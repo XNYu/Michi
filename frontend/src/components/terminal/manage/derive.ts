@@ -60,12 +60,14 @@ export function deriveTreeRows(
   const rows: TreeRow[] = [];
 
   // Pinned threads sort to the top (most recently pinned first); the rest
-  // keep their natural project.trees order.
+  // sort by recent activity (lastActiveAt DESC), matching sidebar behavior.
   const orderedTrees = [...project.trees].sort((a, b) => {
     const ap = a.pinnedAt ?? 0;
     const bp = b.pinnedAt ?? 0;
     if (ap !== bp) return bp - ap;
-    return 0;
+    const aRecent = a.lastActiveAt ?? a.createdAt ?? 0;
+    const bRecent = b.lastActiveAt ?? b.createdAt ?? 0;
+    return bRecent - aRecent;
   });
 
   for (const tree of orderedTrees) {

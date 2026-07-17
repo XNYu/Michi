@@ -154,7 +154,7 @@ export const DEFAULT_PREFS: Prefs = {
   codeWrap: false,
   terminalDensity: 'dense',
   paneRules: true,
-  terminalSidebarWidth: 232,
+  terminalSidebarWidth: 280,
   sidebarDensity: 'comfortable',
   sidebarInset: 2,
   showSidebarTimestamps: false,
