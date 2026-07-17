@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { weaveToolCalls, type Segment } from './streamingProjection';
-import type { ToolCallState } from './chatTypes';
+import { isAnswerTextStreaming, weaveToolCalls, type Segment } from './streamingProjection';
+import type { ChatMessage, ToolCallState } from './chatTypes';
 
 const identity = (n: number) => n;
 
@@ -60,6 +60,24 @@ describe('weaveToolCalls — streaming gating', () => {
     });
     expect(toolIdsByGroup(segs)).toEqual([['a']]);
     expect(texts(segs).join('')).toBe(smooth);
+  });
+});
+
+describe('answer streaming state', () => {
+  it('treats a tool boundary as the end of the current answer segment', () => {
+    const message: ChatMessage = {
+      id: 'a1',
+      role: 'assistant',
+      text: '',
+      streaming: true,
+      toolCalls: [{ id: 't1', title: 'tool', status: 'running', textOffset: 4 }],
+      blocks: [
+        { id: 'a1-b-0', kind: 'answer', rawText: 'text', streaming: false },
+        { id: 'a1-b-1', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 4 },
+      ],
+    };
+
+    expect(isAnswerTextStreaming(message)).toBe(false);
   });
 });
 

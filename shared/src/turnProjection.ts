@@ -285,6 +285,14 @@ function currentRunLength(blocks: DurableAssistantBlock[], section: 'answer' | '
   return total;
 }
 
+function closeTrailingTextBlock(blocks: DurableAssistantBlock[]): void {
+  const index = blocks.length - 1;
+  const last = blocks[index];
+  if ((last?.kind === 'answer' || last?.kind === 'thinking') && last.streaming !== false) {
+    blocks[index] = { ...last, streaming: false };
+  }
+}
+
 function appendText(
   snapshot: DurableTurnSnapshot,
   kind: 'answer' | 'thinking',
@@ -295,6 +303,7 @@ function appendText(
   if (last?.kind === kind) {
     blocks[blocks.length - 1] = { ...last, rawText: last.rawText + text, streaming: true };
   } else {
+    closeTrailingTextBlock(blocks);
     blocks.push({ id: nextBlockId(snapshot, blocks), kind, rawText: text, streaming: true });
   }
   return blocks;
@@ -326,6 +335,7 @@ function applyTool(snapshot: DurableTurnSnapshot, update: ToolCallStreamPayload)
     const section = currentSection(blocks);
     merged.textOffset = currentRunLength(blocks, section);
     toolCalls.push(merged);
+    closeTrailingTextBlock(blocks);
     blocks.push({
       id: nextBlockId(snapshot, blocks),
       kind: 'tool',
@@ -399,6 +409,7 @@ export function applyTurnEvent(
       break;
     case 'image': {
       const blocks = next.assistantMessage.blocks.slice();
+      closeTrailingTextBlock(blocks);
       blocks.push({
         id: nextBlockId(next, blocks),
         kind: 'image',

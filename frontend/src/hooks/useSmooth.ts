@@ -9,6 +9,8 @@ const MAX_TYPEWRITER_CPS = 600;
 const RATE_EMA_ALPHA = 0.28;
 const FALLBACK_BOOTSTRAP_CPS = 30;
 const BACKGROUND_STALL_SNAP_MS = 1000;
+const BURST_GAP_MS = 200;
+const MIN_CONTINUOUS_SAMPLE_MS = 8;
 type FrameHandle = number | ReturnType<typeof globalThis.setTimeout>;
 
 // --- Diagnostic logging ---
@@ -77,10 +79,9 @@ const KIRO_CJK_SMOOTH_CONFIG: SmoothConfig = {
 const CLAUDE_SMOOTH_CONFIG: SmoothConfig = {
   name: 'claude',
   // Bedrock Cross-Region Streaming flushes ~16 events every ~950ms.
-  // Uses a leaky constant-rate controller (see CLAUDE_LEAKY_CONFIG below)
-  // instead of the default proportional controller. The proportional formula
-  // (cps = backlog/T) decays exponentially within each burst cycle, causing
-  // visible speed oscillation (fast→slow→fast). The leaky controller keeps
+  // The shared hybrid leaky controller replaces the proportional formula.
+  // That formula (cps = backlog/T) decays exponentially within each burst
+  // cycle, causing visible speed oscillation (fast→slow→fast). The leaky controller keeps
   // a near-constant release rate with a weak correction term for stability.
   initialBufferMs: 250,
   resumeBufferMs: 0,       // no re-buffer pauses — leaky controller handles gaps
@@ -91,26 +92,66 @@ const CLAUDE_SMOOTH_CONFIG: SmoothConfig = {
 };
 
 /**
- * Leaky constant-rate controller parameters for the Claude profile.
+ * Runtime-tuned parameters for the shared hybrid leaky controller.
  *
- * Instead of cps = backlog / targetLagMs (proportional, causes 3:1 speed ratio),
- * we use: cps = throughputEma + (backlog - targetBacklog) / correctionTau
+ * Steady-state output uses a leaky constant-rate controller. When backlog is
+ * far above the desired buffer, a blended proportional overdrive catches up
+ * large bursts without bringing proportional slowdown into the visible tail.
  *
  * - throughputEma: observed steady-state arrival rate (graphemes/sec), EMA-tracked
  * - targetBacklog: ideal buffer level = throughputEma × targetLagMs / 1000
  * - correctionTau: time constant for buffer correction (higher = smoother)
  *
- * Result: speed ratio within a burst cycle drops from ~3:1 to ~1.3:1.
+ * This keeps normal output close to constant speed while preserving Kiro CJK's
+ * ability to drain unusually large bursts quickly.
  */
-const CLAUDE_LEAKY_CONFIG = {
-  /** Time constant for correcting buffer deviation (ms). Higher = smoother. */
-  correctionTauMs: 5000,
-  /** EMA alpha for throughput tracking. Lower = more stable, slower to adapt. */
-  throughputEmaAlpha: 0.15,
-  /** Minimum bursts observed before switching from proportional to leaky. */
-  minBurstsForLeaky: 2,
-  /** Floor multiplier for release CPS (fraction of throughputEma). */
-  minCpsFraction: 0.7,
+interface LeakyControllerConfig {
+  correctionTauMs: number;
+  throughputEmaAlpha: number;
+  minBurstsForLeaky: number;
+  minContinuousSamplesForLeaky: number;
+  minCpsFraction: number;
+  overdriveBacklogMultiplier: number;
+  minOverdriveBacklog: number;
+}
+
+const LEAKY_CONTROLLER_CONFIGS: Record<SmoothConfigName, LeakyControllerConfig> = {
+  default: {
+    correctionTauMs: 2000,
+    throughputEmaAlpha: 0.2,
+    minBurstsForLeaky: 2,
+    minContinuousSamplesForLeaky: 3,
+    minCpsFraction: 0.75,
+    overdriveBacklogMultiplier: 3,
+    minOverdriveBacklog: 24,
+  },
+  kiro: {
+    correctionTauMs: 3000,
+    throughputEmaAlpha: 0.18,
+    minBurstsForLeaky: 2,
+    minContinuousSamplesForLeaky: 3,
+    minCpsFraction: 0.7,
+    overdriveBacklogMultiplier: 2.5,
+    minOverdriveBacklog: 24,
+  },
+  'kiro-cjk': {
+    correctionTauMs: 2500,
+    throughputEmaAlpha: 0.18,
+    minBurstsForLeaky: 2,
+    minContinuousSamplesForLeaky: 3,
+    minCpsFraction: 0.7,
+    overdriveBacklogMultiplier: 2,
+    minOverdriveBacklog: 20,
+  },
+  claude: {
+    correctionTauMs: 5000,
+    throughputEmaAlpha: 0.15,
+    minBurstsForLeaky: 2,
+    minContinuousSamplesForLeaky: 3,
+    minCpsFraction: 0.7,
+    overdriveBacklogMultiplier: 2.5,
+    minOverdriveBacklog: 64,
+  },
 };
 
 function configForProfile(profile: StreamSmoothingProfile, source: string): SmoothConfig {
@@ -229,6 +270,64 @@ export function nextTypewriterCps(
   return clamp(lagDrivenCps, minTypewriterCps, maxTypewriterCps);
 }
 
+export function nextHybridTypewriterCps(
+  baseCps: number,
+  backlogChars: number,
+  opts: {
+    targetLagMs: number;
+    finishLagMs: number;
+    streaming: boolean;
+    minTypewriterCps: number;
+    maxTypewriterCps: number;
+    correctionTauMs: number;
+    minCpsFraction: number;
+    overdriveBacklogMultiplier: number;
+    minOverdriveBacklog: number;
+  },
+): number {
+  if (backlogChars <= 0) return 0;
+  if (baseCps <= 0) {
+    return nextTypewriterCps(baseCps, backlogChars, opts);
+  }
+
+  const targetBacklog = Math.max(1, baseCps * opts.targetLagMs / 1000);
+  const overdriveStart = Math.max(
+    opts.minOverdriveBacklog,
+    targetBacklog * opts.overdriveBacklogMultiplier,
+  );
+  const proportionalCps = (backlogChars * 1000) /
+    Math.max(1, opts.streaming ? opts.targetLagMs : opts.finishLagMs);
+
+  let steadyCps: number;
+  if (opts.streaming) {
+    const correction = (backlogChars - targetBacklog) / opts.correctionTauMs * 1000;
+    const minCps = Math.max(opts.minTypewriterCps, baseCps * opts.minCpsFraction);
+    steadyCps = clamp(baseCps + correction, minCps, opts.maxTypewriterCps);
+  } else {
+    // Segment/end-of-turn drain: accelerate up to 2× the learned rate, but keep
+    // the learned rate as a floor so the final few graphemes do not decelerate.
+    steadyCps = clamp(
+      Math.max(baseCps, Math.min(baseCps * 2, proportionalCps)),
+      opts.minTypewriterCps,
+      opts.maxTypewriterCps,
+    );
+  }
+
+  // Blend into proportional catch-up only when backlog is materially above the
+  // target. The blend removes the abrupt speed step at the overdrive boundary.
+  const overdriveWeight = clamp(
+    (backlogChars - overdriveStart) / Math.max(1, overdriveStart),
+    0,
+    1,
+  );
+  const overdriveCps = Math.max(steadyCps, proportionalCps);
+  return clamp(
+    steadyCps + (overdriveCps - steadyCps) * overdriveWeight,
+    opts.minTypewriterCps,
+    opts.maxTypewriterCps,
+  );
+}
+
 function requestFrame(cb: FrameRequestCallback): FrameHandle {
   if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
     return window.requestAnimationFrame(cb);
@@ -296,9 +395,11 @@ export function useSmooth(
   const isBackgroundedRef = useRef(false);
   const wasBackgroundedRef = useRef(false);
 
-  // Leaky constant-rate controller state (Claude profile)
+  // Hybrid leaky-controller throughput state.
   const throughputEmaRef = useRef(0);       // graphemes/sec, EMA of sustained throughput
   const burstCountRef = useRef(0);          // number of bursts observed (for cold-start gate)
+  const continuousRateSamplesRef = useRef(0); // stable sub-200ms arrival samples
+  const leakyReadyRef = useRef(false);      // sticky across tool-call segment gaps
   const totalGraphemesRef = useRef(0);      // total graphemes received since streaming start
   const streamStartAtRef = useRef<number | null>(null); // when streaming started
   const lastBurstAtRef = useRef<number | null>(null);   // timestamp of previous burst boundary
@@ -370,6 +471,8 @@ export function useSmooth(
     // Reset leaky controller state
     throughputEmaRef.current = 0;
     burstCountRef.current = 0;
+    continuousRateSamplesRef.current = 0;
+    leakyReadyRef.current = false;
     totalGraphemesRef.current = 0;
     streamStartAtRef.current = null;
     lastBurstAtRef.current = null;
@@ -462,27 +565,34 @@ export function useSmooth(
       ? agentCpsRef.current
       : FALLBACK_BOOTSTRAP_CPS;
 
-    // Choose CPS strategy: leaky constant-rate for Claude, proportional for others
+    // Use the shared hybrid leaky controller after either burst-average or
+    // continuous-arrival throughput has stabilized. Cold-start stays on the
+    // proportional controller so one sparse burst is never mistaken for CPS.
     let cps: number;
-    const useLeakyController = cfg.name === 'claude'
-      && burstCountRef.current >= CLAUDE_LEAKY_CONFIG.minBurstsForLeaky
+    const leakyCfg = LEAKY_CONTROLLER_CONFIGS[cfg.name];
+    const burstRateStable = burstCountRef.current >= leakyCfg.minBurstsForLeaky
       && throughputEmaRef.current > 0;
+    const continuousRateStable = continuousRateSamplesRef.current >= leakyCfg.minContinuousSamplesForLeaky
+      && agentCpsRef.current > 0;
+    if (burstRateStable || continuousRateStable) leakyReadyRef.current = true;
+    const useLeakyController = leakyReadyRef.current
+      && (throughputEmaRef.current > 0 || agentCpsRef.current > 0);
 
     if (useLeakyController) {
-      // Leaky constant-rate: baseCps + weak proportional correction
-      const baseCps = throughputEmaRef.current;
-      const targetBacklog = baseCps * cfg.targetLagMs / 1000;
-      const correction = (backlog - targetBacklog) / CLAUDE_LEAKY_CONFIG.correctionTauMs * 1000;
-      const minCps = baseCps * CLAUDE_LEAKY_CONFIG.minCpsFraction;
-      if (streamingRef.current) {
-        cps = clamp(baseCps + correction, minCps, cfg.maxTypewriterCps);
-      } else {
-        // Streaming ended — gradually accelerate to drain remaining buffer.
-        // Cap at baseCps × 2 to avoid the "last flash" where hundreds of
-        // characters appear in a single frame.
-        const finishCps = Math.min(baseCps * 2, (backlog * 1000) / cfg.finishLagMs);
-        cps = clamp(finishCps, cfg.minTypewriterCps, cfg.maxTypewriterCps);
-      }
+      const baseCps = burstRateStable || agentCpsRef.current <= 0
+        ? throughputEmaRef.current
+        : agentCpsRef.current;
+      cps = nextHybridTypewriterCps(baseCps, backlog, {
+        targetLagMs: cfg.targetLagMs,
+        finishLagMs: cfg.finishLagMs,
+        streaming: streamingRef.current,
+        minTypewriterCps: cfg.minTypewriterCps,
+        maxTypewriterCps: cfg.maxTypewriterCps,
+        correctionTauMs: leakyCfg.correctionTauMs,
+        minCpsFraction: leakyCfg.minCpsFraction,
+        overdriveBacklogMultiplier: leakyCfg.overdriveBacklogMultiplier,
+        minOverdriveBacklog: leakyCfg.minOverdriveBacklog,
+      });
     } else {
       cps = nextTypewriterCps(effectiveAgentCps, backlog, {
         targetLagMs: cfg.targetLagMs,
@@ -516,7 +626,7 @@ export function useSmooth(
       const state = backlogNow === 0
         ? (streamingRef.current ? 'CAUGHT_UP' : 'IDLE')
         : (displayedDeltaGraphemes === 0 ? 'BUFFERING' : 'DRAINING');
-      const controllerType = useLeakyController ? 'LEAKY' : 'PROPORTIONAL';
+      const controllerType = useLeakyController ? 'HYBRID_LEAKY' : 'PROPORTIONAL';
       // eslint-disable-next-line no-console
       console.log(
         `[SMOOTH] cps=${Math.round(cps)} backlog=${backlogNow} ` +
@@ -582,7 +692,6 @@ export function useSmooth(
         startFrame();
       } else {
         stopFrame();
-        resetArrivalTracking();
       }
       return;
     }
@@ -710,9 +819,10 @@ export function useSmooth(
             agentCpsRef.current * (1 - RATE_EMA_ALPHA) + instant * RATE_EMA_ALPHA;
         }
 
-        // Leaky controller: detect burst boundary and update throughput EMA
-        // A gap > 200ms signals a new burst cycle
-        if (dt > 200 && configRef.current.name === 'claude') {
+        if (dt >= MIN_CONTINUOUS_SAMPLE_MS && dt <= BURST_GAP_MS) {
+          continuousRateSamplesRef.current += 1;
+        } else if (dt > BURST_GAP_MS) {
+          continuousRateSamplesRef.current = 0;
           burstCountRef.current += 1;
           // Calculate throughput from the interval between this burst and the last.
           // This responds quickly to burst-size changes (CJK vs ASCII, code vs prose)
@@ -723,7 +833,7 @@ export function useSmooth(
             const intervalGraphemes = totalGraphemesRef.current - graphemesAtLastBurstRef.current;
             if (intervalMs > 100 && intervalGraphemes > 0) {
               const intervalThroughput = (intervalGraphemes * 1000) / intervalMs;
-              const alpha = CLAUDE_LEAKY_CONFIG.throughputEmaAlpha;
+              const alpha = LEAKY_CONTROLLER_CONFIGS[configRef.current.name].throughputEmaAlpha;
               if (throughputEmaRef.current === 0) {
                 throughputEmaRef.current = intervalThroughput;
               } else {
@@ -755,8 +865,6 @@ export function useSmooth(
 
     if (cursorRef.current < nextCount) {
       startFrame();
-    } else if (!streaming) {
-      resetArrivalTracking();
     }
   }, [source, streaming, profile]); // eslint-disable-line react-hooks/exhaustive-deps
 

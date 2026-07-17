@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextTypewriterCps, smoothingProfileForRuntime, useSmooth } from './useSmooth';
+import { nextHybridTypewriterCps, nextTypewriterCps, smoothingProfileForRuntime, useSmooth } from './useSmooth';
 
 describe('typewriter streaming speed curve', () => {
   it('drives speed from backlog to keep a target visible lag', () => {
@@ -33,7 +33,44 @@ describe('typewriter streaming speed curve', () => {
     })).toBe(500);
   });
 
-  it('maps only Kiro to the thicker smoothing profile', () => {
+  it('keeps the visible tail near constant speed and overdrives only large backlogs', () => {
+    const opts = {
+      targetLagMs: 500,
+      finishLagMs: 140,
+      streaming: true,
+      minTypewriterCps: 8,
+      maxTypewriterCps: 1200,
+      correctionTauMs: 3000,
+      minCpsFraction: 0.7,
+      overdriveBacklogMultiplier: 2.5,
+      minOverdriveBacklog: 24,
+    };
+    const steady = nextHybridTypewriterCps(40, 20, opts);
+    const tail = nextHybridTypewriterCps(40, 4, opts);
+    const burst = nextHybridTypewriterCps(40, 120, opts);
+
+    expect(steady / tail).toBeLessThan(1.5);
+    expect(burst).toBeGreaterThan(steady * 2);
+  });
+
+  it('uses the learned rate as a floor while a segment finishes', () => {
+    const finish = (backlog: number) => nextHybridTypewriterCps(40, backlog, {
+      targetLagMs: 500,
+      finishLagMs: 140,
+      streaming: false,
+      minTypewriterCps: 8,
+      maxTypewriterCps: 1200,
+      correctionTauMs: 3000,
+      minCpsFraction: 0.7,
+      overdriveBacklogMultiplier: 2.5,
+      minOverdriveBacklog: 24,
+    });
+
+    expect(finish(4)).toBeGreaterThanOrEqual(40);
+    expect(finish(1)).toBeGreaterThanOrEqual(40);
+  });
+
+  it('maps runtimes to their smoothing profiles', () => {
     expect(smoothingProfileForRuntime('kiro')).toBe('kiro');
     expect(smoothingProfileForRuntime('claude')).toBe('claude');
     expect(smoothingProfileForRuntime('pi')).toBe('default');

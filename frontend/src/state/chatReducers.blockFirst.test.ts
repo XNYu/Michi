@@ -32,10 +32,27 @@ describe('block-first assistant reducer', () => {
     state = reduceNodes(state, { type: 'chunk', nodeId: 'n1', assistantId: 'a1', text: 'tail' });
 
     expect(state.n1.messages[0].blocks).toEqual([
-      { id: 'a1-b-0', kind: 'answer', rawText: 'answer', streaming: true },
-      { id: 'a1-b-1', kind: 'thinking', rawText: 'think', streaming: true },
+      { id: 'a1-b-0', kind: 'answer', rawText: 'answer', streaming: false },
+      { id: 'a1-b-1', kind: 'thinking', rawText: 'think', streaming: false },
       { id: 'a1-b-2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 5 },
       { id: 'a1-b-3', kind: 'answer', rawText: 'tail', streaming: true },
+    ]);
+  });
+
+  it('closes the current answer segment at a tool boundary', () => {
+    let state = node();
+    state = reduceNodes(state, { type: 'chunk', nodeId: 'n1', assistantId: 'a1', text: 'before tool' });
+    state = reduceNodes(state, {
+      type: 'tool-call',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: { id: 't1', title: 'tool', status: 'running' },
+    });
+
+    expect(state.n1.messages[0].streaming).toBe(true);
+    expect(state.n1.messages[0].blocks).toEqual([
+      { id: 'a1-b-0', kind: 'answer', rawText: 'before tool', streaming: false },
+      { id: 'a1-b-1', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 11 },
     ]);
   });
 
@@ -56,7 +73,7 @@ describe('block-first assistant reducer', () => {
     });
 
     expect(state.n1.messages[0].blocks).toEqual([
-      { id: 'a1-b-0', kind: 'thinking', rawText: 'thinking', streaming: true },
+      { id: 'a1-b-0', kind: 'thinking', rawText: 'thinking', streaming: false },
       { id: 'a1-b-1', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 8 },
       { id: 'a1-b-2', kind: 'tool', toolCallId: 't2', section: 'thinking', rawOffset: 8 },
     ]);

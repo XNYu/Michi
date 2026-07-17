@@ -328,6 +328,11 @@ export function useAnswerRunStream(
   return { segments, isSmoothing };
 }
 
+export function isAnswerTextStreaming(m: ChatMessage): boolean {
+  if (!hasAssistantBlocks(m)) return !!m.streaming;
+  return (m.blocks ?? []).some((block) => block.kind === 'answer' && block.streaming === true);
+}
+
 export function useVisibleStream(m: ChatMessage, runtimeId?: string | null): VisibleStream {
   const hasBlocks = hasAssistantBlocks(m);
   const { visibleText, remapOffset } = useMemo(() => {
@@ -335,14 +340,15 @@ export function useVisibleStream(m: ChatMessage, runtimeId?: string | null): Vis
     return deriveVisibleMessage(m);
   }, [hasBlocks, m]);
 
+  const answerStreaming = isAnswerTextStreaming(m);
   const { displayed: smoothText, isSmoothing } = useSmooth(
     visibleText,
-    !!m.streaming,
+    answerStreaming,
     smoothingProfileForRuntime(runtimeId),
   );
   const rawTextLen = hasBlocks ? assistantAnswerRawText(m).length : m.text.length;
-  const forceFinal = !m.streaming && !isSmoothing;
-  const revealFrom = streamingRevealFrom(smoothText, !!m.streaming);
+  const forceFinal = !answerStreaming && !isSmoothing;
+  const revealFrom = streamingRevealFrom(smoothText, answerStreaming);
 
   const segments = useMemo(
     () => weaveToolCalls(smoothText, rawTextLen, m.toolCalls, remapOffset, { forceFinal, revealFrom }),

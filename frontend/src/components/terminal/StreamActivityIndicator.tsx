@@ -89,9 +89,15 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
   }
 
   // While visible answer text streams, the blinking cursor already conveys
-  // liveness — stay quiet regardless of plan state.
+  // liveness — stay quiet regardless of plan state. However, if the stream has
+  // gone idle for over 2s (e.g. kiro-cli writing a file without emitting a
+  // tool_call running event), fall through so the user sees "Working" dots.
   const tail = blocks[blocks.length - 1];
-  if (tail?.kind === 'answer' && tail.streaming) return null;
+  if (tail?.kind === 'answer' && tail.streaming) {
+    const idle = node.streamingIdleMs ?? 0;
+    if (idle < 2000) return null;
+    // Fall through — cursor hasn't moved in 2s, show activity indicator.
+  }
 
   // Kiro plan progress: richer than the bare Thinking/Working fallbacks, so it
   // takes over once no tool is running and no answer is streaming. Claude never

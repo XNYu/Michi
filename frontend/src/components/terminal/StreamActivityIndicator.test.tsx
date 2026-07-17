@@ -98,6 +98,26 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(n)).toBeNull();
   });
 
+  it('shows Working when answer block is streaming but idle > 2s (e.g. file write)', () => {
+    const n = node({
+      messages: [assistant({
+        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
+      })],
+    });
+    (n as any).streamingIdleMs = 3000;
+    expect(deriveStreamActivity(n)?.label).toBe('Working');
+  });
+
+  it('stays quiet when answer block is streaming and idle < 2s', () => {
+    const n = node({
+      messages: [assistant({
+        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
+      })],
+    });
+    (n as any).streamingIdleMs = 1500;
+    expect(deriveStreamActivity(n)).toBeNull();
+  });
+
   it('shows Thinking while a thinking block streams with no running tool', () => {
     const n = node({
       messages: [assistant({

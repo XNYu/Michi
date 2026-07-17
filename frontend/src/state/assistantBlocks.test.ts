@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendAnswerBlockText,
   appendThinkingBlockText,
   appendToolBlock,
   assistantAnswerRawText,
@@ -49,6 +50,24 @@ describe('assistant block migration', () => {
 });
 
 describe('assistant block streaming boundaries', () => {
+  it('closes the preceding text block when a tool block is appended', () => {
+    const base: ChatMessage = {
+      id: 'a3',
+      role: 'assistant',
+      text: '',
+      toolCalls: [],
+      blocks: [],
+      streaming: true,
+    };
+    const withText = appendAnswerBlockText(base, 'before');
+    const withTool = appendToolBlock(withText, 't1');
+
+    expect(withTool.blocks).toEqual([
+      { id: 'a3-b-0', kind: 'answer', rawText: 'before', streaming: false },
+      { id: 'a3-b-1', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 6 },
+    ]);
+  });
+
   it('keeps consecutive tools in the preceding thinking section', () => {
     const base: ChatMessage = {
       id: 'a4',
@@ -63,7 +82,7 @@ describe('assistant block streaming boundaries', () => {
     const withSecondTool = appendToolBlock(withFirstTool, 't2');
 
     expect(withSecondTool.blocks).toEqual([
-      { id: 'a4-b-0', kind: 'thinking', rawText: 'inspect', streaming: true },
+      { id: 'a4-b-0', kind: 'thinking', rawText: 'inspect', streaming: false },
       { id: 'a4-b-1', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 7 },
       { id: 'a4-b-2', kind: 'tool', toolCallId: 't2', section: 'thinking', rawOffset: 7 },
     ]);
