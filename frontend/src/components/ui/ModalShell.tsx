@@ -55,18 +55,51 @@ export function ModalShell({
   // Remember what was focused when we opened so we can restore it on close.
   const restoreRef = React.useRef<HTMLElement | null>(null);
 
+  // Keep the latest onClose/dismissible in refs so the focus/trap effects below
+  // depend ONLY on `open`. Call sites pass fresh inline `onClose` arrows, so a
+  // parent re-render (e.g. a background chat stream re-rendering TerminalShell
+  // while a modal is open) would otherwise re-run those effects — tearing down
+  // and re-capturing focus mid-open, bouncing focus and clobbering the restore
+  // target with an in-modal node.
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+  const dismissibleRef = React.useRef(dismissible);
+  dismissibleRef.current = dismissible;
+
+  // Focus capture on open + restore on close — runs only on the open transition.
   React.useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement as HTMLElement | null;
 
+    // Focus the first focusable inside the pane (unless a child already grabbed
+    // focus via autoFocus). Deferred a frame so portaled content is mounted.
+    const raf = requestAnimationFrame(() => {
+      const pane = paneRef.current;
+      if (!pane) return;
+      if (pane.contains(document.activeElement) && document.activeElement !== pane) return;
+      const focusable = pane.querySelector<HTMLElement>(
+        'input:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      focusable?.focus();
+    });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      // Restore focus to the trigger element captured at open time.
+      restoreRef.current?.focus?.();
+    };
+  }, [open]);
+
+  // Escape + Tab focus-trap — reads onClose/dismissible via refs.
+  React.useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && dismissible) {
+      if (e.key === 'Escape' && dismissibleRef.current) {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab') return;
-      // Focus trap: keep Tab cycling within the pane.
       const pane = paneRef.current;
       if (!pane) return;
       const focusables = pane.querySelectorAll<HTMLElement>(
@@ -84,26 +117,8 @@ export function ModalShell({
       }
     };
     window.addEventListener('keydown', onKey);
-
-    // Focus the first focusable inside the pane (unless a child already grabbed
-    // focus via autoFocus). Deferred a frame so portaled content is mounted.
-    const raf = requestAnimationFrame(() => {
-      const pane = paneRef.current;
-      if (!pane) return;
-      if (pane.contains(document.activeElement) && document.activeElement !== pane) return;
-      const focusable = pane.querySelector<HTMLElement>(
-        'input:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      focusable?.focus();
-    });
-
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      cancelAnimationFrame(raf);
-      // Restore focus to the trigger element.
-      restoreRef.current?.focus?.();
-    };
-  }, [open, onClose, dismissible]);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
 
   if (!open) return null;
 

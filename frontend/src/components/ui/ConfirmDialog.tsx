@@ -37,31 +37,31 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
 /** Mount once (App root). Registers the imperative `confirmDialog` handler. */
 export function ConfirmDialogHost() {
   const [pending, setPending] = React.useState<PendingConfirm | null>(null);
+  // The live pending confirm, mirrored in a ref so open/close can settle the
+  // previous promise WITHOUT doing side effects inside a state updater (which
+  // React StrictMode double-invokes in dev).
+  const pendingRef = React.useRef<PendingConfirm | null>(null);
+  pendingRef.current = pending;
 
   React.useEffect(() => {
     openConfirm = (opts) =>
       new Promise<boolean>((resolve) => {
-        setPending((prev) => {
-          // If a confirm is somehow already open, resolve it as cancelled so
-          // its caller's promise never hangs, then show the new one.
-          prev?.resolve(false);
-          return { ...opts, resolve };
-        });
+        // If a confirm is somehow already open, resolve it as cancelled so its
+        // caller's promise never hangs, then show the new one.
+        pendingRef.current?.resolve(false);
+        setPending({ ...opts, resolve });
       });
     return () => {
       openConfirm = null;
+      // Host unmounting with a confirm still open → resolve false so no await hangs.
+      pendingRef.current?.resolve(false);
     };
   }, []);
 
-  const close = React.useCallback(
-    (ok: boolean) => {
-      setPending((cur) => {
-        cur?.resolve(ok);
-        return null;
-      });
-    },
-    [],
-  );
+  const close = React.useCallback((ok: boolean) => {
+    pendingRef.current?.resolve(ok);
+    setPending(null);
+  }, []);
 
   return (
     <ModalShell

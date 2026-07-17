@@ -28,8 +28,13 @@ const PANEL_PROSE =
 export default function ExportPanel({ open, state, onClose, onAbort, onSave }: ExportPanelProps) {
   const headerTitle = state.kind === 'idle' ? 'Export' : `Export · ${state.exportTitle}`;
 
+  // Dismissing (Escape / scrim click) while an export is in flight should abort
+  // it, not leave the controller running behind a closed drawer (which would
+  // later flip state to done/error and show a stale result on next open).
+  const dismiss = state.kind === 'running' ? onAbort : onClose;
+
   return (
-    <DrawerShell open={open} onClose={onClose} title={headerTitle}>
+    <DrawerShell open={open} onClose={dismiss} title={headerTitle}>
       {/* body */}
       <div
         className="term-scrollbar"
