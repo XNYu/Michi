@@ -44,10 +44,20 @@ import {
 function inferRuntimeId(row: ReturnType<typeof getNode> | null, nodeId: string): string | null {
     const explicit = normalizeSignaturePart(row?.runtime_id);
     if (explicit) return explicit;
-    if (normalizeSignaturePart(row?.external_session_id)) return "claude";
     const sid = normalizeSignaturePart(row?.acp_session_id);
     if (!sid) return null;
     return sid === nodeId ? "pi" : "kiro";
+}
+
+function resolvePublicNodeId(identifier: string, userId?: string | null): string | null {
+    const live = getSessionForUser(identifier, userId ?? null);
+    if (live) return live.id;
+    return getNodeSessionBinding(identifier, userId ?? undefined)?.nodeId ?? null;
+}
+
+function getSessionByIdentifier(identifier: string, userId?: string | null): AgentSession | null {
+    const nodeId = resolvePublicNodeId(identifier, userId);
+    return nodeId ? getSessionForUser(nodeId, userId ?? null) : null;
 }
 
 function ensureCloudWorkspaceRow(userId: string | undefined, workspaceId: string | null | undefined): void {
@@ -147,7 +157,7 @@ function persistResumeBinding(
     try {
         if (!getNode(nodeId)) return;
         updateNodeResumeBinding(nodeId, {
-            acp_session_id: session.id,
+            acp_session_id: session.nativeSessionId ?? session.id,
             runtime_id: signature.runtimeId,
             provider_id: signature.providerId,
             model_id: signature.modelId,
@@ -571,16 +581,16 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(400).json({ error: "runtimeId must be a non-empty string" });
         }
         try {
-            const nodeRow = typeof nodeId === "string" ? getNode(nodeId) : null;
+            const resolvedNodeId = typeof nodeId === "string"
+                ? nodeId
+                : resolvePublicNodeId(chatId, req.user?.id ?? null) ?? chatId;
+            const nodeRow = getNode(resolvedNodeId);
             const chatRow = getNode(chatId);
             const row = nodeRow ?? chatRow;
             const runtimeId =
                 (bodyRuntimeId as string | undefined) ??
                 row?.runtime_id ??
-                (row?.external_session_id ? "claude" : undefined) ??
-                (row?.acp_session_id
-                    ? row.acp_session_id === row.id ? "pi" : "kiro"
-                    : undefined) ??
+                inferRuntimeId(row, resolvedNodeId) ??
                 getAgentConfig(process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined).runtime;
             const runtime = getRuntime(runtimeId);
             if (!runtime?.loadSession) {
@@ -605,8 +615,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 workspaceId = row?.workspace_id ?? null;
             }
             const session = await runtime.loadSession({
-                sessionId: chatId,
-                nodeId: typeof nodeId === "string" ? nodeId : undefined,
+                sessionId: resolvedNodeId,
+                nodeId: resolvedNodeId,
                 cwd,
                 model: model as string | undefined,
                 workspaceId,
@@ -779,17 +789,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const storedFingerprint =
                 normalizeSignaturePart(body.resumeFingerprint) ??
                 normalizeSignaturePart(row?.resume_fingerprint);
-            const chatId =
-                existingChatId ??
-                normalizeSignaturePart(row?.acp_session_id);
+            const persistedBinding =
+                normalizeSignaturePart(row?.acp_session_id) ??
+                normalizeSignaturePart(row?.external_session_id);
+            const legacyBinding = existingChatId
+                ? getNodeSessionBinding(existingChatId, michiUserId)
+                : null;
+            const hasResumeBinding = !!persistedBinding || legacyBinding?.nodeId === nodeId;
             const existingSignature = readExistingSignature(row, body, nodeId);
-            const liveSession = chatId ? sessionRegistry.getSession(chatId) : undefined;
+            const liveSession = sessionRegistry.getSession(nodeId)
+                ?? (existingChatId ? sessionRegistry.getSession(existingChatId) : undefined);
             const nativeResumeAvailable =
                 runtime.capabilities.nativeResume &&
                 typeof runtime.loadSession === "function" &&
-                !!chatId;
+                hasResumeBinding;
             const decision = chooseResumeStrategy({
-                existingChatId: chatId,
+                existingChatId: hasResumeBinding ? nodeId : null,
                 liveSessionMatches: !!liveSession && liveSession.runtimeId === targetSignature.runtimeId,
                 nativeResumeAvailable,
                 existingSignature,
@@ -804,10 +819,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
             if (decision.strategy === "live" && liveSession) {
                 session = liveSession;
-            } else if (decision.strategy === "exact" && chatId && runtime.loadSession) {
+            } else if (decision.strategy === "exact" && runtime.loadSession) {
                 try {
                     session = await runtime.loadSession({
-                        sessionId: chatId,
+                        sessionId: nodeId,
                         nodeId,
                         cwd,
                         model: targetSignature.modelId,
@@ -816,7 +831,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     });
                     sessionRegistry.registerSession(session, req.user?.id ?? null);
                 } catch (err) {
-                    console.warn(`exact resume failed for ${chatId}; falling back to compatible resume: ${(err as Error).message}`);
+                    console.warn(`exact resume failed for ${nodeId}; falling back to compatible resume: ${(err as Error).message}`);
                     resumeStrategy = "compatible";
                     resumeReason = `exact_failed:${(err as Error).message}`;
                 }
@@ -934,7 +949,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     });
 
     router.post("/chats/:chatId/message", requireChatOwner, async (req, res) => {
-        const { chatId } = req.params;
+        const requestedIdentifier = req.params.chatId;
         const text: string = req.body?.text || "";
         const displayText: string = typeof req.body?.displayText === 'string'
             ? req.body.displayText
@@ -942,31 +957,34 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const userMetadata = req.body?.userMetadata && typeof req.body.userMetadata === 'object'
             ? req.body.userMetadata
             : undefined;
-        const nodeId: string | undefined = req.body?.nodeId;
+        const legacyNodeId: string | undefined = req.body?.nodeId;
         const ownerToken: string | undefined = req.body?.ownerToken;
         const routeStart = Date.now();
-        startupMark("stream_route_start", { chatId, nodeId, textLen: text.length });
+        const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
+        const nodeId = session?.id ?? null;
+        startupMark("stream_route_start", { chatId: requestedIdentifier, nodeId, textLen: text.length });
         if (!text) {
             return res.status(400).json({ error: "text is required" });
         }
-        if (!nodeId) {
-            return res.status(400).json({ error: "nodeId is required" });
+        if (!session || !nodeId) {
+            return res.status(404).json({ error: `unknown chat: ${requestedIdentifier}` });
         }
-
-        const session = getSessionForUser(chatId, req.user?.id ?? null);
-        if (!session) {
-            return res.status(404).json({ error: `unknown chat: ${chatId}` });
+        if (legacyNodeId && legacyNodeId !== nodeId) {
+            return res.status(409).json({
+                error: "chat identifier and nodeId resolve to different nodes",
+                code: "IDENTITY_MISMATCH",
+            });
         }
-        if (paneOwnership.hasLiveClaim(chatId) && (!ownerToken || !paneOwnership.isHeldBy(chatId, ownerToken))) {
+        if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
             return res.status(403).json({ error: "not the pane owner" });
         }
-        if (chatHub.isActive(chatId)) {
+        if (chatHub.isActive(nodeId)) {
             return res.status(409).json({ error: "a turn is already active for this chat" });
         }
 
         let started;
         try {
-            started = chatHub.startTurn({ chatId, nodeId, text, displayText, userMetadata, session });
+            started = chatHub.startTurn({ chatId: nodeId, nodeId, text, displayText, userMetadata, session });
         } catch (err) {
             return res.status(409).json({
                 error: (err as Error).message,
@@ -987,7 +1005,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 if (res.writableEnded || res.destroyed) return;
                 if (!wroteFirstEvent) {
                     wroteFirstEvent = true;
-                    startupMark("stream_route_first_event", { chatId, nodeId, kind: ev.event, durMs: Date.now() - routeStart });
+                    startupMark("stream_route_first_event", { chatId: nodeId, nodeId, kind: ev.event, durMs: Date.now() - routeStart });
                 }
                 if (ev.event === CHAT_STREAM_EVENTS.done || ev.event === CHAT_STREAM_EVENTS.error) {
                     wroteTerminal = true;
@@ -1002,28 +1020,29 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 if (!res.writableEnded) res.end();
             },
         };
-        const detach = chatHub.subscribe(chatId, sub);
+        const detach = chatHub.subscribe(nodeId, sub);
         res.on("close", () => {
             detach();
         });
         try {
             await started.done;
         } finally {
-            startupMark("stream_route_done", { chatId, nodeId, durMs: Date.now() - routeStart, aborted: false });
+            startupMark("stream_route_done", { chatId: nodeId, nodeId, durMs: Date.now() - routeStart, aborted: false });
             if (!res.writableEnded) res.end();
         }
     });
 
     router.post("/chats/:chatId/cancel", requireChatOwner, async (req, res) => {
-        const { chatId } = req.params;
+        const requestedIdentifier = req.params.chatId;
+        const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
+        const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
         const ownerToken: string | undefined = req.body?.ownerToken;
         try {
-            if (paneOwnership.hasLiveClaim(chatId) && (!ownerToken || !paneOwnership.isHeldBy(chatId, ownerToken))) {
+            if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
                 return res.status(403).json({ error: "not the pane owner" });
             }
-            chatHub.cancel(chatId);
-            const session = getSessionForUser(chatId, req.user?.id ?? null);
-            if (session && !chatHub.isActive(chatId)) await Promise.resolve(session.cancel());
+            chatHub.cancel(nodeId);
+            if (session && !chatHub.isActive(nodeId)) await Promise.resolve(session.cancel());
             res.json({ ok: true });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
@@ -1031,7 +1050,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     });
 
     router.get("/chats/:chatId/subscribe", requireChatOwner, (req, res) => {
-        const { chatId } = req.params;
+        const requestedIdentifier = req.params.chatId;
+        const nodeId = resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
         const fromSeqRaw = req.query.fromSeq;
         const fromTurnIdRaw = req.query.fromTurnId;
         const fromSeq = typeof fromSeqRaw === "string" ? parseInt(fromSeqRaw, 10) : 0;
@@ -1046,13 +1066,17 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const sub: HubSubscriber = {
             send: (ev) => {
                 if (res.writableEnded || res.destroyed) return;
+                // Suppress events while an owner turn (/message SSE) is active —
+                // those events already flow through the /message response. Only
+                // self-initiated turns (idle pump) pass through here.
+                if (chatHub.isOwnerTurnActive(nodeId)) return;
                 try { res.write(encodeChatStreamEvent(ev)); } catch { /* peer gone */ }
             },
             close: () => {
                 // Observers stay connected across turns.
             },
         };
-        const detach = chatHub.subscribe(chatId, sub, {
+        const detach = chatHub.subscribe(nodeId, sub, {
             fromTurnId,
             fromSeq: Number.isFinite(fromSeq) ? fromSeq : 0,
         });
@@ -1073,33 +1097,33 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     });
 
     router.post("/chats/:chatId/claim", requireChatOwner, (req, res) => {
-        const { chatId } = req.params;
+        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
         const ownerToken: unknown = req.body?.ownerToken;
         const windowId: unknown = req.body?.windowId;
         if (typeof ownerToken !== "string" || !ownerToken) {
             return res.status(400).json({ error: "ownerToken is required" });
         }
-        res.json(paneOwnership.claim(chatId, ownerToken, typeof windowId === "string" ? windowId : "window"));
+        res.json(paneOwnership.claim(nodeId, ownerToken, typeof windowId === "string" ? windowId : "window"));
     });
 
     router.post("/chats/:chatId/heartbeat", requireChatOwner, (req, res) => {
-        const { chatId } = req.params;
+        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
         const ownerToken: unknown = req.body?.ownerToken;
         if (typeof ownerToken !== "string" || !ownerToken) {
             return res.status(400).json({ error: "ownerToken is required" });
         }
-        const ok = paneOwnership.heartbeat(chatId, ownerToken);
+        const ok = paneOwnership.heartbeat(nodeId, ownerToken);
         if (!ok) return res.status(409).json({ ok: false, demoted: true });
         res.json({ ok: true });
     });
 
     router.post("/chats/:chatId/release", requireChatOwner, (req, res) => {
-        const { chatId } = req.params;
+        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
         const ownerToken: unknown = req.body?.ownerToken;
         if (typeof ownerToken !== "string" || !ownerToken) {
             return res.status(400).json({ error: "ownerToken is required" });
         }
-        paneOwnership.release(chatId, ownerToken);
+        paneOwnership.release(nodeId, ownerToken);
         res.json({ ok: true });
     });
 
@@ -1107,8 +1131,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     // The frontend sends { requestId, optionId } to approve, or
     // { requestId, cancel: true } to deny.
     router.post("/chats/:chatId/permission-response", requireChatOwner, (req, res) => {
-        const { chatId } = req.params;
-        const session = getSessionForUser(chatId, req.user?.id ?? null);
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
         const { requestId, optionId, cancel } = req.body ?? {};
         if (typeof requestId !== "number") {
@@ -1125,6 +1148,28 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(400).json({ error: "Session does not support permissions" });
         }
         session.respondToPermission(requestId, optionId);
+        res.json({ ok: true });
+    });
+
+    // Respond to a pending AskUserQuestion from the agent.
+    router.post("/chats/:chatId/user-input-response", requireChatOwner, (req, res) => {
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
+        if (!session) return res.status(404).json({ error: "unknown chat" });
+        const { requestId, answers, skip } = req.body ?? {};
+        if (typeof requestId !== "number") {
+            return res.status(400).json({ error: "requestId (number) is required" });
+        }
+        if (skip === true) {
+            session.skipUserInput?.(requestId);
+            return res.json({ ok: true });
+        }
+        if (!Array.isArray(answers)) {
+            return res.status(400).json({ error: "answers (array) required when not skipping" });
+        }
+        if (!session.respondToUserInput) {
+            return res.status(400).json({ error: "Session does not support user input requests" });
+        }
+        session.respondToUserInput(requestId, answers);
         res.json({ ok: true });
     });
 
@@ -1177,7 +1222,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     });
 
     router.get("/chats/:chatId/modes", requireChatOwner, (req, res) => {
-        const session = getSessionForUser(req.params.chatId, req.user?.id ?? null);
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
         res.json({ currentModeId: session.currentModeId ?? null });
     });
@@ -1187,7 +1232,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (typeof modeId !== "string" || !modeId) {
             return res.status(400).json({ error: "modeId is required" });
         }
-        const session = getSessionForUser(req.params.chatId, req.user?.id ?? null);
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session?.setMode) {
             return res.status(400).json({ error: "Active session does not support modes" });
         }
@@ -1200,7 +1245,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     });
 
     router.get("/chats/:chatId/model", requireChatOwner, (req, res) => {
-        const session = getSessionForUser(req.params.chatId, req.user?.id ?? null);
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
         res.json({ currentModelId: session.currentModelId ?? null });
     });
@@ -1210,7 +1255,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (typeof modelId !== "string" || !modelId) {
             return res.status(400).json({ error: "modelId is required" });
         }
-        const session = getSessionForUser(req.params.chatId, req.user?.id ?? null);
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session?.setModel) {
             return res.status(400).json({ error: "Active session does not support runtime model switching" });
         }

@@ -19,6 +19,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   // Non-spied: plain arrow that returns what the provider expects.
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
@@ -110,8 +111,8 @@ describe('auto-branch behavior (real provider)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => {
-      rootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      rootId = (await result.current.store.createThread()) ?? '';
       result.current.store.sendMessage(rootId, 'hello');
     });
 
@@ -142,8 +143,8 @@ describe('auto-branch behavior (real provider)', () => {
     // Workspaces start empty; create the first thread explicitly so we have
     // a node to send messages to. Mirrors what Home composer's submit does.
     let rootId: string = '';
-    act(() => {
-      rootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      rootId = (await result.current.store.createThread()) ?? '';
     });
 
     // First send: idle → streaming. streamMessage is called once.
@@ -176,8 +177,8 @@ describe('auto-branch behavior (real provider)', () => {
     // Workspaces start empty; create the first thread explicitly so we have
     // a node to send messages to. Mirrors what Home composer's submit does.
     let rootId: string = '';
-    act(() => {
-      rootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      rootId = (await result.current.store.createThread()) ?? '';
     });
     expect(result.current.nodes[rootId].status).toBe('idle');
 
@@ -199,8 +200,8 @@ describe('auto-branch behavior (real provider)', () => {
     // Workspaces start empty; create the first thread explicitly so we have
     // a node to send messages to. Mirrors what Home composer's submit does.
     let rootId: string = '';
-    act(() => {
-      rootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      rootId = (await result.current.store.createThread()) ?? '';
     });
 
     await act(async () => {
@@ -233,8 +234,8 @@ describe('auto-branch behavior (real provider)', () => {
     });
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
     let rootId = '';
-    act(() => {
-      rootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      rootId = (await result.current.store.createThread()) ?? '';
     });
     await waitFor(() => expect(result.current.store.focusedPane).toBe(rootId));
 
@@ -261,11 +262,11 @@ describe('auto-branch behavior (real provider)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
     let firstRootId = '';
     let secondRootId = '';
-    act(() => {
-      firstRootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      firstRootId = (await result.current.store.createThread()) ?? '';
     });
-    act(() => {
-      secondRootId = result.current.store.createThread() ?? '';
+    await act(async () => {
+      secondRootId = (await result.current.store.createThread()) ?? '';
     });
     await waitFor(() => expect(result.current.store.focusedPane).toBe(secondRootId));
 
@@ -309,8 +310,8 @@ describe('auto-branch behavior (real provider)', () => {
       await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
       let rootId = '';
-      act(() => {
-        rootId = result.current.store.createThread() ?? '';
+      await act(async () => {
+        rootId = (await result.current.store.createThread()) ?? '';
       });
 
       await act(async () => {

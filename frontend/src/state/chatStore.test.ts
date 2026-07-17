@@ -205,6 +205,18 @@ describe('hydrateSavedState', () => {
     expect(hydrated.nodes.n2.chatId).toBeNull();
   });
 
+  it('maps a legacy runtime chatId to the public nodeId marker', () => {
+    const hydrated = hydrateSavedState({
+      ...baseState,
+      nodes: {
+        ...baseState.nodes,
+        n1: { ...baseState.nodes.n1, chatId: 'legacy-kiro-acp-session' },
+      },
+    });
+    expect(hydrated.nodes.n1.chatId).toBe('n1');
+    expect(hydrated.nodes.n1.runtimeId).toBe('kiro');
+  });
+
   it('forces status to idle and clears any streaming flag', () => {
     const hydrated = hydrateSavedState(baseState);
     expect(hydrated.nodes.n1.status).toBe('idle');

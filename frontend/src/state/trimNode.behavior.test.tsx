@@ -16,6 +16,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
@@ -78,9 +79,9 @@ describe('trimNode (single-node trim)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let leafId = '';
-    act(() => { leafId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { leafId = await result.current.store.createBlankChild(rootId); });
 
     expect(result.current.nodes[leafId].parentNodeId).toBe(rootId);
 
@@ -101,11 +102,11 @@ describe('trimNode (single-node trim)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let midId = '';
-    act(() => { midId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
     let leafId = '';
-    act(() => { leafId = result.current.store.createBlankChild(midId); });
+    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
 
     expect(result.current.nodes[leafId].parentNodeId).toBe(midId);
 
@@ -125,15 +126,15 @@ describe('trimNode (single-node trim)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let forkId = '';
-    act(() => { forkId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { forkId = await result.current.store.createBlankChild(rootId); });
     let aId = '';
     let bId = '';
     let cId = '';
-    act(() => { aId = result.current.store.createBlankChild(forkId); });
-    act(() => { bId = result.current.store.createBlankChild(forkId); });
-    act(() => { cId = result.current.store.createBlankChild(forkId); });
+    await act(async () => { aId = await result.current.store.createBlankChild(forkId); });
+    await act(async () => { bId = await result.current.store.createBlankChild(forkId); });
+    await act(async () => { cId = await result.current.store.createBlankChild(forkId); });
 
     act(() => { result.current.store.trimNode(forkId); });
 
@@ -153,14 +154,14 @@ describe('trimNode (single-node trim)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     // Three children of root in chronological order: A (oldest), B, C.
     let aId = '';
     let bId = '';
     let cId = '';
-    act(() => { aId = result.current.store.createBlankChild(rootId); });
-    act(() => { bId = result.current.store.createBlankChild(rootId); });
-    act(() => { cId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { aId = await result.current.store.createBlankChild(rootId); });
+    await act(async () => { bId = await result.current.store.createBlankChild(rootId); });
+    await act(async () => { cId = await result.current.store.createBlankChild(rootId); });
 
     const projectBefore = result.current.store.activeProject!;
     const treeId = projectBefore.trees.find((t) => t.rootNodeId === rootId)!.id;
@@ -186,11 +187,11 @@ describe('trimNode (single-node trim)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let midId = '';
-    act(() => { midId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
     let leafId = '';
-    act(() => { leafId = result.current.store.createBlankChild(midId); });
+    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
 
     act(() => { result.current.store.trimNode(midId); });
     const groupId = result.current.nodes[midId].deletionGroupId!;
@@ -211,13 +212,13 @@ describe('trimNode (single-node trim)', () => {
 
     // G - P - X - C
     let gId = '';
-    act(() => { gId = result.current.store.createThread() ?? ''; });
+    await act(async () => { gId = (await result.current.store.createThread()) ?? ''; });
     let pId = '';
-    act(() => { pId = result.current.store.createBlankChild(gId); });
+    await act(async () => { pId = await result.current.store.createBlankChild(gId); });
     let xId = '';
-    act(() => { xId = result.current.store.createBlankChild(pId); });
+    await act(async () => { xId = await result.current.store.createBlankChild(pId); });
     let cId = '';
-    act(() => { cId = result.current.store.createBlankChild(xId); });
+    await act(async () => { cId = await result.current.store.createBlankChild(xId); });
 
     act(() => { result.current.store.trimNode(xId); });
     act(() => { result.current.store.trimNode(pId); });

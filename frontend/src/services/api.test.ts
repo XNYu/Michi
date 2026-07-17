@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from 'michi-shared';
-import { ensureSession, streamMessage } from './api';
+import { allocateNodeIds, ensureSession, streamMessage } from './api';
 
 describe('ensureSession', () => {
   afterEach(() => {
@@ -36,6 +36,18 @@ describe('ensureSession', () => {
     await ensureSession({ nodeId: 'n1', workspaceId: 'ws-1', graphPrerequisite });
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(String(init.body)).graphPrerequisite).toEqual(graphPrerequisite);
+  });
+});
+
+describe('allocateNodeIds', () => {
+  it('returns backend-minted node ids', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      nodeIds: ['n-server-1', 'n-server-2'],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(allocateNodeIds(2)).resolves.toEqual(['n-server-1', 'n-server-2']);
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({ count: 2 });
   });
 });
 
@@ -109,7 +121,7 @@ describe('streamMessage terminal-state safety net', () => {
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const onDone = vi.fn();
-    streamMessage('c1', 'wire prompt', { onDone }, 'n1', undefined, {
+    streamMessage('n1', 'wire prompt', { onDone }, undefined, {
       displayText: 'visible text',
       userMetadata: { quotedText: 'quote' },
     });
@@ -120,7 +132,6 @@ describe('streamMessage terminal-state safety net', () => {
       text: 'wire prompt',
       displayText: 'visible text',
       userMetadata: { quotedText: 'quote' },
-      nodeId: 'n1',
     });
     expect(onDone).toHaveBeenCalledWith('end_turn', undefined, undefined, true);
   });

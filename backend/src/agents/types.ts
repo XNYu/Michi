@@ -144,7 +144,13 @@ export interface AgentStatus {
 }
 
 export interface AgentSession {
+  /** Stable Michi node id. This is the only session identity exposed outside runtime adapters. */
   id: string;
+  /**
+   * Runtime-owned resume/transport id when it differs from the Michi node id
+   * (for example Kiro's ACP session id). Never expose this to the frontend.
+   */
+  nativeSessionId?: string | null;
   runtimeId: RuntimeId;
   parentChatId?: string;
   currentModeId?: string | null;

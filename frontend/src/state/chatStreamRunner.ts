@@ -23,7 +23,6 @@ function couldStillBeSentinel(buf: string): boolean {
 }
 
 interface RunChatStreamOptions {
-  chatId: string;
   prompt: string;
   nodeId: string;
   assistantId: string;
@@ -33,7 +32,6 @@ interface RunChatStreamOptions {
   // the reducer's assistant blocks.
   assistantTextBufs: Ref<Record<string, string>>;
   cancelFns: Ref<Record<string, () => void>>;
-  requestNodeId?: string;
   ownerToken?: string;
   displayText?: string;
   userMetadata?: {
@@ -54,13 +52,11 @@ interface RunChatStreamOptions {
 }
 
 export function runChatStream({
-  chatId,
   prompt,
   nodeId,
   assistantId,
   dispatch,
   cancelFns,
-  requestNodeId,
   ownerToken,
   displayText,
   userMetadata,
@@ -296,7 +292,7 @@ export function runChatStream({
     ...extraHandlers,
   };
 
-  streamCancel = streamMessage(chatId, prompt, handlers, requestNodeId, ownerToken, {
+  streamCancel = streamMessage(nodeId, prompt, handlers, ownerToken, {
     displayText,
     userMetadata,
   });

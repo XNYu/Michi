@@ -469,10 +469,10 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     && !selectionHasStreaming
     && !selectionSpansTrees;
 
-  const mergeSelection = () => {
+  const mergeSelection = async () => {
     if (!canMergeSelection) return;
     try {
-      createMergedChat(selectedMapIds);
+      await createMergedChat(selectedMapIds);
       clearSelection();
       onNav?.('dashboard');
     } catch {

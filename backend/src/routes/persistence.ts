@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { log } from '../services/logger';
 import { getDb, runInTransaction } from '../services/db';
 import {
@@ -30,6 +31,17 @@ export function setupPersistenceRoutes(): express.Router {
       backgroundWorkspaceSync: false,
       legacySyncAccepted: false,
     });
+  });
+
+  // Backend-owned node identity allocation. This intentionally does not write
+  // SQLite: an unused allocation is harmless, while the existing graph command
+  // path remains authoritative for creating the node/tree/edge rows.
+  router.post('/node-ids/allocate', (req, res) => {
+    const rawCount = req.body?.count ?? 1;
+    if (!Number.isInteger(rawCount) || rawCount < 1 || rawCount > 100) {
+      return res.status(400).json({ error: 'count must be an integer between 1 and 100' });
+    }
+    res.json({ nodeIds: Array.from({ length: rawCount }, () => `n-${randomUUID()}`) });
   });
 
   // List all workspaces (lightweight, no messages)

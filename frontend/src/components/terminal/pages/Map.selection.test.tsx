@@ -1,9 +1,9 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import TerminalMap from './Map';
 
-const createMergedChat = vi.hoisted(() => vi.fn(() => 'merged'));
+const createMergedChat = vi.hoisted(() => vi.fn(async () => 'merged'));
 const clearSelection = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   project: null as any,
@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 describe('Map selection actions', () => {
-  it('exposes Merge, Digest, Export, and Clear and wires their existing flows', () => {
+  it('exposes Merge, Digest, Export, and Clear and wires their existing flows', async () => {
     const onNav = vi.fn();
     const digestSpy = vi.fn();
     const exportSpy = vi.fn();
@@ -84,7 +84,7 @@ describe('Map selection actions', () => {
       expect(screen.getByRole('toolbar', { name: 'Map selection actions' })).not.toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
       expect(createMergedChat).toHaveBeenCalledWith(['n1', 'n2']);
-      expect(onNav).toHaveBeenCalledWith('dashboard');
+      await waitFor(() => expect(onNav).toHaveBeenCalledWith('dashboard'));
 
       fireEvent.click(screen.getByRole('button', { name: 'Digest' }));
       expect(digestSpy).toHaveBeenCalledOnce();

@@ -6,7 +6,7 @@ import { requestDigest } from '../lib/digestPrompt';
 
 export interface TreeMenuActions {
   openPane: (id: string) => void;
-  createBlankChild: (parentId: string) => void;
+  createBlankChild: (parentId: string) => Promise<unknown> | void;
   toggleSelection: (id: string) => void;
   clearSelection: () => void;
   deleteNode: (id: string) => void;
@@ -17,7 +17,7 @@ export interface TreeMenuActions {
    *  surface instead of Trash). */
   archiveNode: (id: string) => void;
   /** Merge ≥2 nodes into a new woven chat node. */
-  createMergedChat: (sourceIds: string[]) => string;
+  createMergedChat: (sourceIds: string[]) => Promise<string>;
   /** Create a digest covering the given chat nodes. */
   createDigest: (projectId: string, sourceIds: string[], customPrompt?: string) => Promise<string>;
   /** Fire the export-panel toggle event. */
@@ -80,9 +80,10 @@ export function buildTreeContextMenu({
             keys: 'W',
             disabled: chatScope.length < 2,
             run: () => {
-              const newId = actions.createMergedChat(chatScope);
-              actions.focusOrOpen(newId);
-              actions.clearSelection();
+              void actions.createMergedChat(chatScope).then((newId) => {
+                actions.focusOrOpen(newId);
+                actions.clearSelection();
+              }).catch(() => {});
             },
           },
           {
@@ -192,7 +193,9 @@ export function buildTreeContextMenu({
           label: 'Branch new chat',
           keys: 'B',
           disabled: !isChat,
-          run: () => actions.createBlankChild(targetId),
+          run: () => {
+            void Promise.resolve(actions.createBlankChild(targetId)).catch(() => {});
+          },
         },
       ],
     },

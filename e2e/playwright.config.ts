@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const port = Number(process.env.MICHI_E2E_PORT ?? 3001);
+const baseURL = `http://localhost:${port}`;
+
 // Web-only e2e for the React/Vite frontend. The backend is NEVER reached —
 // every /api/** call is intercepted by fixtures/mockApi.ts. That keeps tests
 // hermetic (no kiro-cli binary, no external auth, no sqlite).
@@ -17,7 +20,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
 
   use: {
-    baseURL: 'http://localhost:3001',
+    baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     // Keep videos off by default — they bloat traces. Enable per-spec when debugging.
@@ -35,9 +38,9 @@ export default defineConfig({
   // boot vite from the frontend workspace. We do NOT start the backend — the
   // mockApi fixture intercepts every /api/** call.
   webServer: {
-    command: 'npm run frontend:dev',
+    command: `npm --prefix frontend run dev:raw -- --port ${port}`,
     cwd: '..',
-    url: 'http://localhost:3001',
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     stdout: 'pipe',

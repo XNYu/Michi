@@ -16,6 +16,7 @@ import { render, act, waitFor } from '@testing-library/react';
 
 vi.mock('../../services/api', () => ({
   __esModule: true,
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
@@ -112,9 +113,9 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
     let rootA = '';
     let rootB = '';
     let childB = '';
-    act(() => { rootA = storeRef.createThread() ?? ''; });
-    act(() => { rootB = storeRef.createThread() ?? ''; });
-    act(() => { childB = storeRef.createBlankChild(rootB); });
+    await act(async () => { rootA = (await storeRef.createThread()) ?? ''; });
+    await act(async () => { rootB = (await storeRef.createThread()) ?? ''; });
+    await act(async () => { childB = await storeRef.createBlankChild(rootB); });
     const treeA = storeRef.activeProject!.trees.find((t) => t.rootNodeId === rootA)!.id;
     const treeB = storeRef.activeProject!.trees.find((t) => t.rootNodeId === rootB)!.id;
 
@@ -146,15 +147,15 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
     let rootA = '';
     let rootB = '';
     let childB = '';
-    act(() => { rootA = storeRef.createThread() ?? ''; });
-    act(() => { rootB = storeRef.createThread() ?? ''; });
-    act(() => { childB = storeRef.createBlankChild(rootB); });
+    await act(async () => { rootA = (await storeRef.createThread()) ?? ''; });
+    await act(async () => { rootB = (await storeRef.createThread()) ?? ''; });
+    await act(async () => { childB = await storeRef.createBlankChild(rootB); });
     const treeA = storeRef.projects.find((p) => p.id === pidTarget)!.trees.find((t) => t.rootNodeId === rootA)!.id;
     act(() => { storeRef.activateTree(treeA, pidTarget); });
 
     await act(async () => { await storeRef.createProject('wsOther', undefined); });
     await waitFor(() => expect(storeRef.activeProject!.name).toBe('wsOther'));
-    act(() => { storeRef.createThread(); });
+    await act(async () => { await storeRef.createThread(); });
     expect(row(childB)).toBeNull();
     scrollSpy.mockClear();
 
@@ -178,10 +179,10 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
 
       let rootOld = '';
       let childOld = '';
-      act(() => { rootOld = storeRef.createThread() ?? ''; });
-      act(() => { childOld = storeRef.createBlankChild(rootOld); });
+      await act(async () => { rootOld = (await storeRef.createThread()) ?? ''; });
+      await act(async () => { childOld = await storeRef.createBlankChild(rootOld); });
       // six fresher threads push the first one past THREAD_PREVIEW_LIMIT (5)
-      for (let i = 0; i < 6; i++) act(() => { storeRef.createThread(); });
+      for (let i = 0; i < 6; i++) await act(async () => { await storeRef.createThread(); });
 
       // beyond the cap → its row is not in the DOM at all
       expect(row(rootOld)).toBeNull();
@@ -207,10 +208,10 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
 
     let rootT = '';
     let childT = '';
-    act(() => { rootT = storeRef.createThread() ?? ''; });
-    act(() => { childT = storeRef.createBlankChild(rootT); });
+    await act(async () => { rootT = (await storeRef.createThread()) ?? ''; });
+    await act(async () => { childT = await storeRef.createBlankChild(rootT); });
     const treeT = storeRef.activeProject!.trees.find((t) => t.rootNodeId === rootT)!.id;
-    act(() => { storeRef.createThread(); }); // another live thread stays active
+    await act(async () => { await storeRef.createThread(); }); // another live thread stays active
     act(() => { storeRef.archiveTree(treeT); });
 
     // archived section is collapsed → no row in the DOM
@@ -233,13 +234,13 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
 
     let rootB = '';
     let childB = '';
-    act(() => { rootB = storeRef.createThread() ?? ''; });
-    act(() => { childB = storeRef.createBlankChild(rootB); });
+    await act(async () => { rootB = (await storeRef.createThread()) ?? ''; });
+    await act(async () => { childB = await storeRef.createBlankChild(rootB); });
     // tree B stays the ACTIVE tree of wsTarget
 
     await act(async () => { await storeRef.createProject('wsOther', undefined); });
     await waitFor(() => expect(storeRef.activeProject!.name).toBe('wsOther'));
-    act(() => { storeRef.createThread(); });
+    await act(async () => { await storeRef.createThread(); });
     scrollSpy.mockClear();
 
     act(() => { navigateToNode(deps(), childB, pidTarget); });

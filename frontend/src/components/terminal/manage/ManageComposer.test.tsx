@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import ManageComposer, { __resetManageComposerSessionStateForTests } from './ManageComposer';
 
 // The agent switcher menu is a searchable ContextMenu: it renders a `filter…`
@@ -18,7 +18,7 @@ function flushBlink() {
   });
 }
 
-const createThread = vi.fn(() => 'new-node-id');
+const createThread = vi.fn(async () => 'new-node-id');
 const sendMessage = vi.fn();
 const selectProject = vi.fn();
 const createContext = vi.fn();
@@ -70,7 +70,7 @@ describe('ManageComposer', () => {
     storeState.agentStatus = null;
   });
 
-  it('submit triggers selectProject + createThread + sendMessage + onSubmitted', () => {
+  it('submit triggers selectProject + createThread + sendMessage + onSubmitted', async () => {
     selectProject.mockClear();
     createThread.mockClear();
     sendMessage.mockClear();
@@ -85,13 +85,15 @@ describe('ManageComposer', () => {
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: 'hello there' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    expect(selectProject).toHaveBeenCalledWith('ws1');
-    expect(createThread).toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith('new-node-id', 'hello there', undefined);
-    expect(onSubmitted).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(selectProject).toHaveBeenCalledWith('ws1');
+      expect(createThread).toHaveBeenCalled();
+      expect(sendMessage).toHaveBeenCalledWith('new-node-id', 'hello there', undefined);
+      expect(onSubmitted).toHaveBeenCalled();
+    });
   });
 
-  it('clears the remembered draft before submission navigation unmounts it', () => {
+  it('clears the remembered draft before submission navigation unmounts it', async () => {
     let unmountFirst = () => {};
     const onSubmitted = vi.fn(() => unmountFirst());
     const first = render(
@@ -107,7 +109,7 @@ describe('ManageComposer', () => {
     fireEvent.change(ta, { target: { value: 'do not haunt home' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
 
-    expect(onSubmitted).toHaveBeenCalled();
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
 
     render(
       <ManageComposer

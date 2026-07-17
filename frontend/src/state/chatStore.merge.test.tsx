@@ -14,6 +14,7 @@ import { PrefsProvider } from './prefs';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
@@ -79,11 +80,11 @@ describe('createMergedChat — cross-tree, no branch parent', () => {
     await act(async () => {
       await result.current.store.createProject('ws');
     });
-    act(() => {
-      aId = result.current.store.createThread()!;
+    await act(async () => {
+      aId = (await result.current.store.createThread())!;
     });
-    act(() => {
-      bId = result.current.store.createThread()!;
+    await act(async () => {
+      bId = (await result.current.store.createThread())!;
     });
 
     // Both ids must be populated.
@@ -92,8 +93,8 @@ describe('createMergedChat — cross-tree, no branch parent', () => {
     expect(aId).not.toBe(bId);
 
     let mergedId = '';
-    act(() => {
-      mergedId = result.current.store.createMergedChat([aId, bId]);
+    await act(async () => {
+      mergedId = await result.current.store.createMergedChat([aId, bId]);
     });
 
     expect(mergedId).toBeTruthy();
@@ -128,11 +129,11 @@ describe('createMergedChat — cross-tree, no branch parent', () => {
     await act(async () => {
       await result.current.store.createProject('ws');
     });
-    act(() => {
-      aId = result.current.store.createThread()!;
+    await act(async () => {
+      aId = (await result.current.store.createThread())!;
     });
 
-    expect(() => result.current.store.createMergedChat([aId])).toThrow(/at least 2/);
+    await expect(result.current.store.createMergedChat([aId])).rejects.toThrow(/at least 2/);
   });
 
   it('rejects self-merge (duplicate source ids)', async () => {
@@ -142,10 +143,10 @@ describe('createMergedChat — cross-tree, no branch parent', () => {
     await act(async () => {
       await result.current.store.createProject('ws');
     });
-    act(() => {
-      aId = result.current.store.createThread()!;
+    await act(async () => {
+      aId = (await result.current.store.createThread())!;
     });
 
-    expect(() => result.current.store.createMergedChat([aId, aId])).toThrow(/duplicate|self-merge/i);
+    await expect(result.current.store.createMergedChat([aId, aId])).rejects.toThrow(/duplicate|self-merge/i);
   });
 });

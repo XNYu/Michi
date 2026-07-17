@@ -48,9 +48,13 @@ export default function ThreadsScreen({ onOpenThread }: Props) {
     [activeProject?.edges, nodes, activeProject?.trees],
   );
 
-  const handleNewThread = () => {
-    const newRootId = createThread();
-    if (newRootId) onOpenThread(newRootId);
+  const handleNewThread = async () => {
+    try {
+      const newRootId = await createThread();
+      if (newRootId) onOpenThread(newRootId);
+    } catch {
+      // The store already surfaced the allocation failure.
+    }
   };
 
   const handleOpen = (tree: Tree) => {

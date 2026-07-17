@@ -273,6 +273,20 @@ export interface EnsureSessionResult {
   resumeReason?: string;
 }
 
+export async function allocateNodeIds(count = 1): Promise<string[]> {
+  const res = await fetch(`${API_BASE_URL}/node-ids/allocate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ count }),
+  });
+  if (!res.ok) throw new Error(`allocateNodeIds failed: ${res.status}`);
+  const body = await res.json();
+  if (!Array.isArray(body.nodeIds) || body.nodeIds.length !== count) {
+    throw new Error('allocateNodeIds returned an invalid response');
+  }
+  return body.nodeIds as string[];
+}
+
 export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureSessionResult> {
   const startedAt = Date.now();
   startupMark('ensure_session_start', { nodeId: opts.nodeId, chatId: opts.chatId, cwd: opts.cwd, workspaceId: opts.workspaceId });
@@ -461,10 +475,9 @@ export interface ExportRequestPayload {
  * that aborts the fetch (also calls /cancel on the backend).
  */
 export function streamMessage(
-  chatId: string,
+  nodeId: string,
   text: string,
   handlers: StreamHandlers,
-  nodeId?: string,
   ownerToken?: string,
   durable?: {
     displayText?: string;
@@ -519,20 +532,19 @@ export function streamMessage(
   (async () => {
     try {
       const payload: Record<string, unknown> = { text };
-      if (nodeId) payload.nodeId = nodeId;
       if (ownerToken) payload.ownerToken = ownerToken;
       if (durable?.displayText !== undefined) payload.displayText = durable.displayText;
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
       const startedAt = Date.now();
-      startupMark('stream_request_start', { chatId, nodeId, textLen: text.length });
-      const res = await fetch(`${API_BASE_URL}/chats/${chatId}/message`, {
+      startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });
+      const res = await fetch(`${API_BASE_URL}/chats/${nodeId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`stream failed: ${res.status}`);
-      startupMark('stream_response_headers', { chatId, nodeId, status: res.status, durMs: Date.now() - startedAt });
+      startupMark('stream_response_headers', { chatId: nodeId, nodeId, status: res.status, durMs: Date.now() - startedAt });
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -572,18 +584,18 @@ export function streamMessage(
           if (!parsed) continue;
           if (!sawFirstEvent) {
             sawFirstEvent = true;
-            startupMark('first_sse_event', { chatId, nodeId, event: parsed.event, durMs: Date.now() - startedAt });
+            startupMark('first_sse_event', { chatId: nodeId, nodeId, event: parsed.event, durMs: Date.now() - startedAt });
           }
           if (!sawFirstChunk && parsed.event === 'chunk') {
             sawFirstChunk = true;
-            startupMark('first_sse_chunk', { chatId, nodeId, durMs: Date.now() - startedAt });
+            startupMark('first_sse_chunk', { chatId: nodeId, nodeId, durMs: Date.now() - startedAt });
           }
           if (probeEnabled && parsed.event === CHAT_STREAM_EVENTS.chunk) {
             const now = Date.now();
             chunkSeq += 1;
             writeStreamProbe({
               phase: 'sse_chunk',
-              chatId,
+              chatId: nodeId,
               nodeId,
               seq: chunkSeq,
               chars: parsed.data.text.length,
@@ -623,7 +635,7 @@ export function streamMessage(
   return () => {
     clearWatchdog();
     controller.abort();
-    cancelChat(chatId, ownerToken).catch(() => {});
+    cancelChat(nodeId, ownerToken).catch(() => {});
   };
 }
 

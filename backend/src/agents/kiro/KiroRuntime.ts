@@ -15,6 +15,7 @@ import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble } from "../preamble";
 import type { AgentToolBridge, BridgeContextResult, SpawnedBranch } from "../toolBridge";
 import type { RuntimeModelCache } from "../runtimeModelCache";
+import { getNode } from "../../services/dbRepository";
 
 export interface OpenSessionResult {
     sid: string;
@@ -104,6 +105,17 @@ export class KiroRuntime implements AgentRuntime {
     private slotByChatId = new Map<string, string>();
     /** sessionId → cwd binding. Used by permission forwarding and cwd-scoped purge. */
     private sessionCwd = new Map<string, string>();
+    /** Michi node id → ACP session id. Public callers only use the node id. */
+    private sidByNodeId = new Map<string, string>();
+    /** ACP session id → Michi node id. Used when a cwd-scoped client exits. */
+    private nodeIdBySid = new Map<string, string>();
+    /** Monotonic request id for user-input requests across all sessions. */
+    private nextUserInputRequestId = 0;
+    /** Pending user-input promises, keyed by requestId. */
+    private readonly pendingUserInputs = new Map<
+        number,
+        { resolve: (answers: Array<{ question: string; answer: string }> | null) => void; timer: NodeJS.Timeout }
+    >();
 
     private readonly mcpBaseUrl: string;
     private readonly defaultCwd: string;
@@ -128,6 +140,18 @@ export class KiroRuntime implements AgentRuntime {
         return this.sessionCwd.get(sid);
     }
 
+    private bindNodeSession(nodeId: string, sid: string): void {
+        this.sidByNodeId.set(nodeId, sid);
+        this.nodeIdBySid.set(sid, nodeId);
+    }
+
+    private unbindNativeSession(sid: string): string {
+        const nodeId = this.nodeIdBySid.get(sid) ?? sid;
+        this.nodeIdBySid.delete(sid);
+        this.sidByNodeId.delete(nodeId);
+        return nodeId;
+    }
+
     /**
      * Drop every session bound to a cwd whose AcpClient just exited. Releases
      * MCP slots and clears the per-session caches so a fresh client starts
@@ -137,7 +161,7 @@ export class KiroRuntime implements AgentRuntime {
     private purgeSessionsForCwd(cwd: string): void {
         for (const [sid, boundCwd] of this.sessionCwd) {
             if (boundCwd !== cwd) continue;
-            sessionRegistry.dropSession(sid);
+            sessionRegistry.dropSession(this.unbindNativeSession(sid));
             this.sessionCwd.delete(sid);
             this.sessionCurrentMode.delete(sid);
             this.sessionCurrentModel.delete(sid);
@@ -186,13 +210,14 @@ export class KiroRuntime implements AgentRuntime {
     ): Promise<SpawnedBranch[]> {
         const slot = this.mcpRegistry?.get(slotId);
         if (!slot) return [];
-        const parentChatId = slot.parentChatId;
-        if (parentChatId === "__pending__") return [];
+        const parentSid = slot.parentChatId;
+        if (parentSid === "__pending__") return [];
+        const parentNodeId = slot.nodeId ?? this.nodeIdBySid.get(parentSid) ?? parentSid;
         const cwd = slot.cwd;
-        const parentSession = sessionRegistry.getSession(parentChatId) as KiroSession | undefined;
+        const parentSession = sessionRegistry.getSession(parentNodeId) as KiroSession | undefined;
 
         const created = await this.bridge.spawnBranches({
-            parentChatId,
+            parentChatId: parentNodeId,
             cwd,
             enableFollowUps: parentSession?.getEnableFollowUps() !== false,
             topics,
@@ -200,7 +225,7 @@ export class KiroRuntime implements AgentRuntime {
 
         const client = this.getClient(cwd);
         if (client) {
-            client.injectUpdate(parentChatId, {
+            client.injectUpdate(parentSid, {
                 sessionUpdate: "spawn_branches",
                 topics: created,
             });
@@ -750,21 +775,23 @@ export class KiroRuntime implements AgentRuntime {
             perf.measure("newChat:session_new", tNew, { cwd: opts.cwd, sid });
         }
         perf.measure("newChat:total", tTotal, { cwd: opts.cwd, sid, warmed: !!warmed });
+        const nodeId = opts.sessionId ?? sid;
 
         if (slotId) {
             const slot = this.mcpRegistry?.get(slotId);
             if (slot) {
                 slot.parentChatId = sid;
-                slot.nodeId = opts.sessionId ?? null;
+                slot.nodeId = nodeId;
                 slot.workspaceId = opts.workspaceId ?? null;
                 slot.ownerUserId = opts.ownerUserId ?? null;
             }
             this.slotByChatId.set(sid, slotId);
         }
         this.sessionCwd.set(sid, opts.cwd);
+        this.bindNodeSession(nodeId, sid);
 
         const enableFollowUps = opts.enableFollowUps !== false;
-        const session = new KiroSession(sid, this, opts.cwd, {
+        const session = new KiroSession(nodeId, sid, this, opts.cwd, {
             parentChatId: opts.parentChatId,
             enableFollowUps,
         });
@@ -801,35 +828,46 @@ export class KiroRuntime implements AgentRuntime {
      * preamble was sent in the prior backend run).
      */
     async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
+        const nodeId = opts.nodeId ?? opts.sessionId;
+        const storedSid = getNode(nodeId)?.acp_session_id ?? null;
+        const nativeSessionId = storedSid && storedSid !== nodeId
+            ? storedSid
+            : opts.nodeId
+                ? opts.sessionId
+                : storedSid ?? opts.sessionId;
         const result = await this.loadAcpSession({
-            sessionId: opts.sessionId,
+            sessionId: nativeSessionId,
             cwd: opts.cwd,
             model: opts.model ?? undefined,
             workspaceId: opts.workspaceId ?? null,
-            nodeId: opts.nodeId ?? null,
+            nodeId,
             ownerUserId: opts.ownerUserId ?? null,
         });
         if (result.slotId) this.slotByChatId.set(result.sid, result.slotId);
         this.sessionCwd.set(result.sid, opts.cwd);
-        return new KiroSession(result.sid, this, opts.cwd);
+        this.bindNodeSession(nodeId, result.sid);
+        return new KiroSession(nodeId, result.sid, this, opts.cwd);
     }
 
     async releaseSession(sessionId: string): Promise<void> {
-        const cwd = this.sessionCwd.get(sessionId);
+        const sid = this.sidByNodeId.get(sessionId) ?? sessionId;
+        const nodeId = this.nodeIdBySid.get(sid) ?? sessionId;
+        const cwd = this.sessionCwd.get(sid);
         const client = cwd ? this.pool.get(cwd) : undefined;
         if (client) {
-            await client.cancel(sessionId).catch(() => {});
-            client.destroySession(sessionId);
+            await client.cancel(sid).catch(() => {});
+            client.destroySession(sid);
         }
-        const slotId = this.slotByChatId.get(sessionId);
+        const slotId = this.slotByChatId.get(sid);
         if (slotId) {
             await this.mcpRegistry?.dispose(slotId).catch(() => {});
         }
-        this.slotByChatId.delete(sessionId);
-        this.sessionCwd.delete(sessionId);
-        this.sessionCurrentMode.delete(sessionId);
-        this.sessionCurrentModel.delete(sessionId);
-        sessionRegistry.dropSession(sessionId);
+        this.slotByChatId.delete(sid);
+        this.sessionCwd.delete(sid);
+        this.sessionCurrentMode.delete(sid);
+        this.sessionCurrentModel.delete(sid);
+        this.unbindNativeSession(sid);
+        sessionRegistry.dropSession(nodeId);
     }
 
     /**
@@ -906,6 +944,8 @@ export class KiroRuntime implements AgentRuntime {
         for (const slotId of this.slotByChatId.values()) await this.mcpRegistry?.dispose(slotId);
         this.slotByChatId.clear();
         this.sessionCwd.clear();
+        this.sidByNodeId.clear();
+        this.nodeIdBySid.clear();
         const clients = [...this.pool.values()];
         this.pool.clear();
         this.warmedSessions.clear();

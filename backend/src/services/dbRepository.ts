@@ -485,7 +485,15 @@ export function saveNode(node: NodeRow, userId?: string): void {
       current_mode_id=excluded.current_mode_id, pane_width=excluded.pane_width,
       digest=excluded.digest, follow_ups=excluded.follow_ups,
       follow_ups_source_message_id=excluded.follow_ups_source_message_id,
-      acp_session_id=excluded.acp_session_id, runtime_id=excluded.runtime_id,
+      -- acp_session_id is minted server-side for Kiro. Preserve an existing
+      -- binding when an older/newer frontend snapshot omits it or carries the
+      -- public node id instead. updateNodeResumeBinding remains authoritative
+      -- when a runtime intentionally re-binds the node.
+      acp_session_id=COALESCE(nodes.acp_session_id, excluded.acp_session_id),
+      -- Runtime ownership is also server-side. Agent-spawn can race a frontend
+      -- graph snapshot that has not received runtime metadata yet; never let
+      -- that nullable snapshot erase a binding persisted by the adapter.
+      runtime_id=COALESCE(nodes.runtime_id, excluded.runtime_id),
       provider_id=excluded.provider_id, model_id=excluded.model_id,
       reasoning=excluded.reasoning, resume_fingerprint=excluded.resume_fingerprint,
       composer_draft=excluded.composer_draft,

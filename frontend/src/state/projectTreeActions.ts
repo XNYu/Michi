@@ -227,7 +227,7 @@ interface UseTreeActionsArgs {
   nodesRef: MutableRefObject<Record<string, ChatNodeState>>;
   cancelFns: MutableRefObject<Record<string, () => void>>;
   dispatch: (action: ChatAction) => void;
-  newNodeId: () => string;
+  newNodeId: () => Promise<string>;
   setProjects: Dispatch<SetStateAction<Project[]>>;
   setNodes: Dispatch<SetStateAction<Record<string, ChatNodeState>>>;
   setOpenPanes: PaneSetter<string[]>;
@@ -262,9 +262,9 @@ export function useTreeActions({
   sidebarExpanded,
   setSidebarExpanded,
 }: UseTreeActionsArgs) {
-  const createThread = useCallback((modeId?: string) => {
+  const createThread = useCallback(async (modeId?: string) => {
     if (!activeProjectId) return null;
-    const nodeId = newNodeId();
+    const nodeId = await newNodeId();
     const treeId = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const now = Date.now();
     dispatch({ type: 'create', nodeId, projectId: activeProjectId, modeId });

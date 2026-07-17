@@ -97,12 +97,11 @@ describe('broadcast stream api', () => {
     ]));
     vi.stubGlobal('fetch', fetchMock);
 
-    streamMessage('chat1', 'hello', { onDone: vi.fn() }, 'n1', 'tokA');
+    streamMessage('n1', 'hello', { onDone: vi.fn() }, 'tokA');
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
       text: 'hello',
-      nodeId: 'n1',
       ownerToken: 'tokA',
     });
   });

@@ -11,7 +11,7 @@ interface UseDigestOrchestrationArgs {
   setProjects: Dispatch<SetStateAction<Project[]>>;
   setNodes: Dispatch<SetStateAction<Record<string, ChatNodeState>>>;
   sameTree: (a: string, b: string) => boolean;
-  newNodeId: () => string;
+  newNodeId: () => Promise<string>;
 }
 
 export function useDigestOrchestration({
@@ -92,7 +92,7 @@ export function useDigestOrchestration({
           throw new Error('cross-tree digest');
         }
       }
-      const nodeId = newNodeId();
+      const nodeId = await newNodeId();
       dispatch({ type: 'create-digest', nodeId, projectId, sources });
       setProjects((prev) =>
         prev.map((p) =>

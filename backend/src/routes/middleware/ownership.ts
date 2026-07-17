@@ -9,7 +9,7 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { getWorkspace, getNodeWorkspaceId } from '../../services/dbRepository';
+import { getWorkspace, getNodeSessionBinding, getNodeWorkspaceId } from '../../services/dbRepository';
 
 /** Resolves a workspaceId from the request, checks ownership, calls next() or
  *  returns 400/404. Reads from:
@@ -52,7 +52,8 @@ export function requireChatOwner(req: any, res: Response, next: NextFunction): v
     return;
   }
 
-  const workspaceId = getNodeWorkspaceId(chatId);
+  const workspaceId = getNodeSessionBinding(chatId, req.user?.id)?.workspaceId
+    ?? getNodeWorkspaceId(chatId);
   if (!workspaceId) {
     // Node not yet flushed to DB (new-session race) — let the route
     // handle the not-found case itself. We only block confirmed mismatches.

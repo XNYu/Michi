@@ -197,11 +197,12 @@ export default function CommandPalette({
         setPage: (p) => { setPage(p); onClose(); },
         fanoutFromSelection: () => {
           if (selection.size < 2) return;
-          const nodeId = createMergedChat(Array.from(selection));
-          openPane(nodeId);
-          clearSelection();
-          setPage('dashboard');
-          onClose();
+          void createMergedChat(Array.from(selection)).then((nodeId) => {
+            openPane(nodeId);
+            clearSelection();
+            setPage('dashboard');
+            onClose();
+          }).catch(() => {});
         },
         digestFromSelection: () => {
           if (!activeProject) return;

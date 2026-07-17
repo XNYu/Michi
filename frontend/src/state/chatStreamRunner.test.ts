@@ -17,7 +17,7 @@ function makeNode(): ChatNodeState {
   return {
     nodeId: 'n1',
     kind: 'chat',
-    chatId: 'c1',
+    chatId: 'n1',
     projectId: 'p1',
     parentNodeId: undefined,
     mergeSources: [],
@@ -44,7 +44,6 @@ describe('chatStreamRunner — chunk/tool-call ordering', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -88,7 +87,6 @@ describe('chatStreamRunner — chunk/tool-call ordering', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -157,7 +155,6 @@ describe('chatStreamRunner — incremental follow-up sentinels', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -213,7 +210,6 @@ describe('chatStreamRunner — incremental follow-up sentinels', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -244,7 +240,7 @@ describe("reduceNodes 'done' — finalize stuck tool call statuses", () => {
       n1: {
         nodeId: 'n1',
         kind: 'chat',
-        chatId: 'c1',
+        chatId: 'n1',
         projectId: 'p1',
         parentNodeId: undefined,
         mergeSources: [],
@@ -318,7 +314,6 @@ describe('onTurnEnd', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -342,7 +337,6 @@ describe('onTurnEnd', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -373,7 +367,6 @@ describe('onTurnEnd', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -396,7 +389,6 @@ describe('onTurnEnd', () => {
     const cancels = { current: {} as Record<string, () => void> };
 
     runChatStream({
-      chatId: 'c1',
       prompt: 'hi',
       nodeId: 'n1',
       assistantId: 'a1',
@@ -424,7 +416,6 @@ describe('chatStreamRunner — onImage targets the retargeted assistant id', () 
   it('dispatches image-block with the post-retarget id, not the stale one', () => {
     const dispatched: ChatAction[] = [];
     runChatStream({
-      chatId: 'c1',
       prompt: 'show the image',
       nodeId: 'n1',
       assistantId: 'STALE',

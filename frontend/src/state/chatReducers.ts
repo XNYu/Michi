@@ -248,7 +248,7 @@ export function reduceNodes(
         ...nodes,
         [action.nodeId]: {
           ...n,
-          chatId: action.chatId,
+          chatId: action.nodeId,
           runtimeId: action.runtimeId ?? n.runtimeId,
           providerId: action.providerId !== undefined ? action.providerId : n.providerId,
           modelId: action.modelId !== undefined ? action.modelId : n.modelId,

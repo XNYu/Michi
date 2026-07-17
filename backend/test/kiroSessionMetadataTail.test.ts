@@ -19,7 +19,7 @@ function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntim
 
 describe('KiroSession metadata completion tail', () => {
     it('strips a completion sentinel split across ACP chunks and keeps it out of history', async () => {
-        const session = new KiroSession('session-1', runtimeWithUpdates([
+        const session = new KiroSession('node-1', 'session-1', runtimeWithUpdates([
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Visible answer.' } },
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[MICHI_META' } },
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'DATA_DONE]' } },
@@ -41,7 +41,7 @@ describe('KiroSession metadata completion tail', () => {
     });
 
     it('releases a held prefix when later text proves it is ordinary prose', async () => {
-        const session = new KiroSession('session-2', runtimeWithUpdates([
+        const session = new KiroSession('node-2', 'session-2', runtimeWithUpdates([
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Literal [MICHI_META' } },
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'X remains visible.' } },
             { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
@@ -56,7 +56,7 @@ describe('KiroSession metadata completion tail', () => {
     });
 
     it('removes the hidden completion instruction from persisted tool output', async () => {
-        const session = new KiroSession('session-3', runtimeWithUpdates([
+        const session = new KiroSession('node-3', 'session-3', runtimeWithUpdates([
             {
                 sessionUpdate: 'tool_call_update',
                 toolCallId: 'tool-1',

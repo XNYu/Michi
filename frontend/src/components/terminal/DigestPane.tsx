@@ -306,7 +306,7 @@ export default function DigestPane({
                     <span style={{ color: 'var(--term-accent)' }}>?</span>
                     <span style={{ color: 'var(--term-fg)', flex: 1 }}>{q}</span>
                     <span
-                      onClick={() => void createChildChat(nodeId, q)}
+                      onClick={() => void createChildChat(nodeId, q).catch(() => {})}
                       style={{
                         fontSize: 10,
                         color: 'var(--term-mauve)',

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import TreeSelectionBar from './TreeSelectionBar';
 
@@ -107,8 +107,8 @@ describe('TreeSelectionBar', () => {
     expect(createMergedChat).not.toHaveBeenCalled();
   });
 
-  it('calls createMergedChat with root node ids and clearTreeSelection on click', () => {
-    const createMergedChat = vi.fn();
+  it('calls createMergedChat with root node ids and clearTreeSelection on click', async () => {
+    const createMergedChat = vi.fn().mockResolvedValue('n-merged');
     const clearTreeSelection = vi.fn();
 
     mockHooks(
@@ -129,6 +129,6 @@ describe('TreeSelectionBar', () => {
     expect(callArg).toHaveLength(2);
     expect(callArg).toContain('n-1');
     expect(callArg).toContain('n-2');
-    expect(clearTreeSelection).toHaveBeenCalledOnce();
+    await waitFor(() => expect(clearTreeSelection).toHaveBeenCalledOnce());
   });
 });

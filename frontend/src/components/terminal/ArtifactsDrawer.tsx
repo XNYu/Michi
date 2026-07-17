@@ -143,7 +143,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   }, [contexts, filter]);
 
   const openArtifact = useCallback(
-    (c: ContextEntry) => {
+    async (c: ContextEntry) => {
       const t = artifactType(c);
       if (t === 'link') {
         if (c.url) window.open(c.url, '_blank', 'noopener,noreferrer');
@@ -164,7 +164,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
           ? c.filePath
           : c.filePath;
         try {
-          openArtifactPane(relPath);
+          await openArtifactPane(relPath);
           onClose();
         } catch (err) {
           // Fallback: open via OS if pane creation fails (e.g. no workspace cwd)

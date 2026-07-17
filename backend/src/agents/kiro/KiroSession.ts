@@ -78,6 +78,7 @@ export class KiroSession implements AgentSession {
 
     constructor(
         public readonly id: string,
+        public readonly nativeSessionId: string,
         private readonly runtime: KiroRuntime,
         private readonly cwd: string,
         opts?: { parentChatId?: string; enableFollowUps?: boolean },
@@ -91,11 +92,11 @@ export class KiroSession implements AgentSession {
     }
 
     get currentModeId(): string | null {
-        return this.runtime.getCurrentMode(this.id) ?? null;
+        return this.runtime.getCurrentMode(this.nativeSessionId) ?? null;
     }
 
     get currentModelId(): string | null {
-        return this.runtime.getCurrentModel(this.id) ?? null;
+        return this.runtime.getCurrentModel(this.nativeSessionId) ?? null;
     }
 
     getHistory(): ChatMessage[] {
@@ -149,7 +150,7 @@ export class KiroSession implements AgentSession {
         const c = await this.runtime.ensureClient(this.cwd);
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         try {
-            for await (const update of c.prompt(this.id, text)) {
+            for await (const update of c.prompt(this.nativeSessionId, text)) {
                 const kind = update.sessionUpdate;
                 if (kind === "agent_message_chunk") {
                     const content = update.content;
@@ -335,22 +336,22 @@ export class KiroSession implements AgentSession {
 
     async cancel(): Promise<void> {
         const c = this.runtime.getClient(this.cwd);
-        await c?.cancel(this.id);
+        await c?.cancel(this.nativeSessionId);
     }
 
     async setMode(modeId: string): Promise<void> {
-        await this.runtime.setMode(this.id, modeId);
+        await this.runtime.setMode(this.nativeSessionId, modeId);
     }
 
     async setModel(modelId: string): Promise<void> {
-        await this.runtime.setModel(this.id, modelId);
+        await this.runtime.setModel(this.nativeSessionId, modelId);
     }
 
     respondToPermission(requestId: number, optionId: string): void {
-        this.runtime.respondToPermission(this.id, requestId, optionId);
+        this.runtime.respondToPermission(this.nativeSessionId, requestId, optionId);
     }
 
     cancelPermission(requestId: number): void {
-        this.runtime.cancelPermission(this.id, requestId);
+        this.runtime.cancelPermission(this.nativeSessionId, requestId);
     }
 }

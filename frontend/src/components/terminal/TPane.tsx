@@ -1220,7 +1220,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const handleBranchFollowUp = useCallback((question: string) => {
     void createChildChat(nodeId, question, undefined, {
       anchorMessageId: n?.followUpsSourceMessageId,
-    });
+    }).catch(() => {});
   }, [createChildChat, n?.followUpsSourceMessageId, nodeId]);
 
   const innerWrap = useMemo<React.CSSProperties>(
@@ -1488,14 +1488,14 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         <SelectionActions
           containerRef={scrollRef}
           onQuote={(q) => setQuotedText(q)}
-          onBranch={(q, p, anchorMessageId) =>
+          onBranch={(q, p, anchorMessageId) => {
             void createChildChat(
               nodeId,
               formatQuotedMessage(q, p),
               { quotedText: q, displayText: p },
               { anchorMessageId },
-            )
-          }
+            ).catch(() => {});
+          }}
           onComment={(q, body) => addPendingComment(nodeId, q, body)}
         />
       <div

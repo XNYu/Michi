@@ -289,7 +289,8 @@ export function serializeNodeRow(
     digest: n.digest ? JSON.stringify({ ...n.digest, status: 'idle', error: undefined }) : null,
     follow_ups: n.followUps.length > 0 ? JSON.stringify(n.followUps) : null,
     follow_ups_source_message_id: n.followUpsSourceMessageId ?? null,
-    acp_session_id: n.chatId ?? null,
+    // Runtime session bindings are server-owned. In particular, never write
+    // the public node id over Kiro's persisted ACP session id.
     runtime_id: n.runtimeId ?? null,
     provider_id: n.providerId ?? null,
     model_id: n.modelId ?? null,

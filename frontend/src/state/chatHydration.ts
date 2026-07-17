@@ -49,7 +49,6 @@ function asString(v: unknown): string | undefined {
 function inferRuntimeId(row: Record<string, unknown>, nodeId: string): string | undefined {
   const explicit = asString(row.runtime_id);
   if (explicit) return explicit;
-  if (asString(row.external_session_id)) return 'claude';
   const sessionId = asString(row.acp_session_id);
   if (!sessionId) return undefined;
   return sessionId === nodeId ? 'pi' : 'kiro';
@@ -370,12 +369,15 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
 export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNodeState> {
   const nodeId = asString(row.id)!;
   const kind: NodeKind = row.kind === 'digest' ? 'digest' : 'chat';
+  const hasRuntimeBinding = !!asString(row.acp_session_id) || !!asString(row.external_session_id);
   const posX = asOptionalNumber(row.position_x);
   const posY = asOptionalNumber(row.position_y);
   return {
     nodeId,
     kind,
-    chatId: asString(row.acp_session_id) ?? null,
+    // Compatibility marker only: a bound node always uses its nodeId on the
+    // public API. Runtime-native ids remain in SQLite/backend adapters.
+    chatId: hasRuntimeBinding ? nodeId : null,
     runtimeId: inferRuntimeId(row, nodeId),
     providerId: asString(row.provider_id) ?? null,
     modelId: asString(row.model_id) ?? null,
@@ -564,10 +566,11 @@ export function hydrateBackendWorkspaces(
 }
 
 /**
- * Convert a saved snapshot back into live state. chatId fields are nulled
- * (backend sessions don't survive restarts); status is forced idle; any
- * lingering `streaming` flags on assistant messages are cleared.
- * Malformed or wrong-version input yields an empty state.
+ * Convert a saved snapshot back into live state. A legacy runtime binding is
+ * retained only as the public node-id marker; runtime-native ids never return
+ * to frontend state. Status is forced idle and lingering `streaming` flags on
+ * assistant messages are cleared. Malformed or wrong-version input yields an
+ * empty state.
  */
 export function hydrateSavedState(saved: unknown): HydratedState {
   if (!saved || typeof saved !== 'object') return emptyHydrated();
@@ -604,7 +607,7 @@ export function hydrateSavedState(saved: unknown): HydratedState {
     nodes[id] = {
       nodeId: raw.nodeId,
       kind: raw.kind === 'digest' ? 'digest' : 'chat',
-      chatId: (typeof raw.chatId === 'string' && raw.chatId) ? raw.chatId : null,
+      chatId: (typeof raw.chatId === 'string' && raw.chatId) ? raw.nodeId : null,
       runtimeId:
         typeof (raw as any).runtimeId === 'string' && (raw as any).runtimeId
           ? (raw as any).runtimeId

@@ -264,8 +264,9 @@ export default function TerminalShell() {
       if (e.altKey && !e.shiftKey && (e.key === 't' || e.key === 'T' || e.key === '†')) {
         if (focusedPane) {
           e.preventDefault();
-          createBlankChild(focusedPane, { anchorMessageId: focusedLastMessageId });
-          setPage('dashboard');
+          void createBlankChild(focusedPane, { anchorMessageId: focusedLastMessageId })
+            .then(() => setPage('dashboard'))
+            .catch(() => {});
         }
         return;
       }

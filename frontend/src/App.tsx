@@ -63,7 +63,7 @@ function DigestPromptListener() {
         if (!pending) return;
         const { projectId, sourceIds } = pending;
         setPending(null);
-        void createDigest(projectId, sourceIds, cp || undefined).then((id) => openPane(id));
+        void createDigest(projectId, sourceIds, cp || undefined).then((id) => openPane(id)).catch(() => {});
       }}
     />
   );

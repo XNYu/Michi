@@ -224,7 +224,7 @@ describe('reduceNodes bind-chat — currentModeId preservation', () => {
     };
     const after = reduceNodes(before, action);
     expect(after.n1.currentModeId).toBe('gpu-dev');
-    expect(after.n1.chatId).toBe('c2');
+    expect(after.n1.chatId).toBe('n1');
   });
 
   it('overwrites when the bind carries an explicit mode', () => {

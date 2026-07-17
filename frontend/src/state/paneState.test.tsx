@@ -59,6 +59,7 @@ function renderHook<T>(cb: () => T): HookHarness<T> {
 }
 
 vi.mock('../services/api', () => ({
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   ensureSession: () => Promise.resolve({ chatId: 'fake', currentModeId: null, resumeStrategy: 'fresh' }),
   streamMessage: () => () => {},
   setChatMode: () => Promise.resolve(''),
@@ -85,8 +86,8 @@ describe('pane state', () => {
     await act(async () => {
       await harness.result.current.createProject('WS');
     });
-    act(() => {
-      harness.result.current.createThread();
+    await act(async () => {
+      await harness.result.current.createThread();
     });
     act(() => {
       harness.result.current.openPane('n1');
@@ -101,8 +102,8 @@ describe('pane state', () => {
     await act(async () => {
       await harness.result.current.createProject('WS');
     });
-    act(() => {
-      harness.result.current.createThread();
+    await act(async () => {
+      await harness.result.current.createThread();
     });
     // Replace panes with just 'a' and 'b' by focusing known ids.
     act(() => {

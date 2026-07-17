@@ -730,8 +730,9 @@ export default function WorkspaceTree({
             selectProject: selectProjectStable,
             toggleWorkspaceExpand,
             createThread: () => {
-              createThread();
-              onActivate?.();
+              void createThread()
+                .then(() => onActivate?.())
+                .catch(() => {});
             },
             archiveTree,
             unarchiveTree,

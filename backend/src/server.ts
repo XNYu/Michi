@@ -37,7 +37,7 @@ import type { KiroRuntime } from './agents/kiro/KiroRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
-import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns } from './services/dbRepository';
+import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns, updateNodeResumeBinding } from './services/dbRepository';
 import { ensureDurableGraphNode } from './services/graphCommands';
 import { getMichiDataDir } from './services/dataDir';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
@@ -191,6 +191,11 @@ for (const factory of getEnabledFactories()) {
                 ownerUserId: workspace.owner_user_id ?? null,
             });
             sessionRegistry.registerSession(child, workspace.owner_user_id ?? null);
+            updateNodeResumeBinding(nodeId, {
+              acp_session_id: child.nativeSessionId ?? child.id,
+              runtime_id: child.runtimeId,
+              current_mode_id: child.currentModeId ?? null,
+            });
             return { chatId: child.id, nodeId };
         },
     });

@@ -46,13 +46,20 @@ export interface MockOverrides {
 }
 
 let chatIdCounter = 0;
+let nodeIdCounter = 0;
 function nextChatId() {
   chatIdCounter += 1;
   return `mock-chat-${chatIdCounter}`;
 }
 
+function nextNodeId() {
+  nodeIdCounter += 1;
+  return `n-mock-${nodeIdCounter}`;
+}
+
 export async function installMockApi(page: Page, overrides: MockOverrides = {}) {
   chatIdCounter = 0;
+  nodeIdCounter = 0;
 
   await page.route('**/api/**', async (route) => {
     if (overrides.custom && (await overrides.custom(route))) return;
@@ -82,6 +89,16 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
     // chat create
     if (method === 'POST' && path === '/chats') {
       return json({ chatId: nextChatId(), currentModeId: null });
+    }
+    if (method === 'POST' && path === '/node-ids/allocate') {
+      let count = 1;
+      try {
+        const body = route.request().postDataJSON() as { count?: unknown };
+        if (typeof body.count === 'number') count = body.count;
+      } catch {
+        count = 1;
+      }
+      return json({ nodeIds: Array.from({ length: count }, () => nextNodeId()) });
     }
     if (method === 'POST' && /^\/chats\/[^/]+\/load$/.test(path)) {
       return json({ currentModeId: null });
@@ -122,8 +139,9 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
         requestBody = {};
       }
       const existingChatId = typeof requestBody.chatId === 'string' ? requestBody.chatId : null;
+      const nodeId = path.split('/')[2];
       return json({
-        chatId: existingChatId ?? nextChatId(),
+        chatId: nodeId,
         currentModeId: null,
         resumeStrategy: existingChatId ? 'live' : 'fresh',
       });

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ensureSession, fetchAgentStatus, fetchReady, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat } from '../services/api';
+import { allocateNodeIds, ensureSession, fetchAgentStatus, fetchReady, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat } from '../services/api';
 import type { AgentStatus, SessionMode } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
@@ -244,7 +244,6 @@ function linkedPeersOf(
  * `user-send` because that would duplicate the messages.
  */
 function subscribeChildStream(
-  chatId: string,
   prompt: string,
   nodeId: string,
   assistantId: string,
@@ -254,7 +253,6 @@ function subscribeChildStream(
   ownerToken?: string,
 ): () => void {
   return runChatStream({
-    chatId,
     prompt,
     nodeId,
     assistantId,
@@ -1069,7 +1067,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const newNodeId = useCallback(
-    () => `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    async () => {
+      try {
+        return (await allocateNodeIds(1))[0];
+      } catch (err) {
+        toast.error('Could not allocate a new thread id.');
+        throw err;
+      }
+    },
     [],
   );
 
@@ -1199,11 +1204,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         });
         perf.measure('client:ensure_session', tEnsureStart, { nodeId, strategy: ensured.resumeStrategy });
         perf.measure('client:submit_to_ensured', tSubmit, { nodeId });
-        chatId = ensured.chatId;
+        // New backends return chatId === nodeId. Ignore a legacy runtime id in
+        // the compatibility field; all subsequent frontend operations address
+        // the canonical nodeId.
+        chatId = nodeId;
         dispatch({
           type: 'bind-chat',
           nodeId,
-          chatId,
           currentModeId: ensured.currentModeId,
           runtimeId: ensured.runtimeId,
           providerId: ensured.providerId,
@@ -1211,7 +1218,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           reasoning: ensured.reasoning,
           resumeFingerprint: ensured.resumeFingerprint,
         });
-        boundSessionsRef.current.add(chatId);
+        boundSessionsRef.current.add(nodeId);
 
         if ((ensured.resumeStrategy === 'live' || ensured.resumeStrategy === 'exact') && peerBlocks.length > 0) {
           // Existing hidden context stays intact, so newly linked peer context
@@ -1257,14 +1264,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       }
 
       const cancel = runChatStream({
-        chatId,
         prompt: outgoingText,
         nodeId,
         assistantId,
         dispatch,
         assistantTextBufs,
         cancelFns,
-        requestNodeId: nodeId,
         ownerToken: ownerTokenRef.current,
         displayText,
         userMetadata: {
@@ -1276,7 +1281,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           if (reason === 'error') {
             // Evict session from the bound set so the next retry re-runs
             // ensureSession instead of hitting the same dead session.
-            boundSessionsRef.current.delete(chatId);
+            boundSessionsRef.current.delete(nodeId);
           }
           const ended = nodesRef.current[endedNodeId];
           if (!ended) return;
@@ -1363,7 +1368,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           if (!parent) return;
           const projectId = parent.projectId;
           const spawned = topics.map((t) => ({
-            nodeId: t.nodeId ?? newNodeId(),
+            nodeId: t.nodeId ?? t.chatId,
             chatId: t.chatId,
             title: t.title,
             prompt: t.prompt,
@@ -1411,7 +1416,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           // first prompt and wire handlers for the inbound SSE.
           spawned.forEach((s) => {
             const cancel = subscribeChildStream(
-              s.chatId,
               s.prompt,
               s.nodeId,
               `a-${s.nodeId}-0`,
@@ -1489,7 +1493,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         cancel();
       }
     },
-    [dispatch, newNodeId, setOpenPanes],
+    [dispatch, setOpenPanes],
   );
 
   const {
@@ -1543,7 +1547,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           branchParentNodeId = tree.rootNodeId;
         }
       }
-      const nodeId = newNodeId();
+      const nodeId = await newNodeId();
       dispatch({ type: 'create', nodeId, projectId, parentNodeId: branchParentNodeId });
       const createdAt = Date.now();
       setProjects((prev) =>
@@ -1589,11 +1593,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const createBlankChild = useCallback(
-    (parentNodeId: string, opts?: { anchorMessageId?: string }) => {
+    async (parentNodeId: string, opts?: { anchorMessageId?: string }) => {
       const parent = nodesRef.current[parentNodeId];
       if (!parent) throw new Error('unknown parent node');
       const projectId = parent.projectId;
-      const nodeId = newNodeId();
+      const nodeId = await newNodeId();
       dispatch({ type: 'create', nodeId, projectId, parentNodeId });
       const createdAt = Date.now();
       setProjects((prev) =>
@@ -1632,7 +1636,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const createMergedChat = useCallback(
-    (sourceNodeIds: string[]) => {
+    async (sourceNodeIds: string[]) => {
       if (sourceNodeIds.length < 2) {
         toast.error('Select at least two threads to merge.');
         throw new Error('createMergedChat requires at least 2 source nodes');
@@ -1655,7 +1659,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           throw new Error('cross-workspace merge');
         }
       }
-      const nodeId = newNodeId();
+      const nodeId = await newNodeId();
       const treeId = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const now = Date.now();
       dispatch({
@@ -1998,7 +2002,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
       // Pre-generate ids, add all structural updates in one pass so views see
       // the new nodes appear together.
-      const newIds = cleaned.map(() => newNodeId());
+      const newIds = await allocateNodeIds(cleaned.length);
       newIds.forEach((nid) => {
         dispatch({ type: 'create', nodeId: nid, projectId, parentNodeId });
       });
@@ -2034,7 +2038,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       });
       return newIds;
     },
-    [dispatch, newNodeId, setFocusedPane, setOpenPanes, startStream],
+    [dispatch, setFocusedPane, setOpenPanes, startStream],
   );
 
   const { createDigest, refreshDigest, setDigestPrompt, markDigestViewed, deleteDigest } = useDigestOrchestration({
@@ -2049,7 +2053,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   // ---- Artifact pane ----
   const openArtifactPane = useCallback(
-    (filePath: string): string => {
+    async (filePath: string): Promise<string> => {
       if (!activeProjectId) throw new Error('No active project');
       if (!filePath || !filePath.trim()) throw new Error('No file path provided');
 
@@ -2066,7 +2070,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         return existing.nodeId;
       }
 
-      const nodeId = newNodeId();
+      const nodeId = await newNodeId();
       dispatch({ type: 'create-artifact', nodeId, projectId: activeProjectId, filePath });
 
       // Add to project's chatIds so the node is tracked

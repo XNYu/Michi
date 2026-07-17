@@ -35,10 +35,10 @@ export default function TreeSelectionBar() {
   const canMerge = count >= 2 && rootNodeIds.length >= 2;
   const mergeDisabled = !canMerge || anyStreaming;
 
-  const onMerge = () => {
+  const onMerge = async () => {
     if (mergeDisabled) return;
     try {
-      createMergedChat(rootNodeIds);
+      await createMergedChat(rootNodeIds);
       clearTreeSelection();
     } catch {
       // createMergedChat already surfaced a toast on validation failure.

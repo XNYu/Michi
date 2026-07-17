@@ -15,6 +15,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
@@ -77,9 +78,9 @@ describe('deleted-node pane prune (Fix B wiring)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let childId = '';
-    act(() => { childId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { childId = await result.current.store.createBlankChild(rootId); });
 
     act(() => { result.current.store.openPane(childId); });
     expect(result.current.store.openPanes).toContain(childId);
@@ -98,15 +99,15 @@ describe('deleted-node pane prune (Fix B wiring)', () => {
 
     // Tree 1 with a child, opened in tree-1's pane slot.
     let root1 = '';
-    act(() => { root1 = result.current.store.createThread() ?? ''; });
+    await act(async () => { root1 = (await result.current.store.createThread()) ?? ''; });
     let child1 = '';
-    act(() => { child1 = result.current.store.createBlankChild(root1); });
+    await act(async () => { child1 = await result.current.store.createBlankChild(root1); });
     act(() => { result.current.store.openPane(child1); });
     expect(result.current.store.openPanes).toContain(child1);
 
     // Create a SECOND tree — it becomes active, so the pane key switches and
     // tree-1's pane slot is now inactive (the cross-tab / cross-view case).
-    act(() => { result.current.store.createThread(); });
+    await act(async () => { await result.current.store.createThread(); });
     expect(result.current.store.openPanes).not.toContain(child1); // different slot now
 
     // Delete child1. deleteNode runs under tree-2's active pane key, so its own

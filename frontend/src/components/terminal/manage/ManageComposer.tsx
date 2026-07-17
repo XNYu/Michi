@@ -385,7 +385,7 @@ export default function ManageComposer({
     [addPendingPaths, progressForFile, project?.id, resolveAttachCwd],
   );
 
-  const submit = () => {
+  const submit = async () => {
     const raw = expandMentions(draft.value, draft.mentions).trim();
     if (!raw && pendingAttachments.length === 0) return;
     if (!workspaceId) return;
@@ -402,7 +402,13 @@ export default function ManageComposer({
     // to every other conversation, so sibling threads kept reading unrelated
     // screenshots.
 
-    const nodeId = createThread(currentModeId);
+    let nodeId: string | null;
+    try {
+      nodeId = await createThread(currentModeId);
+    } catch {
+      // The store already surfaced the allocation failure.
+      return;
+    }
     if (!nodeId) return;
     const finalText = appendAttachmentsSentinel(raw, attachmentsForSend);
     const meta =

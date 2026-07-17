@@ -207,7 +207,10 @@ export interface ChatNodeState {
   nodeId: string;
   /** 'chat' for normal agent-backed threads; 'digest' for generated markdown docs. */
   kind: NodeKind;
-  /** Backend chatId. Null until the first message creates the ACP session. */
+  /**
+   * Compatibility binding marker. Null before ensure-session; once bound it
+   * must equal nodeId. Runtime-native ids never enter frontend state.
+   */
   chatId: string | null;
   /** Runtime that owns this backend session. Undefined until the first session is created. */
   runtimeId?: RuntimeId;
@@ -515,7 +518,8 @@ export type ChatAction =
   | {
       type: 'bind-chat';
       nodeId: string;
-      chatId: string;
+      /** Deprecated compatibility input; reducers ignore it and bind to nodeId. */
+      chatId?: string;
       currentModeId?: string | null;
       runtimeId?: RuntimeId;
       providerId?: string | null;
@@ -709,8 +713,8 @@ export interface ChatContextValue {
     opts?: { anchorMessageId?: string },
   ) => Promise<string>;
   /** Create an empty child chat (no streaming turn) branched from the given node. Returns the new nodeId. */
-  createBlankChild: (parentNodeId: string, opts?: { anchorMessageId?: string }) => string;
-  createMergedChat: (sourceNodeIds: string[]) => string;
+  createBlankChild: (parentNodeId: string, opts?: { anchorMessageId?: string }) => Promise<string>;
+  createMergedChat: (sourceNodeIds: string[]) => Promise<string>;
   cancelStream: (nodeId: string) => void;
   isObserver: (nodeId: string) => boolean;
   /** Process-global list of ACP agents (Kiro modes). Fetched once on mount. */
@@ -807,7 +811,7 @@ export interface ChatContextValue {
   /** Delete a digest node (aborts in-flight generation, removes edges + state). */
   deleteDigest: (nodeId: string) => void;
   /** Open a file as an artifact pane. Returns the artifact node id. */
-  openArtifactPane: (filePath: string) => string;
+  openArtifactPane: (filePath: string) => Promise<string>;
   /** Node ids currently open as panes, in tab order. Not persisted. */
   openPanes: string[];
   /** Currently-focused pane nodeId. Always one of openPanes if non-empty. */
@@ -844,7 +848,7 @@ export interface ChatContextValue {
   selection: ReadonlySet<string>;
   toggleSelection: (nodeId: string) => void;
   clearSelection: () => void;
-  createThread: (modeId?: string) => string | null;
+  createThread: (modeId?: string) => Promise<string | null>;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
   pinTree: (treeId: string) => void;

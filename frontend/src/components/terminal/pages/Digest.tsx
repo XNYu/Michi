@@ -25,7 +25,7 @@ function DigestInput({
     const t = text.trim();
     if (!t) return;
     setText('');
-    void createChildChat(nodeId, t).then(() => onNav('dashboard'));
+    void createChildChat(nodeId, t).then(() => onNav('dashboard')).catch(() => {});
   };
   return (
     <div
@@ -645,7 +645,7 @@ export default function TerminalDigest({
                     {q}
                   </span>
                   <span
-                    onClick={() => void createChildChat(digestNode.nodeId, q).then(() => onNav('dashboard'))}
+                    onClick={() => void createChildChat(digestNode.nodeId, q).then(() => onNav('dashboard')).catch(() => {})}
                     style={{
                       fontSize: 10,
                       color: 'var(--term-mauve)',

@@ -12,6 +12,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
+  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
@@ -75,11 +76,11 @@ describe('archiveNode (single-node archive)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let midId = '';
-    act(() => { midId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
     let leafId = '';
-    act(() => { leafId = result.current.store.createBlankChild(midId); });
+    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
 
     act(() => { result.current.store.archiveNode(midId); });
 
@@ -97,11 +98,11 @@ describe('archiveNode (single-node archive)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let midId = '';
-    act(() => { midId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
     let leafId = '';
-    act(() => { leafId = result.current.store.createBlankChild(midId); });
+    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
 
     act(() => { result.current.store.archiveNode(midId); });
     const gid = result.current.nodes[midId].deletionGroupId!;
@@ -120,9 +121,9 @@ describe('archiveNode (single-node archive)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let aId = '';
-    act(() => { aId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { aId = await result.current.store.createBlankChild(rootId); });
 
     act(() => { result.current.store.archiveNode(aId); });
     expect(result.current.nodes[aId].deletedAt).toBeTruthy();
@@ -140,11 +141,11 @@ describe('archiveNode (single-node archive)', () => {
     await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
 
     let rootId = '';
-    act(() => { rootId = result.current.store.createThread() ?? ''; });
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
     let trashId = '';
-    act(() => { trashId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { trashId = await result.current.store.createBlankChild(rootId); });
     let archId = '';
-    act(() => { archId = result.current.store.createBlankChild(rootId); });
+    await act(async () => { archId = await result.current.store.createBlankChild(rootId); });
 
     act(() => { result.current.store.trimNode(trashId); });
     act(() => { result.current.store.archiveNode(archId); });
