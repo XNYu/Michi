@@ -1,0 +1,42 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    "frontend": {
+      "entry": [
+        "src/index.tsx",
+        "src/**/*.test.{ts,tsx}",
+        "src/setupTests.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "backend": {
+      "entry": [
+        "src/server.ts",
+        "test/**/*.test.ts",
+        "scripts/**/*.ts"
+      ],
+      "project": ["src/**/*.ts"]
+    },
+    "shared": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "electron": {
+      "entry": ["main.ts", "preload.ts"],
+      "project": ["**/*.ts"]
+    },
+    ".": {
+      "entry": ["e2e/**/*.spec.ts", "e2e/playwright.config.ts"],
+      "project": ["e2e/**/*.ts"]
+    }
+  },
+  "ignore": [
+    ".claude/**",
+    "**/dist/**",
+    "**/build/**",
+    "backend/src/agents/codex/gen/**",
+    "research/**"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "includeEntryExports": false
+}
