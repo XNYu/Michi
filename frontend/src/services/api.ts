@@ -832,14 +832,6 @@ export async function applyWorkspaceCommands(
   }
 }
 
-/** Legacy snapshot response shape retained for pure migration helpers/tests. */
-export interface SyncWorkspaceResponse {
-  ok: boolean;
-  newRev?: number;
-  conflicts?: Array<{ id: string; table: string; serverRow: unknown }>;
-  ignored?: string;
-}
-
 export async function deleteWorkspace(id: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/workspaces/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`deleteWorkspace failed: ${res.status}`);

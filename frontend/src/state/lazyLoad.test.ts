@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 import {
   accumulateWorkspaceDirtyDelta,
   emptyWorkspaceDirtyDelta,
-  serializeWorkspaceDelta,
 } from './workspacePersistence';
 import {
   hydrateBackendWorkspaces,
@@ -44,15 +43,6 @@ describe('lazy-load write-back safety', () => {
     expect(delta.messageNodeIds.has('n1')).toBe(false);
   });
 
-  it('serialized delta for a placeholder carries NO messages and NO reconcile list', () => {
-    const p = project();
-    const nodes = { n1: placeholderNode() };
-    const delta = accumulateWorkspaceDirtyDelta(undefined, p, {}, nodes, emptyWorkspaceDirtyDelta());
-    const payload = serializeWorkspaceDelta(p, nodes, delta);
-    expect(payload.upserts.messages).toBeUndefined();
-    expect(payload.messageReconcileNodeIds).toBeUndefined();
-  });
-
   it('a loaded node still drives message reconcile normally', () => {
     const p = project();
     const loaded: ChatNodeState = placeholderNode({
@@ -62,8 +52,6 @@ describe('lazy-load write-back safety', () => {
     const nodes = { n1: loaded };
     const delta = accumulateWorkspaceDirtyDelta(undefined, p, {}, nodes, emptyWorkspaceDirtyDelta());
     expect(delta.messageNodeIds.has('n1')).toBe(true);
-    const payload = serializeWorkspaceDelta(p, nodes, delta);
-    expect(payload.messageReconcileNodeIds).toContain('n1');
   });
 
   it('a node changing while still a placeholder does not leak messages into the delta', () => {

@@ -180,17 +180,6 @@ export function setupPersistenceRoutes(): express.Router {
     }
   });
 
-  // Compatibility endpoint for stale tabs only. Workspace snapshots are no
-  // longer an accepted writer: turns persist through ChatHub and structural
-  // mutations use graph prerequisites / explicit domain commands.
-  router.post('/workspaces/:id/sync', (_req, res) => {
-    res.status(410).json({
-      error: 'legacy_workspace_sync_disabled',
-      reloadRequired: true,
-      protocolVersion: 2,
-    });
-  });
-
   // Permanently empty a workspace's trash: physically delete every node with
   // deleted_at IS NOT NULL (along with their cascaded edges/messages and any
   // newly-orphaned trees). Returns the row count actually purged so the
