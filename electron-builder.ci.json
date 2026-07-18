@@ -1,0 +1,34 @@
+{
+  "appId": "com.michi.app",
+  "productName": "michi",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "electron/dist/**",
+    "frontend/build/**",
+    "backend/dist/**",
+    "!backend/dist/frontend/**",
+    "!**/*.map",
+    "!**/*.d.ts",
+    "!**/*.d.cts",
+    "!**/*.d.mts",
+    "package.json"
+  ],
+  "npmRebuild": false,
+  "mac": {
+    "target": {
+      "target": "dmg",
+      "arch": "arm64"
+    },
+    "icon": "assets/icons/icon.icns",
+    "category": "public.app-category.productivity",
+    "minimumSystemVersion": "12.0",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "electron/entitlements.mac.plist",
+    "entitlementsInherit": "electron/entitlements.mac.plist",
+    "notarize": true
+  },
+  "asar": true
+}
