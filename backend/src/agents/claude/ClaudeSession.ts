@@ -770,7 +770,7 @@ export class ClaudeSession implements AgentSession {
     this.followUpsSentinelTail = '';
     this.followUpsSentinelsCompleteThisTurn = false;
     this.followUpsSilentOverviewTail = false;
-    log.info('chat', 'claude follow-ups hook poc turn armed', {
+    log.debug('chat', 'claude follow-ups hook poc turn armed', {
       nodeId: this.nodeId,
       sessionId: this.id,
       userTurnCount,
@@ -788,7 +788,7 @@ export class ClaudeSession implements AgentSession {
           const cleaned = followUps.map((value) => value.trim()).filter(Boolean).slice(0, 3);
           if (cleaned.length === 0) return;
           if (this.followUpsValidationActive) this.followUpsSetThisTurn = true;
-          log.info('mcp', 'claude follow-ups hook poc set_follow_ups received', {
+          log.debug('mcp', 'claude follow-ups hook poc set_follow_ups received', {
             nodeId: this.nodeId,
             sessionId: this.id,
             count: cleaned.length,
@@ -813,7 +813,7 @@ export class ClaudeSession implements AgentSession {
             });
           }
         }
-        log.info('mcp', 'claude follow-ups hook poc set_branch_overview received', {
+        log.debug('mcp', 'claude follow-ups hook poc set_branch_overview received', {
           nodeId: this.nodeId,
           sessionId: this.id,
           length: cleaned.length,
@@ -823,7 +823,7 @@ export class ClaudeSession implements AgentSession {
       },
       onValidateFollowUps: () => {
         if (!this.followUpsValidationActive) {
-          log.info('mcp', 'claude follow-ups hook poc validator skipped', {
+          log.debug('mcp', 'claude follow-ups hook poc validator skipped', {
             nodeId: this.nodeId,
             sessionId: this.id,
             reason: 'non-user-turn',
@@ -836,7 +836,7 @@ export class ClaudeSession implements AgentSession {
           missingTools.push('set_follow_ups');
         }
         if (missingTools.length === 0) {
-          log.info('mcp', 'claude follow-ups hook poc validator passed', {
+          log.debug('mcp', 'claude follow-ups hook poc validator passed', {
             nodeId: this.nodeId,
             sessionId: this.id,
           });
@@ -909,7 +909,7 @@ export class ClaudeSession implements AgentSession {
       return;
     }
     this.followUpsOutputBoundaryPending = false;
-    log.info('chat', 'claude follow-ups visible output boundary completed', {
+    log.debug('chat', 'claude follow-ups visible output boundary completed', {
       nodeId: this.nodeId,
       sessionId: this.id,
       reason: type === 'result' ? 'turn-result' : 'message-stop',
@@ -922,7 +922,7 @@ export class ClaudeSession implements AgentSession {
       this.followUpsSuppressedChunkEvents > 0 ||
       this.followUpsSuppressedThoughtEvents > 0
     )) {
-      log.info('chat', 'claude follow-ups hook poc hidden metadata output suppressed', {
+      log.debug('chat', 'claude follow-ups hook poc hidden metadata output suppressed', {
         nodeId: this.nodeId,
         sessionId: this.id,
         chunks: this.followUpsSuppressedChunkEvents,
@@ -945,7 +945,7 @@ export class ClaudeSession implements AgentSession {
     const subtype = typeof envelope.subtype === 'string' ? envelope.subtype : '';
     const hookName = typeof envelope.hook_name === 'string' ? envelope.hook_name : '';
     if (type !== 'system' || !subtype.startsWith('hook_') || hookName !== 'Stop') return;
-    log.info('chat', 'claude follow-ups hook poc lifecycle event', {
+    log.debug('chat', 'claude follow-ups hook poc lifecycle event', {
       nodeId: this.nodeId,
       sessionId: this.id,
       type: subtype,

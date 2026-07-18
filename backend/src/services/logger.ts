@@ -20,7 +20,7 @@ import path from "path";
  * is enough — we just don't want one runaway session to fill the disk.
  */
 
-type Level = "INFO" | "WARN" | "ERROR";
+type Level = "DEBUG" | "INFO" | "WARN" | "ERROR";
 type Stage =
     | "boot"
     | "http"
@@ -112,16 +112,24 @@ function formatMeta(meta?: Record<string, unknown>): string {
     return parts.length > 0 ? " " + parts.join(" ") : "";
 }
 
+/** DEBUG lines always land in backend.log but only reach stdout when
+ *  MICHI_LOG_DEBUG=1 — keeps the dev console quiet without losing the
+ *  diagnostic trail. */
+const DEBUG_TO_STDOUT = process.env.MICHI_LOG_DEBUG === "1";
+
 function emit(level: Level, stage: Stage, msg: string, meta?: Record<string, unknown>): void {
     const ts = new Date().toISOString();
     const stagePad = stage.padEnd(10, " ");
     const line = `${ts} ${level.padEnd(5, " ")} ${stagePad} ${msg}${formatMeta(meta)}\n`;
     appendSafe(BACKEND_LOG, line);
     if (level === "ERROR") process.stderr.write(line);
-    else process.stdout.write(line);
+    else if (level !== "DEBUG" || DEBUG_TO_STDOUT) process.stdout.write(line);
 }
 
 export const log = {
+    debug(stage: Stage, msg: string, meta?: Record<string, unknown>): void {
+        emit("DEBUG", stage, msg, meta);
+    },
     info(stage: Stage, msg: string, meta?: Record<string, unknown>): void {
         emit("INFO", stage, msg, meta);
     },

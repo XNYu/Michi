@@ -476,7 +476,7 @@ export function mountMcp(
 
         const slot = registry.get(slotId);
         const result = validateCodexStopHookForSlot(registry, slotId, req.body);
-        log.info("mcp", "codex follow-ups hook poc validator request", {
+        log.debug("mcp", "codex follow-ups hook poc validator request", {
             slotId,
             nodeId: slot?.nodeId ?? null,
             decision: typeof result.decision === "string" ? result.decision : "allow",

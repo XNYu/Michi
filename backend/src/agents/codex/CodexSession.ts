@@ -448,7 +448,7 @@ export class CodexSession implements AgentSession {
     this.followUpsSentinelTail = '';
     this.followUpsSentinelsCompleteThisTurn = false;
     this.followUpsSilentOverviewTail = false;
-    log.info('chat', 'codex follow-ups hook poc turn armed', {
+    log.debug('chat', 'codex follow-ups hook poc turn armed', {
       nodeId: this.id,
       threadId: this.threadId,
       userTurnCount,
@@ -466,7 +466,7 @@ export class CodexSession implements AgentSession {
           const cleaned = followUps.map((value) => value.trim()).filter(Boolean).slice(0, 3);
           if (cleaned.length === 0) return;
           if (this.followUpsValidationActive) this.followUpsSetThisTurn = true;
-          log.info('mcp', 'codex follow-ups hook poc set_follow_ups received', {
+          log.debug('mcp', 'codex follow-ups hook poc set_follow_ups received', {
             nodeId: this.id,
             threadId: this.threadId,
             count: cleaned.length,
@@ -491,7 +491,7 @@ export class CodexSession implements AgentSession {
             });
           }
         }
-        log.info('mcp', 'codex follow-ups hook poc set_branch_overview received', {
+        log.debug('mcp', 'codex follow-ups hook poc set_branch_overview received', {
           nodeId: this.id,
           threadId: this.threadId,
           length: cleaned.length,
@@ -501,7 +501,7 @@ export class CodexSession implements AgentSession {
       },
       onValidateFollowUps: () => {
         if (!this.followUpsValidationActive) {
-          log.info('mcp', 'codex follow-ups hook poc validator skipped', {
+          log.debug('mcp', 'codex follow-ups hook poc validator skipped', {
             nodeId: this.id,
             threadId: this.threadId,
             reason: 'non-user-turn',
@@ -514,7 +514,7 @@ export class CodexSession implements AgentSession {
           missingTools.push('set_follow_ups');
         }
         if (missingTools.length === 0) {
-          log.info('mcp', 'codex follow-ups hook poc validator passed', {
+          log.debug('mcp', 'codex follow-ups hook poc validator passed', {
             nodeId: this.id,
             threadId: this.threadId,
           });
@@ -594,7 +594,7 @@ export class CodexSession implements AgentSession {
   private completeFollowUpsOutputBoundary(reason: 'agent-message-completed' | 'turn-completed'): void {
     if (!this.followUpsOutputBoundaryPending) return;
     this.followUpsOutputBoundaryPending = false;
-    log.info('chat', 'codex follow-ups visible output boundary completed', {
+    log.debug('chat', 'codex follow-ups visible output boundary completed', {
       nodeId: this.id,
       threadId: this.threadId,
       reason,
@@ -608,7 +608,7 @@ export class CodexSession implements AgentSession {
       this.followUpsSuppressedChunkEvents > 0
       || this.followUpsSuppressedThoughtEvents > 0
     )) {
-      log.info('chat', 'codex follow-ups hook poc hidden metadata output suppressed', {
+      log.debug('chat', 'codex follow-ups hook poc hidden metadata output suppressed', {
         nodeId: this.id,
         threadId: this.threadId,
         chunks: this.followUpsSuppressedChunkEvents,
