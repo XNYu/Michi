@@ -66,10 +66,11 @@ describe('serializeWorkspaceForSync — edge fields', () => {
 describe('serializeWorkspaceForSync — node fields', () => {
   it('includes branch_overview when set on a node', () => {
     const project = makeProject('ws1', ['n1']);
-    const nodes = { n1: makeNode('n1', 'ws1', { branchOverview: 'Current branch state.' }) };
+    const entries = [{ at: 1000, text: 'Current branch state.' }];
+    const nodes = { n1: makeNode('n1', 'ws1', { branchOverview: 'Current branch state.', branchOverviewEntries: entries }) };
 
     const wire = serializeWorkspaceForSync(project, nodes);
-    expect(wire.nodes[0]!.branch_overview).toBe('Current branch state.');
+    expect(wire.nodes[0]!.branch_overview).toBe(JSON.stringify(entries));
   });
 
   it('emits null branch_overview when absent', () => {

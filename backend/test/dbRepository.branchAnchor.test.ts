@@ -177,14 +177,18 @@ describe('saveNode / getNode — follow_ups_source_message_id', () => {
     assert.equal(getNode('overview-node')?.branch_overview, 'Initial branch state.');
   });
 
-  test('updates branch_overview without replacing other node fields', () => {
+  test('updates branch_overview as append-only journal entries', () => {
     insertWorkspace('ws1');
     insertNode('ws1', 'overview-node', 'Initial branch state.');
 
     updateNodeBranchOverview('overview-node', 'Updated durable state.');
 
     const node = getNode('overview-node');
-    assert.equal(node?.branch_overview, 'Updated durable state.');
+    // The column now holds a JSON entry array.
+    const entries = JSON.parse(node?.branch_overview ?? '[]');
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].text, 'Initial branch state.');
+    assert.equal(entries[1].text, 'Updated durable state.');
     assert.equal(node?.title, 'overview-node');
   });
 
