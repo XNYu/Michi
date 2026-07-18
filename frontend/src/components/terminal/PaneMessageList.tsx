@@ -35,6 +35,12 @@ interface PaneMessageListProps {
   anchorsByMessage?: Map<string, ChildAnchor[]>;
   /** Called when the user clicks a child-branch title. */
   onOpenBranch?: (childNodeId: string) => void;
+  /** Called when user clicks the per-message branch icon. */
+  onBranchFromMessage?: (messageId: string) => void;
+  /** Lowercased context names for highlighting @mentions in user messages. */
+  contextNames?: ReadonlySet<string>;
+  /** Called when user clicks a mention chip. */
+  onMentionClick?: (name: string) => void;
 }
 
 function PaneMessageListInner({
@@ -51,6 +57,9 @@ function PaneMessageListInner({
   followUpsDisabled = false,
   anchorsByMessage,
   onOpenBranch,
+  onBranchFromMessage,
+  contextNames,
+  onMentionClick,
 }: PaneMessageListProps) {
   const tailAssistantId = React.useMemo(() => {
     // Backward scan (no array copy) — this recomputes on every stream chunk
@@ -66,7 +75,9 @@ function PaneMessageListInner({
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);
   }, []);
-  const showFollowUps = node.visibleResponseComplete
+  const showFollowUps = node.messagesLoaded === false
+    ? false
+    : node.visibleResponseComplete
     ? node.followUps.length > 0
     : shouldShowFollowUps(
         node.followUps.length,
@@ -81,11 +92,16 @@ function PaneMessageListInner({
   });
   const isDark = DARK_PALETTES.has(prefs.terminalPalette);
 
+  // Placeholder state: node has messages in the DB but they haven't loaded yet.
+  // Show a subtle loading indicator instead of bare follow-ups.
+  const isPlaceholder = node.messagesLoaded === false && (node.messageCount ?? 0) > 0;
+
   return (
     <NodeUserInputContext.Provider value={node.pendingUserInput}>
     <div style={contentStyle}>
       <MergeSourcesNotice node={node} sourceLabels={mergeSourceLabels} />
 
+      {isPlaceholder && <MessagesLoadingPlaceholder />}
       {node.messages.map((m, i) => {
         const isUser = m.role === 'user';
         let retryText: string | undefined;
@@ -146,6 +162,11 @@ function PaneMessageListInner({
                 onEdit={
                   isUser && !streaming
                     ? () => onEditUserMessage(m.text)
+                    : undefined
+                }
+                onBranch={
+                  !streaming && onBranchFromMessage
+                    ? () => onBranchFromMessage(m.id)
                     : undefined
                 }
                 isErrorTail={isErrorTail}
@@ -210,10 +231,51 @@ export const PaneMessageList = React.memo(PaneMessageListInner, (prev, next) =>
   prev.onBranchFollowUp === next.onBranchFollowUp &&
   (prev.followUpsDisabled ?? false) === (next.followUpsDisabled ?? false) &&
   prev.anchorsByMessage === next.anchorsByMessage &&
-  prev.onOpenBranch === next.onOpenBranch,
+  prev.onOpenBranch === next.onOpenBranch &&
+  prev.onBranchFromMessage === next.onBranchFromMessage &&
+  prev.contextNames === next.contextNames &&
+  prev.onMentionClick === next.onMentionClick,
 );
 
 PaneMessageList.displayName = 'PaneMessageList';
+
+function MessagesLoadingPlaceholder() {
+  return (
+    <div
+      style={{
+        padding: '16px 0',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}
+    >
+      {[0, 1].map((i) => (
+        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div
+            className="t-skeleton-pulse"
+            style={{
+              height: 12,
+              width: i === 0 ? '60%' : '80%',
+              borderRadius: 3,
+              background: 'var(--term-line)',
+              opacity: 0.5,
+            }}
+          />
+          <div
+            className="t-skeleton-pulse"
+            style={{
+              height: 12,
+              width: i === 0 ? '90%' : '45%',
+              borderRadius: 3,
+              background: 'var(--term-line)',
+              opacity: 0.4,
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function MergeSourcesNotice({
   node,

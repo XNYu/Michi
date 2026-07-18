@@ -985,6 +985,24 @@ html[data-vibrancy="on"],
 }
 .t-hover-fg:hover { color: var(--term-fg); }
 
+/* Icon buttons — subtle bg on hover, dimmed bg + press on active. Used by
+   message-action rows and any single-icon interactive affordance. */
+.t-icon-btn {
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color var(--t-quick) var(--t-ease),
+              background var(--t-quick) var(--t-ease),
+              transform 60ms var(--t-ease);
+}
+.t-icon-btn:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.t-icon-btn:active {
+  background: color-mix(in srgb, var(--term-hover-bg, var(--term-alt)) 80%, var(--term-fg) 10%);
+  transform: scale(0.9);
+}
+
 /* Follow-up rows. The row text is the primary action ("continue in this
    pane"); the right-hand branch button is the explicit "branch into new
    pane" affordance. Branch button fades in on row hover (no horizontal
@@ -1123,6 +1141,16 @@ html[data-vibrancy="on"],
     opacity: var(--followup-final-opacity);
     animation: none;
   }
+}
+
+/* Messages loading skeleton — placeholder while lazy-loaded message bodies
+   are still in flight for a historical thread. */
+.t-skeleton-pulse {
+  animation: t-skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes t-skeleton-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.6; }
 }
 
 /* Follow-ups skeleton shown during kiro's `set_follow_ups` tool call
