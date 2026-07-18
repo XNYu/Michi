@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { Editor } from '@tiptap/core';
-import { composerStarterKit, enterSubmits } from './MentionEditor';
+import { composerStarterKit, enterContinuesBlock } from './MentionEditor';
 import { docToDraft, draftToDoc } from './mentionDoc';
 
 /**
@@ -88,30 +88,66 @@ describe('block input rules render WYSIWYG and keep the markdown wire format', (
   }
 });
 
-describe('enterSubmits: Enter sends only from a top-level paragraph', () => {
+describe('enterContinuesBlock: Shift+Enter runs block-native Enter inside formatted blocks', () => {
   const atEnd = (editor: Editor) => {
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
     return editor.state;
   };
 
   const cases: Array<[name: string, value: string, expected: boolean]> = [
-    ['plain paragraph', 'hello', true],
-    ['empty composer', '', true],
-    ['inside a code block', '```\ncode\n```', false],
-    ['inside a list item', '- item', false],
-    ['inside an ordered item', '1. item', false],
-    ['inside a blockquote', '> quote', false],
-    ['inside a heading', '# title', false],
-    ['paragraph after a list', '- a\ndone', true],
+    ['plain paragraph', 'hello', false],
+    ['empty composer', '', false],
+    ['inside a code block', '```\ncode\n```', true],
+    ['inside a list item', '- item', true],
+    ['inside an ordered item', '1. item', true],
+    ['inside a blockquote', '> quote', true],
+    ['inside a heading', '# title', true],
+    ['paragraph after a list', '- a\ndone', false],
   ];
 
   for (const [name, value, expected] of cases) {
     it(name, () => {
       const editor = makeEditor(draftToDoc(value, []));
       const state = atEnd(editor);
-      const got = enterSubmits(state);
+      const got = enterContinuesBlock(state);
       editor.destroy();
       expect(got).toBe(expected);
     });
   }
+});
+
+describe('Shift+Enter block continuation commands', () => {
+  it('splitListItem continues an ordered list with the next item', () => {
+    const editor = makeEditor(draftToDoc('1. first', []));
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    const handled = editor.commands.first(({ commands }) => [
+      () => commands.newlineInCode(),
+      () => commands.splitListItem('listItem'),
+      () => commands.createParagraphNear(),
+      () => commands.liftEmptyBlock(),
+      () => commands.splitBlock(),
+    ]);
+    expect(handled).toBe(true);
+    typeText(editor, 'second');
+    const value = draftValue(editor);
+    editor.destroy();
+    expect(value).toBe('1. first\n2. second');
+  });
+
+  it('lifts out of the list when the current item is empty', () => {
+    const editor = makeEditor(draftToDoc('1. first', []));
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    const continueBlock = () =>
+      editor.commands.first(({ commands }) => [
+        () => commands.newlineInCode(),
+        () => commands.splitListItem('listItem'),
+        () => commands.createParagraphNear(),
+        () => commands.liftEmptyBlock(),
+        () => commands.splitBlock(),
+      ]);
+    continueBlock(); // → empty item 2.
+    continueBlock(); // empty item lifts out of the list
+    expect(enterContinuesBlock(editor.state)).toBe(false);
+    editor.destroy();
+  });
 });

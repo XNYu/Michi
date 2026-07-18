@@ -59,7 +59,7 @@ export interface MentionEditorProps {
   /** Enable `/`-command autocomplete (TPane: yes; ManageComposer: no). Default true. */
   enableSlash?: boolean;
 
-  /** Enter (no Shift). `branch` is true for Mod+Enter. Replaces TPane's onKeyDown. */
+  /** Enter (no Shift) always submits; `branch` is true for Mod+Enter. Replaces TPane's onKeyDown. */
   onSubmit?: (opts: { branch: boolean }) => void;
   /** Native paste passthrough (image paste handling lives in the host). */
   onPaste?: (e: ClipboardEvent) => void;
@@ -73,7 +73,8 @@ export interface MentionEditorProps {
 // horizontalRule stays off (nobody types `---` in chat; easy to mistrigger).
 // trailingNode stays off: it auto-appends an empty paragraph after a trailing
 // code block / list, which would leak a spurious `\n` into the wire value —
-// codeBlock's own exitOnTripleEnter / exitOnArrowDown cover the escape path.
+// codeBlock's exitOnArrowDown covers the escape path (plain Enter submits, so
+// exitOnTripleEnter never fires; newlines inside the fence come from Shift+Enter).
 // Exported so tests can drive a real editor with the exact production config.
 export const composerStarterKit = StarterKit.configure({
   horizontalRule: false,
@@ -81,20 +82,20 @@ export const composerStarterKit = StarterKit.configure({
 });
 
 /**
- * Whether a plain Enter should submit, given the current selection. Inside a
- * code block, list item or blockquote, Enter does the block-native thing
- * (newline / new item; double-Enter on an empty block lifts out). A heading
- * also swallows Enter — it starts the body paragraph of a longer draft.
- * Mod+Enter bypasses this and submits from anywhere.
+ * Whether the selection sits inside a formatted block (code block, list item,
+ * blockquote, heading). Plain Enter ALWAYS submits — chat convention — but
+ * Shift+Enter inside one of these runs the block-native Enter instead of the
+ * default hardBreak: next list item, newline in code, new paragraph in a
+ * quote, body paragraph after a heading.
  */
-export function enterSubmits(state: EditorState): boolean {
+export function enterContinuesBlock(state: EditorState): boolean {
   const { $from } = state.selection;
-  if ($from.parent.type.name === 'heading') return false;
+  if ($from.parent.type.name === 'heading') return true;
   for (let d = $from.depth; d > 0; d -= 1) {
     const name = $from.node(d).type.name;
-    if (name === 'codeBlock' || name === 'listItem' || name === 'blockquote') return false;
+    if (name === 'codeBlock' || name === 'listItem' || name === 'blockquote') return true;
   }
-  return true;
+  return false;
 }
 
 // Mention node extended to carry our MentionRecord fields (refId + kind) on top
@@ -307,6 +308,10 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   } = props;
 
   const hostRef = useRef<HTMLDivElement | null>(null);
+  // Editor handle for the (mount-time) handleKeyDown closure — the Shift+Enter
+  // path needs editor.commands, but `editor` doesn't exist when useEditor's
+  // config object is built. Assigned right after useEditor returns.
+  const editorRef = useRef<Editor | null>(null);
 
   // Refs the (mount-time) ProseMirror plugin callbacks read for fresh values.
   const contextsRef = useRef(contexts);
@@ -461,14 +466,27 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
           }
         }
 
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (event.key === 'Enter') {
           // IME guard: never submit mid-composition (matches the old textarea path).
           if (view.composing || event.isComposing) return false;
+          if (event.shiftKey) {
+            // Shift+Enter inside a formatted block runs the block-native Enter
+            // (next list item, newline in code, new paragraph in a quote) so
+            // markdown drafting can continue; in a plain paragraph fall
+            // through to the default hardBreak soft newline.
+            if (!enterContinuesBlock(view.state)) return false;
+            const ed = editorRef.current;
+            if (!ed) return false;
+            event.preventDefault();
+            return ed.commands.first(({ commands }) => [
+              () => commands.newlineInCode(),
+              () => commands.splitListItem('listItem'),
+              () => commands.createParagraphNear(),
+              () => commands.liftEmptyBlock(),
+              () => commands.splitBlock(),
+            ]);
+          }
           const branch = event.metaKey || event.ctrlKey;
-          // Inside a code block / list / quote / heading, plain Enter does the
-          // block-native thing (newline, next item, body paragraph) — only
-          // Mod+Enter submits from there.
-          if (!branch && !enterSubmits(view.state)) return false;
           event.preventDefault();
           onSubmitRef.current?.({ branch });
           return true;
@@ -494,6 +512,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
       });
     },
   });
+  editorRef.current = editor ?? null;
 
   // External → editor: re-sync only when the incoming props differ from what we
   // last emitted/applied (draft restore, clear-on-send, history redo). Guard
