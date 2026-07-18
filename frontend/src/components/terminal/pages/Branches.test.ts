@@ -54,10 +54,10 @@ describe('buildBranchDocumentRows', () => {
 
   it('derives the directory parentage from the same Markdown document order', () => {
     const documentRows = [
-      { nodeId: 'root', depth: 0, title: 'Root', overview: null, generated: false, streaming: false },
-      { nodeId: 'a', depth: 1, title: 'A', overview: null, generated: false, streaming: false },
-      { nodeId: 'aa', depth: 2, title: 'AA', overview: null, generated: false, streaming: true },
-      { nodeId: 'b', depth: 1, title: 'B', overview: null, generated: false, streaming: false },
+      { nodeId: 'root', depth: 0, title: 'Root', overview: null, entries: [], generated: false, streaming: false },
+      { nodeId: 'a', depth: 1, title: 'A', overview: null, entries: [], generated: false, streaming: false },
+      { nodeId: 'aa', depth: 2, title: 'AA', overview: null, entries: [], generated: false, streaming: true },
+      { nodeId: 'b', depth: 1, title: 'B', overview: null, entries: [], generated: false, streaming: false },
     ];
 
     expect(buildBranchDirectoryRows(documentRows)).toMatchObject([
