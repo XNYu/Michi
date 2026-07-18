@@ -9,6 +9,7 @@ import {
 } from '../../../state/chatStore';
 import { assistantAnswerVisibleText } from '../../../state/assistantBlocks';
 import type { ChatNodeState } from '../../../state/chatTypes';
+import type { BranchOverviewEntry } from 'michi-shared';
 import { buildTree, type TreeNode } from '../../../state/tree';
 import type { PageId } from '../../../state/commands';
 
@@ -23,6 +24,7 @@ export interface BranchDocumentRow {
   depth: number;
   title: string;
   overview: string | null;
+  entries: BranchOverviewEntry[];
   generated: boolean;
   streaming: boolean;
 }
@@ -132,12 +134,16 @@ export function buildBranchDocumentRows(
   return flattenTree(tree).flatMap((item) => {
     const node = nodes[item.nodeId];
     if (!node || node.kind === 'digest') return [];
-    const generated = !!node.branchOverview?.trim();
+    const entries = node.branchOverviewEntries ?? [];
+    const generated = entries.length > 0;
     return [{
       nodeId: item.nodeId,
       depth: item.depth,
       title: node.title?.trim() || chatLabel(node),
-      overview: generated ? node.branchOverview!.trim() : fallbackBranchOverview(node),
+      overview: generated
+        ? entries.map((e) => e.text).join('\n\n')
+        : fallbackBranchOverview(node),
+      entries,
       generated,
       streaming: node.status === 'streaming',
     }];
@@ -471,6 +477,7 @@ function rowsEqual(a: BranchDocumentRow[], b: BranchDocumentRow[]): boolean {
       && row.depth === other.depth
       && row.title === other.title
       && row.overview === other.overview
+      && row.entries === other.entries
       && row.generated === other.generated
       && row.streaming === other.streaming;
   });

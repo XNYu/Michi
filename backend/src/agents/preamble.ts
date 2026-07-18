@@ -19,11 +19,13 @@ Required final answer metadata:
 {{FOLLOW_UPS_INSTRUCTIONS}}`;
 
 const BRANCH_OVERVIEW_SENTINEL_INSTRUCTION = `- Near the end of the final answer, immediately before any follow-up sentinels,
-  write one single-line overview of the branch in this form:
-      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this branch is about and where it currently stands]
-  Keep it factual and useful when read later without the conversation. Match the
-  user's language. Use inline Markdown if helpful, but no headings, lists, or closing square bracket.
-  The UI strips this line and renders it in the Branches document.`;
+  write one single-line journal entry for this turn in this form:
+      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]
+  Entries accumulate into a chronological journal of the branch, so cover only
+  this turn's contribution; do not restate earlier turns. Keep it factual and
+  useful when read later without the conversation. Match the user's language.
+  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.
+  The UI strips this line and appends it to the branch's journal in the Branches document.`;
 
 const SENTINEL_METADATA_SCOPE_INSTRUCTION = `- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,
   progress/status updates, tool plans, or any message before you are ready to
@@ -34,8 +36,9 @@ const HYBRID_METADATA_SCOPE_INSTRUCTION = `- Do not emit [TITLE:] or [FOLLOW-UP 
   deliver the final answer. Never emit a [BRANCH-OVERVIEW:] sentinel; the
   runtime supplies the overview through a hidden metadata tool.`;
 
-const STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION = `- Provide the durable branch overview through the runtime's structured metadata tool.
-  Follow the runtime-specific tool instructions and do not duplicate the overview in the visible answer.`;
+const STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION = `- Provide this turn's branch-journal entry (what this turn did — explored, decided, discovered)
+  through the runtime's structured metadata tool. Entries accumulate into a chronological journal;
+  do not restate earlier turns and do not duplicate the entry in the visible answer.`;
 
 const STRUCTURED_METADATA_SCOPE_INSTRUCTION = `- Do not emit title metadata in commentary, progress/status updates, tool plans,
   or any message before you are ready to deliver the final answer.`;
@@ -98,7 +101,7 @@ const FOLLOW_UPS_REMIND_AFTER_TURNS = 2;
 // Repeat the reminder every N turns after the initial trigger.
 const FOLLOW_UPS_REMIND_INTERVAL = 1;
 
-const FOLLOW_UPS_REMINDER = `\n\n[Reminder: before the three follow-ups, include one [BRANCH-OVERVIEW: ...] line summarizing what this branch is about and where it stands. Then end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with "]".]`;
+const FOLLOW_UPS_REMINDER = `\n\n[Reminder: before the three follow-ups, include one [BRANCH-OVERVIEW: ...] line — 1-3 sentences on what this turn did or concluded (it appends to the branch's journal; do not restate earlier turns). Then end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with "]".]`;
 
 /**
  * Returns a short reminder suffix when the conversation is long enough that

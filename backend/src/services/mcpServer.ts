@@ -278,7 +278,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             "set_branch_overview",
             {
                 description:
-                    "Update this branch's durable overview. Summarize what the branch is about and where it currently stands in 1-3 concise sentences, matching the user's language. Call near the end of every reply.",
+                    "Append this turn's entry to the branch's durable journal. Summarize what this turn did — what was explored, decided, or discovered — in 1-3 concise sentences, matching the user's language. Do not restate earlier turns. Call near the end of every reply.",
                 inputSchema: {
                     overview: z.string().min(1).max(4000),
                 },

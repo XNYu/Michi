@@ -3,6 +3,8 @@ import type { AgentStatus } from '../services/api';
 import type { MentionRecord } from '../components/mentions';
 import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
+import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
+import type { BranchOverviewEntry } from 'michi-shared';
 
 export type { AgentStatus } from '../services/api';
 
@@ -275,7 +277,12 @@ export interface ChatNodeState {
   /** Transient marker for titles created by a user/domain action. Runtime titles
    * are persisted by the backend turn writer and must not schedule a second write. */
   titleNeedsPersistence?: boolean;
-  /** Agent-maintained one-paragraph summary rendered in the active thread's Branches document. */
+  /** Agent-maintained append-only journal of per-turn overview entries,
+   * rendered chronologically in the active thread's Branches document. */
+  branchOverviewEntries?: BranchOverviewEntry[];
+  /** Derived convenience: text of the latest journal entry. Kept in sync by
+   * the reducer so existing reads (Branches page, export, fallback) don't
+   * need changes. Never set directly — always derived from entries. */
   branchOverview?: string;
   /** Transient assistant message id that supplied the structured SSE overview.
    * Lets the terminal `done` parser remain a legacy fallback without

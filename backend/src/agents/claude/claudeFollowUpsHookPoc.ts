@@ -34,7 +34,7 @@ export function buildClaudeFollowUpsHookPocInstruction(
 
 Claude Stop-hook POC — structured turn metadata:
 - Before ending every real user turn, call the MCP tool mcp____michi_internal____set_branch_overview exactly once.
-- Pass {"overview":"..."}: 1-3 concise sentences describing what this branch is about and where it currently stands, matching the user's language.
+- Pass {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.
 ${overviewFallbackInstruction}
 ${followUpsInstruction}
 - Do not call validate_turn_metadata or validate_follow_ups yourself; Claude Code invokes validation automatically from the Stop hook.`;

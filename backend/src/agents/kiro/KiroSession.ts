@@ -54,7 +54,7 @@ class StreamingSentinelStripper {
 
 const BRANCH_OVERVIEW_TOOL_REMINDER = `
 
-[Before ending this turn, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this branch is about and where it currently stands. Match the user's language. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
+[Before ending this turn, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered. It appends to the branch's journal; do not restate earlier turns. Match the user's language. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
 
 /**
  * KiroSession wraps an ACP `AcpClient.prompt(sessionId, text)` async

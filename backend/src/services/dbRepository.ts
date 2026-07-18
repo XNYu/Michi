@@ -1,6 +1,13 @@
 import { getDb, prepareCached, runInTransaction } from './db';
 import { randomUUID } from 'node:crypto';
-import { checkpointTurnContent, type DurableMessage, type DurableTurnSnapshot } from 'michi-shared';
+import {
+  appendBranchOverviewEntry,
+  checkpointTurnContent,
+  parseBranchOverviewEntries,
+  serializeBranchOverviewEntries,
+  type DurableMessage,
+  type DurableTurnSnapshot,
+} from 'michi-shared';
 import { computeTranscriptFingerprint, type TranscriptMessage } from './resumeStrategy';
 
 /**
@@ -548,14 +555,31 @@ export function updateNodeTitle(id: string, title: string, userId?: string): voi
   getDb().prepare('UPDATE nodes SET title = ? WHERE id = ?').run(title, id);
 }
 
+/**
+ * Append one per-turn entry to a node's branch-overview journal. The column
+ * stores a JSON entry array; legacy plain-string snapshots hydrate as a
+ * single entry before the append. Verbatim repeats of the last entry are
+ * dropped (dual delivery: structured event + turn-end text fallback).
+ */
+function appendBranchOverviewJournal(nodeId: string, text: string): void {
+  const row = prepareCached('SELECT branch_overview FROM nodes WHERE id = ?')
+    .get(nodeId) as { branch_overview?: string | null } | undefined;
+  if (!row) return;
+  const entries = parseBranchOverviewEntries(row.branch_overview ?? null);
+  const next = appendBranchOverviewEntry(entries, text, Date.now());
+  if (next === entries) return;
+  prepareCached('UPDATE nodes SET branch_overview = ? WHERE id = ?')
+    .run(serializeBranchOverviewEntries(next), nodeId);
+}
+
 export function updateNodeBranchOverview(id: string, overview: string, userId?: string): void {
   if (process.env.MICHI_CLOUD === '1' && userId) {
-    getDb().prepare(
-      'UPDATE nodes SET branch_overview = ? WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
-    ).run(overview, id, id, userId);
-    return;
+    const owned = getDb().prepare(
+      'SELECT 1 FROM nodes WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
+    ).get(id, id, userId);
+    if (!owned) return;
   }
-  getDb().prepare('UPDATE nodes SET branch_overview = ? WHERE id = ?').run(overview, id);
+  appendBranchOverviewJournal(id, overview);
 }
 
 export function softDeleteNode(id: string, deletedAt: number, groupId: string, userId?: string): void {
@@ -1115,9 +1139,10 @@ function writeTurnNodeProjection(snapshot: DurableTurnSnapshot, terminal: boolea
     prepareCached('UPDATE nodes SET follow_ups = ?, follow_ups_source_message_id = ? WHERE id = ?')
       .run(JSON.stringify(metadata.followUps), snapshot.assistantId, snapshot.nodeId);
   }
-  if (metadata.branchOverview) {
-    prepareCached('UPDATE nodes SET branch_overview = ? WHERE id = ?')
-      .run(metadata.branchOverview, snapshot.nodeId);
+  // Journal append happens only at the turn's durability boundary so each
+  // turn contributes at most one entry even when checkpoints ran earlier.
+  if (terminal && metadata.branchOverview) {
+    appendBranchOverviewJournal(snapshot.nodeId, metadata.branchOverview);
   }
   prepareCached(`
     UPDATE nodes

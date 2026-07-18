@@ -11,6 +11,7 @@ import type {
   TrimSnapshot,
 } from './chatTypes';
 import type { DigestState } from './digest';
+import { parseBranchOverviewEntries } from 'michi-shared';
 
 export const STATE_SCHEMA_VERSION = 5;
 
@@ -402,7 +403,14 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     followUps: parseJsonStringArray(row.follow_ups),
     followUpsSourceMessageId: asString(row.follow_ups_source_message_id) || undefined,
     title: asString(row.title),
-    branchOverview: asString(row.branch_overview) || undefined,
+    branchOverviewEntries: (() => {
+      const entries = parseBranchOverviewEntries(row.branch_overview);
+      return entries.length > 0 ? entries : undefined;
+    })(),
+    branchOverview: (() => {
+      const entries = parseBranchOverviewEntries(row.branch_overview);
+      return entries.length > 0 ? entries[entries.length - 1].text : undefined;
+    })(),
     status: row.status === 'streaming' ? 'streaming' : row.status === 'error' ? 'error' : 'idle',
     lastAppliedTurnId: asString(row.last_applied_turn_id),
     lastAppliedSeq: asOptionalNumber(row.last_applied_seq),
@@ -658,10 +666,24 @@ export function hydrateSavedState(saved: unknown): HydratedState {
       messages: msgs,
       followUps: raw.followUps ?? [],
       title: raw.title,
-      branchOverview:
-        typeof (raw as any).branchOverview === 'string' && (raw as any).branchOverview.trim().length > 0
-          ? (raw as any).branchOverview
-          : undefined,
+      branchOverviewEntries: (() => {
+        if (Array.isArray((raw as any).branchOverviewEntries) && (raw as any).branchOverviewEntries.length > 0) {
+          return parseBranchOverviewEntries((raw as any).branchOverviewEntries);
+        }
+        const legacy = (raw as any).branchOverview;
+        if (typeof legacy === 'string' && legacy.trim().length > 0) {
+          return parseBranchOverviewEntries(legacy);
+        }
+        return undefined;
+      })(),
+      branchOverview: (() => {
+        if (Array.isArray((raw as any).branchOverviewEntries) && (raw as any).branchOverviewEntries.length > 0) {
+          const entries = parseBranchOverviewEntries((raw as any).branchOverviewEntries);
+          return entries.length > 0 ? entries[entries.length - 1].text : undefined;
+        }
+        const legacy = (raw as any).branchOverview;
+        return typeof legacy === 'string' && legacy.trim().length > 0 ? legacy : undefined;
+      })(),
       status: 'idle',
       minimized: raw.minimized,
       position: validPos,

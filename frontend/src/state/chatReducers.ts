@@ -9,7 +9,7 @@ import {
   projectAssistantStreamEvent,
   nextToolBlockPlacement,
 } from './assistantBlocks';
-import { CHAT_STREAM_EVENTS } from 'michi-shared';
+import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS } from 'michi-shared';
 
 export const NODE_ACTIVITY_ACTIONS = new Set<ChatAction['type']>([
   'user-send',
@@ -580,12 +580,23 @@ export function reduceNodes(
           followUpsSourceMessageId:
             extractedFollowUps.length > 0 ? action.assistantId : n.followUpsSourceMessageId,
           title: lockedTitle,
-          // A structured branch_overview SSE frame is canonical. Parsing the
-          // rendered text remains only for older servers / stored replies.
-          branchOverview:
-            n.branchOverviewSourceMessageId === action.assistantId
-              ? n.branchOverview
-              : extractedBranchOverview ?? n.branchOverview,
+          // A structured branch_overview SSE frame is canonical. The text
+          // fallback parser only fires when no structured event was delivered
+          // for this assistant turn.
+          branchOverviewEntries: (() => {
+            if (n.branchOverviewSourceMessageId === action.assistantId) return n.branchOverviewEntries;
+            if (!extractedBranchOverview) return n.branchOverviewEntries;
+            const prev = n.branchOverviewEntries ?? [];
+            const next = appendBranchOverviewEntry(prev, extractedBranchOverview, Date.now());
+            return next === prev ? prev : next;
+          })(),
+          branchOverview: (() => {
+            if (n.branchOverviewSourceMessageId === action.assistantId) return n.branchOverview;
+            if (!extractedBranchOverview) return n.branchOverview;
+            const prev = n.branchOverviewEntries ?? [];
+            const next = appendBranchOverviewEntry(prev, extractedBranchOverview, Date.now());
+            return next === prev ? n.branchOverview : next[next.length - 1].text;
+          })(),
           resumeFingerprint: computeTranscriptFingerprint(msgs),
         },
       };
@@ -1002,13 +1013,16 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       const next = action.overview.trim();
-      // Empty / malformed markers must not erase the last useful branch state.
-      if (!next || n.branchOverview === next) return nodes;
+      if (!next) return nodes;
+      const prev = n.branchOverviewEntries ?? [];
+      const entries = appendBranchOverviewEntry(prev, next, Date.now());
+      if (entries === prev) return nodes;
       return {
         ...nodes,
         [action.nodeId]: {
           ...n,
-          branchOverview: next,
+          branchOverviewEntries: entries,
+          branchOverview: entries[entries.length - 1].text,
           ...(action.assistantId ? { branchOverviewSourceMessageId: action.assistantId } : {}),
         },
       };

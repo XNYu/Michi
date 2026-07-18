@@ -24,6 +24,7 @@ import {
   type SavedState,
 } from './chatHydration';
 import { messageForPersistence } from './assistantBlocks';
+import { serializeBranchOverviewEntries } from 'michi-shared';
 import type { ChatNodeState, Project } from './chatTypes';
 import { startupMarkOnce } from '../services/startupTrace';
 import { WorkspaceSyncQueue } from './workspaceSyncQueue';
@@ -327,7 +328,7 @@ export function serializeNodeRow(
     parent_node_id: n.parentNodeId || null,
     kind: n.kind || 'chat',
     title: n.title || null,
-    branch_overview: n.branchOverview || null,
+    branch_overview: serializeBranchOverviewEntries(n.branchOverviewEntries ?? []),
     status: 'idle',
     position_x: n.position?.x ?? null,
     position_y: n.position?.y ?? null,

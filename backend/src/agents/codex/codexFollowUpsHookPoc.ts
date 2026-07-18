@@ -38,7 +38,7 @@ export function buildCodexFollowUpsHookPocInstruction(
 
 Codex Stop-hook POC — structured turn metadata:
 - Before ending every real user turn, call mcp____michi_internal____set_branch_overview exactly once.
-- Pass {"overview":"..."}: 1-3 concise sentences describing what this branch is about and where it currently stands, matching the user's language.
+- Pass {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.
 ${overviewFallbackInstruction}
 ${followUpsInstruction}
 - Do not call the Stop-hook validator yourself; Michi invokes it automatically.`;

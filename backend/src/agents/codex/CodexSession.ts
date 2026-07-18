@@ -529,7 +529,7 @@ export class CodexSession implements AgentSession {
             attempt: 1,
           });
           const repairInstructions = missingTools.map((tool) => tool === 'set_branch_overview'
-            ? 'For set_branch_overview, provide 1-3 concise sentences about the branch state.'
+            ? 'For set_branch_overview, provide 1-3 concise sentences about what this turn did.'
             : 'For set_follow_ups, provide exactly three user-voice questions.');
           return {
             decision: 'block',
