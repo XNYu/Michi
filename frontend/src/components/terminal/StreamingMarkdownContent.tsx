@@ -161,7 +161,10 @@ export default function StreamingMarkdownContent({
         />
       ))}
       {unfinishedBlock && (
-        <MarkdownStreamingTailProvider text={pendingText}>
+        <MarkdownStreamingTailProvider
+          text={pendingText}
+          revealTailChars={revealTailChars}
+        >
           <MarkdownBlock
             key={unfinishedBlock.index}
             {...markdownProps}
@@ -173,7 +176,10 @@ export default function StreamingMarkdownContent({
         </MarkdownStreamingTailProvider>
       )}
       {!unfinishedBlock && (
-        <MarkdownStreamingTailProvider text={pendingText}>
+        <MarkdownStreamingTailProvider
+          text={pendingText}
+          revealTailChars={revealTailChars}
+        >
           <MarkdownStreamingTail />
         </MarkdownStreamingTailProvider>
       )}

@@ -33,16 +33,17 @@ describe('StreamingMarkdownContent semantic reinterpretation', () => {
 
   it('keeps a live plain-text tail inside the same paragraph', () => {
     const { container, rerender } = render(
-      <StreamingMarkdownContent text="hello" />,
+      <StreamingMarkdownContent text="hello" revealTailChars={1} />,
     );
 
-    rerender(<StreamingMarkdownContent text="hello world" />);
+    rerender(<StreamingMarkdownContent text="hello world" revealTailChars={1} />);
 
     const paragraph = container.querySelector('p');
     const tail = container.querySelector('[data-markdown-pending-tail]');
     expect(paragraph?.textContent).toBe('hello world');
     expect(tail?.textContent).toBe(' world');
     expect(tail?.parentElement).toBe(paragraph);
+    expect(tail?.querySelector('.stream-token-reveal')?.textContent).toBe('d');
   });
 
   it('places live tails inside the unfinished heading, list item, and table cell', () => {
