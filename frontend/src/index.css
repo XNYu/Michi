@@ -2579,12 +2579,24 @@ html[data-vibrancy="on"],
 .ui-scrim--modal {
   background: var(--scrim-modal);
   z-index: var(--z-modal-scrim);
+}
+/* Centering layer for the modal card. Kept SEPARATE from the scrim (and from
+   the panel) and deliberately free of opacity/transform/filter animations:
+   backdrop-filter on .ui-modal-panel only frosts real page content if NO
+   ancestor between it and the viewport isolates the backdrop. Nesting the glass
+   panel inside the opacity-fading scrim (as before) gave the panel an isolated,
+   empty backdrop → clear glass. This transparent, un-animated sibling lets the
+   panel blur through to the app exactly like the drawer does. */
+.ui-modal-positioner {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
 }
-.ui-scrim--modal[data-anchor='top'] {
+.ui-modal-positioner[data-anchor='top'] {
   align-items: flex-start;
   padding-top: 80px;
 }

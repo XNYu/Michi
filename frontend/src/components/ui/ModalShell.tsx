@@ -123,21 +123,33 @@ export function ModalShell({
   if (!open) return null;
 
   return createPortal(
-    <div
-      className="ui-scrim ui-scrim--modal"
-      data-anchor={anchor}
-      onMouseDown={dismissible ? onClose : undefined}
-    >
+    <>
+      {/* Dim scrim — a SIBLING of the panel, never its ancestor. If the glass
+          panel were nested inside this (translucent, opacity-fading) element,
+          its backdrop-filter would sample the scrim's flat fill instead of the
+          real app content and render clear. Keeping them siblings lets the panel
+          frost through to the page exactly like the drawer does. */}
       <div
-        ref={paneRef}
-        className="ui-modal-panel term-glass"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={title ? titleId : undefined}
-        aria-label={title ? undefined : ariaLabel}
-        style={{ width, maxWidth: '92vw' }}
-        onMouseDown={(e) => e.stopPropagation()}
+        className="ui-scrim ui-scrim--modal"
+        onMouseDown={dismissible ? onClose : undefined}
+      />
+      {/* Transparent, un-animated centering layer (no bg/opacity/transform, so it
+          doesn't isolate the panel's backdrop). Clicks on its empty area dismiss. */}
+      <div
+        className="ui-modal-positioner"
+        data-anchor={anchor}
+        onMouseDown={dismissible ? onClose : undefined}
       >
+        <div
+          ref={paneRef}
+          className="ui-modal-panel term-glass"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={title ? titleId : undefined}
+          aria-label={title ? undefined : ariaLabel}
+          style={{ width, maxWidth: '92vw' }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
         {title && (
           <div className="ui-overlay-header" style={{ justifyContent: 'space-between' }}>
             <span
@@ -165,8 +177,9 @@ export function ModalShell({
           </div>
         )}
         {children}
+        </div>
       </div>
-    </div>,
+    </>,
     document.body,
   );
 }
