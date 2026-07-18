@@ -2289,7 +2289,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   const handleStreamComplete = useCallback((nodeId: string) => {
     if (prefsRef.current.notifications !== 'all') return;
-    if (document.hasFocus() && focusedPaneRef.current === nodeId) return;
+    if (focusedPaneRef.current === nodeId) return;
     const node = nodesRef.current[nodeId];
     notify({
       title: node?.title ?? 'Branch complete',

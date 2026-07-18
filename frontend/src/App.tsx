@@ -202,7 +202,7 @@ function ExportPanelManager() {
 function AppToaster() {
   const { prefs } = usePrefs();
   const isDark = DARK_PALETTES.has(prefs.terminalPalette);
-  return <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} richColors />;
+  return <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} richColors offset={16} />;
 }
 
 function ShellSwitcher() {
