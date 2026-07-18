@@ -57,6 +57,9 @@ dist-electron/
 .acp-capture/
 
 # AI / automation tool state
+/.agents/
+/.kiro/
+/skills-lock.json
 .claude/
 .playwright-mcp/
 .sisyphus/
@@ -105,3 +108,23 @@ docs/screenshots/
 
 # Codegraph index cache
 /.codegraph/
+
+# design-sync (claude.ai/design)
+.design-sync/
+.ds-sync/
+ds-bundle/
+
+# Chat attachments (screenshots, pastes)
+.attachments/
+
+# TokenSave code-graph index
+.tokensave/
+
+# Local experiments, mocks, and scratch files
+/research/
+TODO.md
+artifacts-state.png
+cfn-template.json
+extension/
+feasibility-of-background-execution-during-sleep-*.md
+mocks/
