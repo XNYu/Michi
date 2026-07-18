@@ -17,6 +17,7 @@ export interface LegacyCodeBlockProps {
   className?: string;
   language?: string;
   deferHighlight?: boolean;
+  tail?: React.ReactNode;
   'data-michi-code-block'?: boolean;
 }
 
@@ -25,6 +26,7 @@ function LegacyCodeBlock({
   className,
   language,
   deferHighlight = false,
+  tail,
 }: LegacyCodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
@@ -82,11 +84,11 @@ function LegacyCodeBlock({
           <pre className="michi-code-pre">
             <code className={className}>
               {shouldHighlight ? (
-                <Suspense fallback={<CodeBlockPlainLines source={source} />}>
-                  <LegacyHighlightedCode language={resolvedLanguage} source={source} />
+                <Suspense fallback={<CodeBlockPlainLines source={source} tail={tail} />}>
+                  <LegacyHighlightedCode language={resolvedLanguage} source={source} tail={tail} />
                 </Suspense>
               ) : (
-                <CodeBlockPlainLines source={source} />
+                <CodeBlockPlainLines source={source} tail={tail} />
               )}
             </code>
           </pre>

@@ -15,6 +15,7 @@ const ROOT_NODE_ID = 'n0';
 const BASELINE_LABEL = process.env.MICHI_PERF_LABEL ?? 'baseline';
 const OUT_DIR = process.env.MICHI_PERF_OUT ?? path.join(process.cwd(), 'e2e', '.perf');
 const STREAMING_MARKDOWN_BLOCKS = process.env.MICHI_STREAMING_MARKDOWN_BLOCKS;
+const MARKDOWN_REINTERPRET_HZ = process.env.MICHI_MARKDOWN_REINTERPRET_HZ;
 
 interface FrameStats {
   frames: number;
@@ -39,6 +40,8 @@ interface ScenarioResult {
   heapBefore?: number | null;
   heapAfter?: number | null;
   heapAfterClose?: number | null;
+  taskDurationMs?: number;
+  scriptDurationMs?: number;
   renderDelta: Record<string, number>;
   componentDelta: Record<string, number>;
   inactivePaneRenders?: Record<string, number>;
@@ -264,7 +267,7 @@ function makeSavedState(paneCount: number) {
 }
 
 async function installPerfInit(page: Page, paneCount: number) {
-  await page.addInitScript(({ state, streamingMarkdownBlocks }) => {
+  await page.addInitScript(({ state, streamingMarkdownBlocks, markdownReinterpretHz }) => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem('michi:migrated', '1');
@@ -273,6 +276,9 @@ async function installPerfInit(page: Page, paneCount: number) {
     window.localStorage.setItem('michi:ff:markdownRenderer', 'react-markdown');
     if (streamingMarkdownBlocks === '0' || streamingMarkdownBlocks === '1') {
       window.localStorage.setItem('michi:ff:streamingMarkdownBlocks', streamingMarkdownBlocks);
+    }
+    if (markdownReinterpretHz !== undefined) {
+      window.localStorage.setItem('michi:ff:markdownReinterpretHz', markdownReinterpretHz);
     }
     window.__MICHI_RENDER_COUNTERS__ = {
       enabled: true,
@@ -327,7 +333,11 @@ async function installPerfInit(page: Page, paneCount: number) {
       }
       return originalFetch(input, init);
     };
-  }, { state: makeSavedState(paneCount), streamingMarkdownBlocks: STREAMING_MARKDOWN_BLOCKS });
+  }, {
+    state: makeSavedState(paneCount),
+    streamingMarkdownBlocks: STREAMING_MARKDOWN_BLOCKS,
+    markdownReinterpretHz: MARKDOWN_REINTERPRET_HZ,
+  });
 }
 
 async function bootHeavyWorkspace(page: Page, paneCount: number) {
@@ -514,9 +524,27 @@ async function measureWithCounters(
   await resetCounters(page);
   const heapBefore = await collectHeap(page);
   const before = await snapshotCounters(page);
-  const measured = await fn();
+  const perfClient = await page.context().newCDPSession(page);
+  await perfClient.send('Performance.enable');
+  const cpuBefore = await perfClient.send('Performance.getMetrics');
+  let measured: Awaited<ReturnType<typeof fn>>;
+  let cpuAfter: typeof cpuBefore;
+  try {
+    measured = await fn();
+    cpuAfter = await perfClient.send('Performance.getMetrics');
+  } finally {
+    await perfClient.detach();
+  }
   const after = await snapshotCounters(page);
   const heapAfter = await collectHeap(page);
+  const metric = (snapshot: typeof cpuBefore, name: string) =>
+    snapshot.metrics.find((candidate) => candidate.name === name)?.value ?? 0;
+  const taskDurationMs = Math.round(
+    (metric(cpuAfter, 'TaskDuration') - metric(cpuBefore, 'TaskDuration')) * 100_000,
+  ) / 100;
+  const scriptDurationMs = Math.round(
+    (metric(cpuAfter, 'ScriptDuration') - metric(cpuBefore, 'ScriptDuration')) * 100_000,
+  ) / 100;
   const renderDelta = diffRecord(before.counts, after.counts);
   const componentDelta = diffRecord(before.componentCounts, after.componentCounts);
   const result: ScenarioResult = {
@@ -527,6 +555,8 @@ async function measureWithCounters(
     renderDelta,
     componentDelta,
     inactivePaneRenders: inactivePaneRenders(renderDelta, activeNodeId, paneCount),
+    taskDurationMs,
+    scriptDurationMs,
     ...measured,
   };
   results.push(result);
@@ -538,6 +568,8 @@ async function measureWithCounters(
     heapAfter,
     heapAfterClose: result.heapAfterClose,
     interactionMaxMs: result.interactionMaxMs,
+    taskDurationMs,
+    scriptDurationMs,
   })}`);
 }
 
@@ -567,7 +599,7 @@ test('4 pane heavy horizontal scroll, streaming isolation, and interactions', as
     await submitToPane(page, 'n0', 'stream a measured pane-local update');
     await expect(page.locator('.terminal-pane[data-node-id="n0"] [data-streaming-tail="true"]')).toBeVisible({ timeout: 5_000 });
     const frames = await streaming;
-    await expect(page.getByText('Inspect inactive panes?').first()).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText('Inspect inactive panes?').first()).toBeVisible({ timeout: 15_000 });
     return { frames };
   }, 'n0');
 
@@ -601,7 +633,7 @@ test('6 pane heavy scroll and streaming pressure', async ({ page }) => {
     await submitToPane(page, 'n0', 'stream under six pane pressure');
     await expect(page.locator('.terminal-pane[data-node-id="n0"] [data-streaming-tail="true"]')).toBeVisible({ timeout: 5_000 });
     const frames = await streaming;
-    await expect(page.getByText('Check heap?').first()).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText('Check heap?').first()).toBeVisible({ timeout: 15_000 });
     for (let i = 0; i < 5; i += 1) {
       await dispatchAppShortcut(page, 'w');
       await page.waitForTimeout(50);

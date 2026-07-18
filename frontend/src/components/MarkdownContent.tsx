@@ -4,6 +4,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { rehypeAutolinkBareUrls } from './rehypeAutolinkBareUrls';
 import MarkdownRendererAdapter from './MarkdownRendererAdapter';
 import LegacyCodeBlock, { languageFromClassName } from './LegacyCodeBlock';
+import { MarkdownStreamingTail } from './MarkdownStreamingTail';
 import { hasCjkText, performanceNowMs, rendererStreamProbeEnabled, writeRendererStreamProbe } from '../lib/streamProbe';
 import { countRender } from '../services/renderCounters';
 
@@ -31,6 +32,8 @@ export interface MarkdownContentProps {
   trimFirstChild?: boolean;
   /** Override last child bottom-margin trimming. Defaults to trimEdges. */
   trimLastChild?: boolean;
+  /** Insert the live Smooth tail into the final semantic Markdown element. */
+  appendStreamingTail?: boolean;
 }
 
 const sanitizeSchema = {
@@ -165,6 +168,62 @@ function createStreamingRevealPlugin(state: StreamingRevealState) {
   };
 }
 
+const STREAMING_TAIL_CONTAINER_TAGS = new Set([
+  'p',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'li',
+  'td',
+  'th',
+  'blockquote',
+]);
+
+function isStreamingTailMarker(node: HastNode): boolean {
+  return node.type === 'element' && node.properties?.dataMichiStreamingTail === true;
+}
+
+function findStreamingTailContainer(node: HastNode, parent?: HastNode): HastNode | null {
+  if (Array.isArray(node.children)) {
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      const match = findStreamingTailContainer(node.children[index], node);
+      if (match) return match;
+    }
+  }
+
+  if (node.type !== 'element' || !node.tagName) return null;
+  if (STREAMING_TAIL_CONTAINER_TAGS.has(node.tagName)) return node;
+  if (node.tagName === 'code' && parent?.tagName === 'pre') return node;
+  return null;
+}
+
+function createStreamingTailPlugin() {
+  return function streamingTailPlugin() {
+    return function transform(tree: HastNode) {
+      // Block-only constructs such as a thematic break have no inline semantic
+      // container. Keep the live text visible beside those blocks until the
+      // next snapshot rather than dropping it for up to one second.
+      const container = findStreamingTailContainer(tree) ?? tree;
+      if (!Array.isArray(container.children)) container.children = [];
+      container.children.push({
+        type: 'element',
+        tagName: 'span',
+        properties: { dataMichiStreamingTail: true },
+        children: [],
+      });
+    };
+  };
+}
+
+function hasStreamingTailMarker(node: HastNode | undefined): boolean {
+  if (!node) return false;
+  if (isStreamingTailMarker(node)) return true;
+  return Array.isArray(node.children) && node.children.some(hasStreamingTailMarker);
+}
+
 /** Split text on the search term and wrap matches in <mark> (case-insensitive). */
 function HighlightText({ children, term }: { children: string; term: string }) {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -214,6 +273,7 @@ function MarkdownContentInner({
   trimEdges = true,
   trimFirstChild,
   trimLastChild,
+  appendStreamingTail = false,
 }: MarkdownContentProps) {
   countRender('MarkdownContent', `${text.length}:${text.slice(0, 24)}`, {
     textChars: text.length,
@@ -280,8 +340,9 @@ function MarkdownContentInner({
     if (rehypeKatex) plugins.push(rehypeKatex);
     plugins.push(rehypeAutolinkBareUrls);
     if (revealPlugin) plugins.push(revealPlugin);
+    if (appendStreamingTail) plugins.push(createStreamingTailPlugin());
     return plugins;
-  }, [mayContainRawHtml, rehypeKatex, revealPlugin]);
+  }, [appendStreamingTail, mayContainRawHtml, rehypeKatex, revealPlugin]);
   // External links open in a new context (system browser in Electron via
   // setWindowOpenHandler; a new tab in a plain browser) instead of replacing
   // the app. Internal/relative/mailto/hash links keep default behavior.
@@ -347,6 +408,10 @@ function MarkdownContentInner({
         legacyComponents={{
           ...hlComponents,
           a: anchorComponent,
+          span({ children, node, ...props }: any) {
+            if (isStreamingTailMarker(node)) return <MarkdownStreamingTail />;
+            return <span {...props}>{children}</span>;
+          },
           pre({ children, node: _node, ...props }: any) {
             if (React.Children.count(children) === 1) return <>{children}</>;
             return <pre {...props}>{children}</pre>;
@@ -362,6 +427,9 @@ function MarkdownContentInner({
                   deferHighlight={revealEnabled}
                   language={language}
                   text={codeText}
+                  tail={appendStreamingTail && hasStreamingTailMarker(_node)
+                    ? <MarkdownStreamingTail />
+                    : undefined}
                   data-michi-code-block
                 />
               );
@@ -390,7 +458,8 @@ const MarkdownContent = React.memo(MarkdownContentInner, (prev, next) =>
   prev.displayContents === next.displayContents &&
   prev.trimEdges === next.trimEdges &&
   prev.trimFirstChild === next.trimFirstChild &&
-  prev.trimLastChild === next.trimLastChild,
+  prev.trimLastChild === next.trimLastChild &&
+  prev.appendStreamingTail === next.appendStreamingTail,
 );
 
 export default MarkdownContent;

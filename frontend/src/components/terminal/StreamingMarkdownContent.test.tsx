@@ -1,22 +1,47 @@
-import { render } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import StreamingMarkdownContent from './StreamingMarkdownContent';
+import { MARKDOWN_REINTERPRET_HZ_STORAGE_KEY } from './markdownReinterpretationFlag';
 
 const { markdownRenderSpy } = vi.hoisted(() => ({
   markdownRenderSpy: vi.fn(),
 }));
 
-vi.mock('../MarkdownContent', () => ({
-  default: ({ text, revealTailChars }: { text: string; revealTailChars?: number }) => {
-    markdownRenderSpy({ text, revealTailChars });
-    return <span>{text}</span>;
-  },
-}));
+vi.mock('../MarkdownContent', async () => {
+  const { MarkdownStreamingTail } = await vi.importActual<
+    typeof import('../MarkdownStreamingTail')
+  >('../MarkdownStreamingTail');
+  return {
+    default: ({
+      text,
+      revealTailChars,
+      appendStreamingTail,
+    }: {
+      text: string;
+      revealTailChars?: number;
+      appendStreamingTail?: boolean;
+    }) => {
+      markdownRenderSpy({ text, revealTailChars });
+      return (
+        <span>
+          {text}
+          {appendStreamingTail ? <MarkdownStreamingTail /> : null}
+        </span>
+      );
+    },
+  };
+});
 
 describe('StreamingMarkdownContent', () => {
   beforeEach(() => {
     markdownRenderSpy.mockClear();
+    window.localStorage.setItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY, '0');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.removeItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY);
   });
 
   it('does not re-render stable markdown blocks when only the tail block changes', () => {
@@ -62,5 +87,37 @@ describe('StreamingMarkdownContent', () => {
     const tailCalls = calls.filter((call) => call.text === 'branch');
     expect(tailCalls).toHaveLength(1);
     expect(tailCalls[0].revealTailChars).toBe(1);
+  });
+
+  it('keeps visible text moving while Markdown reinterpretation is limited to 1Hz', () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY, '1');
+    const { container, rerender } = render(
+      <StreamingMarkdownContent text="hello" revealTailChars={1} />,
+    );
+
+    rerender(<StreamingMarkdownContent text="hello world" revealTailChars={1} />);
+
+    expect(container.textContent).toBe('hello world');
+    expect(container.querySelector('[data-markdown-pending-tail]')?.textContent).toBe(' world');
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello']);
+
+    act(() => vi.advanceTimersByTime(999));
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello']);
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello', 'hello world']);
+    expect(container.querySelector('[data-markdown-pending-tail]')).toBeNull();
+    expect(container.textContent).toBe('hello world');
+  });
+
+  it('immediately reinterprets non-append replacements', () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY, '1');
+    const { rerender } = render(<StreamingMarkdownContent text="hello" />);
+
+    rerender(<StreamingMarkdownContent text="replacement" />);
+
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello', 'replacement']);
   });
 });

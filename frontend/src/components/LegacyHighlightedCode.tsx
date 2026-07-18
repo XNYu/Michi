@@ -55,7 +55,13 @@ function useShikiHighlight(source: string, language: string) {
   return result;
 }
 
-function HighlightedCodeLines({ result }: { result: HighlightResult }) {
+function HighlightedCodeLines({
+  result,
+  tail,
+}: {
+  result: HighlightResult;
+  tail?: React.ReactNode;
+}) {
   return (
     <>
       {result.tokens.map((line, lineIndex) => (
@@ -69,6 +75,7 @@ function HighlightedCodeLines({ result }: { result: HighlightResult }) {
               {token.content}
             </span>
           ))}
+          {lineIndex === result.tokens.length - 1 ? tail : null}
         </span>
       ))}
     </>
@@ -78,10 +85,14 @@ function HighlightedCodeLines({ result }: { result: HighlightResult }) {
 export default function LegacyHighlightedCode({
   source,
   language,
+  tail,
 }: {
   source: string;
   language: string;
+  tail?: React.ReactNode;
 }) {
   const result = useShikiHighlight(source, language);
-  return result ? <HighlightedCodeLines result={result} /> : <CodeBlockPlainLines source={source} />;
+  return result
+    ? <HighlightedCodeLines result={result} tail={tail} />
+    : <CodeBlockPlainLines source={source} tail={tail} />;
 }
