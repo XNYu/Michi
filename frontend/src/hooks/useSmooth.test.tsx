@@ -139,6 +139,44 @@ describe('useSmooth', () => {
     }
   }
 
+  it('does not segment a message that mounts already completed', () => {
+    const segment = vi.spyOn(Intl.Segmenter.prototype, 'segment');
+    const windowListener = vi.spyOn(window, 'addEventListener');
+    const documentListener = vi.spyOn(document, 'addEventListener');
+    try {
+      const source = 'completed 👨‍👩‍👧‍👦 中文 message'.repeat(100);
+      const { result } = renderHook(() => useSmooth(source, false));
+
+      expect(result.current).toEqual({ displayed: source, isSmoothing: false });
+      expect(segment).not.toHaveBeenCalled();
+      expect(frames).toHaveLength(0);
+      expect(windowListener).not.toHaveBeenCalledWith('blur', expect.any(Function));
+      expect(windowListener).not.toHaveBeenCalledWith('focus', expect.any(Function));
+      expect(documentListener).not.toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+    } finally {
+      segment.mockRestore();
+      windowListener.mockRestore();
+      documentListener.mockRestore();
+    }
+  });
+
+  it('starts grapheme-safe smoothing if a completed message later grows', () => {
+    const family = '👨‍👩‍👧‍👦';
+    const { result, rerender } = renderHook(
+      ({ text, streaming }) => useSmooth(text, streaming),
+      { initialProps: { text: 'done', streaming: false } },
+    );
+
+    act(() => {
+      rerender({ text: `done${family}中文`, streaming: true });
+    });
+
+    expect(result.current.displayed).toBe('done');
+    expect(result.current.isSmoothing).toBe(true);
+    drainFrames([120, 220, 320, 500, 800, 1200]);
+    expect(result.current.displayed).toBe(`done${family}中文`);
+  });
+
   function setDocumentHidden(hidden: boolean): void {
     Object.defineProperty(document, 'hidden', {
       configurable: true,

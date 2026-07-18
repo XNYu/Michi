@@ -103,6 +103,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 if (d?.name && d?.filePath) {
                     yield {
                         kind: "context_saved",
+                        contextId: typeof d.id === "string" ? d.id : undefined,
                         name: d.name,
                         filePath: d.filePath,
                         size: d.size,
@@ -113,6 +114,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 if (d?.name && d?.filePath) {
                     yield {
                         kind: "context_updated",
+                        contextId: typeof d.id === "string" ? d.id : undefined,
                         name: d.name,
                         filePath: d.filePath,
                         size: d.size,

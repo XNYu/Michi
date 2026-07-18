@@ -180,6 +180,19 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     [],
   );
 
+  /** Open a pane in an explicit tree slot without stealing that slot's focus.
+   * Background stream events must not move the user between panes or trees. */
+  const appendPaneInTree = useCallback(
+    (projectId: string, treeId: string, nodeId: string) => {
+      const key = `${projectId}::${treeId}`;
+      setOpenPanesMap((prev) => {
+        const cur = prev[key] ?? [];
+        return cur.includes(nodeId) ? prev : { ...prev, [key]: [...cur, nodeId] };
+      });
+    },
+    [],
+  );
+
   const closePane = useCallback(
     (nodeId: string) => {
       setOpenPanes((prev) => {
@@ -234,6 +247,7 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     setFocusedPane,
     openPane,
     openPaneInTree,
+    appendPaneInTree,
     closePane,
     focusPane,
     reorderPane,

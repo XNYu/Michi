@@ -9,7 +9,8 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { getWorkspace, getNodeSessionBinding, getNodeWorkspaceId } from '../../services/dbRepository';
+import { getWorkspace, getNodeWorkspaceId, getNodeSessionBinding } from '../../services/dbRepository';
+import { getSessionForUser } from '../../agents/sessionRegistry';
 
 /** Resolves a workspaceId from the request, checks ownership, calls next() or
  *  returns 400/404. Reads from:
@@ -39,10 +40,13 @@ export function requireWorkspaceOwner(req: any, res: Response, next: NextFunctio
   next();
 }
 
-/** For routes with :chatId in params. Looks up the node's workspace_id
- *  (nodes.id === chatId in Pi; kiro uses ACP ids but the node row is still
- *  keyed by nodeId which the client also supplies). Falls back gracefully
- *  if the node isn't in SQLite yet (new session race). */
+/** For routes with :chatId in params. A runtime id may be stored in
+ * `acp_session_id` or `external_session_id`, so authorize against the
+ * persisted runtime binding rather than assuming `chatId === nodeId`.
+ *
+ * Cloud routes must never allow an unknown id through merely because it has
+ * not reached SQLite. A same-owner live registry entry is the narrow race
+ * exception while an ensure-session response is being persisted. */
 export function requireChatOwner(req: any, res: Response, next: NextFunction): void {
   if (process.env.MICHI_CLOUD !== '1') { next(); return; }
 
@@ -52,17 +56,10 @@ export function requireChatOwner(req: any, res: Response, next: NextFunction): v
     return;
   }
 
-  const workspaceId = getNodeSessionBinding(chatId, req.user?.id)?.workspaceId
-    ?? getNodeWorkspaceId(chatId);
-  if (!workspaceId) {
-    // Node not yet flushed to DB (new-session race) — let the route
-    // handle the not-found case itself. We only block confirmed mismatches.
-    next();
-    return;
-  }
-
-  const row = getWorkspace(workspaceId);
-  if (!row || row.owner_user_id !== req.user?.id) {
+  const userId = req.user?.id;
+  const persistedBinding = getNodeSessionBinding(chatId, userId);
+  const liveSession = getSessionForUser(chatId, userId ?? null);
+  if (!persistedBinding && !liveSession) {
     res.status(404).json({ error: 'not_found' });
     return;
   }

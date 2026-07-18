@@ -1,5 +1,6 @@
-import { getDb, runInTransaction } from './db';
-import type { DurableMessage, DurableTurnSnapshot } from 'michi-shared';
+import { getDb, prepareCached, runInTransaction } from './db';
+import { randomUUID } from 'node:crypto';
+import { checkpointTurnContent, type DurableMessage, type DurableTurnSnapshot } from 'michi-shared';
 import { computeTranscriptFingerprint, type TranscriptMessage } from './resumeStrategy';
 
 /**
@@ -91,6 +92,8 @@ export interface NodeRow {
   /** JSON-encoded TrimSnapshot. Non-null iff the node was trimmed (single-node
    *  trash entry, not a subtree deletion). Carries the undo data for restore. */
   trim_snapshot?: string | null;
+  last_applied_turn_id?: string | null;
+  last_applied_seq?: number | null;
   /** Tombstone — Unix ms when this node was permanently purged. Non-null rows
    *  are filtered out of reads and refused on write so a stale POST /sync from
    *  another tab cannot resurrect them. GC'd by `runTombstoneGc()` after
@@ -1052,7 +1055,7 @@ function durableMessageMetadata(message: DurableMessage): string | null {
 }
 
 function getTurnRow(turnId: string): TurnRow | null {
-  return (getDb().prepare('SELECT * FROM turns WHERE turn_id = ?').get(turnId) as TurnRow | undefined) ?? null;
+  return (prepareCached('SELECT * FROM turns WHERE turn_id = ?').get(turnId) as TurnRow | undefined) ?? null;
 }
 
 function assertTurnIdentity(row: TurnRow, snapshot: DurableTurnSnapshot): void {
@@ -1065,14 +1068,29 @@ function assertTurnIdentity(row: TurnRow, snapshot: DurableTurnSnapshot): void {
   }
 }
 
-function writeAssistantSnapshot(snapshot: DurableTurnSnapshot): void {
+function clearPendingSpawnPromptOutbox(nodeId: string): void {
+  const row = prepareCached('SELECT composer_draft FROM nodes WHERE id = ?')
+    .get(nodeId) as { composer_draft?: string | null } | undefined;
+  const raw = row?.composer_draft;
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed?.__michiPendingSpawnPrompt !== 'string') return;
+  } catch {
+    return;
+  }
+  prepareCached('UPDATE nodes SET composer_draft = NULL WHERE id = ? AND composer_draft = ?')
+    .run(nodeId, raw);
+}
+
+function writeAssistantSnapshot(snapshot: DurableTurnSnapshot, content = snapshot.assistantMessage.content): void {
   const message = snapshot.assistantMessage;
-  const result = getDb().prepare(`
+  const result = prepareCached(`
     UPDATE messages
     SET content = ?, blocks = ?, tool_calls = ?, metadata = ?
     WHERE id = ? AND node_id = ? AND role = 'assistant'
   `).run(
-    message.content,
+    content,
     message.blocks.length > 0 ? JSON.stringify(message.blocks) : null,
     message.toolCalls.length > 0 ? JSON.stringify(message.toolCalls) : null,
     durableMessageMetadata(message),
@@ -1085,24 +1103,23 @@ function writeAssistantSnapshot(snapshot: DurableTurnSnapshot): void {
 }
 
 function writeTurnNodeProjection(snapshot: DurableTurnSnapshot, terminal: boolean): void {
-  const db = getDb();
   const metadata = snapshot.nodeMetadata;
   if (metadata.title) {
-    db.prepare(`
+    prepareCached(`
       UPDATE nodes
       SET title = CASE WHEN title IS NULL OR TRIM(title) = '' THEN ? ELSE title END
       WHERE id = ?
     `).run(metadata.title, snapshot.nodeId);
   }
   if (metadata.followUps !== undefined) {
-    db.prepare('UPDATE nodes SET follow_ups = ?, follow_ups_source_message_id = ? WHERE id = ?')
+    prepareCached('UPDATE nodes SET follow_ups = ?, follow_ups_source_message_id = ? WHERE id = ?')
       .run(JSON.stringify(metadata.followUps), snapshot.assistantId, snapshot.nodeId);
   }
   if (metadata.branchOverview) {
-    db.prepare('UPDATE nodes SET branch_overview = ? WHERE id = ?')
+    prepareCached('UPDATE nodes SET branch_overview = ? WHERE id = ?')
       .run(metadata.branchOverview, snapshot.nodeId);
   }
-  db.prepare(`
+  prepareCached(`
     UPDATE nodes
     SET status = ?, last_applied_turn_id = ?, last_applied_seq = ?
     WHERE id = ?
@@ -1121,7 +1138,7 @@ function refreshResumeFingerprint(nodeId: string): void {
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: message.content,
     }));
-  getDb().prepare('UPDATE nodes SET resume_fingerprint = ? WHERE id = ?')
+  prepareCached('UPDATE nodes SET resume_fingerprint = ? WHERE id = ?')
     .run(computeTranscriptFingerprint(transcript), nodeId);
 }
 
@@ -1131,6 +1148,7 @@ export function beginTurn(snapshot: DurableTurnSnapshot): TurnRow {
     const existing = getTurnRow(snapshot.turnId);
     if (existing) {
       assertTurnIdentity(existing, snapshot);
+      clearPendingSpawnPromptOutbox(snapshot.nodeId);
       return existing;
     }
     const node = getNode(snapshot.nodeId);
@@ -1138,8 +1156,12 @@ export function beginTurn(snapshot: DurableTurnSnapshot): TurnRow {
     if (node.workspace_id !== snapshot.workspaceId) {
       throw new Error(`node ${snapshot.nodeId} does not belong to workspace ${snapshot.workspaceId}`);
     }
+    // The spawn prompt is a one-shot durable outbox. Consume it in the same
+    // transaction that makes the first turn visible, so a renderer/backend
+    // crash after begin cannot replay the prompt or mask a real composer draft.
+    clearPendingSpawnPromptOutbox(snapshot.nodeId);
 
-    const max = getDb().prepare('SELECT COALESCE(MAX(seq), -1) AS seq FROM messages WHERE node_id = ?')
+    const max = prepareCached('SELECT COALESCE(MAX(seq), -1) AS seq FROM messages WHERE node_id = ?')
       .get(snapshot.nodeId) as { seq: number };
     let seq = max.seq + 1;
     if (snapshot.userMessage) {
@@ -1167,7 +1189,7 @@ export function beginTurn(snapshot: DurableTurnSnapshot): TurnRow {
       created_at: snapshot.assistantMessage.createdAt,
     });
     const now = Date.now();
-    getDb().prepare(`
+    prepareCached(`
       INSERT INTO turns (
         turn_id, node_id, user_message_id, assistant_message_id, status,
         last_seq, stop_reason, error, started_at, checkpoint_at, completed_at, updated_at
@@ -1193,10 +1215,10 @@ export function checkpointTurn(snapshot: DurableTurnSnapshot): TurnRow {
     if (!row) throw new Error(`turn ${snapshot.turnId} has not begun`);
     assertTurnIdentity(row, snapshot);
     if (row.status !== 'active' || snapshot.lastAppliedSeq < row.last_seq) return row;
-    writeAssistantSnapshot(snapshot);
+    writeAssistantSnapshot(snapshot, checkpointTurnContent(snapshot));
     writeTurnNodeProjection(snapshot, false);
     const now = Date.now();
-    getDb().prepare(`
+    prepareCached(`
       UPDATE turns SET last_seq = ?, checkpoint_at = ?, updated_at = ? WHERE turn_id = ?
     `).run(snapshot.lastAppliedSeq, now, now, snapshot.turnId);
     return getTurnRow(snapshot.turnId)!;
@@ -1223,7 +1245,7 @@ export function finalizeTurn(snapshot: DurableTurnSnapshot): TurnRow {
     refreshResumeFingerprint(snapshot.nodeId);
     const now = Date.now();
     const completedAt = snapshot.completedAt ?? now;
-    getDb().prepare(`
+    prepareCached(`
       UPDATE turns
       SET status = ?, last_seq = ?, stop_reason = ?, error = ?,
           checkpoint_at = ?, completed_at = ?, updated_at = ?
@@ -1245,15 +1267,15 @@ export function finalizeTurn(snapshot: DurableTurnSnapshot): TurnRow {
 /** Mark checkpointed turns left active by a previous process as interrupted. */
 export function recoverInterruptedTurns(now = Date.now()): number {
   return runInTransaction(() => {
-    const active = getDb().prepare("SELECT turn_id, node_id FROM turns WHERE status = 'active'")
+    const active = prepareCached("SELECT turn_id, node_id FROM turns WHERE status = 'active'")
       .all() as Array<{ turn_id: string; node_id: string }>;
     if (active.length === 0) return 0;
-    getDb().prepare(`
+    prepareCached(`
       UPDATE turns
       SET status = 'error', error = 'backend_restarted', completed_at = ?, updated_at = ?
       WHERE status = 'active'
     `).run(now, now);
-    const updateNode = getDb().prepare(`
+    const updateNode = prepareCached(`
       UPDATE nodes SET status = 'error' WHERE id = ? AND status = 'streaming'
     `);
     for (const turn of active) updateNode.run(turn.node_id);
@@ -1287,6 +1309,46 @@ export function saveContext(ctx: ContextRow, userId?: string): void {
       source=excluded.source, updated_at=excluded.updated_at,
       rev=COALESCE(excluded.rev, contexts.rev)
   `).run({ ...ctx, size: ctx.size ?? null, rev: ctx.rev ?? null });
+}
+
+/**
+ * Durable projection for agent save_context/update_context side effects.
+ * Reuses the existing row id for a workspace/name pair so an SSE replay (or a
+ * later full workspace load) observes one context rather than a duplicate.
+ */
+export function upsertAgentContextMetadata(input: {
+  workspaceId: string;
+  nodeId: string;
+  name: string;
+  filePath: string;
+  size: number;
+  userId?: string;
+}): string | null {
+  const workspace = getWorkspace(input.workspaceId, input.userId);
+  if (!workspace) return null;
+  const existing = listContexts(input.workspaceId, input.userId)
+    .find((context) => context.name === input.name);
+  const now = Date.now();
+  const id = existing?.id ?? `ctx-${randomUUID()}`;
+  saveContext({
+    id,
+    workspace_id: input.workspaceId,
+    name: input.name,
+    file_path: input.filePath,
+    size: input.size,
+    auto_inject: existing?.auto_inject ?? 0,
+    source: 'agent',
+    type: existing?.type ?? 'doc',
+    url: existing?.url ?? null,
+    origin_node_id: existing?.origin_node_id ?? input.nodeId,
+    origin_message_id: existing?.origin_message_id ?? null,
+    kind: existing?.kind ?? 'embedded',
+    pinned_at: existing?.pinned_at ?? null,
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
+    rev: existing?.rev ?? null,
+  } as ContextRow, input.userId);
+  return id;
 }
 
 export function deleteContext(id: string, userId?: string): void {

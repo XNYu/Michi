@@ -356,10 +356,14 @@ function finalizeMessage(message: DurableMessage): DurableMessage {
         : block,
     ),
     toolCalls: message.toolCalls.map((tool) => {
-      const active = !tool.status || tool.status === 'running' || tool.status === 'pending' || tool.status === 'in_progress';
+      const active = isActiveToolStatus(tool.status);
       return active ? { ...tool, status: 'completed' } : tool;
     }),
   };
+}
+
+export function isActiveToolStatus(status: string | undefined): boolean {
+  return !status || status === 'running' || status === 'pending' || status === 'in_progress';
 }
 
 function answerContent(blocks: DurableAssistantBlock[]): string {
@@ -370,6 +374,13 @@ function answerContent(blocks: DurableAssistantBlock[]): string {
 
 function rawAnswerContent(blocks: DurableAssistantBlock[]): string {
   return blocks.map((block) => block.kind === 'answer' ? block.rawText : '').join('');
+}
+
+/** Derive the partial visible answer only at a persistence checkpoint. */
+export function checkpointTurnContent(snapshot: DurableTurnSnapshot): string {
+  return snapshot.status === 'active'
+    ? answerContent(snapshot.assistantMessage.blocks)
+    : snapshot.assistantMessage.content;
 }
 
 export function applyTurnEvent(
@@ -388,7 +399,7 @@ export function applyTurnEvent(
       const blocks = appendText(next, 'answer', streamEvent.data.text);
       next = {
         ...next,
-        assistantMessage: { ...next.assistantMessage, blocks, content: answerContent(blocks) },
+        assistantMessage: { ...next.assistantMessage, blocks },
       };
       break;
     }

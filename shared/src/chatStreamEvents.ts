@@ -87,8 +87,8 @@ export interface ChatStreamPayloads {
   follow_ups: { followUps: string[] };
   follow_ups_status: { status: "in_progress" | "completed" | "failed" };
   commands: { commands: AgentCommand[] };
-  context_saved: { name: string; filePath: string; size?: number };
-  context_updated: { name: string; filePath: string; size?: number };
+  context_saved: { contextId?: string; name: string; filePath: string; size?: number };
+  context_updated: { contextId?: string; name: string; filePath: string; size?: number };
   permission_request: {
     requestId: number;
     toolCallId?: string;
@@ -108,6 +108,10 @@ export interface ChatStreamPayloads {
 }
 
 export interface ChatStreamEnvelope {
+  /** Runtime chat identifier; present on every ChatHub-stamped frame. */
+  chatId?: string;
+  /** Stable Michi node identifier; present on every ChatHub-stamped frame. */
+  nodeId?: string;
   turnId?: string;
   seq?: number;
   assistantId?: string;
@@ -229,11 +233,13 @@ const parsers = {
   },
   commands: (data) => ({ commands: parseCommands(data.commands) }),
   context_saved: (data) => ({
+    contextId: optionalString(data.contextId),
     name: stringOrEmpty(data.name),
     filePath: stringOrEmpty(data.filePath),
     size: optionalFiniteNumber(data.size),
   }),
   context_updated: (data) => ({
+    contextId: optionalString(data.contextId),
     name: stringOrEmpty(data.name),
     filePath: stringOrEmpty(data.filePath),
     size: optionalFiniteNumber(data.size),
@@ -318,6 +324,8 @@ export function parseChatStreamEvent(event: string, rawData: string): ChatStream
 
   const raw = objectOrEmpty(parsed);
   const data = parsers[event](raw) as ChatStreamPayloads[typeof event] & ChatStreamEnvelope;
+  if (typeof raw.chatId === "string") data.chatId = raw.chatId;
+  if (typeof raw.nodeId === "string") data.nodeId = raw.nodeId;
   if (typeof raw.turnId === "string") data.turnId = raw.turnId;
   if (typeof raw.seq === "number" && Number.isFinite(raw.seq)) data.seq = raw.seq;
   if (typeof raw.assistantId === "string") data.assistantId = raw.assistantId;

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatNode, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
@@ -7,9 +7,11 @@ import MoveThreadDialog from '../MoveThreadDialog';
 import { buildThreadRowContextMenu } from '../../lib/threadRowContextMenu';
 import type { MenuSection } from '../ContextMenu';
 import type { ContextMenuSection } from '../../lib/threadRowContextMenu';
-import type { Tree } from '../../state/chatTypes';
+import type { ProjectEdge, Tree } from '../../state/chatTypes';
 import type { OpenState } from '../../state/sidebarSelectors';
 import { treeHasUnread } from '../../state/sidebarSelectors';
+
+const EMPTY_EDGES: readonly ProjectEdge[] = [];
 
 function toMenuSections(sections: ContextMenuSection[]): MenuSection[] {
   return sections.map((s, si) => ({
@@ -78,10 +80,14 @@ export default function ThreadRow({
   const { prefs } = usePrefs();
   const selected = treeSelection.has(tree.id);
   const n = useChatNode(tree.rootNodeId);
-  const projectEdges = projects.find((p) => p.id === projectId)?.edges ?? [];
-  const unread = useStructuralSelector(
-    (nodes) => treeHasUnread(tree, projectEdges, nodes, focusedNodeId),
+  const projectEdges = projects.find((p) => p.id === projectId)?.edges ?? EMPTY_EDGES;
+  const rootNodeId = tree.rootNodeId;
+  const unreadSelector = useCallback(
+    (nodes: Parameters<typeof treeHasUnread>[2]) =>
+      treeHasUnread({ rootNodeId }, projectEdges, nodes, focusedNodeId),
+    [rootNodeId, projectEdges, focusedNodeId],
   );
+  const unread = useStructuralSelector(unreadSelector);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);

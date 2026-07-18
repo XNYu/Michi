@@ -297,6 +297,10 @@ export interface ChatNodeState {
   lastAppliedTurnId?: string;
   /** Highest broadcast seq applied for lastAppliedTurnId. Transient. */
   lastAppliedSeq?: number;
+  /** Background feed replay cursor. It is per-window/transient and must never
+   * be persisted as the foreground durable replay watermark. */
+  lastAppliedBackgroundTurnId?: string;
+  lastAppliedBackgroundSeq?: number;
   /** Legacy manual layout position retained for older persisted state. */
   position?: { x: number; y: number };
   /**
@@ -312,6 +316,11 @@ export interface ChatNodeState {
   artifact?: ArtifactState;
   /** True iff this node was created by an agent-initiated spawn_branches tool call. */
   spawnedByAgent?: boolean;
+  /**
+   * Server-durable first prompt for an agent-spawned child. This is a one-shot
+   * outbox item, not a user composer draft; clear it only after turn_start.
+   */
+  pendingSpawnPrompt?: string;
   /**
    * Unix ms when this node was soft-deleted. Presence means it's in the
    * trash - renderers / tree walkers skip it. Absent = live. Cleared on
@@ -549,8 +558,9 @@ export type ChatAction =
       assistantId: string;
     }
   | { type: 'error'; nodeId: string; assistantId: string; message: string }
-  | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string }
+  | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
   | { type: 'apply-seq'; nodeId: string; turnId: string; seq: number }
+  | { type: 'apply-background-seq'; nodeId: string; turnId: string; seq: number }
   | { type: 'block-reset'; nodeId: string; assistantId: string }
   | { type: 'realign-assistant-id'; nodeId: string; fromId: string; toId: string }
   | {
@@ -612,6 +622,7 @@ export type ChatAction =
       projectId: string;
       nodes: Array<{ nodeId: string; chatId: string; title: string; prompt: string; runtimeId?: RuntimeId }>;
     }
+  | { type: 'spawn-prompt-started'; nodeId: string }
   | { type: 'permission-request'; nodeId: string; permission: PermissionRequest }
   | { type: 'permission-resolved'; nodeId: string }
   | { type: 'subagent-list-update'; nodeId: string; subagents: SubagentInfo[] }
@@ -655,6 +666,7 @@ export type ProjectAction =
       type: 'update-context-by-name';
       projectId: string;
       context: {
+        id?: string;
         name: string;
         filePath: string;
         size?: number;

@@ -71,6 +71,15 @@ const SAMPLE_ACTIONS: Record<string, ChatAction> = {
   'subagent-list-update': { type: 'subagent-list-update', nodeId: 'n1', subagents: [] } as ChatAction,
   'subagent-tool-activity': { type: 'subagent-tool-activity', nodeId: 'n1', subagentSessionId: 's1', title: 'read file', status: 'running' },
   'apply-seq': { type: 'apply-seq', nodeId: 'n1', turnId: 'T1', seq: 1 },
+  'set-composer-draft': {
+    type: 'set-composer-draft',
+    nodeId: 'n1',
+    draft: {
+      value: 'latest @Thread',
+      mentions: [{ start: 7, end: 14, kind: 'node', refId: 'n2', label: 'Thread' }],
+      quotedText: 'selected passage',
+    },
+  },
 };
 
 describe('HIGH_FREQ_ACTIONS structural invariant', () => {

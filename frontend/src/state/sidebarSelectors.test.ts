@@ -6,6 +6,7 @@ import {
   sortTrees,
   sortLiveProjects,
   mergeReferences,
+  selectProjectNodeStatuses,
 } from './sidebarSelectors';
 import type { Tree, Project, ChatNodeState } from './chatTypes';
 
@@ -27,6 +28,20 @@ describe('isWorkspaceExpanded', () => {
     expect(
       isWorkspaceExpanded({ ...empty, workspaces: { p2: true } }, 'p2', 'p1'),
     ).toBe(true);
+  });
+});
+
+describe('selectProjectNodeStatuses', () => {
+  it('collects only non-idle statuses from the requested workspace', () => {
+    const nodes = {
+      a: { nodeId: 'a', status: 'streaming' },
+      b: { nodeId: 'b', status: 'idle' },
+      foreign: { nodeId: 'foreign', status: 'error' },
+    } satisfies Record<string, Pick<ChatNodeState, 'nodeId' | 'status'>>;
+
+    expect(selectProjectNodeStatuses(['a', 'b', 'missing'], nodes)).toEqual({
+      a: 'streaming',
+    });
   });
 });
 

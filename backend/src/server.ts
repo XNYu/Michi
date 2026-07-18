@@ -37,8 +37,8 @@ import type { KiroRuntime } from './agents/kiro/KiroRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
-import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns, updateNodeResumeBinding } from './services/dbRepository';
-import { ensureDurableGraphNode } from './services/graphCommands';
+import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns, updateNodeResumeBinding, upsertAgentContextMetadata } from './services/dbRepository';
+import { ensureDurableGraphNode, rollbackProvisionalSpawnNode } from './services/graphCommands';
 import { getMichiDataDir } from './services/dataDir';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
 import { FileRuntimeModelCache } from './agents/runtimeModelCache';
@@ -137,8 +137,12 @@ for (const factory of getEnabledFactories()) {
     let runtime!: AgentRuntime;
     const bridge = createAgentToolBridge({
         createChild: async (args) => {
-            const parentBinding = getNodeSessionBinding(args.parentChatId);
-            const parentNode = parentBinding ? getNode(parentBinding.nodeId) : getNode(args.parentChatId);
+            const parentBinding = getNodeSessionBinding(args.parentChatId, args.ownerUserId ?? undefined);
+            const parentNode = parentBinding
+              ? getNode(parentBinding.nodeId)
+              : process.env.MICHI_CLOUD === '1'
+                ? null
+                : getNode(args.parentChatId);
             if (!parentNode) throw new Error(`spawn parent node not found for ${args.parentChatId}`);
             const workspace = getWorkspace(parentNode.workspace_id);
             if (!workspace) throw new Error(`spawn workspace ${parentNode.workspace_id} not found`);
@@ -170,7 +174,11 @@ for (const factory of getEnabledFactories()) {
                 treeId: parentNode.tree_id ?? null,
                 parentNodeId: parentNode.id,
                 kind: 'chat',
+                title: args.title,
                 spawnedByAgent: true,
+                // A tiny durable outbox. It lets hydration restart the child
+                // even when the parent spawn SSE frame expired from the ring.
+                composerDraft: JSON.stringify({ __michiPendingSpawnPrompt: args.prompt }),
                 createdAt: Date.now(),
               },
               edges: [{
@@ -182,21 +190,50 @@ for (const factory of getEnabledFactories()) {
               }],
               ownerUserId: workspace.owner_user_id ?? null,
             });
-            const child = await runtime.newSession({
-                cwd: args.cwd,
-                parentChatId: args.parentChatId,
-                enableFollowUps: args.enableFollowUps,
-                sessionId: nodeId,
-                workspaceId: parentNode.workspace_id,
-                ownerUserId: workspace.owner_user_id ?? null,
-            });
+            let child: Awaited<ReturnType<AgentRuntime['newSession']>>;
+            try {
+                child = await runtime.newSession({
+                    cwd: args.cwd,
+                    parentChatId: args.parentChatId,
+                    enableFollowUps: args.enableFollowUps,
+                    sessionId: nodeId,
+                    workspaceId: parentNode.workspace_id,
+                    ownerUserId: workspace.owner_user_id ?? null,
+                });
+            } catch (err) {
+                rollbackProvisionalSpawnNode(
+                  nodeId,
+                  parentNode.workspace_id,
+                  workspace.owner_user_id ?? null,
+                );
+                throw err;
+            }
             sessionRegistry.registerSession(child, workspace.owner_user_id ?? null);
+            // Runtime ids (notably Kiro/Claude) differ from node ids. Persist
+            // the reverse mapping before publishing the spawn event so cloud
+            // /message ownership accepts this freshly spawned live session.
             updateNodeResumeBinding(nodeId, {
               acp_session_id: child.nativeSessionId ?? child.id,
               runtime_id: child.runtimeId,
               current_mode_id: child.currentModeId ?? null,
             });
             return { chatId: child.id, nodeId };
+        },
+        persistContext: ({ chatId, ownerUserId, name, filePath, size }) => {
+            const userId = ownerUserId ?? undefined;
+            const binding = getNodeSessionBinding(chatId, userId);
+            if (!binding) {
+                log.warn('bridge', 'context metadata skipped (chat has no durable binding)', { chatId, name });
+                return false;
+            }
+            return upsertAgentContextMetadata({
+                workspaceId: binding.workspaceId,
+                nodeId: binding.nodeId,
+                name,
+                filePath,
+                size,
+                userId,
+            });
         },
     });
     runtime = factory.create({

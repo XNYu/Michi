@@ -19,6 +19,8 @@ vi.mock('../services/api', () => ({
   heartbeatPane: vi.fn().mockResolvedValue(true),
   releasePane: vi.fn().mockResolvedValue(undefined),
   subscribeChat: vi.fn(() => () => {}),
+  subscribeChats: vi.fn(() => () => {}),
+  subscribeBackground: vi.fn(() => () => {}),
   cancelChat: vi.fn().mockResolvedValue(undefined),
   streamMessage: vi.fn(),
   searchMessages: vi.fn().mockResolvedValue([]),

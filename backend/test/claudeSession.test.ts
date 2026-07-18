@@ -609,6 +609,44 @@ describe('ClaudeSession', () => {
     await session.dispose();
   });
 
+  test('idle self-turn owns the runtime turn lock and in_turn state until terminal', async () => {
+    const child = new MockClaudeChild();
+    stubSpawnClaude(() => child);
+    setTimeout(() => child.emitInit('ext-self-lock-001'), 20);
+
+    const { ClaudeSession } = freshClaudeSession();
+    const session = new ClaudeSession('session-self-lock', makeSessionDeps({ ownerUserId: 'owner-1' }) as any);
+    await session.spawnFresh();
+
+    let callbackStarted!: () => void;
+    let callbackFinished!: () => void;
+    const started = new Promise<void>((resolve) => { callbackStarted = resolve; });
+    const finished = new Promise<void>((resolve) => { callbackFinished = resolve; });
+    session.onSelfTurn((info) => {
+      assert.equal((info as any).ownerUserId, 'owner-1');
+      callbackStarted();
+      void (async () => {
+        for await (const _event of info.events) { /* drain */ }
+        callbackFinished();
+      })();
+    });
+
+    const queue = (session as any).queue;
+    queue.push({ kind: 'chunk', text: 'self output' });
+    await started;
+
+    assert.equal(session.getState(), 'in_turn');
+    assert.ok((session as any).turnLock, 'self-turn must reserve the same lock as send()');
+
+    queue.push({ kind: 'turn_end', stopReason: 'end_turn' });
+    await finished;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(session.getState(), 'idle');
+    assert.equal((session as any).turnLock, null);
+    await session.dispose();
+  });
+
   // ── Case 6: cancel() sends SIGINT and marks state crashed ────────────────────
 
   test('cancel(): sends SIGINT to child and marks state as crashed', async () => {

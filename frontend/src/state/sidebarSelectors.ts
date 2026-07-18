@@ -215,11 +215,28 @@ export function selectUnreadTotal(
 }
 
 /**
+ * Statuses needed by one workspace row's open/streaming indicators. Idle and
+ * foreign-workspace nodes are omitted because callers already default a
+ * missing entry to idle.
+ */
+export function selectProjectNodeStatuses(
+  chatIds: readonly string[],
+  nodes: Readonly<Record<string, Pick<ChatNodeState, 'status'> | undefined>>,
+): Record<string, ChatNodeState['status']> {
+  const statuses: Record<string, ChatNodeState['status']> = {};
+  for (const id of chatIds) {
+    const status = nodes[id]?.status;
+    if (status && status !== 'idle') statuses[id] = status;
+  }
+  return statuses;
+}
+
+/**
  * True iff any node in the subtree rooted at `tree.rootNodeId` (traversed via
  * branch edges) is unread. Mirrors the pattern used by `subtreeOpenState`.
  */
 export function treeHasUnread(
-  tree: Tree,
+  tree: Pick<Tree, 'rootNodeId'>,
   edges: readonly ProjectEdge[],
   nodes: Record<string, ChatNodeState>,
   focusedNodeId: string | null,

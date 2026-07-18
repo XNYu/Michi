@@ -2,6 +2,7 @@ import {
   CHAT_STREAM_EVENTS,
   parseChatStreamEvent,
   type AgentCommand,
+  type ChatStreamEnvelope,
   type ChatStreamEvent,
   type ChatStreamPayloads,
   type PlanEntry,
@@ -12,6 +13,7 @@ import {
 export { CHAT_STREAM_EVENTS, parseChatStreamEvent };
 export type {
   AgentCommand,
+  ChatStreamEnvelope,
   ChatStreamEvent,
   ChatStreamPayloads,
   PlanEntry,
@@ -20,6 +22,8 @@ export type {
 };
 
 export interface StreamHandlers {
+  /** Runs before the event-specific callback. Returning false drops a replay. */
+  onEnvelope?: (envelope: ChatStreamEnvelope) => boolean | void;
   onTurnStart?: (data: ChatStreamPayloads['turn_start']) => void;
   onChunk?: (text: string, seq?: number, assistantId?: string, turnId?: string) => void;
   onThought?: (text: string, seq?: number, assistantId?: string, turnId?: string) => void;
@@ -33,8 +37,8 @@ export interface StreamHandlers {
   onFollowUps?: (followUps: string[]) => void;
   onFollowUpsStatus?: (status: 'in_progress' | 'completed' | 'failed') => void;
   onCommands?: (commands: AgentCommand[]) => void;
-  onContextSaved?: (name: string, filePath: string, size?: number) => void;
-  onContextUpdated?: (name: string, filePath: string, size?: number) => void;
+  onContextSaved?: (name: string, filePath: string, size?: number, contextId?: string) => void;
+  onContextUpdated?: (name: string, filePath: string, size?: number, contextId?: string) => void;
   onImage?: (data: ChatStreamPayloads['image']) => void;
   onPermissionRequest?: (data: ChatStreamPayloads['permission_request']) => void;
   onSubagentListUpdate?: (data: ChatStreamPayloads['subagent_list_update']) => void;
@@ -55,6 +59,7 @@ export function dispatchChatStreamEvent(
   streamEvent: ChatStreamEvent,
   handlers: StreamHandlers,
 ): void {
+  if (handlers.onEnvelope?.(streamEvent.data) === false) return;
   switch (streamEvent.event) {
     case CHAT_STREAM_EVENTS.turnStart:
       handlers.onTurnStart?.(streamEvent.data);
@@ -105,6 +110,7 @@ export function dispatchChatStreamEvent(
         streamEvent.data.name,
         streamEvent.data.filePath,
         streamEvent.data.size,
+        streamEvent.data.contextId,
       );
       return;
     case CHAT_STREAM_EVENTS.contextUpdated:
@@ -112,6 +118,7 @@ export function dispatchChatStreamEvent(
         streamEvent.data.name,
         streamEvent.data.filePath,
         streamEvent.data.size,
+        streamEvent.data.contextId,
       );
       return;
     case CHAT_STREAM_EVENTS.image:

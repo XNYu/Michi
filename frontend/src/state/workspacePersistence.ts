@@ -347,7 +347,13 @@ export function serializeNodeRow(
     model_id: n.modelId ?? null,
     reasoning: n.reasoning ?? null,
     resume_fingerprint: n.resumeFingerprint ?? null,
-    composer_draft: n.composerDraft ? JSON.stringify(n.composerDraft) : null,
+    last_applied_turn_id: n.lastAppliedTurnId ?? null,
+    last_applied_seq: n.lastAppliedSeq ?? null,
+    // Keep an agent-spawn outbox entry durable until the stream's turn_start
+    // arrives. Ordinary composer persistence must not erase it before send.
+    composer_draft: n.pendingSpawnPrompt
+      ? JSON.stringify({ __michiPendingSpawnPrompt: n.pendingSpawnPrompt })
+      : n.composerDraft ? JSON.stringify(n.composerDraft) : null,
     trim_snapshot: n.trimSnapshot ? JSON.stringify(n.trimSnapshot) : null,
     created_at: n.messages[0]?.createdAt ?? project.createdAt ?? Date.now(),
   };
@@ -491,12 +497,18 @@ export function buildExplicitWorkspaceCommands(
     commands.push({ type: 'node.patch', payload: patch });
     nodeProjectionUpdates.set(nodeId, projection);
   }
+  const edgeById = delta.edgeUpsertIds.size > 0
+    ? new Map(project.edges.map((edge) => [serializedEdgeId(edge), edge] as const))
+    : null;
   for (const edgeId of delta.edgeUpsertIds) {
-    const edge = project.edges.find((candidate) => serializedEdgeId(candidate) === edgeId);
+    const edge = edgeById?.get(edgeId);
     if (edge) commands.push({ type: 'edge.upsert', payload: serializeEdgeRow(project, edge) });
   }
+  const contextById = delta.contextUpsertIds.size > 0
+    ? new Map((project.contexts ?? []).map((context) => [context.id, context] as const))
+    : null;
   for (const contextId of delta.contextUpsertIds) {
-    const context = project.contexts?.find((candidate) => candidate.id === contextId);
+    const context = contextById?.get(contextId);
     if (context) commands.push({ type: 'context.upsert', payload: serializeContextRow(project, context) });
   }
   for (const edgeId of delta.edgeDeleteIds) {
@@ -517,7 +529,7 @@ export function mergeWorkspaceDirtyDelta(
 ): WorkspaceDirtyDelta {
   const merged = emptyWorkspaceDirtyDelta();
   for (const key of [
-    'nodeIds', 'messageNodeIds', 'edgeUpsertIds', 'edgeDeleteIds',
+    'nodeIds', 'edgeUpsertIds', 'edgeDeleteIds',
     'treeUpsertIds', 'treeDeleteIds', 'contextUpsertIds', 'contextDeleteIds',
   ] as const) {
     for (const value of base[key]) merged[key].add(value);
@@ -540,8 +552,6 @@ export function mergeWorkspaceDirtyDelta(
 export interface WorkspaceDirtyDelta {
   /** Nodes whose row changed → upsert these node rows. */
   nodeIds: Set<string>;
-  /** Nodes whose message set changed. Turn messages persist outside this queue. */
-  messageNodeIds: Set<string>;
   /** Edges added/changed (by serialized edge id). */
   edgeUpsertIds: Set<string>;
   /** Edges removed (by serialized edge id). */
@@ -558,7 +568,6 @@ export interface WorkspaceDirtyDelta {
 export function emptyWorkspaceDirtyDelta(): WorkspaceDirtyDelta {
   return {
     nodeIds: new Set<string>(),
-    messageNodeIds: new Set<string>(),
     edgeUpsertIds: new Set<string>(),
     edgeDeleteIds: new Set<string>(),
     treeUpsertIds: new Set<string>(),
@@ -600,7 +609,6 @@ export function accumulateWorkspaceDirtyDelta(
   // Clone the existing sets so we return a new object (pure function).
   const d: WorkspaceDirtyDelta = {
     nodeIds: new Set(existing.nodeIds),
-    messageNodeIds: new Set(existing.messageNodeIds),
     edgeUpsertIds: new Set(existing.edgeUpsertIds),
     edgeDeleteIds: new Set(existing.edgeDeleteIds),
     treeUpsertIds: new Set(existing.treeUpsertIds),
@@ -616,11 +624,6 @@ export function accumulateWorkspaceDirtyDelta(
     d.workspaceChanged = true;
     for (const nid of cur.chatIds) {
       d.nodeIds.add(nid);
-      // Never mark a lazy-load placeholder's messages dirty: its `messages:[]`
-      // is NOT authoritative (bodies live unfetched in the DB). Only a node
-      // whose bodies are loaded may drive message reconcile. See the
-      // messagesLoaded invariant in chatTypes.
-      if (curNodes[nid]?.messagesLoaded !== false) d.messageNodeIds.add(nid);
     }
     for (const e of cur.edges || []) {
       const id = serializedEdgeId(e);
@@ -721,13 +724,6 @@ export function accumulateWorkspaceDirtyDelta(
     const prevN = prevNodes[nid];
     if (curN !== prevN) {
       d.nodeIds.add(nid);
-      // New node (no prev) or message array reference changed → full message send.
-      // But never for a placeholder: its `messages:[]` is not authoritative.
-      // The `messages-loaded` install flips messagesLoaded→true, so a genuine
-      // load transition is picked up on the tick after loading, not suppressed.
-      if (curN?.messagesLoaded !== false && (!prevN || curN?.messages !== prevN?.messages)) {
-        d.messageNodeIds.add(nid);
-      }
     }
   }
 
@@ -1167,19 +1163,23 @@ export function useWorkspacePersistence({
           // readiness signal single-sourced — if the backend is up enough to
           // answer /workspaces/all, we proceed.
           try {
-            const capabilities = await fetchPersistenceCapabilities();
-            const v2Available =
-              capabilities.protocolVersion >= 2
-              && capabilities.authoritativeTurnPersistence
-              && capabilities.durableNodePrerequisite
-              && capabilities.explicitCommands
-              && capabilities.backgroundWorkspaceSync === false;
-            if (!v2Available) {
-              console.warn('backend does not advertise the required persistence v2 capabilities');
-            }
+            const capabilitiesPromise = fetchPersistenceCapabilities();
+            void capabilitiesPromise.then((capabilities) => {
+              const v2Available =
+                capabilities.protocolVersion >= 2
+                && capabilities.authoritativeTurnPersistence
+                && capabilities.durableNodePrerequisite
+                && capabilities.explicitCommands
+                && capabilities.backgroundWorkspaceSync === false;
+              if (!v2Available) {
+                console.warn('backend does not advertise the required persistence v2 capabilities');
+              }
+            }).catch(() => {
+              // Advisory only. The meta request below is the readiness gate.
+            });
           } catch {
-            // Capability endpoint unreachable → fall through to the workspace
-            // fetch, which throws on the same unreachability and triggers retry.
+            // A synchronous probe failure is advisory too. The workspace meta
+            // request below remains the sole readiness signal.
           }
           // Meta mode: structure + per-node counts, NO message bodies. Bodies
           // for the active tree are eager-loaded below; other trees load on

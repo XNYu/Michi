@@ -20,6 +20,51 @@ afterEach(() => {
 });
 
 describe('AgentToolBridge contexts', () => {
+  test('persists context metadata with the owning chat after writing the file', () => {
+    const cwd = mkTmpDir();
+    const mutations: Array<{ chatId: string; name: string; filePath: string; size: number }> = [];
+    const bridge = createAgentToolBridge({
+      createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }),
+      persistContext: (context) => { mutations.push(context); },
+    });
+
+    bridge.saveContext({ cwd, chatId: 'chat-parent', name: 'notes', body: 'v1' });
+    bridge.updateContext({ cwd, chatId: 'chat-parent', name: 'notes', body: 'version two' });
+
+    assert.deepEqual(mutations, [
+      { chatId: 'chat-parent', name: 'notes', filePath: '.contexts/notes.md', size: 2 },
+      { chatId: 'chat-parent', name: 'notes', filePath: '.contexts/notes.md', size: 11 },
+    ]);
+  });
+
+  test('does not report success when durable metadata cannot be recorded', () => {
+    const cwd = mkTmpDir();
+    const bridge = createAgentToolBridge({
+      createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }),
+      persistContext: () => false,
+    });
+
+    assert.equal(bridge.saveContext({ cwd, chatId: 'chat-parent', name: 'notes', body: 'v1' }), null);
+    assert.equal(fs.readFileSync(path.join(cwd, '.contexts/notes.md'), 'utf-8'), 'v1');
+  });
+
+  test('returns the durable context id in save and update results', () => {
+    const cwd = mkTmpDir();
+    const bridge = createAgentToolBridge({
+      createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }),
+      persistContext: () => 'ctx-durable',
+    });
+
+    assert.deepEqual(
+      bridge.saveContext({ cwd, chatId: 'chat-parent', name: 'notes', body: 'v1' }),
+      { id: 'ctx-durable', name: 'notes', filePath: '.contexts/notes.md', size: 2 },
+    );
+    assert.deepEqual(
+      bridge.updateContext({ cwd, chatId: 'chat-parent', name: 'notes', body: 'version two' }),
+      { id: 'ctx-durable', name: 'notes', filePath: '.contexts/notes.md', size: 11 },
+    );
+  });
+
   test('saveContext creates a context file and updateContext rewrites it', () => {
     const cwd = mkTmpDir();
     const bridge = createAgentToolBridge({ createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }) });
@@ -54,5 +99,29 @@ describe('AgentToolBridge spawned identity', () => {
     assert.deepEqual(created, [{
       title: 'Child', prompt: 'Investigate', chatId: 'chat-child', nodeId: 'node-child',
     }]);
+  });
+
+  test('passes the durable title and pending prompt into child creation', async () => {
+    let argsSeen: Record<string, unknown> | undefined;
+    const bridge = createAgentToolBridge({
+      createChild: async (args) => {
+        argsSeen = args;
+        return { chatId: 'chat-child', nodeId: 'node-child' };
+      },
+    });
+
+    await bridge.spawnBranches({
+      parentChatId: 'parent', cwd: mkTmpDir(), enableFollowUps: false, ownerUserId: 'owner-1',
+      topics: [{ title: 'Durable child title', prompt: 'Durable child prompt' }],
+    });
+
+    assert.deepEqual(argsSeen, {
+      parentChatId: 'parent',
+      cwd: argsSeen?.cwd,
+      enableFollowUps: false,
+      ownerUserId: 'owner-1',
+      title: 'Durable child title',
+      prompt: 'Durable child prompt',
+    });
   });
 });

@@ -81,6 +81,8 @@ export function runChatStream({
   let visibleResponseCompleteDispatched = false;
   let currentAssistantId = assistantId;
   let currentTurnId = '';
+  let lastAcceptedTurnId = '';
+  let lastAcceptedSeq = -1;
   let streamCancel: (() => void) | null = null;
   const streamedFollowUps: string[] = [];
   const MAX_BRACKET_HOLD = 4096; // safety cap for malformed / unclosed brackets
@@ -139,12 +141,18 @@ export function runChatStream({
 
   const trackSeq = (seq?: number, turnId?: string): void => {
     if (turnId) currentTurnId = turnId;
-    if (typeof seq === 'number' && currentTurnId) {
-      dispatch({ type: 'apply-seq', nodeId, turnId: currentTurnId, seq });
-    }
   };
 
   const handlers: StreamHandlers = {
+    onEnvelope: (envelope) => {
+      if (envelope.turnId) currentTurnId = envelope.turnId;
+      if (typeof envelope.seq !== 'number' || !envelope.turnId) return true;
+      if (lastAcceptedTurnId === envelope.turnId && envelope.seq <= lastAcceptedSeq) return false;
+      lastAcceptedTurnId = envelope.turnId;
+      lastAcceptedSeq = envelope.seq;
+      dispatch({ type: 'apply-seq', nodeId, turnId: envelope.turnId, seq: envelope.seq });
+      return true;
+    },
     onTurnStart: (data) => {
       if (data.assistantId && data.assistantId !== currentAssistantId) {
         dispatch({
@@ -157,6 +165,10 @@ export function runChatStream({
       } else if (data.assistantId) {
         currentAssistantId = data.assistantId;
       }
+      // The server has committed the provisional user/assistant rows before
+      // this frame. It is now safe to ack a recovered agent-spawn outbox item.
+      dispatch({ type: 'spawn-prompt-started', nodeId });
+      trackSeq(env.seq, data.turnId);
     },
     onChunk: (text) => {
       // Forward raw chunk to reducer immediately as block-first assistant data.

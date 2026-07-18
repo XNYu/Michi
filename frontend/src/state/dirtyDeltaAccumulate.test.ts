@@ -249,11 +249,11 @@ describe('accumulateWorkspaceDirtyDelta — contexts', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Node + message tracking
+// Node tracking (messages persist through the authoritative turn path)
 // ---------------------------------------------------------------------------
 
-describe('accumulateWorkspaceDirtyDelta — nodes and messages', () => {
-  it('changed node → nodeIds set; unchanged message ref → NOT in messageNodeIds', () => {
+describe('accumulateWorkspaceDirtyDelta — nodes', () => {
+  it('tracks a changed node without a redundant message delta', () => {
     const msgs = [makeMsg('m1')];
     const n1before = makeNode('n1', 'ws1', { messages: msgs, title: 'before' });
     const n1after  = makeNode('n1', 'ws1', { messages: msgs, title: 'after' });  // same messages ref
@@ -264,10 +264,10 @@ describe('accumulateWorkspaceDirtyDelta — nodes and messages', () => {
       emptyWorkspaceDirtyDelta(),
     );
     expect(d.nodeIds.has('n1')).toBe(true);
-    expect(d.messageNodeIds.has('n1')).toBe(false);
+    expect('messageNodeIds' in d).toBe(false);
   });
 
-  it('changed message ref → both nodeIds and messageNodeIds set', () => {
+  it('tracks a changed message reference through the node row only', () => {
     const n1before = makeNode('n1', 'ws1', { messages: [makeMsg('m1')] });
     const n1after  = makeNode('n1', 'ws1', { messages: [makeMsg('m1'), makeMsg('m2')] }); // new ref
     const project = makeProject('ws1', ['n1']);
@@ -277,10 +277,10 @@ describe('accumulateWorkspaceDirtyDelta — nodes and messages', () => {
       emptyWorkspaceDirtyDelta(),
     );
     expect(d.nodeIds.has('n1')).toBe(true);
-    expect(d.messageNodeIds.has('n1')).toBe(true);
+    expect('messageNodeIds' in d).toBe(false);
   });
 
-  it('node trimmed to zero messages → messageNodeIds set (empty messages array)', () => {
+  it('tracks a node trimmed to zero messages through the node row only', () => {
     const n1before = makeNode('n1', 'ws1', { messages: [makeMsg('m1')] });
     const n1after  = makeNode('n1', 'ws1', { messages: [] });
     const project = makeProject('ws1', ['n1']);
@@ -289,10 +289,11 @@ describe('accumulateWorkspaceDirtyDelta — nodes and messages', () => {
       { n1: n1before }, { n1: n1after },
       emptyWorkspaceDirtyDelta(),
     );
-    expect(d.messageNodeIds.has('n1')).toBe(true);
+    expect(d.nodeIds.has('n1')).toBe(true);
+    expect('messageNodeIds' in d).toBe(false);
   });
 
-  it('new node (no prev) → both nodeIds and messageNodeIds set', () => {
+  it('tracks a new node without a redundant message delta', () => {
     const prevProject = makeProject('ws1', []);
     const curProject  = makeProject('ws1', ['n2']);
     const n2 = makeNode('n2', 'ws1', { messages: [makeMsg('m1')] });
@@ -302,7 +303,7 @@ describe('accumulateWorkspaceDirtyDelta — nodes and messages', () => {
       emptyWorkspaceDirtyDelta(),
     );
     expect(d.nodeIds.has('n2')).toBe(true);
-    expect(d.messageNodeIds.has('n2')).toBe(true);
+    expect('messageNodeIds' in d).toBe(false);
   });
 });
 

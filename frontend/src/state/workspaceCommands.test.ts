@@ -23,7 +23,7 @@ describe('explicit workspace command projection', () => {
     const { project, nodes } = fixture();
     const delta = emptyWorkspaceDirtyDelta();
     delta.nodeIds.add('n1');
-    delta.messageNodeIds.add('n1');
+    expect('messageNodeIds' in delta).toBe(false);
     const first = buildExplicitWorkspaceCommands(project, nodes, delta, new Map());
     expect(first.commands.map((command) => command.type)).toEqual(['node.upsert', 'node.patch']);
     expect(first.commands.some((command) => 'messages' in command.payload)).toBe(false);
@@ -54,5 +54,68 @@ describe('explicit workspace command projection', () => {
     const manual = buildExplicitWorkspaceCommands(project, manuallyRenamedNodes, delta, known);
     expect(manual.commands.map((command) => command.type)).toEqual(['node.upsert', 'node.patch']);
     expect(manual.commands[1].payload.title).toBe('User rename');
+  });
+
+  it('indexes dirty edges and contexts once instead of calling Array.find per id', () => {
+    const { project, nodes } = fixture();
+    let edgeFindCalls = 0;
+    let contextFindCalls = 0;
+    const edges = Array.from({ length: 8 }, (_, index) => ({
+      source: 'n1',
+      target: `n${index + 2}`,
+      kind: 'branch' as const,
+    }));
+    const contexts = Array.from({ length: 8 }, (_, index) => ({
+      id: `c${index}`,
+      name: `context-${index}`,
+      filePath: `.contexts/context-${index}.md`,
+      type: 'doc' as const,
+      source: 'user' as const,
+      createdAt: index,
+      updatedAt: index,
+    }));
+    project.edges = new Proxy(edges, {
+      get(target, prop, receiver) {
+        if (prop === 'find') edgeFindCalls += 1;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    project.contexts = new Proxy(contexts, {
+      get(target, prop, receiver) {
+        if (prop === 'find') contextFindCalls += 1;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const delta = emptyWorkspaceDirtyDelta();
+    for (const edge of edges) delta.edgeUpsertIds.add(`${edge.kind}-${edge.source}-${edge.target}`);
+    for (const context of contexts) delta.contextUpsertIds.add(context.id);
+
+    const result = buildExplicitWorkspaceCommands(project, nodes, delta, new Map());
+
+    expect(edgeFindCalls).toBe(0);
+    expect(contextFindCalls).toBe(0);
+    expect(result.commands.filter((command) => command.type === 'edge.upsert')).toHaveLength(edges.length);
+    expect(result.commands.filter((command) => command.type === 'context.upsert')).toHaveLength(contexts.length);
+  });
+
+  it('does not index edges or contexts for a node-only delta', () => {
+    const { project, nodes } = fixture();
+    const failOnScan = () => { throw new Error('unexpected collection scan'); };
+    project.edges = new Proxy([], {
+      get(target, prop, receiver) {
+        if (prop === 'map' || prop === Symbol.iterator) return failOnScan;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    project.contexts = new Proxy([], {
+      get(target, prop, receiver) {
+        if (prop === 'map' || prop === Symbol.iterator) return failOnScan;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const delta = emptyWorkspaceDirtyDelta();
+    delta.nodeIds.add('n1');
+
+    expect(() => buildExplicitWorkspaceCommands(project, nodes, delta, new Map())).not.toThrow();
   });
 });

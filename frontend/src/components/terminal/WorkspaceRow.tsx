@@ -13,7 +13,14 @@ import {
 } from '../../lib/workspaceRowContextMenu';
 import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chatTypes';
 import { useChatProjects, useStructuralSelector } from '../../state/chatStore';
-import { nodeOpenState, subtreeOpenState, workspaceHasUnread, treeHasUnread, type OpenState } from '../../state/sidebarSelectors';
+import {
+  nodeOpenState,
+  selectProjectNodeStatuses,
+  subtreeOpenState,
+  workspaceHasUnread,
+  treeHasUnread,
+  type OpenState,
+} from '../../state/sidebarSelectors';
 
 const THREAD_PREVIEW_LIMIT = 5;
 
@@ -200,12 +207,12 @@ export default function WorkspaceRow({
         .map((p) => ({ id: p.id, name: p.name })),
     [projects, project.id],
   );
+  const nodeStatusesSelector = useCallback(
+    (nodes: Record<string, ChatNodeState>) => selectProjectNodeStatuses(project.chatIds, nodes),
+    [project.chatIds],
+  );
   const nodeStatuses = useStructuralSelector(
-    (ns) => {
-      const result: Record<string, ChatNodeState['status']> = {};
-      for (const [id, n] of Object.entries(ns)) result[id] = n.status;
-      return result;
-    },
+    nodeStatusesSelector,
     (a, b) => {
       const ak = Object.keys(a);
       if (ak.length !== Object.keys(b).length) return false;

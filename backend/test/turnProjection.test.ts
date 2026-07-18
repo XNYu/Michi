@@ -74,10 +74,21 @@ describe('durable turn projector', () => {
     const once = applyTurnEvent(initial, event('chunk', { text: 'one', seq: 4 }));
     const replayed = applyTurnEvent(once, event('chunk', { text: 'duplicate', seq: 4 }));
     const older = applyTurnEvent(replayed, event('chunk', { text: 'older', seq: 3 }));
+    const finished = applyTurnEvent(older, event('done', {
+      stopReason: 'end_turn', persisted: true, seq: 5,
+    }));
 
     assert.equal(replayed, once);
     assert.equal(older, once);
-    assert.equal(older.assistantMessage.content, 'one');
+    assert.equal(older.assistantMessage.content, '');
+    assert.equal(older.assistantMessage.blocks[0]?.kind, 'answer');
+    assert.equal(
+      older.assistantMessage.blocks[0]?.kind === 'answer'
+        ? older.assistantMessage.blocks[0].rawText
+        : null,
+      'one',
+    );
+    assert.equal(finished.assistantMessage.content, 'one');
   });
 
   test('creates a tool block when an update arrives before the initial call', () => {

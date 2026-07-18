@@ -73,6 +73,68 @@ describe('ChatHub.startTurn', () => {
     });
   });
 
+  it('routes foreground turns only to direct subscribers and self turns only to background subscribers', async () => {
+    const hub = hubWithPersistence();
+    const direct: ChatStreamEvent[] = [];
+    const background: Array<{ chatId: string; event: ChatStreamEvent }> = [];
+    hub.subscribeBackground({
+      send: (chatId, event) => background.push({ chatId, event }),
+      close: () => {},
+    });
+
+    const { done, turnId } = hub.startTurn({
+      chatId: 'separated-chat',
+      nodeId: 'separated-node',
+      text: 'foreground',
+      turnId: 'foreground-turn',
+      session: sessionFrom([{ kind: 'chunk', text: 'foreground body' }, { kind: 'turn_end', stopReason: 'end_turn' }]),
+    });
+    hub.subscribeTurn('separated-chat', turnId, { send: (event) => direct.push(event), close: () => {} });
+    await done;
+    assert.equal(direct.some((event) => event.event === 'chunk'), true);
+    assert.equal(background.length, 0);
+
+    direct.length = 0;
+    hub.startSelfTurn({
+      chatId: 'separated-chat',
+      nodeId: 'separated-node',
+      events: asyncIteratorFrom([{ kind: 'chunk', text: 'runtime body' }, { kind: 'turn_end', stopReason: 'end_turn' }]),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(direct.length, 0);
+    assert.equal(background.every(({ chatId, event }) => chatId === 'separated-chat' && event.data.turnId !== undefined), true);
+    assert.deepEqual(background.map(({ event }) => event.event), ['turn_start', 'chunk', 'done']);
+    // logger writes asynchronously in the node:test sandbox; let its queued
+    // append settle before this focused transport test completes.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  });
+
+  it('queues a self turn behind an active foreground turn for the same chat', async () => {
+    let releaseForeground!: () => void;
+    const foreground = (async function* (): AsyncIterableIterator<NormalizedEvent> {
+      yield { kind: 'chunk', text: 'foreground body' } as NormalizedEvent;
+      await new Promise<void>((resolve) => { releaseForeground = resolve; });
+      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
+    })();
+    const hub = hubWithPersistence();
+    const background: ChatStreamEvent[] = [];
+    hub.subscribeBackground({ send: (_chatId, event) => background.push(event), close: () => {} });
+    const session = sessionFrom([]);
+    session.send = () => foreground;
+    const { done } = hub.startTurn({
+      chatId: 'mutex-chat', nodeId: 'mutex-node', text: 'foreground', session,
+    });
+    hub.startSelfTurn({
+      chatId: 'mutex-chat', nodeId: 'mutex-node',
+      events: asyncIteratorFrom([{ kind: 'chunk', text: 'self body' }, { kind: 'turn_end', stopReason: 'end_turn' }]),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(background.length, 0);
+    releaseForeground();
+    await done;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(background.map((event) => event.event), ['turn_start', 'chunk', 'done']);
+  });
   it('publishes branch_overview before done on the owner message stream', async () => {
     const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
@@ -269,9 +331,97 @@ describe('ChatHub.startTurn', () => {
     assert.equal(received.some((ev) => ev.event === 'done'), true);
     assert.equal(received.some((ev) => ev.event === 'error'), false);
   });
+
+  it('throttles active tool output updates but checkpoints terminal tool state immediately', async () => {
+    const checkpoints: DurableTurnSnapshot[] = [];
+    const finalizations: DurableTurnSnapshot[] = [];
+    const hub = new ChatHub({
+      retentionMs: 100,
+      checkpointIntervalMs: 60_000,
+      workspaceIdForNode: () => 'ws-test',
+      persistence: {
+        begin: () => {},
+        checkpoint: (snapshot) => { checkpoints.push(snapshot); },
+        finalize: (snapshot) => { finalizations.push(snapshot); },
+      },
+    });
+    const outputUpdates: NormalizedEvent[] = Array.from({ length: 100 }, (_, index) => ({
+      kind: 'tool_call_update',
+      toolCallId: 'tool-chatty',
+      title: '',
+      status: 'in_progress',
+      output: `line ${index}`,
+    }));
+
+    const { done } = hub.startTurn({
+      chatId: 'chatty-tool-chat',
+      nodeId: 'chatty-tool-node',
+      text: 'run the command',
+      session: sessionFrom([
+        { kind: 'tool_call', toolCallId: 'tool-chatty', title: 'Bash', status: 'running' },
+        ...outputUpdates,
+        {
+          kind: 'tool_call_update', toolCallId: 'tool-chatty', title: '',
+          status: 'completed', output: 'final output',
+        },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    assert.equal(checkpoints.length, 2, 'initial and terminal tool states should checkpoint');
+    assert.equal(checkpoints[0].assistantMessage.toolCalls[0]?.status, 'running');
+    assert.equal(checkpoints[1].assistantMessage.toolCalls[0]?.status, 'completed');
+    assert.equal(checkpoints[1].assistantMessage.toolCalls[0]?.output, 'final output');
+    assert.equal(finalizations.length, 1);
+    assert.equal(finalizations[0].assistantMessage.toolCalls[0]?.output, 'final output');
+  });
 });
 
 describe('ChatHub.startSelfTurn', () => {
+  it('reserves the chat synchronously so a foreground turn cannot overtake a claimed self-turn', async () => {
+    const hub = hubWithPersistence();
+    hub.startSelfTurn({
+      chatId: 'same-chat',
+      nodeId: 'same-node',
+      events: asyncIteratorFrom([
+        { kind: 'chunk', text: 'self first' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+
+    assert.throws(() => hub.startTurn({
+      chatId: 'same-chat',
+      nodeId: 'same-node',
+      text: 'foreground should wait',
+      session: sessionFrom([{ kind: 'turn_end', stopReason: 'end_turn' }]),
+    }), /already active/);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it('drains a claimed self-turn when durable initialization fails', async () => {
+    let finalized = false;
+    const events = (async function* (): AsyncIterableIterator<NormalizedEvent> {
+      try {
+        yield { kind: 'chunk', text: 'orphaned output' } as NormalizedEvent;
+        yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
+      } finally {
+        finalized = true;
+      }
+    })();
+    const hub = new ChatHub({
+      retentionMs: 100,
+      workspaceIdForNode: () => null,
+      persistence: { begin: () => {}, checkpoint: () => {}, finalize: () => {} },
+    });
+
+    hub.startSelfTurn({ chatId: 'gone-chat', nodeId: 'gone-node', events });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(finalized, true, 'idle-pump iterator must be released even when begin fails');
+  });
+
   it('publishes branch_overview before done and replays it to late subscribers', async () => {
     const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];
@@ -342,6 +492,37 @@ describe('ChatHub.startSelfTurn', () => {
     // Should have done
     const done = received.find((e) => e.event === 'done');
     assert(done, 'expected a done event');
+    assert(received.every((event) => event.data.chatId === 'chat-1' && event.data.nodeId === 'node-1'));
+  });
+
+  it('delivers cloud background frames only to the owner fixed at turn creation', async () => {
+    const hub = hubWithPersistence();
+    const ownerEvents: ChatStreamEvent[] = [];
+    const foreignEvents: ChatStreamEvent[] = [];
+    hub.subscribeBackground({
+      ownerUserId: 'owner-a',
+      send: (_chatId, event) => ownerEvents.push(event),
+      close: () => {},
+    });
+    hub.subscribeBackground({
+      ownerUserId: 'owner-b',
+      send: (_chatId, event) => foreignEvents.push(event),
+      close: () => {},
+    });
+
+    hub.startSelfTurn({
+      chatId: 'owned-chat',
+      nodeId: 'owned-node',
+      ownerUserId: 'owner-a',
+      events: asyncIteratorFrom([
+        { kind: 'chunk', text: 'private output' },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.deepEqual(ownerEvents.map((event) => event.event), ['turn_start', 'chunk', 'done']);
+    assert.equal(foreignEvents.length, 0);
   });
 
   it('assistantId is prefixed with self-', async () => {
@@ -400,6 +581,80 @@ describe('ChatHub.startSelfTurn', () => {
 });
 
 describe('ChatHub.cancel', () => {
+  it('reserves a client turn id when Stop beats POST /message', () => {
+    const hub = hubWithPersistence();
+    const session: AgentSession = {
+      id: 'reserved-session', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
+      async *send() { yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent; },
+      cancel: () => {},
+    };
+
+    assert.equal(hub.cancel('reserved-chat', 'reserved-turn'), false);
+    assert.throws(
+      () => hub.startTurn({
+        chatId: 'reserved-chat', nodeId: 'reserved-node', text: 'must not run',
+        turnId: 'reserved-turn', session,
+      }),
+      /cancelled before it started/,
+    );
+  });
+
+  it('ignores a delayed cancel from the previous turn', async () => {
+    const hub = hubWithPersistence();
+    const first = hub.startTurn({
+      chatId: 'reuse-chat', nodeId: 'reuse-node', text: 'first', turnId: 'turn-a',
+      session: {
+        id: 'session-a', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
+        async *send() { yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent; },
+        cancel: () => {},
+      },
+    });
+    await first.done;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let secondCancelled = 0;
+    const second = hub.startTurn({
+      chatId: 'reuse-chat', nodeId: 'reuse-node', text: 'second', turnId: 'turn-b',
+      session: {
+        id: 'session-b', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
+        async *send() { await blocked; yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent; },
+        cancel: () => { secondCancelled += 1; },
+      },
+    });
+
+    assert.equal(hub.cancel('reuse-chat', 'turn-a'), false);
+    assert.equal(secondCancelled, 0);
+    release();
+    await second.done;
+  });
+
+  it('persists a runtime turn_end(error) as cancelled when cancellation won the race', async () => {
+    let releaseTerminal!: () => void;
+    const terminalReady = new Promise<void>((resolve) => { releaseTerminal = resolve; });
+    let finalized: DurableTurnSnapshot | undefined;
+    const hub = hubWithPersistence({ finalize: (snapshot) => { finalized = snapshot; } });
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('cancel-terminal-chat', { send: (ev) => received.push(ev), close: () => {} });
+    const session: AgentSession = {
+      id: 'cancel-terminal-session', runtimeId: 'claude', getHistory: () => [], getPendingAssistant: () => undefined,
+      async *send() {
+        yield { kind: 'chunk', text: 'partial answer' } as NormalizedEvent;
+        await terminalReady;
+        yield { kind: 'turn_end', stopReason: 'error' } as NormalizedEvent;
+      },
+      cancel: () => {},
+    };
+
+    const { done } = hub.startTurn({ chatId: 'cancel-terminal-chat', nodeId: 'cancel-terminal-node', text: 'hello', session });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    hub.cancel('cancel-terminal-chat');
+    releaseTerminal();
+    await done;
+
+    assert.equal(received.find((event) => event.event === 'done')?.data.stopReason, 'cancelled');
+    assert.equal(finalized?.status, 'cancelled');
+  });
+
   it('treats a runtime error after cancel as cancelled, not error', async () => {
     const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];

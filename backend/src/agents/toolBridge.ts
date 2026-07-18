@@ -29,17 +29,24 @@ export interface BridgeSpawnBranchesArgs {
     cwd: string;
     /** Whether children should also instruct the agent to call set_follow_ups. */
     enableFollowUps: boolean;
+    /** Cloud owner of the parent session, forwarded to durable graph lookup. */
+    ownerUserId?: string | null;
     topics: Array<{ title: string; prompt: string }>;
 }
 
 export interface BridgeSaveContextArgs {
     cwd: string;
+    /** Runtime chat id used to resolve the durable workspace owner. */
+    chatId?: string;
+    ownerUserId?: string | null;
     /** Sanitized to /^[A-Za-z0-9_-]+$/. The bridge enforces this. */
     name: string;
     body: string;
 }
 
 export interface BridgeContextResult {
+    /** Durable contexts row id. Present in the production bridge. */
+    id?: string;
     name: string;
     filePath: string;
     size: number;
@@ -50,6 +57,9 @@ export type BridgeUpdateContextResult = BridgeContextResult;
 
 export interface BridgeUpdateContextArgs {
     cwd: string;
+    /** Runtime chat id used to resolve the durable workspace owner. */
+    chatId?: string;
+    ownerUserId?: string | null;
     /** Sanitized to /^[A-Za-z0-9_-]+$/. The bridge enforces this. */
     name: string;
     body: string;
@@ -72,7 +82,23 @@ export interface AgentToolBridgeDeps {
         parentChatId: string;
         cwd: string;
         enableFollowUps: boolean;
+        ownerUserId?: string | null;
+        /** Durable node title — survives an expired parent replay frame. */
+        title: string;
+        /** First child turn, stored as a durable outbox item until it starts. */
+        prompt: string;
     }) => Promise<{ chatId: string; nodeId: string }>;
+    /**
+     * Records agent-owned context metadata immediately after the file write.
+     * Optional so isolated runtime/unit tests can use the filesystem-only bridge.
+     */
+    persistContext?: (context: {
+        chatId: string;
+        ownerUserId?: string | null;
+        name: string;
+        filePath: string;
+        size: number;
+    }) => string | false | null | void;
 }
 
 function isValidContextName(name: unknown): name is string {
@@ -84,6 +110,23 @@ function contextFilePath(name: string): string {
 }
 
 export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridge {
+    const persistContext = (args: { chatId?: string; ownerUserId?: string | null; name: string; filePath: string; size: number }): string | undefined | null => {
+        if (!args.chatId || !deps.persistContext) return undefined;
+        try {
+            const persisted = deps.persistContext({
+                chatId: args.chatId,
+                ...(args.ownerUserId !== undefined ? { ownerUserId: args.ownerUserId } : {}),
+                name: args.name,
+                filePath: args.filePath,
+                size: args.size,
+            });
+            if (persisted === false || persisted === null) return null;
+            return typeof persisted === "string" ? persisted : undefined;
+        } catch (err) {
+            log.error("bridge", "context metadata persistence failed", { chatId: args.chatId, name: args.name, err: (err as Error).message });
+            return null;
+        }
+    };
     return {
         async spawnBranches(args: BridgeSpawnBranchesArgs): Promise<SpawnedBranch[]> {
             const capped = args.topics.slice(0, 5);
@@ -95,6 +138,9 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
                         parentChatId: args.parentChatId,
                         cwd: args.cwd,
                         enableFollowUps: args.enableFollowUps,
+                        ...(args.ownerUserId !== undefined ? { ownerUserId: args.ownerUserId } : {}),
+                        title: t.title,
+                        prompt: t.prompt,
                     });
                     result.push({ title: t.title, prompt: t.prompt, chatId: child.chatId, nodeId: child.nodeId });
                     log.info("bridge", "branch child created", { parentChatId: args.parentChatId, childChatId: child.chatId, nodeId: child.nodeId, title: t.title });
@@ -115,7 +161,10 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
             const filePath = contextFilePath(args.name);
             fs.writeFileSync(path.join(args.cwd, filePath), args.body, "utf-8");
             log.info("bridge", "context saved", { name: args.name, size: args.body.length, cwd: args.cwd });
-            return { name: args.name, filePath, size: args.body.length };
+            const result = { name: args.name, filePath, size: args.body.length };
+            const contextId = persistContext({ chatId: args.chatId, ownerUserId: args.ownerUserId, ...result });
+            if (contextId === null) return null;
+            return { ...result, ...(contextId ? { id: contextId } : {}) };
         },
         updateContext(args: BridgeUpdateContextArgs): BridgeUpdateContextResult | null {
             if (!isValidContextName(args.name) || typeof args.body !== "string") {
@@ -130,7 +179,10 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
             }
             fs.writeFileSync(absolutePath, args.body, "utf-8");
             log.info("bridge", "context updated", { name: args.name, size: args.body.length, cwd: args.cwd });
-            return { name: args.name, filePath, size: args.body.length };
+            const result = { name: args.name, filePath, size: args.body.length };
+            const contextId = persistContext({ chatId: args.chatId, ownerUserId: args.ownerUserId, ...result });
+            if (contextId === null) return null;
+            return { ...result, ...(contextId ? { id: contextId } : {}) };
         },
     };
 }

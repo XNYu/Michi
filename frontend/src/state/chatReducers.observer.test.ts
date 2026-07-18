@@ -80,19 +80,23 @@ describe('observer-turn-start', () => {
 });
 
 describe('broadcast seq watermark', () => {
-  it('advances within a turn and never moves backward', () => {
+  it('advances the background watermark without clobbering foreground replay state', () => {
     let nodes: Record<string, ChatNodeState> = { n1: baseNode() };
+    nodes.n1.lastAppliedTurnId = 'foreground-turn';
+    nodes.n1.lastAppliedSeq = 9;
 
-    nodes = reduceNodes(nodes, { type: 'apply-seq', nodeId: 'n1', turnId: 'T1', seq: 3 });
-    expect(nodes.n1.lastAppliedTurnId).toBe('T1');
-    expect(nodes.n1.lastAppliedSeq).toBe(3);
+    nodes = reduceNodes(nodes, { type: 'apply-background-seq', nodeId: 'n1', turnId: 'T1', seq: 3 });
+    expect(nodes.n1.lastAppliedBackgroundTurnId).toBe('T1');
+    expect(nodes.n1.lastAppliedBackgroundSeq).toBe(3);
+    expect(nodes.n1.lastAppliedTurnId).toBe('foreground-turn');
+    expect(nodes.n1.lastAppliedSeq).toBe(9);
 
-    nodes = reduceNodes(nodes, { type: 'apply-seq', nodeId: 'n1', turnId: 'T1', seq: 1 });
-    expect(nodes.n1.lastAppliedSeq).toBe(3);
+    nodes = reduceNodes(nodes, { type: 'apply-background-seq', nodeId: 'n1', turnId: 'T1', seq: 1 });
+    expect(nodes.n1.lastAppliedBackgroundSeq).toBe(3);
 
-    nodes = reduceNodes(nodes, { type: 'apply-seq', nodeId: 'n1', turnId: 'T2', seq: 0 });
-    expect(nodes.n1.lastAppliedTurnId).toBe('T2');
-    expect(nodes.n1.lastAppliedSeq).toBe(0);
+    nodes = reduceNodes(nodes, { type: 'apply-background-seq', nodeId: 'n1', turnId: 'T2', seq: 0 });
+    expect(nodes.n1.lastAppliedBackgroundTurnId).toBe('T2');
+    expect(nodes.n1.lastAppliedBackgroundSeq).toBe(0);
   });
 });
 

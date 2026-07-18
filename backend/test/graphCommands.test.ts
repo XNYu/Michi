@@ -48,6 +48,33 @@ describe('ensureDurableGraphNode', () => {
     assert.equal(listEdges('ws-1').length, 1);
   });
 
+  test('keeps an agent-spawn title and pending prompt durable across graph replay', () => {
+    ensureDurableGraphNode({
+      workspace: { id: 'ws-spawn', name: 'Workspace', cwd: null, createdAt: 1, activeTreeId: 'tree-spawn' },
+      tree: { id: 'tree-spawn', rootNodeId: 'root-spawn', createdAt: 1, lastActiveAt: 1 },
+      node: { id: 'root-spawn', treeId: 'tree-spawn', kind: 'chat', createdAt: 1 },
+      edges: [],
+    });
+    const child = {
+      workspace: { id: 'ws-spawn', name: 'Workspace', cwd: null, createdAt: 1, activeTreeId: 'tree-spawn' },
+      tree: { id: 'tree-spawn', rootNodeId: 'root-spawn', createdAt: 1, lastActiveAt: 2 },
+      node: {
+        id: 'child-spawn', treeId: 'tree-spawn', parentNodeId: 'root-spawn', kind: 'chat',
+        title: 'Investigate durable recovery', spawnedByAgent: true,
+        composerDraft: JSON.stringify({ __michiPendingSpawnPrompt: 'Continue after missed SSE' }),
+        createdAt: 2,
+      },
+      edges: [{ id: 'branch-root-spawn-child-spawn', sourceNodeId: 'root-spawn', targetNodeId: 'child-spawn', kind: 'branch', createdAt: 2 }],
+    } as const;
+
+    ensureDurableGraphNode(child);
+    ensureDurableGraphNode(child);
+    const row = getNode('child-spawn');
+    assert.equal(row?.title, 'Investigate durable recovery');
+    assert.equal(row?.composer_draft, JSON.stringify({ __michiPendingSpawnPrompt: 'Continue after missed SSE' }));
+    assert.equal(row?.spawned_by_agent, 1);
+  });
+
   test('rejects a branch whose parent belongs to another workspace without partial writes', () => {
     saveWorkspace({ id: 'other', name: 'Other', created_at: 1, updated_at: 1 });
     saveNode({

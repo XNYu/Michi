@@ -1,6 +1,10 @@
 import type { AgentConfig } from "./agentConfig";
 import { getBuiltinDefaultModel, getBuiltinDefaultReasoning } from "./agentConfig";
 import type { AgentReasoning, AgentRuntime } from "../agents/types";
+import {
+  computeTranscriptFingerprint as computeSharedTranscriptFingerprint,
+  type TranscriptFingerprintMessage,
+} from "michi-shared";
 
 export type ResumeStrategy = "fresh" | "live" | "exact" | "compatible";
 
@@ -11,10 +15,7 @@ export interface ResumeSignature {
   reasoning: AgentReasoning | null;
 }
 
-export interface TranscriptMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+export type TranscriptMessage = TranscriptFingerprintMessage;
 
 export interface ResumeDecisionInput {
   existingChatId?: string | null;
@@ -123,11 +124,7 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
 }
 
 export function computeTranscriptFingerprint(messages: readonly TranscriptMessage[]): string {
-  let payload = "";
-  for (const m of messages) {
-    payload += `${m.role}\u0000${m.content}\u0000\u0000`;
-  }
-  return fnv1a32(payload);
+  return computeSharedTranscriptFingerprint(messages);
 }
 
 export function buildCompatibleResumeContext(
@@ -155,13 +152,4 @@ function truncateMiddle(text: string, limit: number): string {
   const tail = text.slice(-COMPAT_TRANSCRIPT_TAIL).trimStart();
   const omitted = text.length - head.length - tail.length;
   return `${head}\n\n[... omitted ${omitted} chars from the middle of the prior transcript ...]\n\n${tail}`;
-}
-
-function fnv1a32(str: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
 }

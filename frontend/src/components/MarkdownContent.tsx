@@ -260,13 +260,28 @@ function MarkdownContentInner({
     () => revealEnabled ? createStreamingRevealPlugin(revealStateRef.current) : null,
     [revealEnabled],
   );
+  // Math via $$…$$ (block) and $…$ (inline). remarkCurrencyGuard runs after
+  // remark-math to revert currency-looking matches (e.g. "$5 to $10") back to
+  // plain text, so prices are not mis-rendered as formulas.
+  const remarkPlugins = useMemo(() => [remarkMath, remarkCurrencyGuard], []);
+  const mayContainRawHtml = text.includes('<');
   const rehypePlugins = useMemo(() => {
-    // autolink runs after sanitize (clean tree) but before the reveal plugin,
-    // which splits text into per-char spans and would otherwise hide the URL.
-    const plugins: any[] = [rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeAutolinkBareUrls];
+    // Raw parsing is the expensive parse5 path. Markdown without a '<' cannot
+    // contain a raw HTML node, so it is already safe to render through
+    // react-markdown's normal escaped-node path. When raw HTML is possible,
+    // keep raw + sanitize paired so allowed markup survives without admitting
+    // executable attributes or elements.
+    const plugins: any[] = mayContainRawHtml
+      ? [rehypeRaw, [rehypeSanitize, sanitizeSchema]]
+      : [];
+    // katex runs after sanitize (when present) so its generated markup
+    // (spans/MathML) is not stripped. Autolink and reveal follow it and both
+    // skip katex output via isMathNode.
+    if (rehypeKatex) plugins.push(rehypeKatex);
+    plugins.push(rehypeAutolinkBareUrls);
     if (revealPlugin) plugins.push(revealPlugin);
     return plugins;
-  }, [rehypeKatex, revealPlugin]);
+  }, [mayContainRawHtml, rehypeKatex, revealPlugin]);
   // External links open in a new context (system browser in Electron via
   // setWindowOpenHandler; a new tab in a plain browser) instead of replacing
   // the app. Internal/relative/mailto/hash links keep default behavior.

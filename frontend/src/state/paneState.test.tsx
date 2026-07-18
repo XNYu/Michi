@@ -11,7 +11,7 @@ import { vi } from 'vitest';
 import React, { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { ChatProvider, useChatStore } from './chatStore';
-import { prunePaneMaps } from './paneState';
+import { prunePaneMaps, usePaneState } from './paneState';
 import { PrefsProvider } from './prefs';
 
 // Opt into React's concurrent-act environment so state updates dispatched
@@ -71,12 +71,15 @@ vi.mock('../services/api', () => ({
   heartbeatPane: () => Promise.resolve(true),
   releasePane: () => Promise.resolve(),
   subscribeChat: () => () => {},
+  subscribeChats: () => () => {},
+  subscribeBackground: () => () => {},
   cancelChat: () => Promise.resolve(),
 }));
 
 describe('pane state', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   it('opens a pane and focuses it', async () => {
@@ -128,6 +131,23 @@ describe('pane state', () => {
       harness.result.current.setViewMode('three');
     });
     expect(harness.result.current.viewMode).toBe('three');
+    harness.unmount();
+  });
+
+  it('appends a background pane without stealing the existing focus', () => {
+    const project = {
+      id: 'p1', name: 'WS', chatIds: ['parent', 'child'], edges: [], contexts: [],
+      trees: [{ id: 't1', rootNodeId: 'parent', createdAt: 1, lastActiveAt: 1 }],
+      activeTreeId: 't1', createdAt: 1,
+    };
+    const harness = renderHook(() => usePaneState({ projects: [project], activeProjectId: 'p1' }));
+    act(() => harness.result.current.openPane('parent'));
+    expect(harness.result.current.focusedPane).toBe('parent');
+
+    act(() => harness.result.current.appendPaneInTree('p1', 't1', 'child'));
+
+    expect(harness.result.current.openPanes).toEqual(['parent', 'child']);
+    expect(harness.result.current.focusedPane).toBe('parent');
     harness.unmount();
   });
 });

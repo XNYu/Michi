@@ -35,6 +35,8 @@ vi.mock('../services/api', () => ({
   heartbeatPane: () => Promise.resolve(true),
   releasePane: () => Promise.resolve(),
   subscribeChat: vi.fn(() => () => {}),
+  subscribeChats: vi.fn(() => () => {}),
+  subscribeBackground: vi.fn(() => () => {}),
   cancelChat: () => Promise.resolve(),
   // Spied: implementation set in beforeEach.
   ensureSession: vi.fn(),
@@ -130,6 +132,24 @@ describe('auto-branch behavior (real provider)', () => {
     expect(prerequisite.node).toEqual(expect.objectContaining({ id: rootId }));
     expect(prerequisite.node.treeId).toBe(prerequisite.tree?.id);
     expect(prerequisite.workspace.activeTreeId).toBe(prerequisite.tree?.id);
+  });
+
+  it('clears the unread focus exemption when the focused pane is closed', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => {
+      await result.current.store.createProject('test', undefined);
+    });
+    let rootId = '';
+    await act(async () => {
+      rootId = await result.current.store.createThread() ?? '';
+      result.current.store.setFocusedNodeId(rootId);
+    });
+    expect(result.current.store.focusedNodeId).toBe(rootId);
+
+    act(() => result.current.store.closePane(rootId));
+
+    expect(result.current.store.focusedPane).toBeNull();
+    expect(result.current.store.focusedNodeId).toBeNull();
   });
 
   it('sendMessage on a streaming node does NOT call streamMessage (guard fires)', async () => {
@@ -346,6 +366,61 @@ describe('auto-branch behavior (real provider)', () => {
 
       rerender();
       expect(assistantAnswerRaw(result.current.nodes[rootId])).toBe('abc');
+    } finally {
+      Object.defineProperty(window, 'requestAnimationFrame', {
+        configurable: true,
+        writable: true,
+        value: originalWindowRaf,
+      });
+      (globalThis as any).requestAnimationFrame = originalGlobalRaf;
+    }
+  });
+
+  it('does not let a pending draft RAF resurrect a draft cleared before commit', async () => {
+    const originalWindowRaf = window.requestAnimationFrame;
+    const originalGlobalRaf = globalThis.requestAnimationFrame;
+    const rafCallbacks: FrameRequestCallback[] = [];
+    const fakeRaf = ((cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb);
+      return rafCallbacks.length;
+    }) as typeof requestAnimationFrame;
+    Object.defineProperty(window, 'requestAnimationFrame', {
+      configurable: true,
+      writable: true,
+      value: fakeRaf,
+    });
+    (globalThis as any).requestAnimationFrame = fakeRaf;
+
+    try {
+      const { result, rerender } = renderHook(() => useStoreAndNodes(), { wrapper });
+      await act(async () => {
+        await result.current.store.createProject('test', undefined);
+      });
+      await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
+
+      let rootId = '';
+      await act(async () => {
+        rootId = await result.current.store.createThread() ?? '';
+      });
+
+      act(() => {
+        result.current.store.setComposerDraft(rootId, {
+          value: 'do not resurrect',
+          mentions: [],
+          quotedText: 'selected passage',
+        });
+        result.current.store.setComposerDraft(rootId, null);
+      });
+      expect(rafCallbacks).toHaveLength(1);
+
+      await act(async () => {
+        while (rafCallbacks.length > 0) {
+          rafCallbacks.shift()?.(performance.now());
+        }
+      });
+      rerender();
+
+      expect(result.current.nodes[rootId].composerDraft).toBeUndefined();
     } finally {
       Object.defineProperty(window, 'requestAnimationFrame', {
         configurable: true,

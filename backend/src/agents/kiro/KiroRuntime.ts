@@ -220,6 +220,7 @@ export class KiroRuntime implements AgentRuntime {
             parentChatId: parentNodeId,
             cwd,
             enableFollowUps: parentSession?.getEnableFollowUps() !== false,
+            ownerUserId: slot.ownerUserId,
             topics,
         });
 
@@ -238,11 +239,12 @@ export class KiroRuntime implements AgentRuntime {
         if (!slot) return null;
         const parentChatId = slot.parentChatId;
         if (parentChatId === "__pending__") return null;
-        const result = this.bridge.saveContext({ cwd: slot.cwd, name, body });
+        const result = this.bridge.saveContext({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
         if (!result) return null;
         const client = this.getClient(slot.cwd);
         client?.injectUpdate(parentChatId, {
             sessionUpdate: "context_saved",
+            contextId: result.id,
             name: result.name,
             filePath: result.filePath,
             size: result.size,
@@ -255,11 +257,12 @@ export class KiroRuntime implements AgentRuntime {
         if (!slot) return null;
         const parentChatId = slot.parentChatId;
         if (parentChatId === "__pending__") return null;
-        const result = this.bridge.updateContext({ cwd: slot.cwd, name, body });
+        const result = this.bridge.updateContext({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
         if (!result) return null;
         const client = this.getClient(slot.cwd);
         client?.injectUpdate(parentChatId, {
             sessionUpdate: "context_updated",
+            contextId: result.id,
             name: result.name,
             filePath: result.filePath,
             size: result.size,

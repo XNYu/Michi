@@ -470,6 +470,15 @@ export interface ExportRequestPayload {
   nodeIds?: string[];
 }
 
+function createClientTurnId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Web Crypto is available in every supported renderer, but retaining a
+  // fallback keeps the transport usable in stripped-down test/webview hosts.
+  return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 /**
  * Consume an SSE stream produced by the backend. Returns a cancel function
  * that aborts the fetch (also calls /cancel on the backend).
@@ -480,6 +489,8 @@ export function streamMessage(
   handlers: StreamHandlers,
   ownerToken?: string,
   durable?: {
+    /** Generated before POST so replay is possible before the first frame. */
+    turnId?: string;
     displayText?: string;
     userMetadata?: {
       quotedText?: string;
@@ -501,6 +512,46 @@ export function streamMessage(
   let settled = false;      // a synthetic terminal handler has fired
   let watchdogTimedOut = false;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
+  // Do not wait for turn_start to learn this: a broken response can occur
+  // after the server began the turn but before any SSE bytes reach us.
+  // The server requires nodeId for a durable foreground turn. Preserve the
+  // legacy no-node helper behavior used by a few lightweight callers/tests.
+  const clientTurnId = nodeId ? (durable?.turnId ?? createClientTurnId()) : '';
+  let resumeTurnId = clientTurnId;
+  let resumeSeq = -1;
+  let resumeCancel: (() => void) | null = null;
+  let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+  let resumeAttempt = 0;
+  let cancelledByUser = false;
+  const resumeForeground = (): boolean => {
+    if (!resumeTurnId || cancelledByUser || resumeCancel || resumeTimer) return false;
+    resumeCancel = subscribeChat(nodeId, {
+      ...handlers,
+      onEnvelope: (envelope) => {
+        if (envelope.turnId) resumeTurnId = envelope.turnId;
+        if (typeof envelope.seq === 'number') resumeSeq = Math.max(resumeSeq, envelope.seq);
+        return handlers.onEnvelope?.(envelope);
+      },
+      onDone: (...args) => { terminalSeen = true; handlers.onDone?.(...args); },
+      onError: (...args) => { terminalSeen = true; handlers.onError?.(...args); },
+    }, { turnId: resumeTurnId, seq: resumeSeq + 1 }, {
+      onOpen: () => { resumeAttempt = 0; },
+      onDisconnect: (result) => {
+        resumeCancel = null;
+        if (terminalSeen || cancelledByUser || settled) return;
+        if (!result.retryable) {
+          settleError(result.error?.message ?? 'turn replay unavailable');
+          return;
+        }
+        const delay = Math.min(5_000, 250 * (2 ** resumeAttempt++));
+        resumeTimer = setTimeout(() => {
+          resumeTimer = null;
+          if (!resumeForeground()) settleError('turn replay ended before completion');
+        }, delay);
+      },
+    });
+    return true;
+  };
 
   const clearWatchdog = () => {
     if (watchdog !== undefined) {
@@ -525,13 +576,15 @@ export function streamMessage(
     watchdog = setTimeout(() => {
       watchdogTimedOut = true;
       controller.abort(); // unstick a half-open reader.read() that never resolves
-      settleError('stream stalled — no data received');
+      if (!resumeTurnId) settleError('stream stalled — no data received');
     }, STREAM_SILENCE_TIMEOUT_MS);
   };
 
   (async () => {
     try {
       const payload: Record<string, unknown> = { text };
+      if (clientTurnId) payload.turnId = clientTurnId;
+      if (nodeId) payload.nodeId = nodeId;
       if (ownerToken) payload.ownerToken = ownerToken;
       if (durable?.displayText !== undefined) payload.displayText = durable.displayText;
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
@@ -582,6 +635,8 @@ export function streamMessage(
           if (!data) continue;
           const parsed = parseChatStreamEvent(evt, data);
           if (!parsed) continue;
+          if (parsed.data.turnId) resumeTurnId = parsed.data.turnId;
+          if (typeof parsed.data.seq === 'number') resumeSeq = Math.max(resumeSeq, parsed.data.seq);
           if (!sawFirstEvent) {
             sawFirstEvent = true;
             startupMark('first_sse_event', { chatId: nodeId, nodeId, event: parsed.event, durMs: Date.now() - startedAt });
@@ -615,13 +670,18 @@ export function streamMessage(
           dispatchChatStreamEvent(parsed, handlers);
         }
       }
-      // Connection closed cleanly. If the backend never sent a terminal frame,
-      // finalize here so the node can't stay stuck in "streaming".
+      // A foreground runner can outlive its first HTTP response. Reattach to
+      // the same immutable turn/cursor rather than handing it to background
+      // SSE (which intentionally never carries user turns).
+      if (!terminalSeen && resumeForeground()) return;
+      // Connection closed before we received a turn id, so no safe replay is
+      // possible. Surface a terminal error rather than silently mixing feeds.
       settleError('stream closed before completion');
     } catch (err: any) {
+      if (!terminalSeen && !cancelledByUser && resumeForeground()) return;
       if (err?.name === 'AbortError') {
-        // watchdog-triggered abort already settled; this is a no-op reassert.
-        // A user/navigation abort (watchdog not fired) finalizes as 'aborted'.
+        // A user/navigation abort finalizes as aborted. A watchdog abort with
+        // no stamped turn id cannot safely resume.
         if (watchdogTimedOut) settleError('stream stalled — no data received');
         else settleAborted();
       } else {
@@ -633,43 +693,85 @@ export function streamMessage(
   })();
 
   return () => {
+    cancelledByUser = true;
+    settleAborted();
     clearWatchdog();
+    if (resumeTimer) clearTimeout(resumeTimer);
+    resumeTimer = null;
     controller.abort();
-    cancelChat(nodeId, ownerToken).catch(() => {});
+    resumeCancel?.();
+    cancelChat(nodeId, ownerToken, resumeTurnId || clientTurnId).catch(() => {});
   };
 }
 
-export async function cancelChat(chatId: string, ownerToken?: string): Promise<void> {
+export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string): Promise<void> {
   await fetch(`${API_BASE_URL}/chats/${chatId}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(ownerToken ? { ownerToken } : {}),
+    body: JSON.stringify({
+      ...(ownerToken ? { ownerToken } : {}),
+      ...(turnId ? { turnId } : {}),
+    }),
   });
+}
+
+export interface ChatStreamDisconnect {
+  retryable: boolean;
+  error?: Error;
+}
+
+class SseHttpError extends Error {
+  constructor(public readonly status: number, prefix = 'subscribe failed') {
+    super(`${prefix}: ${status}`);
+  }
 }
 
 export function subscribeChat(
   chatId: string,
   handlers: StreamHandlers,
   from: { turnId?: string; seq?: number } = {},
-  opts: { onDisconnect?: () => void; onError?: (err: Error) => void } = {},
+  opts: {
+    onOpen?: () => void;
+    onDisconnect?: (result: ChatStreamDisconnect) => void;
+    onError?: (err: Error) => void;
+  } = {},
 ): () => void {
   const controller = new AbortController();
   let stopped = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimedOut = false;
+  const clearWatchdog = () => {
+    if (watchdog === null) return;
+    clearTimeout(watchdog);
+    watchdog = null;
+  };
+  const armWatchdog = () => {
+    clearWatchdog();
+    watchdog = setTimeout(() => {
+      watchdogTimedOut = true;
+      controller.abort();
+    }, 30_000);
+  };
   (async () => {
+    let disconnect: ChatStreamDisconnect = { retryable: true };
     try {
       const query = new URLSearchParams();
       query.set('fromSeq', String(from.seq ?? 0));
       if (from.turnId) query.set('fromTurnId', from.turnId);
-      const res = await fetch(`${API_BASE_URL}/chats/${chatId}/subscribe?${query.toString()}`, {
+      const res = await fetch(`${API_BASE_URL}/chats/${chatId}/stream?${query.toString()}`, {
         signal: controller.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`subscribe failed: ${res.status}`);
+      if (!res.ok) throw new SseHttpError(res.status);
+      if (!res.body) throw new Error('subscribe response has no body');
+      opts.onOpen?.();
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
+      armWatchdog();
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        armWatchdog();
         buf += decoder.decode(value, { stream: true });
         let idx: number;
         while ((idx = buf.indexOf('\n\n')) !== -1) {
@@ -691,13 +793,162 @@ export function subscribeChat(
         }
       }
     } catch (err) {
-      if (!stopped) opts.onError?.(err instanceof Error ? err : new Error(String(err)));
+      const original = err instanceof Error ? err : new Error(String(err));
+      const error = watchdogTimedOut ? new Error('turn replay stalled — no data received') : original;
+      disconnect = {
+        retryable: !(original instanceof SseHttpError)
+          || original.status >= 500
+          || original.status === 408
+          || original.status === 429,
+        error,
+      };
+      if (!stopped) opts.onError?.(error);
     } finally {
-      if (!stopped) opts.onDisconnect?.();
+      clearWatchdog();
+      if (!stopped) opts.onDisconnect?.(disconnect);
     }
   })();
   return () => {
     stopped = true;
+    clearWatchdog();
+    controller.abort();
+  };
+}
+
+export interface BackgroundDisconnect {
+  retryable: boolean;
+  error?: Error;
+}
+
+export interface SubscribeBackgroundOptions {
+  onOpen?: () => void;
+  onDisconnect?: (result: BackgroundDisconnect) => void;
+  onError?: (err: Error) => void;
+  cursors?: Record<string, { turnId: string; seq: number }>;
+  /**
+   * Reconcile an evicted replay cursor before any later frame is delivered.
+   * The parser awaits this callback, turning the control frame into a real
+   * ordering barrier instead of racing a stale snapshot against live data.
+   */
+  onReplayGap?: (
+    gap: { chatId: string; nodeId?: string; turnId: string; seq: number },
+    signal: AbortSignal,
+  ) => void | Promise<void>;
+}
+
+const OBSERVER_SILENCE_TIMEOUT_MS = 30_000;
+
+function observerDisconnectFor(error: Error): BackgroundDisconnect {
+  return {
+    retryable: !(error instanceof SseHttpError) || error.status >= 500,
+    error,
+  };
+}
+
+/**
+ * The one Window-lifetime background feed. It carries runtime self-turns
+ * only; user initiated turns stay on their own direct /message stream.
+ */
+export function subscribeBackground(
+  handlersForChat: (chatId: string, nodeId?: string) => StreamHandlers,
+  opts: SubscribeBackgroundOptions = {},
+): () => void {
+  const controller = new AbortController();
+  let stopped = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  const clearWatchdog = () => {
+    if (watchdog === null) return;
+    clearTimeout(watchdog);
+    watchdog = null;
+  };
+  const armWatchdog = () => {
+    clearWatchdog();
+    watchdog = setTimeout(() => controller.abort(), OBSERVER_SILENCE_TIMEOUT_MS);
+  };
+
+  (async () => {
+    let disconnect: BackgroundDisconnect = { retryable: true };
+    try {
+      const res = await fetch(`${API_BASE_URL}/chats/background/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cursors: opts.cursors ?? {} }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new SseHttpError(res.status);
+      if (!res.body) throw new Error('subscribe response has no body');
+      opts.onOpen?.();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      armWatchdog();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (stopped) break;
+        armWatchdog();
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const lines = block.split('\n');
+          let evt = 'message';
+          let data = '';
+          for (const line of lines) {
+            if (line.startsWith('event:')) evt = line.slice(6).trim();
+            else if (line.startsWith('data:')) {
+              const rest = line.slice(5);
+              data += rest.startsWith(' ') ? rest.slice(1) : rest;
+            }
+          }
+          if (!data) continue;
+          if (evt === 'background_sync_required') {
+            let gap: Record<string, unknown> | null = null;
+            try {
+              gap = JSON.parse(data) as Record<string, unknown>;
+            } catch {
+              // Malformed control frames are ignored like malformed events.
+            }
+            if (
+              gap
+              && typeof gap.chatId === 'string'
+              && typeof gap.turnId === 'string'
+              && typeof gap.seq === 'number'
+            ) {
+              // Deliberately outside the JSON parse catch: reconciliation
+              // failures must close this feed so the transport reconnects and
+              // retries the same durable gap instead of silently moving on.
+              await opts.onReplayGap?.({
+                chatId: gap.chatId,
+                nodeId: typeof gap.nodeId === 'string' ? gap.nodeId : undefined,
+                turnId: gap.turnId,
+                seq: gap.seq,
+              }, controller.signal);
+            }
+            continue;
+          }
+          const parsed = parseChatStreamEvent(evt, data);
+          const chatId = parsed?.data.chatId;
+          if (!parsed || !chatId) continue;
+          dispatchChatStreamEvent(parsed, handlersForChat(chatId, parsed.data.nodeId));
+        }
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      disconnect = observerDisconnectFor(error);
+      if (!stopped) {
+        controller.abort();
+        opts.onError?.(error);
+      }
+    } finally {
+      clearWatchdog();
+      if (!stopped) opts.onDisconnect?.(disconnect);
+    }
+  })();
+  return () => {
+    stopped = true;
+    clearWatchdog();
     controller.abort();
   };
 }
@@ -800,8 +1051,8 @@ export async function fetchTreeMessages(workspaceId: string, treeId: string): Pr
   return body.messages ?? [];
 }
 
-export async function fetchWorkspace(id: string): Promise<unknown> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${id}`);
+export async function fetchWorkspace(id: string, signal?: AbortSignal): Promise<unknown> {
+  const res = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(id)}`, { signal });
   if (!res.ok) throw new Error(`fetchWorkspace failed: ${res.status}`);
   return res.json();
 }

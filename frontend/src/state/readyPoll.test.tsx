@@ -22,6 +22,8 @@ vi.mock('../services/api', () => ({
   heartbeatPane: vi.fn().mockResolvedValue(true),
   releasePane: vi.fn().mockResolvedValue(undefined),
   subscribeChat: vi.fn(() => () => {}),
+  subscribeChats: vi.fn(() => () => {}),
+  subscribeBackground: vi.fn(() => () => {}),
   cancelChat: vi.fn().mockResolvedValue(undefined),
   // workspacePersistence dependencies — return empty so hydration finishes quickly.
   fetchAllWorkspaces: vi.fn().mockResolvedValue([]),

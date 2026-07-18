@@ -1,6 +1,10 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  computeTranscriptFingerprint as computeSharedTranscriptFingerprint,
+  foldFingerprintSegments,
+} from 'michi-shared';
+import {
   buildCompatibleResumeContext,
   chooseResumeStrategy,
   computeTranscriptFingerprint,
@@ -15,6 +19,36 @@ const target: ResumeSignature = {
 };
 
 describe('resume strategy', () => {
+  test('keeps the persisted transcript fingerprint wire-compatible across shared and backend', () => {
+    const vectors = [
+      { messages: [], expected: '811c9dc5' },
+      { messages: [{ role: 'user' as const, content: 'hello' }], expected: '529ed6b6' },
+      {
+        messages: [
+          { role: 'user' as const, content: 'hello' },
+          { role: 'assistant' as const, content: 'hi' },
+        ],
+        expected: '02ae81e1',
+      },
+      {
+        messages: [
+          { role: 'user' as const, content: '你好 👋' },
+          { role: 'assistant' as const, content: 'line1\nline2\u0000x' },
+        ],
+        expected: 'f54f9ce6',
+      },
+    ];
+
+    for (const vector of vectors) {
+      assert.equal(computeSharedTranscriptFingerprint(vector.messages), vector.expected);
+      assert.equal(computeTranscriptFingerprint(vector.messages), vector.expected);
+    }
+    assert.equal(
+      foldFingerprintSegments(['user\u0000hello\u0000\u0000']),
+      Number.parseInt('529ed6b6', 16),
+    );
+  });
+
   test('uses exact resume when signature and transcript fingerprint match', () => {
     const fp = computeTranscriptFingerprint([
       { role: 'user', content: 'hello' },

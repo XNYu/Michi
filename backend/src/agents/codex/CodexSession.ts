@@ -636,16 +636,18 @@ export class CodexSession implements AgentSession {
             parentChatId: this.id,
             cwd: this.cwd,
             enableFollowUps: true,
+            ownerUserId: this.ownerUserId,
             topics,
           });
           this.queue.push({ kind: 'spawn_branches', topics: result });
           return result;
         },
         onSaveContext: (name, body) => {
-          const saved = this.bridge.saveContext({ cwd: this.cwd, name, body });
+          const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
           if (saved) {
             this.queue.push({
               kind: 'context_saved',
+              contextId: saved.id,
               name: saved.name,
               filePath: saved.filePath,
               size: saved.size,
@@ -654,10 +656,11 @@ export class CodexSession implements AgentSession {
           return saved;
         },
         onUpdateContext: (name, body) => {
-          const updated = this.bridge.updateContext({ cwd: this.cwd, name, body });
+          const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
           if (updated) {
             this.queue.push({
               kind: 'context_updated',
+              contextId: updated.id,
               name: updated.name,
               filePath: updated.filePath,
               size: updated.size,

@@ -9,7 +9,7 @@ import { getRuntime } from "../agents/registry";
 import { getAgentConfig, resolveModel, resolveReasoning } from "../services/agentConfig";
 import { startupMark } from "../services/startupTrace";
 import * as sessionRegistry from "../agents/sessionRegistry";
-import { chatHub, type HubSubscriber } from "../agents/chatHub";
+import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/chatHub";
 import { paneOwnership } from "../agents/paneOwnership";
 import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
@@ -58,6 +58,70 @@ function resolvePublicNodeId(identifier: string, userId?: string | null): string
 function getSessionByIdentifier(identifier: string, userId?: string | null): AgentSession | null {
     const nodeId = resolvePublicNodeId(identifier, userId);
     return nodeId ? getSessionForUser(nodeId, userId ?? null) : null;
+}
+
+export function canAccessRuntimeChat(chatId: string, userId?: string): boolean {
+    if (process.env.MICHI_CLOUD !== '1') return true;
+    if (!userId) return false;
+    return Boolean(getNodeSessionBinding(chatId, userId) || getSessionForUser(chatId, userId));
+}
+
+/**
+ * A message's UI node must be the persisted owner of its runtime chat id.
+ * This closes the gap where a caller who owns two nodes could send a turn to
+ * one runtime while attributing its durable events to the other node.
+ */
+export function isRuntimeChatBoundToNode(chatId: string, nodeId: string, userId?: string): boolean {
+    if (process.env.MICHI_CLOUD !== '1' || !userId) return false;
+    return getNodeSessionBinding(chatId, userId)?.nodeId === nodeId;
+}
+
+const MAX_BACKGROUND_CURSORS = 5_000;
+const MAX_SSE_BUFFER_BYTES = 1_048_576;
+
+/** The small writable surface shared by Express' SSE responses and route tests. */
+export interface SseWritableResponse {
+    writableEnded: boolean;
+    destroyed: boolean;
+    writableLength: number;
+    write(frame: string): unknown;
+    destroy(error?: Error): unknown;
+}
+
+/**
+ * Write one SSE frame, dropping only this HTTP response when its outgoing
+ * buffer grows beyond 1 MiB. Callers detach their subscriber on `false`; the
+ * ChatHub turn itself deliberately continues so a client can replay later.
+ */
+export function writeSseFrame(response: SseWritableResponse, frame: string): boolean {
+    if (response.writableEnded || response.destroyed) return false;
+    try {
+        response.write(frame);
+    } catch {
+        return false;
+    }
+    if (response.writableLength > MAX_SSE_BUFFER_BYTES) {
+        try {
+            response.destroy(new Error('SSE client exceeded buffer limit'));
+        } catch {
+            // The peer is already gone; either way this subscriber is done.
+        }
+        return false;
+    }
+    return true;
+}
+
+function readBackgroundCursors(raw: unknown): Record<string, BackgroundCursor> {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out: Record<string, BackgroundCursor> = {};
+    for (const [chatId, value] of Object.entries(raw as Record<string, unknown>).slice(0, MAX_BACKGROUND_CURSORS)) {
+        if (!chatId || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const turnId = (value as { turnId?: unknown }).turnId;
+        const seq = (value as { seq?: unknown }).seq;
+        if (typeof turnId !== 'string' || !turnId || typeof seq !== 'number' || !Number.isFinite(seq)) continue;
+        out[chatId] = { turnId, seq: Math.max(-1, Math.trunc(seq)) };
+    }
+    return out;
 }
 
 function ensureCloudWorkspaceRow(userId: string | undefined, workspaceId: string | null | undefined): void {
@@ -959,6 +1023,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             : undefined;
         const legacyNodeId: string | undefined = req.body?.nodeId;
         const ownerToken: string | undefined = req.body?.ownerToken;
+        const turnId: string | undefined = typeof req.body?.turnId === 'string' && req.body.turnId.length > 0
+            ? req.body.turnId
+            : undefined;
         const routeStart = Date.now();
         const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
         const nodeId = session?.id ?? null;
@@ -984,7 +1051,11 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
         let started;
         try {
-            started = chatHub.startTurn({ chatId: nodeId, nodeId, text, displayText, userMetadata, session });
+            started = chatHub.startTurn({
+                chatId: nodeId, nodeId, text, displayText, userMetadata, session,
+                turnId,
+                ownerUserId: req.user?.id ?? null,
+            });
         } catch (err) {
             return res.status(409).json({
                 error: (err as Error).message,
@@ -999,6 +1070,13 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
         let wroteTerminal = false;
         let wroteFirstEvent = false;
+        let detached = false;
+        let detach = () => {};
+        const detachSubscriber = () => {
+            if (detached) return;
+            detached = true;
+            detach();
+        };
         const sub: HubSubscriber = {
             send: (ev) => {
                 if (res.writableEnded || res.destroyed) return;
@@ -1009,25 +1087,30 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 if (ev.event === CHAT_STREAM_EVENTS.done || ev.event === CHAT_STREAM_EVENTS.error) {
                     wroteTerminal = true;
                 }
-                try { res.write(encodeChatStreamEvent(ev)); } catch { /* peer gone */ }
+                if (!writeSseFrame(res, encodeChatStreamEvent(ev))) detachSubscriber();
             },
             close: () => {
                 const terminal = finalTerminalEvent({ wroteTerminal, aborted: false });
                 if (terminal && !res.writableEnded && !res.destroyed) {
-                    try { res.write(encodeChatStreamEvent(terminal)); } catch { /* peer gone */ }
+                    writeSseFrame(res, encodeChatStreamEvent(terminal));
                 }
-                if (!res.writableEnded) res.end();
+                if (!res.writableEnded && !res.destroyed) res.end();
             },
         };
-        const detach = chatHub.subscribe(nodeId, sub);
+        const subscription = chatHub.subscribeTurn(nodeId, started.turnId, sub, 0);
+        if (!subscription) {
+            return res.status(410).json({ error: 'turn replay unavailable', code: 'turn_replay_unavailable' });
+        }
+        detach = subscription;
+        if (detached) detach();
         res.on("close", () => {
-            detach();
+            detachSubscriber();
         });
         try {
             await started.done;
         } finally {
             startupMark("stream_route_done", { chatId: nodeId, nodeId, durMs: Date.now() - routeStart, aborted: false });
-            if (!res.writableEnded) res.end();
+            if (!res.writableEnded && !res.destroyed) res.end();
         }
     });
 
@@ -1036,19 +1119,96 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
         const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
         const ownerToken: string | undefined = req.body?.ownerToken;
+        const turnId: string | undefined = typeof req.body?.turnId === 'string'
+            ? req.body.turnId
+            : undefined;
         try {
             if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
                 return res.status(403).json({ error: "not the pane owner" });
             }
-            chatHub.cancel(nodeId);
-            if (session && !chatHub.isActive(nodeId)) await Promise.resolve(session.cancel());
+            const activeTurnMatched = chatHub.cancel(nodeId, turnId);
+            // Foreground turns are cancelled through ChatHub.activeSessions.
+            // Runtime self-turns are owned by ClaudeSession's idle-pump lock,
+            // so cancel that live session directly.
+            if (session && activeTurnMatched && !chatHub.isOwnerTurnActive(nodeId)) {
+                await Promise.resolve(session.cancel());
+            }
             res.json({ ok: true });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }
     });
 
-    router.get("/chats/:chatId/subscribe", requireChatOwner, (req, res) => {
+    router.post("/chats/background/subscribe", (req, res) => {
+        const backgroundUserId = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
+        if (process.env.MICHI_CLOUD === "1" && !backgroundUserId) {
+            return res.status(401).json({ error: "unauthorized" });
+        }
+        const requestedCursors = readBackgroundCursors(req.body?.cursors);
+        const cursors: Record<string, BackgroundCursor> = {};
+        const durableCursors: Record<string, BackgroundCursor> = {};
+        const nodeIds = new Map<string, string>();
+        for (const [chatId, cursor] of Object.entries(requestedCursors)) {
+            const binding = getNodeSessionBinding(chatId, backgroundUserId ?? null);
+            if (process.env.MICHI_CLOUD === "1" && !binding) continue;
+            cursors[chatId] = cursor;
+            if (!binding) continue;
+            nodeIds.set(chatId, binding.nodeId);
+            const row = getNode(binding.nodeId);
+            if (row?.last_applied_turn_id && typeof row.last_applied_seq === 'number') {
+                durableCursors[chatId] = {
+                    turnId: row.last_applied_turn_id,
+                    seq: row.last_applied_seq,
+                };
+            }
+        }
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.flushHeaders?.();
+
+        let detached = false;
+        let detach = () => {};
+        const detachSubscriber = () => {
+            if (detached) return;
+            detached = true;
+            detach();
+        };
+        try {
+            detach = chatHub.subscribeBackground({
+            send: (chatId, event) => {
+                if (res.writableEnded || res.destroyed) return;
+                if (!writeSseFrame(res, encodeChatStreamEvent(event))) detachSubscriber();
+            },
+            gap: (chatId, durableCursor) => {
+                const nodeId = nodeIds.get(chatId)
+                    ?? getNodeSessionBinding(chatId, backgroundUserId ?? null)?.nodeId;
+                if (!writeSseFrame(res,
+                    `event: background_sync_required\ndata: ${JSON.stringify({ chatId, nodeId, ...durableCursor })}\n\n`,
+                )) detachSubscriber();
+            },
+            close: () => {},
+            ownerUserId: backgroundUserId,
+            }, { cursors, durableCursors });
+            if (detached) detach();
+        } catch {
+            if (!res.writableEnded) res.end();
+            return;
+        }
+
+        const keepalive = setInterval(() => {
+            if (res.writableEnded || res.destroyed) return;
+            if (!writeSseFrame(res, ': keepalive\n\n')) detachSubscriber();
+        }, HEARTBEAT_INTERVAL_MS);
+        keepalive.unref?.();
+        res.on("close", () => {
+            clearInterval(keepalive);
+            detachSubscriber();
+        });
+    });
+
+    router.get("/chats/:chatId/stream", requireChatOwner, (req, res) => {
         const requestedIdentifier = req.params.chatId;
         const nodeId = resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
         const fromSeqRaw = req.query.fromSeq;
@@ -1056,42 +1216,60 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const fromSeq = typeof fromSeqRaw === "string" ? parseInt(fromSeqRaw, 10) : 0;
         const fromTurnId = typeof fromTurnIdRaw === "string" ? fromTurnIdRaw : undefined;
 
+        if (!fromTurnId) return res.status(400).json({ error: 'fromTurnId is required' });
+        if (!canAccessRuntimeChat(requestedIdentifier, req.user?.id)) {
+            return res.status(404).json({ error: 'not_found' });
+        }
+        // Validate the replay cursor before committing HTTP/SSE headers so a
+        // gap remains an actionable 410 response rather than a hung stream.
+        const probe = chatHub.subscribeTurn(nodeId, fromTurnId, { send: () => {}, close: () => {} }, Number.isFinite(fromSeq) ? fromSeq : 0);
+        if (!probe) return res.status(410).json({ error: 'turn replay unavailable', code: 'turn_replay_unavailable' });
+        probe();
+
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders?.();
 
+        let detached = false;
+        let detach = () => {};
+        const detachSubscriber = () => {
+            if (detached) return;
+            detached = true;
+            detach();
+        };
         const sub: HubSubscriber = {
             send: (ev) => {
                 if (res.writableEnded || res.destroyed) return;
-                // Suppress events while an owner turn (/message SSE) is active —
-                // those events already flow through the /message response. Only
-                // self-initiated turns (idle pump) pass through here.
-                if (chatHub.isOwnerTurnActive(nodeId)) return;
-                try { res.write(encodeChatStreamEvent(ev)); } catch { /* peer gone */ }
+                if (!writeSseFrame(res, encodeChatStreamEvent(ev))) {
+                    detachSubscriber();
+                    return;
+                }
+                if (ev.event === CHAT_STREAM_EVENTS.done || ev.event === CHAT_STREAM_EVENTS.error) {
+                    // A replay/direct recovery stream is per-turn. It must
+                    // release its HTTP/1.1 slot once that turn is terminal.
+                    queueMicrotask(() => {
+                        if (!res.writableEnded) res.end();
+                    });
+                }
             },
             close: () => {
-                // Observers stay connected across turns.
+                if (!res.writableEnded && !res.destroyed) res.end();
             },
         };
-        const detach = chatHub.subscribe(nodeId, sub, {
-            fromTurnId,
-            fromSeq: Number.isFinite(fromSeq) ? fromSeq : 0,
-        });
+        const subscription = chatHub.subscribeTurn(nodeId, fromTurnId, sub, Number.isFinite(fromSeq) ? fromSeq : 0);
+        if (!subscription) return res.status(410).json({ error: 'turn replay unavailable', code: 'turn_replay_unavailable' });
+        detach = subscription;
+        if (detached) detach();
         const keepalive = setInterval(() => {
             if (res.writableEnded || res.destroyed) return;
-            try {
-                res.write(encodeChatStreamEvent({
-                    event: CHAT_STREAM_EVENTS.heartbeat,
-                    data: { idleMs: 0 },
-                }));
-            } catch { /* peer gone */ }
+            if (!writeSseFrame(res, ': keepalive\n\n')) detachSubscriber();
         }, HEARTBEAT_INTERVAL_MS);
         keepalive.unref?.();
         res.on("close", () => {
             clearInterval(keepalive);
-            detach();
+            detachSubscriber();
         });
     });
 
@@ -1132,12 +1310,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     router.post("/chats/:chatId/permission-response", requireChatOwner, (req, res) => {
         const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
+        const nodeId = session.id;
         const { requestId, optionId, cancel } = req.body ?? {};
         if (typeof requestId !== "number") {
             return res.status(400).json({ error: "requestId (number) is required" });
         }
         if (cancel === true) {
             session.cancelPermission?.(requestId);
+            chatHub.resolvePermission(nodeId, requestId);
             return res.json({ ok: true });
         }
         if (typeof optionId !== "string") {
@@ -1147,6 +1327,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(400).json({ error: "Session does not support permissions" });
         }
         session.respondToPermission(requestId, optionId);
+        chatHub.resolvePermission(nodeId, requestId);
         res.json({ ok: true });
     });
 
@@ -1154,12 +1335,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     router.post("/chats/:chatId/user-input-response", requireChatOwner, (req, res) => {
         const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
+        const nodeId = session.id;
         const { requestId, answers, skip } = req.body ?? {};
         if (typeof requestId !== "number") {
             return res.status(400).json({ error: "requestId (number) is required" });
         }
         if (skip === true) {
             session.skipUserInput?.(requestId);
+            chatHub.resolveUserInput(nodeId, requestId);
             return res.json({ ok: true });
         }
         if (!Array.isArray(answers)) {
@@ -1169,6 +1352,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(400).json({ error: "Session does not support user input requests" });
         }
         session.respondToUserInput(requestId, answers);
+        chatHub.resolveUserInput(nodeId, requestId);
         res.json({ ok: true });
     });
 

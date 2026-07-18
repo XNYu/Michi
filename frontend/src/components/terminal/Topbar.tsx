@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { activeTreeRootNodeId, chatLabel, useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../state/chatStore';
+import {
+  activeTreeRootNodeId,
+  chatLabel,
+  useChatActions,
+  useChatProjects,
+  useNodesSelector,
+  useStructuralSelector,
+  shallowArrayEqual,
+} from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { IconBtn } from './primitives';
 import { checkVersion, triggerUpdate } from '../../services/api';
@@ -13,8 +21,11 @@ import { confirmDialog } from '../ui/ConfirmDialog';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
-import { isArchiveGroupId } from '../../state/trashActions';
 import { ArtifactsIcon, BranchesIcon, DigestIcon, MapIcon } from './icons';
+import {
+  selectArchivedGroupCountForPage,
+  selectTrashGroupCountForPage,
+} from '../../state/topbarSelectors';
 
 const TOPBAR_HEIGHT = 44;
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
@@ -288,21 +299,19 @@ export default function TerminalTopbar({
   // Trash title mirrors the Workspaces pattern: a single counts line in the
   // topbar so the page body can drop its in-page header. Combines deleted
   // workspaces with deletion groups (matches Settings.tsx's tally).
-  const trashGroupCount = useStructuralSelector((nodesMap) => {
-    const gids = new Set<string>();
-    for (const n of Object.values(nodesMap)) {
-      if (n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId);
-    }
-    return gids.size;
-  });
-  const trashCount = trashGroupCount + projects.filter((p) => p.deletedAt).length;
-  const archivedCount = useStructuralSelector((nodesMap) => {
-    const gids = new Set<string>();
-    for (const n of Object.values(nodesMap)) {
-      if (isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId!);
-    }
-    return gids.size;
-  });
+  const trashCountSelector = useCallback(
+    (nodesMap: Parameters<typeof selectTrashGroupCountForPage>[1]) =>
+      selectTrashGroupCountForPage(page, nodesMap),
+    [page],
+  );
+  const trashGroupCount = useNodesSelector(trashCountSelector);
+  const trashCount = trashGroupCount + (page === 'trash' ? projects.filter((p) => p.deletedAt).length : 0);
+  const archivedCountSelector = useCallback(
+    (nodesMap: Parameters<typeof selectArchivedGroupCountForPage>[1]) =>
+      selectArchivedGroupCountForPage(page, nodesMap),
+    [page],
+  );
+  const archivedCount = useNodesSelector(archivedCountSelector);
   const showBrowserBrand = getElectron() === null;
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
   // The right cluster sits over the rightmost pane in the grid — mirror its

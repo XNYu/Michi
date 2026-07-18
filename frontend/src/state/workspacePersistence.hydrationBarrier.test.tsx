@@ -48,6 +48,12 @@ const V2_CAPABILITIES = {
   legacySyncAccepted: true,
 };
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
 /** Minimal backend `/workspaces/all` row that hydrates into exactly one project. */
 const backendWorkspaceRow = {
   workspace: { id: 'ws-1', name: 'Recovered', created_at: 1 },
@@ -134,5 +140,20 @@ describe('cold-start hydration barrier', () => {
 
     expect(result.current.hydrated).toBe(true);
     expect(result.current.projectsCount).toBe(0);
+  });
+
+  it('starts meta hydration immediately and does not gate readiness on the advisory capability probe', async () => {
+    const capability = deferred<typeof V2_CAPABILITIES>();
+    apiMocks.fetchPersistenceCapabilities.mockReturnValue(capability.promise);
+    apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([]);
+
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+
+    expect(apiMocks.fetchAllWorkspacesMeta).toHaveBeenCalledTimes(1);
+    expect(result.current.hydrated).toBe(true);
+
+    capability.resolve(V2_CAPABILITIES);
+    await act(async () => { await Promise.resolve(); });
   });
 });

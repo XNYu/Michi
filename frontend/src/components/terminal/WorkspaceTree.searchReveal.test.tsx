@@ -31,6 +31,8 @@ vi.mock('../../services/api', () => ({
   heartbeatPane: () => Promise.resolve(true),
   releasePane: () => Promise.resolve(),
   subscribeChat: vi.fn(() => () => {}),
+  subscribeChats: vi.fn(() => () => {}),
+  subscribeBackground: vi.fn(() => () => {}),
   cancelChat: () => Promise.resolve(),
   ensureSession: vi.fn(() => Promise.resolve({ chatId: 'fake-chat', currentModeId: null, resumeStrategy: 'fresh' })),
   streamMessage: vi.fn(() => () => {}),

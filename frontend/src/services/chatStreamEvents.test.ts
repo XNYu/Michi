@@ -132,6 +132,22 @@ describe('parseChatStreamEvent', () => {
     });
   });
 
+  it('roundtrips the multiplexed observer chat id without changing event payloads', () => {
+    const event: ChatStreamEvent = {
+      event: CHAT_STREAM_EVENTS.chunk,
+      data: {
+        chatId: 'chat-7',
+        nodeId: 'node-7',
+        turnId: 'turn-7',
+        seq: 8,
+        assistantId: 'assistant-7',
+        text: 'hello',
+      },
+    };
+
+    expect(parseEncodedFrame(encodeChatStreamEvent(event))).toEqual(event);
+  });
+
   it('ignores malformed or unknown events', () => {
     expect(parseChatStreamEvent('unknown', '{}')).toBeNull();
     expect(parseChatStreamEvent(CHAT_STREAM_EVENTS.chunk, '{')).toBeNull();
@@ -145,7 +161,7 @@ describe('parseChatStreamEvent', () => {
     dispatchChatStreamEvent(
       {
         event: CHAT_STREAM_EVENTS.contextSaved,
-        data: { name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 42 },
+        data: { contextId: 'ctx-durable', name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 42 },
       },
       { onContextSaved },
     );
@@ -153,7 +169,7 @@ describe('parseChatStreamEvent', () => {
     dispatchChatStreamEvent(
       {
         event: CHAT_STREAM_EVENTS.contextUpdated,
-        data: { name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 84 },
+        data: { contextId: 'ctx-durable', name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 84 },
       },
       { onContextUpdated },
     );
@@ -175,11 +191,13 @@ describe('parseChatStreamEvent', () => {
       'repo_notes',
       '.contexts/repo_notes.md',
       42,
+      'ctx-durable',
     );
     expect(onContextUpdated).toHaveBeenCalledWith(
       'repo_notes',
       '.contexts/repo_notes.md',
       84,
+      'ctx-durable',
     );
     expect(onBranchOverview).toHaveBeenCalledWith(
       'The schema update is ready to ship.',

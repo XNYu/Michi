@@ -24,6 +24,7 @@ const FIT_PADDING = 48;
 type MapMode = 'overview' | 'thread' | 'graph';
 type ZoomMode = 'auto' | 'manual';
 const DEFAULT_MAP_MODE: MapMode = 'graph';
+const EMPTY_TREES: readonly Tree[] = [];
 // Overview/thread remain implemented below, but are temporarily hidden from
 // the toolbar while graph is the only supported public Map view.
 const VISIBLE_MAP_MODES: readonly MapMode[] = ['graph'];
@@ -71,6 +72,44 @@ function collectReachableIds(
 
 function isBranchEdge(e: ProjectEdge): boolean {
   return e.kind === undefined || e.kind === 'branch';
+}
+
+function sameStringArray(a: readonly string[], b: readonly string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function useStableStringArray(value: string[]): readonly string[] {
+  const ref = useRef<readonly string[]>(value);
+  if (!sameStringArray(ref.current, value)) ref.current = value;
+  return ref.current;
+}
+
+function sameLayoutTrees(a: readonly Tree[], b: readonly Tree[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      left.id !== right.id ||
+      left.rootNodeId !== right.rootNodeId ||
+      left.createdAt !== right.createdAt ||
+      left.archivedAt !== right.archivedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Keep lastActiveAt/name-only tree updates from invalidating graph geometry. */
+function useStableLayoutTrees(value: readonly Tree[]): readonly Tree[] {
+  const ref = useRef<readonly Tree[]>(value);
+  if (!sameLayoutTrees(ref.current, value)) ref.current = value;
+  return ref.current;
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -135,12 +174,18 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     setZoomMode('auto');
   };
 
+  const hasActiveProject = activeProject !== null;
+  const projectTrees = activeProject?.trees ?? EMPTY_TREES;
+  const layoutTrees = useStableLayoutTrees(projectTrees);
+  const activeTreeId = activeProject?.activeTreeId ?? null;
+
   // Live chat ids = project chatIds minus anything in the trash, archived
   // trees, and digest nodes — digests aren't part of the map's global graph view.
-  const liveIds = useMemo(
+  const computedLiveIds = useMemo(
     () => visibleMapNodeIds(activeProject, nodesSnapshot),
     [activeProject, nodesSnapshot],
   );
+  const liveIds = useStableStringArray(computedLiveIds);
 
   const liveSet = useMemo(() => new Set(liveIds), [liveIds]);
 
@@ -194,19 +239,19 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   }, [activeProject, branchChildren, liveSet, nodesSnapshot, selection, streamingIds]);
 
   const activeTree = useMemo(() => {
-    if (!activeProject?.activeTreeId) return null;
-    const tree = activeProject.trees.find((item) => item.id === activeProject.activeTreeId) ?? null;
+    if (!activeTreeId) return null;
+    const tree = layoutTrees.find((item) => item.id === activeTreeId) ?? null;
     return tree && !tree.archivedAt ? tree : null;
-  }, [activeProject]);
+  }, [activeTreeId, layoutTrees]);
 
   const layout = useMemo(() => {
-    if (!activeProject || mode === 'overview') return null;
+    if (!hasActiveProject || mode === 'overview') return null;
 
     const graphTrees = mode === 'thread'
       ? activeTree
         ? [activeTree]
         : []
-      : [...(activeProject.trees ?? [])]
+      : [...layoutTrees]
           .filter((t) => !t.archivedAt && liveSet.has(t.rootNodeId))
           .sort((a, b) => a.createdAt - b.createdAt);
 
@@ -309,7 +354,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       width,
       height: cursorY - TREE_GAP + PAD,
     };
-  }, [activeProject, activeTree, edges, graphChildren, liveSet, mode]);
+  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode]);
 
   useEffect(() => {
     if (mode === 'overview') return;

@@ -6,6 +6,7 @@ vi.mock('../services/api', () => ({
 }));
 
 import * as api from '../services/api';
+import { CHAT_STREAM_EVENTS, dispatchChatStreamEvent } from '../services/chatStreamEvents';
 import { runChatStream } from './chatStreamRunner';
 import { reduceNodes } from './chatReducers';
 import { assistantAnswerRawText } from './assistantBlocks';
@@ -79,6 +80,76 @@ describe('chatStreamRunner — chunk/tool-call ordering', () => {
     // textOffset is in raw m.text coordinates and recorded at tool-call
     // dispatch time — i.e. after the two chunks landed in m.text.
     expect(msg.toolCalls[0].textOffset).toBe(10);
+  });
+
+  it('realigns the optimistic assistant id before dispatching a server-stamped chunk', () => {
+    const dispatched: ChatAction[] = [];
+    runChatStream({
+      prompt: 'hi',
+      nodeId: 'n1',
+      assistantId: 'a-local',
+      dispatch: (action) => dispatched.push(action),
+      assistantTextBufs: { current: {} },
+      cancelFns: { current: {} },
+    });
+
+    const handlers = mockStream.mock.calls[0][2];
+    dispatchChatStreamEvent({
+      event: CHAT_STREAM_EVENTS.turnStart,
+      data: {
+        turnId: 'turn-server',
+        seq: 0,
+        assistantId: 'a-server',
+        nodeId: 'n1',
+        userText: 'hi',
+      },
+    }, handlers);
+    dispatchChatStreamEvent({
+      event: CHAT_STREAM_EVENTS.chunk,
+      data: {
+        turnId: 'turn-server',
+        seq: 1,
+        assistantId: 'a-server',
+        text: 'server reply',
+      },
+    }, handlers);
+
+    let nodes: Record<string, ChatNodeState> = {
+      n1: {
+        ...makeNode(),
+        messages: [
+          { id: 'u-a-local', role: 'user', text: 'hi', toolCalls: [] },
+          { id: 'a-local', role: 'assistant', text: '', toolCalls: [], streaming: true },
+        ],
+      },
+    };
+    for (const action of dispatched) nodes = reduceNodes(nodes, action);
+
+    expect(dispatched).toContainEqual({
+      type: 'realign-assistant-id',
+      nodeId: 'n1',
+      fromId: 'a-local',
+      toId: 'a-server',
+    });
+    expect(assistantAnswerRawText(nodes.n1.messages.find((message) => message.id === 'a-server')!))
+      .toBe('server reply');
+  });
+
+  it('acknowledges a recovered spawn outbox only after the server turn starts', () => {
+    const dispatched: ChatAction[] = [];
+    runChatStream({
+      prompt: 'recovered child prompt',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      dispatch: (action) => dispatched.push(action),
+      assistantTextBufs: { current: {} },
+      cancelFns: { current: {} },
+    });
+
+    const handlers = mockStream.mock.calls[0][2];
+    expect(dispatched).not.toContainEqual({ type: 'spawn-prompt-started', nodeId: 'n1' });
+    handlers.onTurnStart({ turnId: 'turn-durable', assistantId: 'a1', userText: 'recovered child prompt' });
+    expect(dispatched).toContainEqual({ type: 'spawn-prompt-started', nodeId: 'n1' });
   });
 
   it('flushes pending chunks before tool-call-update dispatch', () => {

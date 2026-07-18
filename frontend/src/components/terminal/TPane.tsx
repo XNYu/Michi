@@ -280,8 +280,28 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     [n?.composerDraft],
   );
   const quotedText = n?.composerDraft?.quotedText ?? null;
+  // Store writes are RAF-coalesced, so the render snapshot can trail the
+  // TipTap transaction that immediately precedes Enter / a toolbar click.
+  // Keep a synchronous source of truth for submit and quote composition.
+  const latestDraftRef = useRef<ComposerDraftState>(draft);
+  const latestQuotedTextRef = useRef<string | null>(quotedText);
+  // The full draft stays RAF-coalesced, but the primary action must flip
+  // immediately between disabled / Send / Send next / Stop. Updating this
+  // boolean only on empty↔non-empty transitions avoids per-keystroke renders.
+  const [draftHasText, setDraftHasText] = useState(() => draft.value.trim().length > 0);
+  useLayoutEffect(() => {
+    // Sync only when the committed store draft changes. An unrelated render
+    // can happen before the RAF-coalesced draft commit; copying render-time
+    // props on every render would roll the synchronous editor value back.
+    latestDraftRef.current = draft;
+    latestQuotedTextRef.current = quotedText;
+    setDraftHasText(draft.value.trim().length > 0);
+  }, [draft, quotedText]);
   const persistComposerDraft = useCallback(
     (nextDraft: ComposerDraftState, nextQuotedText: string | null) => {
+      latestDraftRef.current = nextDraft;
+      latestQuotedTextRef.current = nextQuotedText;
+      setDraftHasText(nextDraft.value.trim().length > 0);
       setComposerDraft(nodeId, {
         value: nextDraft.value,
         mentions: nextDraft.mentions,
@@ -293,16 +313,22 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const setDraft = useCallback(
     (nextOrUpdater: ComposerDraftState | ((prev: ComposerDraftState) => ComposerDraftState)) => {
       const next = typeof nextOrUpdater === 'function'
-        ? nextOrUpdater(draft)
+        ? nextOrUpdater(latestDraftRef.current)
         : nextOrUpdater;
-      persistComposerDraft(next, quotedText);
+      persistComposerDraft(next, latestQuotedTextRef.current);
     },
-    [draft, persistComposerDraft, quotedText],
+    [persistComposerDraft],
   );
   const setQuotedText = useCallback(
-    (next: string | null) => persistComposerDraft(draft, next),
-    [draft, persistComposerDraft],
+    (next: string | null) => persistComposerDraft(latestDraftRef.current, next),
+    [persistComposerDraft],
   );
+  const clearComposerDraft = useCallback(() => {
+    latestDraftRef.current = EMPTY_COMPOSER_DRAFT;
+    latestQuotedTextRef.current = null;
+    setDraftHasText(false);
+    setComposerDraft(nodeId, null);
+  }, [nodeId, setComposerDraft]);
   const [agentMenu, setAgentMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
   const [modelMenu, setModelMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
   // Load only while the menu is open; the shared hook retries transient catalog failures.
@@ -1289,16 +1315,18 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   const onSubmit = async (forceBranch = false) => {
     if (observing) return;
+    const submitDraft = latestDraftRef.current;
+    const submitQuotedText = latestQuotedTextRef.current;
     // Expand mention chips back to wire-format tokens (`@node:<id>` for nodes,
     // `@<name>` for contexts) before any downstream parsing — fanout, branch
     // prefix stripping, etc. all see the wire string, not the chip-display.
-    const raw = expandMentions(draft.value, draft.mentions).trim();
+    const raw = expandMentions(submitDraft.value, submitDraft.mentions).trim();
     const pending = n.pendingComments ?? [];
     // Comment-only sends are allowed: empty text is fine as long as there's
     // at least one pending comment to flush. Attachment-only sends are also
     // allowed.
     if (!raw && pending.length === 0 && pendingAttachments.length === 0) return;
-    setComposerDraft(nodeId, null);
+    clearComposerDraft();
     const attachmentsForSend = pendingAttachments.map(p => ({ name: p.name, absPath: p.absPath }));
     // Attachments stay scoped to this turn — the agent reads them via the
     // [Attached files: …] sentinel appended below. We deliberately do NOT
@@ -1333,7 +1361,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // the queue payload. quotedText is already captured in scope from the
     // pre-clear draft snapshot.
     const commentBlock = pending.length > 0 ? formatCommentsBlock(pending) : null;
-    const queuedQuote = quotedText;
+    const queuedQuote = submitQuotedText;
 
     // Streaming + plain Enter (no force, no slash-branch) → queue path.
     // Branch button still bypasses (forceBranch=true) and calls
@@ -1349,8 +1377,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     ) {
       queueMessage(nodeId, {
         id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        value: draft.value,                 // literal text (chip labels intact)
-        mentions: [...draft.mentions],
+        value: submitDraft.value,           // literal text (chip labels intact)
+        mentions: [...submitDraft.mentions],
         attachments: attachmentsForSend.map(a => ({ ...a })),
         quotedText: queuedQuote ?? undefined,
         commentBlock: commentBlock ?? undefined,
@@ -1362,7 +1390,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       return;
     }
 
-    const baseFinal = joinMessageParts(commentBlock, quotedText, text);
+    const baseFinal = joinMessageParts(commentBlock, submitQuotedText, text);
     const finalText = appendAttachmentsSentinel(baseFinal, attachmentsForSend);
     if (pending.length > 0) clearPendingComments(nodeId);
 
@@ -1370,7 +1398,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // The optimistic user message renders only the bare prose plus structured
     // quotedText / attachments / comments, so the bubble can show them as modules.
     const meta = {
-      quotedText: quotedText ?? undefined,
+      quotedText: submitQuotedText ?? undefined,
       attachments: attachmentsForSend.length > 0 ? attachmentsForSend.map(a => ({ ...a })) : undefined,
       comments: pending.length > 0 ? pending.map(c => ({ ...c })) : undefined,
       displayText: text,
@@ -1389,7 +1417,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   };
 
   const canAttach = !!getElectron()?.chooseFiles || !!activeProject;
-  const sendDisabledBase = !draft.value.trim()
+  const sendDisabledBase = !draftHasText
     && pendingAttachments.length === 0
     && (n.pendingComments?.length ?? 0) === 0;
   const sendDisabled = observing || sendDisabledBase;
@@ -1663,7 +1691,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
                 const entry = (n.pendingQueued ?? []).find((x) => x.id === queueId);
                 if (!entry) return;
                 dequeueMessage(nodeId, queueId);
-                setComposerDraft(nodeId, { value: entry.value, mentions: entry.mentions });
+                persistComposerDraft({ value: entry.value, mentions: entry.mentions }, null);
                 setPendingAttachments(
                   entry.attachments.map((a, idx) => ({
                     id: `att-restored-${Date.now()}-${idx}`,
@@ -1700,7 +1728,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               onSubmit={({ branch }) => observing ? undefined : void onSubmit(branch)}
               onPaste={(e) => { void handlePaste(e as unknown as React.ClipboardEvent<HTMLTextAreaElement>); }}
             />
-            {observing && !draft.value && (
+            {observing && !draftHasText && (
               <div className="composer-observing-hint" aria-hidden>
                 Viewing — another window is editing
               </div>
@@ -1724,7 +1752,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         toolbarRight={
           <PaneComposerActions
-            draftHasText={!!draft.value.trim()}
+            draftHasText={draftHasText}
             sendMode={sendMode}
             streaming={streaming}
             sendDisabled={sendDisabled}

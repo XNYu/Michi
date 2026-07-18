@@ -15,6 +15,7 @@
     "backend:start": "cd backend && npm start",
     "frontend:dev": "npm run shared:build && cd frontend && npm run dev:raw",
     "frontend:build": "cd frontend && npm run build",
+    "frontend:verify-bundle": "node scripts/verify-frontend-bundle.mjs",
     "frontend:start": "cd frontend && npm start",
     "predev": "node scripts/kill-stale-dev.mjs",
     "dev": "npm run shared:build && concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw\"",

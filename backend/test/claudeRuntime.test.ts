@@ -254,6 +254,72 @@ describe('ClaudeRuntime', () => {
     await rt.shutdown();
   });
 
+  test('a losing foreground send cannot interrupt the turn that owns the Claude event queue', async () => {
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    const session = await rt.newSession({ cwd: '/tmp', sessionId: 'turn-lock-owner' } as any);
+
+    const owner = session.send('owner turn');
+    const ownerFirst = owner.next();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok((session as any).turnLock, 'first send should own the turn lock');
+
+    const loser = session.send('losing turn');
+    await assert.rejects(
+      () => loser.next(),
+      (err: any) => err?.code === 'ESESSION_BUSY',
+    );
+
+    const ownerWasInterrupted = await Promise.race([
+      ownerFirst.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5)),
+    ]);
+    assert.equal(ownerWasInterrupted, false, 'busy loser must not interrupt the owner queue waiter');
+
+    mockChild.emitResult('success');
+    await ownerFirst;
+    for await (const _event of owner) void _event;
+    await rt.shutdown();
+  });
+
+  test('a busy foreground send leaves the idle pump gate open after its self-turn completes', async () => {
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    const session = await rt.newSession({ cwd: '/tmp', sessionId: 'turn-lock-pump' } as any);
+    const concrete = session as any;
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+    let releaseDrain!: () => void;
+    const release = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    let callbacks = 0;
+
+    concrete.onSelfTurn(({ events }: any) => {
+      callbacks += 1;
+      if (callbacks === 1) firstStarted();
+      void (async () => {
+        if (callbacks === 1) await release;
+        for await (const _event of events) void _event;
+      })();
+    });
+
+    concrete.queue.push({ kind: 'chunk', text: 'self turn' });
+    await started;
+    assert.ok(concrete.turnLock, 'self turn should own the lock before competing send');
+
+    await assert.rejects(
+      () => session.send('busy foreground').next(),
+      (err: any) => err?.code === 'ESESSION_BUSY',
+    );
+
+    releaseDrain();
+    concrete.queue.push({ kind: 'turn_end', stopReason: 'end_turn' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(concrete.idleGate.isOpen, true, 'losing send must not strand the idle pump gate closed');
+
+    concrete.queue.push({ kind: 'turn_end', stopReason: 'end_turn' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(callbacks, 2, 'idle pump should recover and accept a subsequent self turn');
+    await rt.shutdown();
+  });
+
   // ── Case 4: concurrency cap enforced ─────────────────────────────────────────
 
   test('newSession() reclaims oldest idle session when cap is reached', async () => {

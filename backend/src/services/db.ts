@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import path from 'path';
 import { runMigrations as runSqlMigrations } from './migrate';
 import { getMichiDataDir } from './dataDir';
@@ -7,6 +7,7 @@ declare const __MICHIBUNDLE__: boolean | undefined;
 
 let _db: DatabaseSync | null = null;
 let _auditDb: DatabaseSync | null = null;
+const statementCache = new Map<string, StatementSync>();
 
 /**
  * Resolve a migration directory.
@@ -35,6 +36,7 @@ export function initDb(): DatabaseSync {
   if (_db) return _db;
   _db = new DatabaseSync(getDbPath());
   _db.exec('PRAGMA journal_mode = WAL');
+  _db.exec('PRAGMA synchronous = NORMAL');
   _db.exec('PRAGMA foreign_keys = ON');
   // Multi-window prereq (spec §18/D12): a writer that loses the WAL write-lock
   // race waits up to 5s for the lock instead of throwing SQLITE_BUSY at once.
@@ -51,7 +53,17 @@ export function getDb(): DatabaseSync {
   return _db;
 }
 
+/** Cache only static SQL owned by hot paths; never pass unbounded dynamic SQL. */
+export function prepareCached(sql: string): StatementSync {
+  const existing = statementCache.get(sql);
+  if (existing) return existing;
+  const statement = getDb().prepare(sql);
+  statementCache.set(sql, statement);
+  return statement;
+}
+
 export function closeDb(): void {
+  statementCache.clear();
   if (_db) {
     _db.close();
     _db = null;

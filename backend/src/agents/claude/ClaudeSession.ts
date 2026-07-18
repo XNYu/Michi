@@ -74,6 +74,17 @@ export interface ClaudeSessionDeps {
   ownerUserId?: string | null;
 }
 
+export type SelfTurnIterator = AsyncIterableIterator<NormalizedEvent>;
+
+export interface SelfTurnInfo {
+  chatId: string;
+  nodeId: string;
+  ownerUserId: string | null;
+  events: SelfTurnIterator;
+}
+
+export type SelfTurnCallback = (info: SelfTurnInfo) => void;
+
 // ---- ClaudeSession -----------------------------------------------------------
 
 export class ClaudeSession implements AgentSession {
@@ -152,6 +163,13 @@ export class ClaudeSession implements AgentSession {
   private disposedCallback: (() => void) | undefined;
   private disposedCallbackFired = false;
 
+  // Idle pump: drains self-initiated turns when no send() is active
+  private readonly idleGate = new AsyncGate();
+  private selfTurnCallback: SelfTurnCallback | null = null;
+  private idlePumpRunning = false;
+  /** True after the idle pump has claimed the first frame of a self-turn. */
+  private idlePumpTurnClaimed = false;
+
   constructor(id: string, deps: ClaudeSessionDeps) {
     this.id = id;
     this.nodeId = deps.nodeId;
@@ -208,10 +226,16 @@ export class ClaudeSession implements AgentSession {
 
     const tSendIn = perf.now();
     perf.mark('claude:send_entered', { sid: this.id, textLen: text.length, state: this.state });
-
+    // Acquiring the lock must be the first mutating step. A losing send must
+    // leave the active owner (foreground or idle-pump self-turn) entirely
+    // alone: closing its gate or interrupting its single EventQueue waiter
+    // would truncate that owner's stream.
+    this.acquireTurnLock();
     this.idleGate.close();
-    this.queue.interruptWaiter(); // kick pump out of blocking pull()
-    await this.acquireTurnLock();
+    // Once the pump has claimed a real self-turn it owns EventQueue until the
+    // terminal frame. Interrupting that waiter would splice the remaining
+    // self-turn frames into this foreground send().
+    if (!this.idlePumpTurnClaimed) this.queue.interruptWaiter();
     perf.measure('claude:send_lock_acquired', tSendIn, { sid: this.id });
     try {
       this.lastUsedAt = Date.now();
@@ -363,7 +387,11 @@ export class ClaudeSession implements AgentSession {
       throw new Error(`warmInit on ${this.state} session`);
     }
 
-    await this.acquireTurnLock();
+    // See send(): do not alter idle-pump coordination until this turn owns the
+    // lock, otherwise a concurrent warm-init can break the active owner.
+    this.acquireTurnLock();
+    this.idleGate.close();
+    if (!this.idlePumpTurnClaimed) this.queue.interruptWaiter();
     try {
       this.lastUsedAt = Date.now();
       this.state = 'in_turn';
@@ -459,6 +487,117 @@ export class ClaudeSession implements AgentSession {
     if (this.disposedCallbackFired) cb();
   }
 
+  /**
+   * Register a callback invoked when the session receives a self-initiated
+   * turn (e.g. a background task-notification completion). The callback
+   * receives an async iterator of NormalizedEvents for the self-turn.
+   */
+  onSelfTurn(cb: SelfTurnCallback): void {
+    this.selfTurnCallback = cb;
+  }
+
+  // ---- Idle pump -------------------------------------------------------------
+
+  /**
+   * Background loop that drains events pushed to the queue while the session
+   * is idle (no active send/warmInit). When it detects the start of a
+   * self-initiated turn, it emits the events via selfTurnCallback.
+   *
+   * Coordination with send():
+   *   - send()/warmInit() call idleGate.close() before draining
+   *   - idlePump awaits idleGate.wait() before each pull()
+   *   - send()/warmInit() call idleGate.open() when done
+   *
+   * The pump auto-stops when the session is disposed or crashed.
+   */
+  private startIdlePump(): void {
+    if (this.idlePumpRunning) return;
+    this.idlePumpRunning = true;
+
+    const run = async () => {
+      while (this.state !== 'disposed' && this.state !== 'crashed') {
+        await this.idleGate.wait();
+        if ((this.state as SessionState) === 'disposed' || (this.state as SessionState) === 'crashed') break;
+
+        const ev = await this.queue.pull();
+        if (ev === null) {
+          // null means either queue disposed or send() interrupted us.
+          // If queue is disposed, exit. Otherwise loop back to gate.wait().
+          if (this.queue.isDisposed) break;
+          continue;
+        }
+
+        // Heartbeats in idle are noise — skip
+        if (ev.kind === 'heartbeat') continue;
+
+        // A real event arrived while idle → self-initiated turn. Claim the
+        // same runtime mutex used by send()/warmInit() before yielding the
+        // first frame. The flag is set synchronously before the first await so
+        // a racing send() cannot interrupt the self iterator's queue waiter.
+        this.idlePumpTurnClaimed = true;
+        let lockHeld = false;
+        try {
+          this.acquireTurnLock();
+          lockHeld = true;
+          this.state = 'in_turn';
+          this.lastUsedAt = Date.now();
+
+          // Build an async iterator that yields this first event + rest of
+          // turn. The pump MUST await full consumption before releasing the
+          // mutex — EventQueue has a single waiter slot.
+          let drainResolve!: () => void;
+          const drainDone = new Promise<void>((r) => { drainResolve = r; });
+          const firstEvent = ev;
+          const queue = this.queue;
+          async function* selfTurnIterator(): AsyncIterableIterator<NormalizedEvent> {
+            try {
+              yield firstEvent;
+              if (firstEvent.kind === 'turn_end') return;
+              for await (const next of queue.drainUntilTurnEnd()) yield next;
+            } finally {
+              drainResolve();
+            }
+          }
+
+          const events = selfTurnIterator();
+          if (!this.selfTurnCallback) {
+            for await (const discard of events) void discard;
+          } else {
+            try {
+              this.selfTurnCallback({
+                chatId: this.id,
+                nodeId: this.nodeId,
+                ownerUserId: this.ownerUserId,
+                events,
+              });
+            } catch (err) {
+              // A synchronous callback failure must still release the pump's
+              // single waiter; consume the already-claimed runtime turn.
+              for await (const discard of events) void discard;
+              throw err;
+            }
+            await drainDone;
+          }
+
+          const stateAfterDrain = this.state as SessionState;
+          if (stateAfterDrain !== 'crashed' && stateAfterDrain !== 'disposed') {
+            this.state = 'idle';
+          }
+          this.lastUsedAt = Date.now();
+        } finally {
+          if (lockHeld) this.releaseTurnLock();
+          this.idlePumpTurnClaimed = false;
+        }
+      }
+      this.idlePumpRunning = false;
+    };
+
+    run().catch((err) => {
+      console.warn('[ClaudeSession] idle pump error:', err);
+      this.idlePumpRunning = false;
+    });
+  }
+
   // ---- Spawn ------------------------------------------------------------------
 
   async spawnFresh(): Promise<void> {
@@ -470,22 +609,23 @@ export class ClaudeSession implements AgentSession {
           parentChatId: this.id,
           cwd: this.cwd,
           enableFollowUps: true,
+          ownerUserId: this.ownerUserId,
           topics,
         });
         this.queue.push({ kind: 'spawn_branches', topics: result });
         return result;
       },
       onSaveContext: (name, body) => {
-        const saved = this.bridge.saveContext({ cwd: this.cwd, name, body });
+        const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (saved) {
-          this.queue.push({ kind: 'context_saved', name: saved.name, filePath: saved.filePath, size: saved.size });
+          this.queue.push({ kind: 'context_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
         }
         return saved;
       },
       onUpdateContext: (name, body) => {
-        const updated = this.bridge.updateContext({ cwd: this.cwd, name, body });
+        const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (updated) {
-          this.queue.push({ kind: 'context_updated', name: updated.name, filePath: updated.filePath, size: updated.size });
+          this.queue.push({ kind: 'context_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
         }
         return updated;
       },
@@ -528,22 +668,23 @@ export class ClaudeSession implements AgentSession {
           parentChatId: this.id,
           cwd: this.cwd,
           enableFollowUps: true,
+          ownerUserId: this.ownerUserId,
           topics,
         });
         this.queue.push({ kind: 'spawn_branches', topics: result });
         return result;
       },
       onSaveContext: (name, body) => {
-        const saved = this.bridge.saveContext({ cwd: this.cwd, name, body });
+        const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (saved) {
-          this.queue.push({ kind: 'context_saved', name: saved.name, filePath: saved.filePath, size: saved.size });
+          this.queue.push({ kind: 'context_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
         }
         return saved;
       },
       onUpdateContext: (name, body) => {
-        const updated = this.bridge.updateContext({ cwd: this.cwd, name, body });
+        const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (updated) {
-          this.queue.push({ kind: 'context_updated', name: updated.name, filePath: updated.filePath, size: updated.size });
+          this.queue.push({ kind: 'context_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
         }
         return updated;
       },
@@ -1071,7 +1212,7 @@ export class ClaudeSession implements AgentSession {
 
   // ---- Turn mutex ------------------------------------------------------------
 
-  private async acquireTurnLock(): Promise<void> {
+  private acquireTurnLock(): void {
     if (this.turnLock) {
       // Already a turn in flight — reject with ESESSION_BUSY
       throw Object.assign(new Error('Session is busy with an in-flight turn'), { code: 'ESESSION_BUSY' });

@@ -33,17 +33,15 @@ function placeholderNode(overrides: Partial<ChatNodeState> = {}): ChatNodeState 
 }
 
 describe('lazy-load write-back safety', () => {
-  it('placeholder nodes never enter messageNodeIds on first-project accumulation', () => {
+  it('placeholder nodes only enter the message-free node delta', () => {
     const p = project();
     const nodes = { n1: placeholderNode() };
     const delta = accumulateWorkspaceDirtyDelta(undefined, p, {}, nodes, emptyWorkspaceDirtyDelta());
-    // Structural id is tracked (the node row itself), but its MESSAGES are not
-    // — a placeholder's empty messages must never drive reconcile.
     expect(delta.nodeIds.has('n1')).toBe(true);
-    expect(delta.messageNodeIds.has('n1')).toBe(false);
+    expect('messageNodeIds' in delta).toBe(false);
   });
 
-  it('a loaded node still drives message reconcile normally', () => {
+  it('a loaded node uses the same message-free node delta', () => {
     const p = project();
     const loaded: ChatNodeState = placeholderNode({
       messagesLoaded: true,
@@ -51,16 +49,17 @@ describe('lazy-load write-back safety', () => {
     });
     const nodes = { n1: loaded };
     const delta = accumulateWorkspaceDirtyDelta(undefined, p, {}, nodes, emptyWorkspaceDirtyDelta());
-    expect(delta.messageNodeIds.has('n1')).toBe(true);
+    expect(delta.nodeIds.has('n1')).toBe(true);
+    expect('messageNodeIds' in delta).toBe(false);
   });
 
-  it('a node changing while still a placeholder does not leak messages into the delta', () => {
+  it('a node changing while still a placeholder remains message-free', () => {
     const p = project();
     const prevNodes = { n1: placeholderNode({ title: 'old' }) };
     const curNodes = { n1: placeholderNode({ title: 'new' }) }; // title edit, still unloaded
     const delta = accumulateWorkspaceDirtyDelta(p, p, prevNodes, curNodes, emptyWorkspaceDirtyDelta());
     expect(delta.nodeIds.has('n1')).toBe(true);
-    expect(delta.messageNodeIds.has('n1')).toBe(false);
+    expect('messageNodeIds' in delta).toBe(false);
   });
 });
 

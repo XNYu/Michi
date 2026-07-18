@@ -224,6 +224,7 @@ export class KiroSession implements AgentSession {
                 if (typeof update.name === "string" && typeof update.filePath === "string") {
                     yield {
                         kind: "context_saved",
+                        contextId: typeof update.contextId === "string" ? update.contextId : undefined,
                         name: update.name,
                         filePath: update.filePath,
                         size: typeof update.size === "number" ? update.size : undefined,
@@ -233,6 +234,7 @@ export class KiroSession implements AgentSession {
                 if (typeof update.name === "string" && typeof update.filePath === "string") {
                     yield {
                         kind: "context_updated",
+                        contextId: typeof update.contextId === "string" ? update.contextId : undefined,
                         name: update.name,
                         filePath: update.filePath,
                         size: typeof update.size === "number" ? update.size : undefined,

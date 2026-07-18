@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = Number(process.env.MICHI_E2E_PORT ?? 3001);
-const baseURL = `http://localhost:${port}`;
+const e2ePort = Number(process.env.E2E_PORT ?? process.env.MICHI_E2E_PORT ?? 3001);
+const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
+const isolatedPort = process.env.E2E_PORT !== undefined || process.env.MICHI_E2E_PORT !== undefined;
 
 // Web-only e2e for the React/Vite frontend. The backend is NEVER reached —
 // every /api/** call is intercepted by fixtures/mockApi.ts. That keeps tests
@@ -20,7 +21,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
 
   use: {
-    baseURL,
+    baseURL: e2eBaseUrl,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     // Keep videos off by default — they bloat traces. Enable per-spec when debugging.
@@ -38,10 +39,12 @@ export default defineConfig({
   // boot vite from the frontend workspace. We do NOT start the backend — the
   // mockApi fixture intercepts every /api/** call.
   webServer: {
-    command: `npm --prefix frontend run dev:raw -- --port ${port}`,
+    command: `npm run shared:build && npm --prefix frontend run dev:raw -- --host 127.0.0.1 --port ${e2ePort}`,
     cwd: '..',
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
+    url: e2eBaseUrl,
+    // A caller-supplied port is an isolation request: never reuse a server
+    // from another checkout/worktree just because it happens to answer.
+    reuseExistingServer: !process.env.CI && !isolatedPort,
     timeout: 60_000,
     stdout: 'pipe',
     stderr: 'pipe',

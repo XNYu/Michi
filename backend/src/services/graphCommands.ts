@@ -39,6 +39,8 @@ export interface EnsureDurableGraphNodeInput {
     kind?: string;
     title?: string | null;
     spawnedByAgent?: boolean;
+    /** Opaque frontend-owned draft/outbox payload. */
+    composerDraft?: string | null;
     currentModeId?: string | null;
     createdAt: number;
   };
@@ -58,6 +60,41 @@ export interface EnsureDurableGraphNodeResult {
   tree: TreeRow | null;
   node: NodeRow;
   edges: EdgeRow[];
+}
+
+/** Remove only an untouched agent-spawn prerequisite whose runtime session
+ * failed to materialize. The guards prevent compensation from deleting a
+ * child that another concurrent path already bound or started. */
+export function rollbackProvisionalSpawnNode(
+  nodeId: string,
+  workspaceId: string,
+  ownerUserId?: string | null,
+): boolean {
+  return runInTransaction(() => {
+    const row = getDb().prepare(`
+      SELECT n.spawned_by_agent, n.status, n.acp_session_id,
+             (SELECT COUNT(*) FROM messages m WHERE m.node_id = n.id) AS message_count,
+             w.owner_user_id
+        FROM nodes n JOIN workspaces w ON w.id = n.workspace_id
+       WHERE n.id = ? AND n.workspace_id = ?
+    `).get(nodeId, workspaceId) as {
+      spawned_by_agent: number;
+      status: string;
+      acp_session_id: string | null;
+      message_count: number;
+      owner_user_id: string | null;
+    } | undefined;
+    if (!row) return false;
+    if (process.env.MICHI_CLOUD === '1' && row.owner_user_id !== (ownerUserId ?? null)) return false;
+    if (
+      row.spawned_by_agent !== 1
+      || row.status !== 'idle'
+      || row.acp_session_id
+      || row.message_count !== 0
+    ) return false;
+    getDb().prepare('DELETE FROM nodes WHERE id = ? AND workspace_id = ?').run(nodeId, workspaceId);
+    return true;
+  });
 }
 
 function requiredId(value: string, label: string): string {
@@ -167,6 +204,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
         minimized: 0,
         spawned_by_agent: input.node.spawnedByAgent ? 1 : 0,
         current_mode_id: input.node.currentModeId ?? null,
+        composer_draft: input.node.composerDraft ?? null,
         created_at: input.node.createdAt,
       }, input.ownerUserId ?? undefined);
     }

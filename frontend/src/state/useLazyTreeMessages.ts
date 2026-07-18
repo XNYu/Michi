@@ -52,16 +52,22 @@ export function useLazyTreeMessages({
     // so we must scope by tree membership — otherwise other trees' placeholders
     // would be wrongly backfilled to loaded-empty below.
     const nodes = nodesRef.current;
-    const treeNodeIds = activeProject.chatIds.filter((nid) => {
+    const placeholderNodeIds = activeProject.chatIds.filter((nid) => {
       const n = nodes[nid];
       if (!n || n.messagesLoaded !== false) return false;
       return findTreeIdForNode(nid, activeProject) === activeTreeId;
     });
-    if (treeNodeIds.length === 0) {
+    if (placeholderNodeIds.length === 0) {
       // Nothing to load (already loaded or genuinely empty) — mark done.
       loadedKeysRef.current.add(key);
       return;
     }
+    // Never install a tree snapshot over an active stream. Once that turn is
+    // terminal, its node/project activity causes this effect to run again and
+    // the canonical DB transcript (history + completed turn) is safe to load.
+    const treeNodeIds = placeholderNodeIds.filter((nid) => nodes[nid]?.status !== 'streaming');
+    if (treeNodeIds.length === 0) return;
+    const startNodes = new Map(treeNodeIds.map((nid) => [nid, nodes[nid]] as const));
 
     loadedKeysRef.current.add(key);
     let cancelled = false;
@@ -73,18 +79,32 @@ export function useLazyTreeMessages({
         // Ensure every placeholder node in this tree flips to loaded, even ones
         // the backend returned zero rows for (genuinely-empty nodes): give them
         // an explicit empty list so messagesLoaded becomes true.
+        let skippedChangedNode = false;
         for (const nid of treeNodeIds) {
+          const current = nodesRef.current[nid];
+          if (
+            current !== startNodes.get(nid)
+            || current?.messagesLoaded !== false
+            || current.status === 'streaming'
+          ) {
+            delete byNode[nid];
+            skippedChangedNode = true;
+            continue;
+          }
           if (!byNode[nid]) byNode[nid] = [];
         }
-        dispatch({
-          type: 'messages-loaded',
-          nodeIds: Object.keys(byNode),
-          messagesByNode: byNode,
-        });
+        const nodeIds = Object.keys(byNode);
+        if (nodeIds.length > 0) {
+          dispatch({ type: 'messages-loaded', nodeIds, messagesByNode: byNode });
+        }
+        if (skippedChangedNode) loadedKeysRef.current.delete(key);
       } catch {
         if (!cancelled) loadedKeysRef.current.delete(key); // allow retry
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      loadedKeysRef.current.delete(key);
+    };
   }, [hydrated, activeProject, activeTreeId, nodesRef, dispatch]);
 }

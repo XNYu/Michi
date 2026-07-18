@@ -366,21 +366,39 @@ export function useSmooth(
   const profileRef = useRef(profile);
   const streamingRef = useRef(streaming);
   const probeIdRef = useRef<string | null>(null);
-  const segCacheRef = useRef<{ source: string; boundaries: number[] }>({ source: '', boundaries: [] });
-  const sourceBoundaries = useMemo(
-    () => segmentGraphemesIncremental(segCacheRef.current, source),
-    [source],
-  );
-  useLayoutEffect(() => {
-    segCacheRef.current = { source, boundaries: sourceBoundaries };
-  }, [source, sourceBoundaries]);
   const [displayed, setDisplayed] = useState(source);
   const displayedRef = useRef(source);
   const sourceRef = useRef(source);
-  const boundariesRef = useRef(sourceBoundaries);
-  const cursorRef = useRef(sourceBoundaries.length);
-  const sourceCountRef = useRef(sourceBoundaries.length);
+  const segCacheRef = useRef<{ source: string; boundaries: number[] }>({ source: '', boundaries: [] });
+  const boundariesRef = useRef<number[]>([]);
+  const cursorRef = useRef(0);
+  const sourceCountRef = useRef(0);
   const sourceCharCountRef = useRef(source.length);
+  // A message that mounts already complete is fully visible and will never
+  // enter the typewriter loop unless its source later grows. Avoid building
+  // and retaining one grapheme boundary per character for that common path.
+  const shouldSegment =
+    streaming || displayedRef.current !== source || segCacheRef.current.source.length > 0;
+  const sourceBoundaries = useMemo(
+    () => shouldSegment ? segmentGraphemesIncremental(segCacheRef.current, source) : [],
+    [shouldSegment, source],
+  );
+  if (
+    shouldSegment &&
+    segCacheRef.current.source.length === 0 &&
+    boundariesRef.current.length === 0
+  ) {
+    // Segmentation was deferred on mount. Reconstruct the cursor from the
+    // text already on screen before processing any appended streaming tail.
+    const displayedCount = displayedGraphemeCount(sourceBoundaries, displayedRef.current.length);
+    cursorRef.current = displayedCount;
+    sourceCountRef.current = displayedCount;
+    sourceCharCountRef.current = displayedRef.current.length;
+  }
+  useLayoutEffect(() => {
+    if (!shouldSegment) return;
+    segCacheRef.current = { source, boundaries: sourceBoundaries };
+  }, [source, sourceBoundaries, shouldSegment]);
   const frameRef = useRef<FrameHandle | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
   const budgetRef = useRef(0);

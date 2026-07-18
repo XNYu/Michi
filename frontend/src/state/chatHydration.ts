@@ -159,6 +159,21 @@ function parseComposerDraft(raw: unknown): ComposerDraft | undefined {
   return { value: text, mentions, quotedText };
 }
 
+/** Read the server-owned spawn outbox without rendering it as a composer draft. */
+function parsePendingSpawnPrompt(raw: unknown): string | undefined {
+  let value = raw;
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const prompt = (value as Record<string, unknown>).__michiPendingSpawnPrompt;
+  return typeof prompt === 'string' && prompt.trim().length > 0 ? prompt : undefined;
+}
+
 function parseTrimSnapshot(raw: unknown): TrimSnapshot | undefined {
   let value = raw;
   if (typeof value === 'string' && value.trim()) {
@@ -388,10 +403,15 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     followUpsSourceMessageId: asString(row.follow_ups_source_message_id) || undefined,
     title: asString(row.title),
     branchOverview: asString(row.branch_overview) || undefined,
-    status: 'idle',
+    status: row.status === 'streaming' ? 'streaming' : row.status === 'error' ? 'error' : 'idle',
+    lastAppliedTurnId: asString(row.last_applied_turn_id),
+    lastAppliedSeq: asOptionalNumber(row.last_applied_seq),
+    lastAppliedBackgroundTurnId: asString(row.last_applied_turn_id),
+    lastAppliedBackgroundSeq: asOptionalNumber(row.last_applied_seq),
     minimized: row.minimized === 1 || row.minimized === true || undefined,
     position: posX !== undefined && posY !== undefined ? { x: posX, y: posY } : undefined,
     spawnedByAgent: row.spawned_by_agent === 1 || row.spawned_by_agent === true || undefined,
+    pendingSpawnPrompt: parsePendingSpawnPrompt(row.composer_draft),
     deletedAt: asOptionalNumber(row.deleted_at),
     deletionGroupId: asString(row.deletion_group_id),
     trimSnapshot: parseTrimSnapshot(row.trim_snapshot),
@@ -620,6 +640,18 @@ export function hydrateSavedState(saved: unknown): HydratedState {
         typeof (raw as any).reasoning === 'string' ? (raw as any).reasoning : null,
       resumeFingerprint:
         typeof (raw as any).resumeFingerprint === 'string' ? (raw as any).resumeFingerprint : null,
+      lastAppliedTurnId:
+        typeof (raw as any).lastAppliedTurnId === 'string' ? (raw as any).lastAppliedTurnId : undefined,
+      lastAppliedSeq:
+        typeof (raw as any).lastAppliedSeq === 'number' ? (raw as any).lastAppliedSeq : undefined,
+      lastAppliedBackgroundTurnId:
+        typeof (raw as any).lastAppliedBackgroundTurnId === 'string'
+          ? (raw as any).lastAppliedBackgroundTurnId
+          : typeof (raw as any).lastAppliedTurnId === 'string' ? (raw as any).lastAppliedTurnId : undefined,
+      lastAppliedBackgroundSeq:
+        typeof (raw as any).lastAppliedBackgroundSeq === 'number'
+          ? (raw as any).lastAppliedBackgroundSeq
+          : typeof (raw as any).lastAppliedSeq === 'number' ? (raw as any).lastAppliedSeq : undefined,
       projectId: raw.projectId,
       parentNodeId: raw.parentNodeId,
       mergeSources: raw.mergeSources,
@@ -646,6 +678,10 @@ export function hydrateSavedState(saved: unknown): HydratedState {
       // peer context.
       consumedLinks: undefined,
       spawnedByAgent: (raw as any).spawnedByAgent === true || undefined,
+      pendingSpawnPrompt:
+        typeof (raw as any).pendingSpawnPrompt === 'string' && (raw as any).pendingSpawnPrompt.trim()
+          ? (raw as any).pendingSpawnPrompt
+          : undefined,
       deletedAt:
         typeof (raw as any).deletedAt === 'number' ? (raw as any).deletedAt : undefined,
       deletionGroupId:

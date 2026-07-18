@@ -57,4 +57,13 @@ describe('PRAGMA busy_timeout', () => {
     assert.equal(journal.journal_mode.toLowerCase(), 'wal', 'journal_mode must stay WAL');
     assert.equal(fk.foreign_keys, 1, 'foreign_keys must stay ON');
   });
+
+  test('uses NORMAL durability for data.db while audit.db remains FULL', () => {
+    initDb();
+    const data = getDb().prepare('PRAGMA synchronous').get() as { synchronous: number };
+    const audit = getAuditDb().prepare('PRAGMA synchronous').get() as { synchronous: number };
+
+    assert.equal(data.synchronous, 1, 'data.db should use synchronous=NORMAL under WAL');
+    assert.equal(audit.synchronous, 2, 'audit.db must retain synchronous=FULL durability');
+  });
 });

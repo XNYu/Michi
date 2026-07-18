@@ -134,6 +134,27 @@ describe('turn persistence repository', () => {
     assert.equal(fts.length, 1);
   });
 
+  test('beginTurn atomically consumes an agent spawn prompt outbox', () => {
+    getDb().prepare('UPDATE nodes SET composer_draft = ? WHERE id = ?').run(
+      JSON.stringify({ __michiPendingSpawnPrompt: 'Investigate the child' }),
+      'node-1',
+    );
+    const snapshot = createDurableTurn({
+      turnId: 'turn-spawn',
+      assistantId: 'a-node-1-turn-spawn',
+      nodeId: 'node-1',
+      workspaceId: 'ws-1',
+      displayUserText: 'Investigate the child',
+      startedAt: 250,
+    });
+
+    beginTurn(snapshot);
+
+    const node = getDb().prepare('SELECT composer_draft FROM nodes WHERE id = ?')
+      .get('node-1') as { composer_draft: string | null };
+    assert.equal(node.composer_draft, null);
+  });
+
   test('finalizes cancelled and errored partial turns without losing content', () => {
     let cancelled = createDurableTurn({
       turnId: 'turn-cancel', assistantId: 'a-cancel', nodeId: 'node-1', workspaceId: 'ws-1',
@@ -187,6 +208,7 @@ describe('turn persistence repository', () => {
     });
     beginTurn(snapshot);
     snapshot = applyTurnEvent(snapshot, event('chunk', { text: 'checkpointed partial', seq: 1 }));
+    assert.equal(snapshot.assistantMessage.content, '', 'active turns defer derived content');
     checkpointTurn(snapshot);
 
     assert.equal(recoverInterruptedTurns(600), 1);

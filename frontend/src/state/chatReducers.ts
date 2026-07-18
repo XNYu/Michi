@@ -92,12 +92,15 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
       const contexts = p.contexts ?? [];
       const now = Date.now();
       if (a.context.id) {
-        const idx = contexts.findIndex((c) => c.id === a.context.id);
+        const idx = contexts.findIndex((c) =>
+          c.id === a.context.id || c.name.toLowerCase() === a.context.name.toLowerCase(),
+        );
         if (idx >= 0) {
           const updated = contexts.map((c, i) =>
             i === idx
               ? {
                   ...c,
+                  id: a.context.id ?? c.id,
                   name: a.context.name,
                   filePath: a.context.filePath,
                   size: a.context.size ?? c.size,
@@ -118,7 +121,7 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
         name = `${a.context.name}-${suffix}`;
       }
       const entry: ContextEntry = {
-        id: `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        id: a.context.id ?? `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
         name,
         filePath: a.context.filePath,
         size: a.context.size,
@@ -141,6 +144,7 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
             i === idx
               ? {
                   ...c,
+                  id: a.context.id ?? c.id,
                   name: a.context.name,
                   filePath: a.context.filePath,
                   size: a.context.size ?? c.size,
@@ -152,7 +156,7 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
         };
       }
       const entry: ContextEntry = {
-        id: `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        id: a.context.id ?? `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
         name: a.context.name,
         filePath: a.context.filePath,
         size: a.context.size,
@@ -304,6 +308,10 @@ export function reduceNodes(
     case 'observer-turn-start': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
+      const foreground = action.cursor === 'foreground';
+      const cursor = foreground
+        ? { lastAppliedTurnId: action.turnId, lastAppliedSeq: Math.max(n.lastAppliedSeq ?? 0, 0) }
+        : { lastAppliedBackgroundTurnId: action.turnId, lastAppliedBackgroundSeq: Math.max(n.lastAppliedBackgroundSeq ?? 0, 0) };
       if (n.messages.some((m) => m.id === action.assistantId)) {
         return {
           ...nodes,
@@ -313,8 +321,7 @@ export function reduceNodes(
             streamingStartedAt: n.streamingStartedAt ?? Date.now(),
             error: undefined,
             visibleResponseComplete: false,
-            lastAppliedTurnId: action.turnId,
-            lastAppliedSeq: Math.max(n.lastAppliedSeq ?? 0, 0),
+            ...cursor,
           },
         };
       }
@@ -363,27 +370,10 @@ export function reduceNodes(
           subagents: undefined,
           usageSummary: undefined,
           mcpServerError: undefined,
-          lastAppliedTurnId: action.turnId,
-          lastAppliedSeq: 0,
-          messages: [
-            ...n.messages,
-            {
-              id: `u-${action.assistantId}`,
-              role: 'user',
-              text: action.userText,
-              toolCalls: [],
-              createdAt: now,
-            },
-            {
-              id: action.assistantId,
-              role: 'assistant',
-              text: '',
-              toolCalls: [],
-              blocks: [],
-              streaming: true,
-              createdAt: now,
-            },
-          ],
+          ...(foreground
+            ? { lastAppliedTurnId: action.turnId, lastAppliedSeq: 0 }
+            : { lastAppliedBackgroundTurnId: action.turnId, lastAppliedBackgroundSeq: 0 }),
+          messages: [...n.messages, ...newMessages],
         },
       };
     }
@@ -399,6 +389,21 @@ export function reduceNodes(
           ...n,
           lastAppliedTurnId: action.turnId,
           lastAppliedSeq: action.seq,
+        },
+      };
+    }
+    case 'apply-background-seq': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      const sameTurn = n.lastAppliedBackgroundTurnId === action.turnId;
+      const prev = sameTurn ? n.lastAppliedBackgroundSeq ?? -1 : -1;
+      if (action.seq <= prev) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          lastAppliedBackgroundTurnId: action.turnId,
+          lastAppliedBackgroundSeq: action.seq,
         },
       };
     }
@@ -1170,7 +1175,8 @@ export function reduceNodes(
     }
     case 'agent-spawn': {
       const copy = { ...nodes };
-      for (const spawned of action.nodes) {
+      const newlyCreated = action.nodes.filter((spawned) => !copy[spawned.nodeId]);
+      for (const spawned of newlyCreated) {
         copy[spawned.nodeId] = {
           nodeId: spawned.nodeId,
           kind: 'chat',
@@ -1178,27 +1184,25 @@ export function reduceNodes(
           runtimeId: spawned.runtimeId,
           projectId: action.projectId,
           parentNodeId: action.parentNodeId,
-          messages: [
-            { id: `u-${spawned.nodeId}-0`, role: 'user', text: spawned.prompt, toolCalls: [], createdAt: Date.now() },
-            { id: `a-${spawned.nodeId}-0`, role: 'assistant', text: '', toolCalls: [], blocks: [], streaming: true, createdAt: Date.now() },
-          ],
+          messages: [],
+          messagesLoaded: true,
           followUps: [],
           title: spawned.title,
           titleNeedsPersistence: true,
-          status: 'streaming',
-          streamingStartedAt: Date.now(),
+          status: 'idle',
           spawnedByAgent: true,
+          pendingSpawnPrompt: spawned.prompt,
         };
       }
       const parent = copy[action.parentNodeId] ?? nodes[action.parentNodeId];
-      if (parent) {
+      if (parent && newlyCreated.length > 0) {
         const msgs = parent.messages.map((m, i, arr) => {
           if (i !== arr.length - 1) return m;
           if (m.role !== 'assistant') return m;
           const placement = nextToolBlockPlacement(m);
           const tool = {
-            id: `spawn-${Date.now()}-${action.nodes[0]?.nodeId ?? 'na'}`,
-            title: `Spawned ${action.nodes.length} branch${action.nodes.length === 1 ? '' : 'es'}: ${action.nodes.map((n) => n.title).join(', ')}`,
+            id: `spawn-${Date.now()}-${newlyCreated[0]?.nodeId ?? 'na'}`,
+            title: `Spawned ${newlyCreated.length} branch${newlyCreated.length === 1 ? '' : 'es'}: ${newlyCreated.map((n) => n.title).join(', ')}`,
             status: 'completed',
             kind: 'spawn_branches',
             textOffset: placement.rawOffset,
@@ -1208,6 +1212,12 @@ export function reduceNodes(
         copy[action.parentNodeId] = { ...parent, messages: msgs };
       }
       return copy;
+    }
+    case 'spawn-prompt-started': {
+      const n = nodes[action.nodeId];
+      if (!n?.pendingSpawnPrompt) return nodes;
+      const { pendingSpawnPrompt: _pendingSpawnPrompt, ...started } = n;
+      return { ...nodes, [action.nodeId]: started };
     }
     case 'subagent-list-update': {
       const n = nodes[action.nodeId];

@@ -485,6 +485,28 @@ describe('hydrateSavedState v4 contexts', () => {
 });
 
 describe('hydrateBackendWorkspaces', () => {
+    it('maps a spawned child durable outbox independently from composer drafts', () => {
+        const result = hydrateBackendWorkspaces([{
+            workspace: { id: 'p-spawn', name: 'Recovery', active_tree_id: 't-spawn', created_at: 1 },
+            trees: [{ id: 't-spawn', workspace_id: 'p-spawn', root_node_id: 'n-spawn', created_at: 1, last_active_at: 1 }],
+            nodes: [{
+                id: 'n-spawn', workspace_id: 'p-spawn', tree_id: 't-spawn', kind: 'chat',
+                spawned_by_agent: 1, title: 'Durable child', acp_session_id: 'runtime-child', runtime_id: 'kiro',
+                composer_draft: JSON.stringify({ __michiPendingSpawnPrompt: 'Resume this child after a missed event' }),
+                created_at: 1,
+            }],
+            edges: [], messages: [], contexts: [],
+        }]);
+
+        expect(result.nodes['n-spawn']).toMatchObject({
+            chatId: 'runtime-child',
+            title: 'Durable child',
+            spawnedByAgent: true,
+            pendingSpawnPrompt: 'Resume this child after a missed event',
+        });
+        expect(result.nodes['n-spawn'].composerDraft).toBeUndefined();
+    });
+
     it('maps SQLite workspace rows into live chat state', () => {
         const result = hydrateBackendWorkspaces([
             {
@@ -565,7 +587,7 @@ describe('hydrateBackendWorkspaces', () => {
             source: 'agent',
         });
         expect(result.nodes.n1.chatId).toBeNull();
-        expect(result.nodes.n1.status).toBe('idle');
+        expect(result.nodes.n1.status).toBe('streaming');
         expect(result.nodes.n1.position).toEqual({ x: 12, y: 34 });
         expect(result.nodes.n1.messages).toHaveLength(2);
         expect(result.nodes.n1.messages[1].toolCalls[0].title).toBe('search');
@@ -664,6 +686,8 @@ vi.mock('../services/api', () => ({
   heartbeatPane: () => Promise.resolve(true),
   releasePane: () => Promise.resolve(),
   subscribeChat: vi.fn(() => () => {}),
+  subscribeChats: vi.fn(() => () => {}),
+  subscribeBackground: vi.fn(() => () => {}),
   cancelChat: () => Promise.resolve(),
 }));
 
@@ -815,6 +839,25 @@ describe('reduceProject context actions', () => {
         });
         expect(updated.contexts).toHaveLength(1);
         expect(updated.contexts![0].filePath).toBe('docs/api-spec-v2.md');
+    });
+
+    it('keeps one context when a live agent SSE follows a durable workspace reload', () => {
+        const hydrated = {
+            ...baseProject,
+            contexts: [{
+                id: 'ctx-durable', name: 'notes', filePath: '.contexts/notes.md',
+                size: 2, source: 'agent' as const, createdAt: 1, updatedAt: 1,
+            }],
+        };
+        const afterLiveEvent = reduceProject(hydrated, {
+            type: 'upsert-context', projectId: 'p1',
+            context: {
+                id: 'ctx-durable', name: 'notes', filePath: '.contexts/notes.md',
+                size: 11, source: 'agent',
+            },
+        });
+        expect(afterLiveEvent.contexts).toHaveLength(1);
+        expect(afterLiveEvent.contexts![0]).toMatchObject({ id: 'ctx-durable', size: 11, name: 'notes' });
     });
 
     it('update-context-by-name updates an existing context without duplicating it', () => {

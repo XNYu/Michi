@@ -81,6 +81,27 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
         body,
       });
     }
+    if (method === 'POST' && path === '/chats/background/subscribe') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'cache-control': 'no-cache' },
+        body: ': keepalive\n\n',
+      });
+    }
+    if (method === 'GET' && /^\/chats\/[^/]+\/stream$/.test(path)) {
+      const turnId = url.searchParams.get('fromTurnId') ?? 'mock-replay-turn';
+      const seq = Number(url.searchParams.get('fromSeq') ?? 0);
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'cache-control': 'no-cache' },
+        body: sseBody([{
+          event: 'done',
+          data: { turnId, seq, assistantId: 'mock-replay-assistant', persisted: true },
+        }]),
+      });
+    }
 
     // ── JSON endpoints ───────────────────────────────────────────────────
     const json = (data: unknown) =>

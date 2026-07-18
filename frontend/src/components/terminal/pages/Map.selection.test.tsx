@@ -1,4 +1,5 @@
 import React from 'react';
+import dagre from '@dagrejs/dagre';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import TerminalMap from './Map';
@@ -72,6 +73,46 @@ beforeEach(() => {
 });
 
 describe('Map selection actions', () => {
+  it('reuses the dagre layout when only labels or project metadata change', () => {
+    const layout = vi.spyOn(dagre, 'layout');
+    try {
+      const view = render(<TerminalMap />);
+      const initialCalls = layout.mock.calls.length;
+      expect(initialCalls).toBeGreaterThan(0);
+
+      storeState.project = { ...storeState.project, name: 'Renamed workspace' };
+      storeState.nodes = {
+        ...storeState.nodes,
+        n1: { ...storeState.nodes.n1, title: 'Renamed node' },
+      };
+      view.rerender(<TerminalMap />);
+
+      expect(layout).toHaveBeenCalledTimes(initialCalls);
+    } finally {
+      layout.mockRestore();
+    }
+  });
+
+  it('recomputes dagre layout when branch topology changes', () => {
+    const layout = vi.spyOn(dagre, 'layout');
+    try {
+      const view = render(<TerminalMap />);
+      const initialCalls = layout.mock.calls.length;
+
+      storeState.project = {
+        ...storeState.project,
+        chatIds: [...storeState.project.chatIds, 'n3'],
+        edges: [...storeState.project.edges, { source: 'n2', target: 'n3', kind: 'branch' }],
+      };
+      storeState.nodes = { ...storeState.nodes, n3: node('n3') };
+      view.rerender(<TerminalMap />);
+
+      expect(layout.mock.calls.length).toBeGreaterThan(initialCalls);
+    } finally {
+      layout.mockRestore();
+    }
+  });
+
   it('exposes Merge, Digest, Export, and Clear and wires their existing flows', async () => {
     const onNav = vi.fn();
     const digestSpy = vi.fn();

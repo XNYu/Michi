@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
+import { frontendManualChunk } from './viteChunks';
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
@@ -38,41 +39,7 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes('node_modules/react-dom')) return 'react-vendor';
-          if (id.includes('node_modules/katex')) return 'math';
-          // Keep shiki langs/themes as separate Rollup-managed dynamic chunks.
-          // Only bundle shiki core+engine into markdown-code so it ships once
-          // alongside the first code block render.
-          if (
-            id.includes('node_modules/@shikijs/langs/') ||
-            id.includes('node_modules/@shikijs/themes/')
-          )
-            return undefined;
-          if (
-            id.includes('node_modules/shiki/') ||
-            id.includes('node_modules/@shikijs/')
-          )
-            return 'markdown-code';
-          if (
-            id.includes('node_modules/streamdown') ||
-            id.includes('node_modules/@streamdown') ||
-            id.includes('node_modules/marked') ||
-            id.includes('node_modules/remend') ||
-            id.includes('node_modules/mermaid')
-          )
-            return 'markdown-streamdown';
-          if (
-            id.includes('node_modules/react-markdown') ||
-            id.includes('node_modules/rehype') ||
-            id.includes('node_modules/remark') ||
-            id.includes('node_modules/unified') ||
-            id.includes('node_modules/mdast') ||
-            id.includes('node_modules/hast') ||
-            id.includes('node_modules/micromark')
-          )
-            return 'markdown-legacy';
-        },
+        manualChunks: frontendManualChunk,
       },
     },
   },

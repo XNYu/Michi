@@ -1,4 +1,3 @@
-import { subscribeChat } from '../services/api';
 import type { StreamHandlers } from '../services/chatStreamEvents';
 import type { ChatAction } from './chatTypes';
 
@@ -11,6 +10,16 @@ interface ObserveOptions {
   lastTurnRef: Ref<string>;
   lastSeqRef: Ref<number>;
   onTerminal?: () => void;
+  extraHandlers?: Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'>;
+  onTurnEnd?: (reason: 'done' | 'error', nodeId: string) => void;
+  onStreamComplete?: () => void;
+  cursor?: 'foreground' | 'background';
+}
+
+export interface BackgroundTurnBinding {
+  nodeId: string;
+  chatId: string;
+  createHandlers(): StreamHandlers;
 }
 
 function toolState(tool: Parameters<NonNullable<StreamHandlers['onToolCall']>>[0]) {
@@ -25,18 +34,18 @@ function toolState(tool: Parameters<NonNullable<StreamHandlers['onToolCall']>>[0
   };
 }
 
-export function observeChatStream({
+export function createBackgroundTurnBinding({
   chatId,
   nodeId,
   dispatch,
   lastTurnRef,
   lastSeqRef,
   onTerminal,
-}: ObserveOptions): () => void {
-  let stopped = false;
-  let detach: (() => void) | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
+  extraHandlers,
+  onTurnEnd,
+  onStreamComplete,
+  cursor = 'background',
+}: ObserveOptions): BackgroundTurnBinding {
   const makeHandlers = (): StreamHandlers => {
     let assistantId = '';
     let turnId = '';
@@ -52,33 +61,36 @@ export function observeChatStream({
       if (lastTurnRef.current === turnId && seq <= lastSeqRef.current) return false;
       lastTurnRef.current = turnId;
       lastSeqRef.current = seq;
-      dispatch({ type: 'apply-seq', nodeId, turnId, seq });
+      dispatch({ type: cursor === 'foreground' ? 'apply-seq' : 'apply-background-seq', nodeId, turnId, seq });
       return true;
     };
 
-    return {
+    const base: StreamHandlers = {
+      onEnvelope: (envelope) => {
+        rememberEnvelope(envelope.assistantId, envelope.turnId);
+        return applySeq(envelope.seq, envelope.turnId);
+      },
       onTurnStart: (data) => {
         rememberEnvelope(data.assistantId, data.turnId);
-        const envelope = data as typeof data & { seq?: number };
-        const seq = typeof envelope.seq === 'number' ? envelope.seq : 0;
-        if (!applySeq(seq, data.turnId)) return;
         dispatch({
           type: 'observer-turn-start',
           nodeId,
           turnId: data.turnId,
           assistantId: data.assistantId,
           userText: data.userText,
+          ...(data.selfInitiated ? { selfInitiated: true } : {}),
+          cursor,
         });
       },
-      onChunk: (text, seq, incomingAssistantId, incomingTurnId) => {
+      onChunk: (text, _seq, incomingAssistantId, incomingTurnId) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
-        if (applySeq(seq, incomingTurnId) && assistantId) {
+        if (assistantId) {
           dispatch({ type: 'chunk', nodeId, assistantId, text });
         }
       },
-      onThought: (text, seq, incomingAssistantId, incomingTurnId) => {
+      onThought: (text, _seq, incomingAssistantId, incomingTurnId) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
-        if (applySeq(seq, incomingTurnId) && assistantId) {
+        if (assistantId) {
           dispatch({ type: 'thought', nodeId, assistantId, text });
         }
       },
@@ -88,24 +100,31 @@ export function observeChatStream({
       onToolCall: (tool) => {
         const env = tool as typeof tool & { assistantId?: string; turnId?: string; seq?: number };
         rememberEnvelope(env.assistantId, env.turnId);
-        if (applySeq(env.seq, env.turnId) && assistantId) {
+        if (assistantId) {
           dispatch({ type: 'tool-call', nodeId, assistantId, tool: toolState(tool) });
         }
       },
       onToolCallUpdate: (tool) => {
         const env = tool as typeof tool & { assistantId?: string; turnId?: string; seq?: number };
         rememberEnvelope(env.assistantId, env.turnId);
-        if (applySeq(env.seq, env.turnId) && assistantId) {
+        if (assistantId) {
           dispatch({ type: 'tool-call-update', nodeId, assistantId, tool: toolState(tool) });
+        }
+      },
+      onImage: (data) => {
+        if (assistantId) {
+          dispatch({
+            type: 'image-block', nodeId, assistantId,
+            path: data.path, caption: data.caption, mimeType: data.mimeType, size: data.size,
+          });
         }
       },
       onHeartbeat: (idleMs) => dispatch({ type: 'heartbeat', nodeId, idleMs }),
       onTitle: (title) => dispatch({ type: 'set-title', nodeId, title }),
       onBranchOverview: (overview, seq, incomingAssistantId, incomingTurnId) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
-        if (applySeq(seq, incomingTurnId)) {
-          dispatch({ type: 'set-branch-overview', nodeId, overview, assistantId });
-        }
+        void seq;
+        dispatch({ type: 'set-branch-overview', nodeId, overview, assistantId });
       },
       onFollowUps: (followUps) => dispatch({ type: 'set-follow-ups', nodeId, followUps }),
       onFollowUpsStatus: (status) => dispatch({ type: 'follow-ups-status', nodeId, status }),
@@ -133,40 +152,54 @@ export function observeChatStream({
         }),
       onMcpServerError: (data) =>
         dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
-      onDone: (_stopReason, incomingAssistantId, incomingTurnId) => {
+      onDone: (stopReason, incomingAssistantId, incomingTurnId, persisted) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
-        if (assistantId) dispatch({ type: 'done', nodeId, assistantId });
+        if (!assistantId) return;
+        if (persisted === false) {
+          dispatch({
+            type: 'error', nodeId, assistantId,
+            message: 'The turn finished but the backend did not confirm durable persistence.',
+          });
+          onTurnEnd?.('error', nodeId);
+          onTerminal?.();
+          return;
+        }
+        if (stopReason === 'error') {
+          dispatch({
+            type: 'error', nodeId, assistantId,
+            message: 'Agent process exited before completing the turn.',
+          });
+          onTurnEnd?.('error', nodeId);
+          onTerminal?.();
+          return;
+        }
+        dispatch({ type: 'done', nodeId, assistantId });
+        onTurnEnd?.('done', nodeId);
+        onStreamComplete?.();
         onTerminal?.();
       },
       onError: (message, incomingAssistantId, incomingTurnId) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
         if (assistantId) dispatch({ type: 'error', nodeId, assistantId, message });
+        onTurnEnd?.('error', nodeId);
         onTerminal?.();
       },
     };
+    return {
+      ...base,
+      ...extraHandlers,
+      // Delivery identity and terminal orchestration are transport invariants;
+      // shared feature handlers may not bypass their exactly-once gate.
+      onEnvelope: base.onEnvelope,
+      onTurnStart: base.onTurnStart,
+      onDone: base.onDone,
+      onError: base.onError,
+    };
   };
 
-  const connect = () => {
-    if (stopped) return;
-    const fromSeq = lastSeqRef.current >= 0 ? lastSeqRef.current + 1 : 0;
-    detach = subscribeChat(
-      chatId,
-      makeHandlers(),
-      { turnId: lastTurnRef.current || undefined, seq: fromSeq },
-      {
-        onDisconnect: () => {
-          if (stopped) return;
-          reconnectTimer = setTimeout(connect, 500);
-        },
-      },
-    );
-  };
-
-  connect();
-
-  return () => {
-    stopped = true;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    detach?.();
+  return {
+    nodeId,
+    chatId,
+    createHandlers: makeHandlers,
   };
 }

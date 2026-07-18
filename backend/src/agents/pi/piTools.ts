@@ -121,6 +121,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                             parentChatId,
                             cwd,
                             enableFollowUps,
+                            ownerUserId,
                             topics,
                         });
                         return {
@@ -141,6 +142,8 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     execute: async (_id: string, args: any) => {
                         const result = bridge.saveContext({
                             cwd,
+                            chatId: parentChatId,
+                            ownerUserId: opts.ownerUserId,
                             name: args.name,
                             body: args.body,
                         });
@@ -165,6 +168,8 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     execute: async (_id: string, args: any) => {
                         const result = bridge.updateContext({
                             cwd,
+                            chatId: parentChatId,
+                            ownerUserId: opts.ownerUserId,
                             name: args.name,
                             body: args.body,
                         });

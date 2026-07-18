@@ -7,6 +7,7 @@ const mockStoreState = {
   treeSelection: new Set<string>(),
   focusedNodeId: null as string | null,
 };
+const structuralSelectors: Array<(nodes: Record<string, unknown>) => unknown> = [];
 
 vi.mock('../../state/prefs', () => ({
   usePrefs: () => ({ prefs: { showSidebarTimestamps: false } }),
@@ -25,8 +26,10 @@ vi.mock('../../state/chatStore', () => ({
     treeSelection: mockStoreState.treeSelection,
     focusedNodeId: mockStoreState.focusedNodeId,
   }),
-  useStructuralSelector: (selector: (nodes: Record<string, unknown>) => unknown) =>
-    selector({}),
+  useStructuralSelector: (selector: (nodes: Record<string, unknown>) => unknown) => {
+    structuralSelectors.push(selector);
+    return selector({});
+  },
 }));
 
 function renderThreadRow(overrides: Partial<React.ComponentProps<typeof ThreadRow>> = {}) {
@@ -51,13 +54,37 @@ function renderThreadRow(overrides: Partial<React.ComponentProps<typeof ThreadRo
     actions,
     ...overrides,
   };
-  render(<ThreadRow {...props} />);
-  return { actions, props };
+  const view = render(<ThreadRow {...props} />);
+  return {
+    actions,
+    props,
+    rerender: (next: Partial<React.ComponentProps<typeof ThreadRow>>) =>
+      view.rerender(<ThreadRow {...props} {...next} />),
+  };
 }
 
 describe('ThreadRow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    structuralSelectors.length = 0;
+  });
+
+  it('keeps its unread selector stable across local-state renders', () => {
+    renderThreadRow();
+    const first = structuralSelectors.at(-1);
+
+    fireEvent.contextMenu(screen.getByText('Root title').closest('[data-sidebar-row]')!);
+
+    expect(structuralSelectors.at(-1)).toBe(first);
+  });
+
+  it('keeps its unread selector stable when only tree activity metadata changes', () => {
+    const { props, rerender } = renderThreadRow();
+    const first = structuralSelectors.at(-1);
+
+    rerender({ tree: { ...props.tree, lastActiveAt: props.tree.lastActiveAt + 1 } });
+
+    expect(structuralSelectors.at(-1)).toBe(first);
   });
 
   // Selection ownership moved out of ThreadRow: it forwards every click to
