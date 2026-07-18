@@ -78,3 +78,49 @@ export function UserIcon({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+export function CopyIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.5" />
+      <path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" />
+    </svg>
+  );
+}
+
+export function RetryIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9L13.5 5.5" />
+      <path d="M13.5 2v3.5H10" />
+    </svg>
+  );
+}
+
+export function EditIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M11.3 2.1a1.85 1.85 0 0 1 2.6 2.6L5.2 13.4l-3.5.9.9-3.5z" />
+    </svg>
+  );
+}
+
+export function BranchIcon({ size = 14, className }: IconProps) {
+  // Git-branch fork — trunk with a child splitting off.
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="4" cy="12" r="2" />
+      <circle cx="12" cy="4" r="2" />
+      <path d="M4 2v8" />
+      <path d="M12 6a6 6 0 0 1-6 6" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 8.5l3.5 3.5L13 5" />
+    </svg>
+  );
+}

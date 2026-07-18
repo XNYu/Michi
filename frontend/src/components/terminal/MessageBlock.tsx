@@ -25,6 +25,7 @@ import { BranchAnchorRow } from './BranchAnchorRow';
 import { ImageBlockView } from './ImageBlockView';
 import { streamingMarkdownBlocksEnabled } from './streamingMarkdownBlocksFlag';
 import { ResolvedUserInput } from './UserInputBanner';
+import { BranchIcon, CheckIcon, CopyIcon, EditIcon, RetryIcon } from './icons';
 
 const StreamingMarkdownContent = React.lazy(() => import('./StreamingMarkdownContent'));
 
@@ -58,6 +59,7 @@ function MessageActions({
   onCopy,
   onRetry,
   onEdit,
+  onBranch,
   usageInfo,
 }: {
   visible: boolean;
@@ -65,6 +67,7 @@ function MessageActions({
   onCopy: () => void;
   onRetry?: () => void;
   onEdit?: () => void;
+  onBranch?: () => void;
   usageInfo?: { durationMs: number; credits: number } | null;
 }) {
   const [copied, setCopied] = useState(false);
@@ -74,14 +77,12 @@ function MessageActions({
     setTimeout(() => setCopied(false), 1200);
   };
   const btnStyle: React.CSSProperties = {
-    cursor: 'pointer',
-    padding: '2px 6px',
-    fontSize: 10.5,
-    fontFamily: 'var(--ui-font)',
+    padding: 4,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     color: 'var(--term-muted)',
-    background: 'transparent',
     border: 'none',
-    letterSpacing: '.04em',
   };
   const hasUsage = !!usageInfo;
   return (
@@ -98,50 +99,65 @@ function MessageActions({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 4,
+          gap: 2,
           opacity: visible ? 1 : 0,
           transition: 'opacity 120ms ease-out',
           pointerEvents: visible ? 'auto' : 'none',
         }}
       >
-        {time && (
-          <span
-            style={{ fontSize: 10, fontFamily: 'var(--ui-font)', color: 'var(--term-faint)', marginRight: 4 }}
-          >
-            {time}
-          </span>
-        )}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+          className="t-icon-btn"
+          style={btnStyle}
+          title="copy message"
+          aria-label="copy message"
+        >
+          {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+        </button>
         {onRetry && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onRetry(); }}
-            className="t-hover-fg"
+            className="t-icon-btn"
             style={btnStyle}
             title="retry this turn"
+            aria-label="retry this turn"
           >
-            ↻ retry
+            <RetryIcon size={13} />
           </button>
         )}
         {onEdit && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
-            className="t-hover-fg"
+            className="t-icon-btn"
             style={btnStyle}
             title="edit and resend"
+            aria-label="edit and resend"
           >
-            ✎ edit
+            <EditIcon size={13} />
           </button>
         )}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); handleCopy(); }}
-          className="t-hover-fg"
-          style={btnStyle}
-          title="copy message"
-        >
-          {copied ? '✓ copied' : '⎘ copy'}
-        </button>
+        {onBranch && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onBranch(); }}
+            className="t-icon-btn"
+            style={btnStyle}
+            title="branch from here"
+            aria-label="branch from here"
+          >
+            <BranchIcon size={13} />
+          </button>
+        )}
+        {time && (
+          <span
+            style={{ fontSize: 10, fontFamily: 'var(--ui-font)', color: 'var(--term-faint)', marginLeft: 4 }}
+          >
+            {time}
+          </span>
+        )}
       </div>
       {hasUsage && (
         <span style={{ fontSize: 10, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
@@ -744,6 +760,8 @@ interface MessageBlockProps {
   isDark: boolean;
   onRetry?: () => void;
   onEdit?: () => void;
+  /** Fork a new blank child branch anchored at this message. */
+  onBranch?: () => void;
   onCopy: () => void;
   showThoughts: boolean;
   fontFamily: string;
@@ -783,6 +801,7 @@ function MessageBlockInner({
   isDark,
   onRetry,
   onEdit,
+  onBranch,
   onCopy,
   showThoughts,
   fontFamily,
@@ -1041,6 +1060,7 @@ function MessageBlockInner({
               onCopy={onCopy}
               onRetry={onRetry}
               onEdit={onEdit}
+              onBranch={onBranch}
               usageInfo={usageInfo}
             />
           </div>
@@ -1051,6 +1071,7 @@ function MessageBlockInner({
             onCopy={onCopy}
             onRetry={onRetry}
             onEdit={onEdit}
+            onBranch={onBranch}
             usageInfo={usageInfo}
           />
         )

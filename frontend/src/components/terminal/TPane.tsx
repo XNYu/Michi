@@ -231,6 +231,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     cancelStream,
     isObserver,
     createChildChat,
+    createBlankChild,
     fanoutBranches,
     setFocusedNodeId,
     switchAgent,
@@ -1249,6 +1250,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }).catch(() => {});
   }, [createChildChat, n?.followUpsSourceMessageId, nodeId]);
 
+  const handleBranchFromMessage = useCallback((messageId: string) => {
+    void createBlankChild(nodeId, { anchorMessageId: messageId }).catch(() => {});
+  }, [createBlankChild, nodeId]);
+
   const innerWrap = useMemo<React.CSSProperties>(
     () => (
       contentMaxWidth != null
@@ -1614,6 +1619,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           followUpsDisabled={observing}
           anchorsByMessage={anchorsByMessage}
           onOpenBranch={handleOpenBranch}
+          onBranchFromMessage={handleBranchFromMessage}
+          contextNames={contextNamesSet}
         />
       </div>
       {!n.pendingPermission && (
