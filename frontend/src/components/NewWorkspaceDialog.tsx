@@ -14,14 +14,16 @@ interface NewWorkspaceDialogProps {
 // showDirectoryPicker is not in the default TS lib; narrow type.
 type DirectoryPicker = (opts?: { mode?: 'read' | 'readwrite' }) => Promise<{ name: string }>;
 
-const promptRow = (active: boolean): React.CSSProperties => ({
+// name + folder rows share one surface color so they read as a continuous
+// field group (they previously diverged: surface vs alt).
+const PROMPT_ROW: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 10,
   padding: '10px 14px',
   borderBottom: '1px solid var(--term-line)',
-  background: active ? 'var(--term-surface)' : 'var(--term-alt)',
-});
+  background: 'var(--term-surface)',
+};
 
 const PROMPT_GLYPH: React.CSSProperties = {
   fontFamily: 'var(--mono-font, ui-monospace, monospace)',
@@ -135,7 +137,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
 
   return (
     <ModalShell open={open} onClose={onClose} title="New workspace" titleGlyph="▸" width={480}>
-        <div style={promptRow(true)}>
+        <div style={PROMPT_ROW}>
           <span style={PROMPT_GLYPH} aria-hidden>›_</span>
           <span style={PROMPT_LABEL}>name</span>
           <input
@@ -155,7 +157,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
           />
         </div>
 
-        <div style={promptRow(false)}>
+        <div style={PROMPT_ROW}>
           <span style={PROMPT_GLYPH} aria-hidden>›_</span>
           <span style={PROMPT_LABEL}>folder</span>
           <span
