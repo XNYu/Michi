@@ -33,6 +33,9 @@
     "electron:install": "node scripts/install-app.mjs",
     "startup:analyze": "node scripts/analyze-startup.mjs",
     "metrics:analyze": "node scripts/analyze-metrics.mjs",
+    "perf:pane": "node scripts/run-pane-perf.mjs",
+    "perf:compare": "node scripts/compare-pane-perf.mjs",
+    "test:perf": "node --test scripts/pane-perf-tools.test.mjs",
     "test:e2e": "npm run shared:build && playwright test --config e2e/playwright.config.ts",
     "test:e2e:ui": "npm run shared:build && playwright test --config e2e/playwright.config.ts --ui"
   },
