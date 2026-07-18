@@ -68,10 +68,11 @@ function useHarness() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({});
   const [hydrated, setHydrated] = useState(false);
+  const [structureVersion] = useState(0);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   useWorkspacePersistence({
-    projects, activeProjectId, nodes, hydrated, nodesRef,
+    projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
   });
   return { hydrated, projectsCount: projects.length };

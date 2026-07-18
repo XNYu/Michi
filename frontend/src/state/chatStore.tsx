@@ -736,6 +736,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     projects,
     activeProjectId,
     nodes,
+    structureVersion: nodeStore.getStructureVersion(),
     hydrated,
     nodesRef,
     setProjects,

@@ -39,28 +39,45 @@ function useHarness() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>('ws-1');
   const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({ n1: node });
   const [hydrated, setHydrated] = useState(true);
+  const [structureVersion, setStructureVersion] = useState(0);
+  const nodeReads = useRef(0);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   useWorkspacePersistence({
-    projects, activeProjectId, nodes, hydrated, nodesRef,
+    projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
+  });
+  const trackedNodes = (nextNode: ChatNodeState): Record<string, ChatNodeState> => new Proxy({
+    n1: nextNode,
+  }, {
+    get(target, property, receiver) {
+      if (property === 'n1') nodeReads.current += 1;
+      return Reflect.get(target, property, receiver);
+    },
   });
   return {
     streamChunk() {
-      setNodes((prev) => ({
-        ...prev,
-        n1: {
-          ...prev.n1,
-          status: 'streaming',
-          messages: [{ id: 'a1', role: 'assistant', text: '', toolCalls: [], blocks: [{ id: 'a1-b-0', kind: 'answer', rawText: 'chunk', streaming: true }], streaming: true }],
-        },
+      setNodes(trackedNodes({
+        ...node,
+        status: 'streaming',
+        messages: [{ id: 'a1', role: 'assistant', text: '', toolCalls: [], blocks: [{ id: 'a1-b-0', kind: 'answer', rawText: 'chunk', streaming: true }], streaming: true }],
       }));
+    },
+    finishStream() {
+      setNodes(trackedNodes({
+        ...node,
+        title: 'Finished',
+        status: 'idle',
+      }));
+      setStructureVersion((version) => version + 1);
     },
     renameWorkspace(name: string) {
       setProjects((prev) => prev.map((candidate) => candidate.id === 'ws-1'
         ? { ...candidate, name }
         : candidate));
     },
+    nodeReads: () => nodeReads.current,
+    resetNodeReads: () => { nodeReads.current = 0; },
   };
 }
 
@@ -85,6 +102,21 @@ describe('v2 authoritative workspace persistence', () => {
     expect(localStorage.getItem(stateProjectKey('michi:v1:state', 'ws-1'))).toBeNull();
 
     act(() => window.dispatchEvent(new Event('beforeunload')));
+  });
+
+  it('does not scan the node graph for high-frequency stream-only renders', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+
+    result.current.resetNodeReads();
+    act(() => result.current.streamChunk());
+    expect(result.current.nodeReads()).toBe(0);
+
+    // Advancing only the structural channel must cross the persistence
+    // boundary and read the latest node snapshot.
+    result.current.resetNodeReads();
+    act(() => result.current.finishStream());
+    expect(result.current.nodeReads()).toBeGreaterThan(0);
   });
 
   it('flushes an immediate-close domain mutation with an explicit command beacon, never /sync', async () => {

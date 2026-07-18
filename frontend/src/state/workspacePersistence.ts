@@ -858,6 +858,8 @@ interface UseWorkspacePersistenceArgs {
   projects: Project[];
   activeProjectId: string | null;
   nodes: Record<string, ChatNodeState>;
+  /** Monotonic structural channel version; high-frequency stream events keep it stable. */
+  structureVersion: number;
   hydrated: boolean;
   nodesRef: MutableRefObject<Record<string, ChatNodeState>>;
   setProjects: Dispatch<SetStateAction<Project[]>>;
@@ -881,6 +883,7 @@ export function useWorkspacePersistence({
   projects,
   activeProjectId,
   nodes,
+  structureVersion,
   hydrated,
   nodesRef,
   setProjects,
@@ -942,7 +945,10 @@ export function useWorkspacePersistence({
   projectsRef.current = projects;
   hydratedRef.current = hydrated;
 
-  // Mark dirty when state changes (only after hydration completes).
+  // Mark dirty only at structural cadence (and when projects themselves
+  // change). `nodes` still refreshes every streamed render, but the structural
+  // version deliberately stays fixed for chunk/thought/heartbeat/tool progress
+  // actions, so those frames never enter this workspace-wide scan.
   // Skip the first render after hydration to avoid writing back the state
   // that was just loaded from the backend.
   // Tracks which specific projects changed so the interval only syncs those.
@@ -1025,7 +1031,7 @@ export function useWorkspacePersistence({
     }
     prevProjectsRef.current = projects;
     prevNodesRef.current = nodes;
-  }, [projects, nodes]); // eslint-disable-line react-hooks/exhaustive-deps -- hydrated intentionally excluded to avoid marking dirty on hydration
+  }, [projects, structureVersion]); // eslint-disable-line react-hooks/exhaustive-deps -- nodes are read at the structural boundary; hydrated intentionally excluded to avoid marking dirty on hydration
 
   // Periodically turn structural state changes into explicit v2 commands.
   useEffect(() => {
