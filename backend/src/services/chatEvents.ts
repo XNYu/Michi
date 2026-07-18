@@ -32,4 +32,5 @@ export type NormalizedEvent =
     | { kind: "context_usage"; contextUsagePercentage: number }
     | { kind: "usage_summary"; contextUsagePercentage: number; totalCredits: number; turnDurationMs: number }
     | { kind: "mcp_server_error"; serverName: string; error: string }
+    | { kind: "runtime_error"; error: string }
     | { kind: "turn_end"; stopReason?: string };

@@ -18,8 +18,11 @@ vi.mock('../../services/api', async (importOriginal) => {
     listAgentModes: vi.fn().mockResolvedValue([]),
     listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
     fetchAllWorkspaces: vi.fn().mockResolvedValue([]),
+    fetchAllWorkspacesMeta: vi.fn().mockResolvedValue([]),
+    fetchTreeMessages: vi.fn().mockResolvedValue([]),
     fetchWorkspaces: vi.fn().mockResolvedValue([]),
     fetchWorkspace: vi.fn().mockResolvedValue(null),
+    fetchPersistenceCapabilities: vi.fn().mockRejectedValue('not available'),
     warmCwd: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -67,7 +70,7 @@ function seedNodes(nodes: Record<string, ChatNodeState>) {
   };
   localStorage.setItem(
     'michi:v1:state',
-    JSON.stringify({ version: 2, projects: [proj], nodes, activeProjectId: proj.id }),
+    JSON.stringify({ version: 6, projects: [proj], nodes, activeProjectId: proj.id }),
   );
   localStorage.setItem('michi:migrated', '1');
 }

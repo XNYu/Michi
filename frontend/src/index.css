@@ -1396,6 +1396,33 @@ html[data-vibrancy="on"],
   border-color: var(--term-danger);
 }
 
+/* Static in-message variant — QuoteChip / CommentChips reuse the pre-block
+   recipe inside the sent user bubble. The composer margins collapse to a
+   bottom gap, the dismiss × is replaced by an expand toggle (the block can't
+   be removed after send), and bodies unclamp when expanded. */
+.t-pre-block.is-msg { margin: 0 0 8px; }
+.t-pre-block-exp {
+  border: none;
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--ui-font);
+  font-size: 10px;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+  margin-top: 1px;
+  user-select: none;
+  transition: color var(--t-quick) var(--t-ease);
+}
+.t-pre-block-exp:hover { color: var(--term-fg); }
+.t-pre-block-body.is-expanded,
+.t-pre-block-quoted.is-expanded,
+.t-pre-block-reply.is-expanded {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Attachment variant — caption on top, inline chips wrap below.
    Block becomes a column container; chips themselves are transparent
    with thin border so they read as light atomic tokens, not panels. */
@@ -2673,4 +2700,29 @@ html[data-vibrancy="on"],
 }
 @media (prefers-reduced-motion: reduce) {
   .ui-scrim, .ui-drawer-panel, .ui-modal-panel { animation: none; }
+}
+
+/* ── Performance gates ─────────────────────────────────────────────────────────
+   Page-hidden: pause all infinite animations (pulse dots, typing indicators,
+   cursor blink, spinning glyphs) so the GPU + compositor can idle when the tab
+   is backgrounded. Set via a visibilitychange listener on <html>.
+   Streaming-active + drawer: disable the expensive backdrop-filter on drawers
+   while a pane is streaming — the blur target repaints every frame, forcing
+   ~10-20 recompositions/sec. The sidebar blur is NOT touched (vibrancy). */
+html[data-page-hidden] *,
+html[data-page-hidden] .typing-dot,
+html[data-page-hidden] .t-branch-anchor-pulse {
+  animation-play-state: paused !important;
+}
+.terminal-shell[data-streaming-active] .ui-drawer-panel.term-glass {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* GPU layer promotion for frequently-animated micro elements. */
+.typing-dot {
+  will-change: transform;
+}
+.t-branch-anchor-pulse {
+  will-change: opacity;
 }

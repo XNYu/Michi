@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+import os from "os";
 import type { AgentSession, ChatMessage } from "../types";
 import type { NormalizedEvent, PermissionOption } from "../../services/chatEvents";
 import type { AgentToolBridge } from "../toolBridge";
@@ -15,6 +18,15 @@ export interface PiSessionDeps {
     bridge: AgentToolBridge;
     /** Preamble injected as system prompt. Built by PiRuntime. */
     preamble: string;
+    /**
+     * Short restatement of the [TITLE:] / [FOLLOW-UP n/3:] format rules,
+     * glued onto the FIRST user message only. Belt-and-suspenders for Pi's
+     * weaker providers (DeepSeek etc.) where format guidance in just the
+     * system prompt isn't reliably followed; Anthropic via Pi doesn't need
+     * it but the extra ~150 tokens once per fresh session is harmless.
+     * Empty string disables the glue.
+     */
+    firstUserGlue?: string;
     cwd: string;
     enableFollowUps: boolean;
     parentChatId?: string;
@@ -35,6 +47,41 @@ export interface PiSessionDeps {
 }
 
 /**
+ * Diagnostic — append every raw text_delta / thinking_delta and turn-boundary
+ * marker from pi-agent-core to a per-session log file so we can inspect what
+ * the model literally emitted (vs. what the frontend parses). Opt-in via the
+ * MICHI_PI_RAW_DUMP env var: set it to "1" to write under
+ * <tmpdir>/michi-pi-raw/<sessionId>.log, or to an explicit directory path.
+ * Default off — leaves no disk writes on the hot path.
+ */
+function openRawDump(sessionId: string): {
+    write: (kind: "chunk" | "thought" | "marker", text: string) => void;
+    close: () => void;
+} {
+    const flag = process.env.MICHI_PI_RAW_DUMP;
+    if (!flag) return { write: () => {}, close: () => {} };
+    const dir = flag === "1" ? path.join(os.tmpdir(), "michi-pi-raw") : flag;
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+        console.warn(`[piRuntime] raw dump dir mkdir failed (${dir}):`, err);
+        return { write: () => {}, close: () => {} };
+    }
+    const filePath = path.join(dir, `${sessionId}.log`);
+    return {
+        write: (kind, text) => {
+            try {
+                const prefix = kind === "marker" ? `\n[${text}]\n` : kind === "thought" ? `[THINK]${text}` : text;
+                fs.appendFileSync(filePath, prefix);
+            } catch {
+                /* swallow — diagnostic only, never break the turn */
+            }
+        },
+        close: () => {},
+    };
+}
+
+/**
  * AgentSession backed by pi-agent-core's Agent.
  *
  * The Agent owns the messages array, abort controller, tool dispatch, and
@@ -52,6 +99,8 @@ export class PiSession implements AgentSession {
     private readonly cwd: string;
     private readonly bridge: AgentToolBridge;
     private readonly preamble: string;
+    private readonly firstUserGlue: string;
+    private firstUserPrimed: boolean;
     private readonly enableFollowUps: boolean;
     private readonly workspaceId: string | null;
     /**
@@ -100,6 +149,10 @@ export class PiSession implements AgentSession {
         this.cwd = deps.cwd;
         this.bridge = deps.bridge;
         this.preamble = deps.preamble;
+        this.firstUserGlue = deps.firstUserGlue ?? "";
+        // Rehydrated sessions skip the first-user-message glue — there's no
+        // "first" turn to remind once the conversation already has prior turns.
+        this.firstUserPrimed = (deps.initialMessages?.length ?? 0) > 0;
         this.enableFollowUps = deps.enableFollowUps;
         this.parentChatId = deps.parentChatId;
         this.workspaceId = deps.workspaceId;
@@ -251,6 +304,12 @@ export class PiSession implements AgentSession {
             }
         }
 
+        const promptText = this.firstUserPrimed || !this.firstUserGlue
+            ? rawText
+            : `${this.firstUserGlue}\n\n${rawText}`;
+        this.firstUserPrimed = true;
+
+
         const ctx: MapperContext = {
             cumulative: { inputTokens: 0, outputTokens: 0, totalCost: 0 },
             contextWindow: (model as any).contextWindow,
@@ -282,14 +341,27 @@ export class PiSession implements AgentSession {
             }
         };
 
+        const dump = openRawDump(this.id);
+        dump.write("marker", `turn start ${new Date().toISOString()} model=${(model as any)?.id ?? "?"}`);
         const unsubscribe = this.agent.subscribe((event: any) => {
+            if (event?.type === "message_update") {
+                const e = event.assistantMessageEvent;
+                if (e?.type === "text_delta") dump.write("chunk", e.delta ?? "");
+                else if (e?.type === "thinking_delta") dump.write("thought", e.delta ?? "");
+            }
             for (const out of mapAgentEvent(event, ctx)) {
                 push(out);
             }
             if (event.type === "agent_end") {
+                dump.write("marker", "turn end");
                 finish();
             }
         });
+
+        // Append follow-up reminder when conversation is long enough that the
+        // model may have lost attention on system-prompt instructions.
+        const userTurnCount = this.history.filter((m) => m.role === "user").length;
+        const textWithReminder = promptText + followUpReminder(userTurnCount, this.enableFollowUps);
 
         // Kick off the prompt; don't await it here — yield events as they arrive.
         const promptPromise = this.agent.prompt(rawText).catch((err: unknown) => {

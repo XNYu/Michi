@@ -69,7 +69,9 @@ export function stateIndexKey(baseKey: string): string {
   return `${baseKey}:index`;
 }
 
-/** Remove the legacy durable chat mirror after backend v2 hydration succeeds. */
+/** Remove the legacy durable chat mirror after backend v2 hydration succeeds.
+ *  Also vacuums orphaned keys: old schema versions, stale per-window active
+ *  project entries, and project blobs not referenced by the current index. */
 export function clearDurableLocalStorageMirror(baseKey: string): void {
   try {
     const rawIndex = window.localStorage.getItem(stateIndexKey(baseKey));
@@ -81,8 +83,57 @@ export function clearDurableLocalStorageMirror(baseKey: string): void {
     }
     window.localStorage.removeItem(stateIndexKey(baseKey));
     window.localStorage.removeItem(baseKey);
+
+    // Vacuum: remove orphaned michi:* keys that accumulate over time.
+    vacuumOrphanedKeys(baseKey);
   } catch {
     // Storage can be unavailable in private browsing; backend state remains authoritative.
+  }
+}
+
+/**
+ * Remove localStorage keys that are no longer referenced:
+ * - Old schema version blobs (any `michi:v1:state*` key not under the current baseKey)
+ * - Orphaned per-window active-project keys (keep the 3 most recent)
+ * - The legacy shared blob if a per-user key was in use
+ */
+function vacuumOrphanedKeys(baseKey: string): void {
+  const ls = window.localStorage;
+  const winKeys: string[] = [];
+
+  for (let i = ls.length - 1; i >= 0; i--) {
+    const key = ls.key(i);
+    if (!key || !key.startsWith('michi:')) continue;
+
+    // Remove project/index blobs from a DIFFERENT base namespace (old user ids,
+    // old schema versions). Current baseKey's children were already cleared above.
+    if (
+      key.startsWith(STATE_KEY_PREFIX) &&
+      !key.startsWith(baseKey) &&
+      key !== LEGACY_STATE_KEY &&
+      key !== MIGRATED_KEY
+    ) {
+      ls.removeItem(key);
+      continue;
+    }
+
+    // Collect per-window keys for pruning.
+    if (key.includes(':win:') && key.endsWith(':activeProject')) {
+      winKeys.push(key);
+    }
+  }
+
+  // Keep only the 3 most recently written window keys (they're tiny but unbounded).
+  if (winKeys.length > 3) {
+    winKeys.sort();
+    for (let i = 0; i < winKeys.length - 3; i++) {
+      ls.removeItem(winKeys[i]);
+    }
+  }
+
+  // Legacy shared blob: if a per-user namespace was active, the shared one is stale.
+  if (baseKey !== LEGACY_STATE_KEY) {
+    ls.removeItem(LEGACY_STATE_KEY);
   }
 }
 

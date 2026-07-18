@@ -8,14 +8,14 @@ describe('QuoteChip', () => {
     expect(container.textContent).toContain('line1');
   });
 
-  it('starts collapsed: meta button reads "Expand ▾"', () => {
+  it('starts collapsed: meta button reads "expand ▾"', () => {
     const { getByRole } = render(<QuoteChip text="hello" />);
-    expect(getByRole('button').textContent).toMatch(/Expand/);
+    expect(getByRole('button').textContent).toMatch(/expand/i);
   });
 
-  it('toggles to expanded on click and the button flips to "Collapse ▴"', () => {
+  it('toggles to expanded on click and the button flips to "collapse ▴"', () => {
     const { getByRole } = render(<QuoteChip text="hello" />);
     fireEvent.click(getByRole('button'));
-    expect(getByRole('button').textContent).toMatch(/Collapse/);
+    expect(getByRole('button').textContent).toMatch(/collapse/i);
   });
 });

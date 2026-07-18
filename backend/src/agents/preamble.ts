@@ -113,6 +113,28 @@ export function followUpReminder(userTurnCount: number, enableFollowUps: boolean
     return "";
 }
 
+/**
+ * Short restatement of the [TITLE:] / [FOLLOW-UP n/3:] sentinel rules, glued
+ * onto the first user message as belt-and-suspenders for weaker providers
+ * (DeepSeek etc.) whose instruction-following drifts when format guidance
+ * only lives in the system prompt — Claude/Anthropic don't need this because
+ * --append-system-prompt rides on top of Anthropic's own conditioning.
+ */
+export function buildFormatReminder(enableFollowUps: boolean): string {
+    if (!enableFollowUps) {
+        return `(Format reminder, restated from system instructions — do not skip in this reply.)
+- FIRST line of your reply MUST be: [TITLE: 4-8 word summary]
+- Do NOT emit any [FOLLOW-UP n/3:] or [FOLLOW-UPS:] lines.`;
+    }
+    return `(Format reminder, restated from system instructions — do not skip in this reply.)
+- FIRST line MUST be: [TITLE: 4-8 word summary]
+- LAST three lines MUST be these sentinels, each on its OWN line:
+    [FOLLOW-UP 1/3: question 1]
+    [FOLLOW-UP 2/3: question 2]
+    [FOLLOW-UP 3/3: question 3]
+- Every sentinel MUST start with the literal "[" and the literal text "FOLLOW-UP", and MUST end with the literal "]". Never abbreviate to "UP 2/3:" or drop the opening "[" / closing "]" — the UI parses lines verbatim and any deviation leaks raw text into the user's view.`;
+}
+
 export type MetadataOutputMode =
     | 'sentinel'
     | 'sentinel-followups-tool-overview'

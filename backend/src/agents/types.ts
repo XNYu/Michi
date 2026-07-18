@@ -8,6 +8,13 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+export interface AgentTurnInput {
+  attachments?: ReadonlyArray<{
+    name: string;
+    absPath: string;
+  }>;
+}
 export type ExtraContext = {
   name: string;
   filePath: string;
@@ -159,7 +166,7 @@ export interface AgentSession {
   getHistory(): ChatMessage[];
   /** Mid-stream partial assistant text for an in-progress turn (auto-branch case). Returns undefined when not streaming. */
   getPendingAssistant(): string | undefined;
-  send(text: string): AsyncIterableIterator<NormalizedEvent>;
+  send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent>;
   cancel(): Promise<void> | void;
   setMode?(modeId: string): Promise<void>;
   setModel?(modelId: string): Promise<void>;

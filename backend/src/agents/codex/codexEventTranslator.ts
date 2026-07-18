@@ -47,6 +47,15 @@ function safeJson(value: unknown): string {
   }
 }
 
+function errorMessage(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (!isRecord(value)) return undefined;
+  const message = stringField(value, 'message');
+  const details = stringField(value, 'additionalDetails');
+  if (message && details && details !== message) return `${message}: ${details}`;
+  return message ?? details;
+}
+
 const MAX_TOOL_PAYLOAD = 16 * 1024;
 
 function truncatePayload(value: unknown): string | undefined {
@@ -207,11 +216,13 @@ export interface CodexTranslatorHandle {
  */
 export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): CodexTranslatorHandle {
   let turnStartMs: number = Date.now();
+  let lastRuntimeError: string | undefined;
   const outputBuffers = new Map<string, string>();
   const toolPresentations = new Map<string, ToolPresentation>();
 
   function startTurn(): void {
     turnStartMs = Date.now();
+    lastRuntimeError = undefined;
     outputBuffers.clear();
     toolPresentations.clear();
   }
@@ -352,15 +363,27 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
         const turn = (p['turn'] ?? p) as Record<string, unknown>;
         const stopReason = typeof turn['status'] === 'string' ? turn['status'] : undefined;
         emit({ kind: 'usage_summary', contextUsagePercentage: 0, totalCredits: 0, turnDurationMs });
+        if (stopReason === 'failed') {
+          emit({
+            kind: 'runtime_error',
+            error: errorMessage(turn['error']) ?? lastRuntimeError ?? 'Codex turn failed',
+          });
+          lastRuntimeError = undefined;
+          break;
+        }
         emit({ kind: 'turn_end', stopReason });
+        lastRuntimeError = undefined;
         break;
       }
 
       // ── Error notifications ─────────────────────────────────────────────────
 
       case N.error: {
-        const error = typeof p['message'] === 'string' ? p['message'] : String(p['message'] ?? 'error');
-        emit({ kind: 'mcp_server_error', serverName: 'codex', error });
+        // Codex reports turn/runtime failures as `{ error: TurnError, willRetry }`.
+        // Keep the latest detail and let turn/completed decide whether the turn
+        // actually failed; retryable notifications must not create a false MCP
+        // banner or terminate a turn that later succeeds.
+        lastRuntimeError = errorMessage(p['error']) ?? errorMessage(p) ?? 'Codex runtime error';
         break;
       }
 

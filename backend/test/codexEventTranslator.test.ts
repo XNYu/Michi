@@ -380,7 +380,7 @@ describe('codexEventTranslator', () => {
     assert.equal(turnEnd['stopReason'], 'completed');
   });
 
-  test('turn/completed with failed turn status passes through stopReason', () => {
+  test('turn/completed with failed turn status emits a runtime error', () => {
     const { emitted, feed } = makeTranslator();
 
     feed('turn/completed', {
@@ -388,9 +388,9 @@ describe('codexEventTranslator', () => {
     });
 
     assert.equal(emitted.length, 2);
-    const turnEnd = emitted[1] as unknown as AnyEv;
-    assert.equal(turnEnd['kind'], 'turn_end');
-    assert.equal(turnEnd['stopReason'], 'failed');
+    const runtimeError = emitted[1] as unknown as AnyEv;
+    assert.equal(runtimeError['kind'], 'runtime_error');
+    assert.equal(runtimeError['error'], 'Codex turn failed');
   });
 
   test('turn/started resets turn timer without emitting', () => {
@@ -403,16 +403,35 @@ describe('codexEventTranslator', () => {
 
   // ── Error notifications ─────────────────────────────────────────────────────
 
-  test('error notification emits mcp_server_error with serverName codex', () => {
+  test('error notification is held until the turn outcome is known', () => {
     const { emitted, feed } = makeTranslator();
 
-    feed('error', { message: 'process exited unexpectedly' });
+    feed('error', {
+      error: { message: 'process exited unexpectedly', additionalDetails: null },
+      willRetry: false,
+    });
 
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'mcp_server_error');
-    assert.equal(ev['serverName'], 'codex');
-    assert.equal(ev['error'], 'process exited unexpectedly');
+    assert.equal(emitted.length, 0);
+  });
+
+  test('failed turn emits runtime_error with the nested Codex message', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('error', {
+      error: { message: 'Unable to decode local image', additionalDetails: 'invalid PNG data' },
+      willRetry: false,
+    });
+    feed('turn/completed', {
+      turn: {
+        status: 'failed',
+        error: { message: 'Unable to decode local image', additionalDetails: 'invalid PNG data' },
+      },
+    });
+
+    assert.equal(emitted.length, 2);
+    const ev = emitted[1] as unknown as AnyEv;
+    assert.equal(ev['kind'], 'runtime_error');
+    assert.equal(ev['error'], 'Unable to decode local image: invalid PNG data');
   });
 
   test('unknown method emits nothing (forward-compat)', () => {
@@ -480,17 +499,18 @@ describe('codexEventTranslator', () => {
     assert.equal(ev['toolCallId'], '');
   });
 
-  test('error with non-string message coerces to string without throwing', () => {
+  test('malformed error notification falls back safely when the turn fails', () => {
     const { emitted, feed } = makeTranslator();
 
     assert.doesNotThrow(() => {
       feed('error', { message: 42 as unknown as string });
     });
+    feed('turn/completed', { turn: { status: 'failed' } });
 
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'mcp_server_error');
-    assert.equal(typeof ev['error'], 'string');
+    assert.equal(emitted.length, 2);
+    const ev = emitted[1] as unknown as AnyEv;
+    assert.equal(ev['kind'], 'runtime_error');
+    assert.equal(ev['error'], 'Codex runtime error');
   });
 
   // ── Detail cap at 200 graphemes ─────────────────────────────────────────────

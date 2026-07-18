@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { Row } from './primitives';
@@ -8,9 +7,6 @@ import TreeSelectionBar from './TreeSelectionBar';
 import ResizeHandle from '../ResizeHandle';
 import {
   HomeIcon,
-  BranchesIcon,
-  MapIcon,
-  DigestIcon,
   WorkspacesIcon,
   SettingsIcon,
   UserIcon,
@@ -217,33 +213,21 @@ function BottomNav({
   activePage: PageId;
   onNav: (p: PageId) => void;
 }) {
-  const { activeProject } = useChatProjects();
-
-  const hasUnreadDigest = useStructuralSelector(
-    (nodesMap) => {
-      if (!activeProject) return false;
-      return activeProject.chatIds.some((id) => {
-        const n = nodesMap[id];
-        if (!n || n.kind !== 'digest' || n.deletedAt || !n.digest) return false;
-        return n.digest.generatedAt > 0 && n.digest.generatedAt > n.digest.viewedAt;
-      });
-    },
-  );
-
   const Item = ({
     id,
     glyph,
     label,
     kbd,
     badge,
-    dot,
+    onClick,
   }: {
     id: PageId;
     glyph: React.ReactNode;
     label: string;
     kbd?: string;
     badge?: number;
-    dot?: boolean;
+    /** Overrides page-nav; used by drawer toggles (e.g. Artifacts). */
+    onClick?: () => void;
   }) => {
     const active = activePage === id;
     return (
@@ -274,19 +258,6 @@ function BottomNav({
           }}
         >
           {glyph}
-          {dot && (
-            <span
-              style={{
-                position: 'absolute',
-                top: -2,
-                right: -4,
-                width: 5,
-                height: 5,
-                borderRadius: 99,
-                background: 'var(--term-accent)',
-              }}
-            />
-          )}
         </span>
         <span style={{ flex: 1 }}>{label}</span>
         {badge !== undefined && badge > 0 && (
@@ -327,9 +298,14 @@ function BottomNav({
         flexShrink: 0,
       }}
     >
-      <Item id="branches" glyph={<BranchesIcon size={15} />} label="Branches" />
-      <Item id="map" glyph={<MapIcon size={15} />} label="Map" />
-      <Item id="digest" glyph={<DigestIcon size={15} />} label="Digest" dot={hasUnreadDigest} />
+      {/* Branches / Map / Digest are thread-scoped views — their entries live
+          in the Topbar right cluster now, next to Artifacts. */}
+      <Item
+        glyph={<ArtifactsIcon size={15} />}
+        label="Artifacts"
+        kbd="⇧⌘A"
+        onClick={() => window.dispatchEvent(new CustomEvent('michi:toggle-artifacts'))}
+      />
       <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
       <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
       <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />

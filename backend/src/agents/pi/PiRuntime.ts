@@ -13,7 +13,7 @@ import type {
 import type { AgentToolBridge } from "../toolBridge";
 import { PiSession } from "./PiSession";
 import * as sessionRegistry from "../sessionRegistry";
-import { buildPreamble } from "../preamble";
+import { buildPreamble, buildFormatReminder } from "../preamble";
 import {
     listPiModels,
     listProviderInfos,
@@ -102,6 +102,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             cwd: opts.cwd,
             enableFollowUps,
             preamble,
+            firstUserGlue: buildFormatReminder(enableFollowUps),
             parentChatId: opts.parentChatId,
             workspaceId: opts.workspaceId ?? null,
             ownerUserId: opts.ownerUserId ?? null,
@@ -119,6 +120,13 @@ export class PiRuntime implements AgentRuntimeWithProviders {
      *
      * chatId === nodeId for Pi, so opts.sessionId is the row id for both
      * the nodes lookup (parent chain) and the messages lookup (history).
+     *
+     * The systemPrompt is rebuilt here too — the preamble (role identity,
+     * TITLE/FOLLOW-UP sentinel rules, ancestor chain) lives in pi-agent-core's
+     * systemPrompt slot, so a reloaded session needs it reconstructed or every
+     * resumed turn loses that guidance. ContextManifest / extraContexts /
+     * mergeContexts aren't persisted; rehydrated user messages still carry
+     * whatever the original turn had glued in.
      */
     async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
         let initialMessages: ReturnType<typeof rowsToAgentMessages> = [];
@@ -136,11 +144,26 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             console.warn(`[piRuntime] loadSession: failed reading state for ${opts.sessionId}:`, err);
         }
 
+        const ancestorChain: AgentSession[] = [];
+        if (parentChatId) {
+            await this.ensureChainLoaded(parentChatId, opts.cwd);
+            const parent = sessionRegistry.getSession(parentChatId);
+            if (parent) {
+                ancestorChain.push(...sessionRegistry.getAncestors(parentChatId), parent);
+            }
+        }
+
+        const preamble = buildPreamble({
+            enableFollowUps: true,
+            cwd: opts.cwd,
+            ancestors: ancestorChain,
+        });
+
         const session = new PiSession(opts.sessionId, {
             bridge: this.bridge,
             cwd: opts.cwd,
             enableFollowUps: true,
-            preamble: "",
+            preamble,
             initialMessages,
             parentChatId,
             workspaceId,

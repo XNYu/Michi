@@ -59,24 +59,14 @@ export default function TerminalShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
-  // Remembers the page the user was on before opening Branches/Map/Digest/Workspaces,
-  // so clicking the same nav button toggles back.
-  const previousPageRef = React.useRef<PageId>('dashboard');
+  // Branches/Map/Digest are thread-scoped views (and Workspaces a picker): a
+  // second click on the same nav target — or a second ⌘M/⌘D/⌘O — drops back to
+  // the conversation. Fixed destination on purpose: "back" means "back to the
+  // thread", not browser-style history.
   const handleNav = React.useCallback((p: PageId) => {
     if (p === 'settings') { setSettingsOpen((v) => !v); return; }
     const TOGGLE_PAGES: PageId[] = ['branches', 'map', 'digest', 'workspaces'];
-    setPage((current) => {
-      if (TOGGLE_PAGES.includes(p)) {
-        if (current === p) {
-          // Second click: return to the page we came from.
-          return previousPageRef.current;
-        }
-        // First click: remember where we were and switch.
-        previousPageRef.current = current;
-        return p;
-      }
-      return p;
-    });
+    setPage((current) => (TOGGLE_PAGES.includes(p) && current === p ? 'dashboard' : p));
   }, []);
   const [newWsOpen, setNewWsOpen] = useState(false);
   const {
@@ -120,10 +110,30 @@ export default function TerminalShell() {
     }, [activeProject, openPanes]),
   );
 
+  const anyPaneStreaming = useStructuralSelector(
+    React.useCallback((nodesMap: Record<string, ChatNodeState>) =>
+      openPanes.some((id) => nodesMap[id]?.status === 'streaming'),
+    [openPanes]),
+  );
+
   useEffect(() => {
     const onResize = () => setWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Pause all CSS animations when the tab is hidden (GPU idle).
+  useEffect(() => {
+    const sync = () => {
+      if (document.hidden) document.documentElement.setAttribute('data-page-hidden', '');
+      else document.documentElement.removeAttribute('data-page-hidden');
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      document.documentElement.removeAttribute('data-page-hidden');
+    };
   }, []);
 
   // Mirror palette vars onto <html> so portal-rendered popups (SelectionActions
@@ -223,6 +233,15 @@ export default function TerminalShell() {
         e.preventDefault();
         if (selection.size > 0) clearSelection();
         if (treeSelection.size > 0) clearTreeSelection();
+        return;
+      }
+      // Escape exits the thread-scoped fullscreen pages back to the
+      // conversation — same destination as the topbar's ‹ back crumb. Runs
+      // after the selection branch so a first Esc on the Map clears the
+      // selection and a second one leaves the page.
+      if (e.key === 'Escape' && (page === 'branches' || page === 'map' || page === 'digest')) {
+        e.preventDefault();
+        setPage('dashboard');
         return;
       }
       if (!meta) return;
@@ -421,6 +440,7 @@ export default function TerminalShell() {
   return (
     <div
       className="terminal-shell"
+      data-streaming-active={anyPaneStreaming || undefined}
       style={{
         ...cssVars,
         width: '100%',

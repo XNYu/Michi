@@ -31,6 +31,19 @@ export interface StreamingMarkdownBlock {
   end: number;
 }
 
+/**
+ * Committed parser state for append-only streaming Markdown.
+ *
+ * `parsedFrom` is primarily diagnostic/test metadata: zero means the whole
+ * document was parsed, while a positive value means only the unstable tail
+ * beginning at that source offset was re-lexed.
+ */
+export interface IncrementalStreamingMarkdownBlockState {
+  markdown: string;
+  blocks: StreamingMarkdownBlock[];
+  parsedFrom: number;
+}
+
 function openTagPattern(tagName: string): RegExp {
   const normalized = tagName.toLowerCase();
   const cached = openTagPatternCache.get(normalized);
@@ -143,6 +156,65 @@ export function splitStreamingMarkdownBlocks(markdown: string): StreamingMarkdow
     cursor = end;
     return { index, text, start, end };
   });
+}
+
+function fullStreamingMarkdownBlockState(markdown: string): IncrementalStreamingMarkdownBlockState {
+  return {
+    markdown,
+    blocks: splitStreamingMarkdownBlocks(markdown),
+    parsedFrom: 0,
+  };
+}
+
+/**
+ * Incrementally split append-only streaming Markdown.
+ *
+ * A Marked block token can still change while text is appended (a paragraph
+ * can become a setext heading, a table delimiter can turn preceding text into
+ * a table, an open fence can keep growing, and so on). The final block is
+ * therefore always treated as unstable and re-lexed together with the new
+ * suffix. Every earlier block is already separated from the tail by a lexer
+ * boundary and is reused by reference.
+ *
+ * Cross-document constructs that the regular splitter intentionally keeps in
+ * one tree (currently footnotes) conservatively force a full parse. Replaced or
+ * truncated text also falls back to a full parse. The non-streaming renderer
+ * still performs its normal full parse after the stream completes.
+ */
+export function updateStreamingMarkdownBlocks(
+  previous: IncrementalStreamingMarkdownBlockState | null,
+  markdown: string,
+): IncrementalStreamingMarkdownBlockState {
+  if (!previous || markdown.length === 0) {
+    return fullStreamingMarkdownBlockState(markdown);
+  }
+  if (markdown === previous.markdown) return previous;
+  if (!markdown.startsWith(previous.markdown)) {
+    return fullStreamingMarkdownBlockState(markdown);
+  }
+  if (footnoteReferencePattern.test(markdown) || footnoteDefinitionPattern.test(markdown)) {
+    return fullStreamingMarkdownBlockState(markdown);
+  }
+  if (previous.blocks.length === 0) {
+    return fullStreamingMarkdownBlockState(markdown);
+  }
+
+  const unstableIndex = previous.blocks.length - 1;
+  const unstableBlock = previous.blocks[unstableIndex];
+  const parsedFrom = unstableBlock.start;
+  const stableBlocks = previous.blocks.slice(0, unstableIndex);
+  const tailBlocks = splitStreamingMarkdownBlocks(markdown.slice(parsedFrom)).map((block, index) => ({
+    ...block,
+    index: stableBlocks.length + index,
+    start: block.start + parsedFrom,
+    end: block.end + parsedFrom,
+  }));
+
+  return {
+    markdown,
+    blocks: [...stableBlocks, ...tailBlocks],
+    parsedFrom,
+  };
 }
 
 export function revealTailCharsForBlock(

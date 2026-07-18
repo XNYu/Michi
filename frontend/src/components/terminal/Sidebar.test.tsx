@@ -14,7 +14,7 @@ function wrap(ui: React.ReactElement) {
 }
 
 describe('TerminalSidebar BottomNav', () => {
-  it('renders Map / Digest / Workspaces / Home / Settings as labelled rows', () => {
+  it('renders Artifacts / Workspaces / Home / Settings as labelled rows', () => {
     render(
       wrap(
         <TerminalSidebar
@@ -26,11 +26,15 @@ describe('TerminalSidebar BottomNav', () => {
       ),
     );
     // getByText throws if missing — finding the element is the assertion.
-    expect(screen.getByText('Map')).toBeTruthy();
-    expect(screen.getByText('Digest')).toBeTruthy();
+    expect(screen.getByText('Artifacts')).toBeTruthy();
     expect(screen.getByText('Workspaces')).toBeTruthy();
     expect(screen.getByText('Home')).toBeTruthy();
     expect(screen.getByText('Settings')).toBeTruthy();
+    // Branches / Map / Digest are thread-scoped views — their entries moved
+    // to the Topbar right cluster.
+    expect(screen.queryByText('Branches')).toBeNull();
+    expect(screen.queryByText('Map')).toBeNull();
+    expect(screen.queryByText('Digest')).toBeNull();
   });
 
   it('navigates to the home page when the Home row is clicked', () => {

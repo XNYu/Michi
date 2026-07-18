@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
+
 
 const closePaneSpy = vi.hoisted(() => vi.fn());
 const clearSelectionSpy = vi.hoisted(() => vi.fn());

@@ -991,7 +991,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 code: 'turn_begin_failed',
             });
         }
-
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");

@@ -8,90 +8,51 @@ interface Props {
 export function CommentChips({ comments }: Props) {
   if (comments.length === 0) return null;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+    <>
       {comments.map((c, i) => (
         <CommentChip key={c.id} comment={c} index={i} />
       ))}
-    </div>
+    </>
   );
 }
 
+/**
+ * Static in-message variant of the composer's comment pre-block: same
+ * .t-pre-block recipe (tone-select, caption + quoted snippet + reply), but
+ * with an expand toggle where the composer puts its dismiss × — the comment
+ * is already sent, so it can't be removed or edited, only unfolded.
+ */
 function CommentChip({ comment, index }: { comment: PendingComment; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const collapsedQuote = comment.quotedText.replace(/\s+/g, ' ').trim();
   const collapsedBody = comment.body.replace(/\s+/g, ' ').trim();
 
-  const lineClampStyle: React.CSSProperties = expanded
-    ? { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0 }
-    : {
-        display: '-webkit-box',
-        WebkitBoxOrient: 'vertical',
-        WebkitLineClamp: 1,
-        overflow: 'hidden',
-        overflowWrap: 'anywhere',
-        margin: 0,
-      };
-
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 8,
-        borderLeft: '2px solid var(--term-mauve)',
-        background: 'color-mix(in srgb, var(--term-mauve) 10%, transparent)',
-        padding: '6px 8px 6px 10px',
-        fontSize: 12,
-        color: 'var(--term-mid, #cfc6e5)',
-        borderRadius: 2,
-      }}
-    >
-      <span style={{ color: 'var(--term-mauve)', fontWeight: 600, flexShrink: 0 }}>↳</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 9.5,
-            color: 'var(--term-muted)',
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            marginBottom: 2,
-            userSelect: 'none',
-          }}
-        >
-          comment {index + 1}
+    <div className="t-pre-block tone-select is-msg">
+      <div className="t-pre-block-col">
+        <div className="t-pre-block-cap">
+          comment <b>{index + 1}</b>
         </div>
-        <p data-testid="comment-quote" style={{ ...lineClampStyle, opacity: 0.75, fontStyle: 'italic' }}>
-          {expanded ? `"${comment.quotedText}"` : `"${collapsedQuote}"`}
-        </p>
-        <p data-testid="comment-body" style={{ ...lineClampStyle, marginTop: 4 }}>
-          {expanded ? comment.body : collapsedBody}
-        </p>
         <div
-          style={{
-            fontSize: 10,
-            color: 'var(--term-muted)',
-            letterSpacing: '0.04em',
-            marginTop: 4,
-            userSelect: 'none',
-          }}
+          data-testid="comment-quote"
+          className={expanded ? 't-pre-block-quoted is-expanded' : 't-pre-block-quoted'}
         >
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              color: 'var(--term-accent, var(--term-mauve))',
-              cursor: 'pointer',
-              padding: 0,
-              fontSize: 10,
-              letterSpacing: '0.04em',
-              fontFamily: 'var(--ui-font)',
-            }}
-          >
-            {expanded ? 'Collapse ▴' : 'Expand ▾'}
-          </button>
+          "{expanded ? comment.quotedText : collapsedQuote}"
+        </div>
+        <div
+          data-testid="comment-body"
+          className={expanded ? 't-pre-block-reply is-expanded' : 't-pre-block-reply'}
+        >
+          {expanded ? comment.body : collapsedBody}
         </div>
       </div>
+      <button
+        type="button"
+        className="t-pre-block-exp"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? 'collapse ▴' : 'expand ▾'}
+      </button>
     </div>
   );
 }

@@ -45,6 +45,34 @@ function hubWithPersistence(overrides: Partial<{
 }
 
 describe('ChatHub.startTurn', () => {
+  it('forwards durable attachment metadata to the runtime turn input', async () => {
+    const hub = hubWithPersistence();
+    let capturedInput: Parameters<AgentSession['send']>[1];
+    const session: AgentSession = {
+      ...sessionFrom([]),
+      send: (_text, input) => {
+        capturedInput = input;
+        return asyncIteratorFrom([{ kind: 'turn_end', stopReason: 'end_turn' }]);
+      },
+    };
+
+    const { done } = hub.startTurn({
+      chatId: 'attachment-chat',
+      nodeId: 'attachment-node',
+      text: 'Inspect the image',
+      displayText: 'Inspect the image',
+      userMetadata: {
+        attachments: [{ name: 'screen.png', absPath: '/tmp/screen.png' }],
+      },
+      session,
+    });
+    await done;
+
+    assert.deepEqual(capturedInput, {
+      attachments: [{ name: 'screen.png', absPath: '/tmp/screen.png' }],
+    });
+  });
+
   it('publishes branch_overview before done on the owner message stream', async () => {
     const hub = hubWithPersistence();
     const received: ChatStreamEvent[] = [];

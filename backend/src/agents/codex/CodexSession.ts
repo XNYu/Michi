@@ -1,4 +1,6 @@
-import type { AgentSession, ChatMessage } from '../types';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { AgentSession, AgentTurnInput, ChatMessage } from '../types';
 import type { NormalizedEvent, PermissionOption, UserInputQuestion } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
@@ -17,6 +19,27 @@ import {
 } from '../followUpsExperiment';
 
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
+
+const CODEX_LOCAL_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp']);
+
+function localImagePaths(input?: AgentTurnInput): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const attachment of input?.attachments ?? []) {
+    const absPath = attachment.absPath;
+    if (!path.isAbsolute(absPath)) continue;
+    if (!CODEX_LOCAL_IMAGE_EXTENSIONS.has(path.extname(absPath).toLowerCase())) continue;
+    if (seen.has(absPath)) continue;
+    try {
+      if (!fs.statSync(absPath).isFile()) continue;
+    } catch {
+      continue;
+    }
+    seen.add(absPath);
+    paths.push(absPath);
+  }
+  return paths;
+}
 
 const INTERNAL_METADATA_TOOLS = new Set([
   'set_branch_overview',
@@ -150,7 +173,7 @@ export class CodexSession implements AgentSession {
     return undefined;
   }
 
-  async *send(text: string): AsyncIterableIterator<NormalizedEvent> {
+  async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
     if (this.state === 'disposed') {
       yield { kind: 'turn_end', stopReason: 'error' };
       return;
@@ -186,9 +209,14 @@ export class CodexSession implements AgentSession {
       this.history.push({ role: 'user', content: outgoingText });
       this.markTranslatorTurnStart?.();
 
+      const turnInput: Array<Record<string, unknown>> = [
+        { type: 'text', text: textForModel },
+        ...localImagePaths(input).map((imagePath) => ({ type: 'localImage', path: imagePath })),
+      ];
+
       await this.client.request('turn/start', {
         threadId: this.threadId,
-        input: [{ type: 'text', text: outgoingText }],
+        input: turnInput,
         ...(this.effort ? { effort: this.effort } : {}),
         summary: 'detailed',
       });
@@ -400,7 +428,7 @@ export class CodexSession implements AgentSession {
     }
     this.pendingPermissions.clear();
 
-    this.queue.push({ kind: 'mcp_server_error', serverName: 'codex', error: reason });
+    this.queue.push({ kind: 'runtime_error', error: reason });
     this.queue.push({ kind: 'turn_end', stopReason: 'error' });
     this.queue.dispose();
   }
@@ -673,7 +701,7 @@ export class CodexSession implements AgentSession {
       this.observeFollowUpsSentinelEvent(ev);
       if (this.suppressInternalMetadataToolEvent(ev)) return;
       if (this.suppressFollowUpsInternalEvent(ev)) return;
-      if (ev.kind === 'turn_end' && this.state === 'in_turn') {
+      if ((ev.kind === 'turn_end' || ev.kind === 'runtime_error') && this.state === 'in_turn') {
         this.state = 'idle';
       }
       this.queue.push(ev);

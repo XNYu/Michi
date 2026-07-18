@@ -16,6 +16,7 @@ import { resolveShowImage } from './showImage';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission, setNodeExternalSessionId } from '../../services/dbRepository';
 import { getAgentConfig, resolveReasoning } from '../../services/agentConfig';
+import * as perf from '../../services/perf';
 import type { AgentReasoning } from '../types';
 import { EventQueue } from '../eventQueue';
 import { AsyncGate } from '../asyncGate';
@@ -129,6 +130,13 @@ export class ClaudeSession implements AgentSession {
   private firstTurnPrefix: string = '';
   private firstTurnPrefixConsumed: boolean = false;
 
+  // Per-turn perf instrumentation. Reset in send() before writeStdin; read by
+  // the envelope parser callback to time the first init/model envelope after
+  // we write a user prompt. All no-cost when MICHI_PERF is off.
+  private stdinWriteAt = 0;
+  private initSeenThisTurn = false;
+  private firstModelEnvelopeThisTurn = false;
+
   // Turn mutex: non-null while a turn is in flight
   private turnLock: Promise<void> | null = null;
   private turnLockRelease: (() => void) | null = null;
@@ -198,7 +206,13 @@ export class ClaudeSession implements AgentSession {
       return;
     }
 
+    const tSendIn = perf.now();
+    perf.mark('claude:send_entered', { sid: this.id, textLen: text.length, state: this.state });
+
+    this.idleGate.close();
+    this.queue.interruptWaiter(); // kick pump out of blocking pull()
     await this.acquireTurnLock();
+    perf.measure('claude:send_lock_acquired', tSendIn, { sid: this.id });
     try {
       this.lastUsedAt = Date.now();
       if (this.state === 'crashed') {
@@ -206,7 +220,9 @@ export class ClaudeSession implements AgentSession {
           yield { kind: 'turn_end', stopReason: 'error' };
           return;
         }
+        const tResume = perf.now();
         await this.spawnResume(this.externalSessionId);
+        perf.measure('claude:send_spawn_resume', tResume, { sid: this.id });
       }
 
       this.state = 'in_turn';
@@ -233,11 +249,30 @@ export class ClaudeSession implements AgentSession {
 
       this.history.push({ role: 'user', content: outgoingText });
       this.markTranslatorTurnStart?.();
-      this.writeStdin(userEnvelope(outgoingText));
+      this.initSeenThisTurn = false;
+      this.firstModelEnvelopeThisTurn = false;
+      this.stdinWriteAt = perf.now();
+      const tStdin = this.stdinWriteAt;
+      this.writeStdin(userEnvelope(textForModel));
+      perf.measure('claude:write_stdin', tStdin, { sid: this.id });
 
+      // tStdin → first event is the claude CLI + Anthropic black-box TTFT.
+      const tAfterStdin = perf.now();
+      let firstEventSeen = false;
+      let firstChunkSeen = false;
       const assistantChunks: string[] = [];
       for await (const ev of this.queue.drainUntilTurnEnd()) {
-        if (ev.kind === 'chunk') assistantChunks.push(ev.text);
+        if (!firstEventSeen) {
+          firstEventSeen = true;
+          perf.measure('claude:stdin_to_first_event', tAfterStdin, { sid: this.id, kind: ev.kind });
+        }
+        if (ev.kind === 'chunk') {
+          if (!firstChunkSeen) {
+            firstChunkSeen = true;
+            perf.measure('claude:stdin_to_first_chunk', tAfterStdin, { sid: this.id });
+          }
+          assistantChunks.push(ev.text);
+        }
         yield ev;
       }
       if (assistantChunks.length > 0) {
@@ -427,6 +462,8 @@ export class ClaudeSession implements AgentSession {
   // ---- Spawn ------------------------------------------------------------------
 
   async spawnFresh(): Promise<void> {
+    const tSpawnFresh = perf.now();
+    perf.mark('claude:spawn_fresh_start', { sid: this.id });
     const slot = this.mcpRegistry.create(this.id, this.cwd, this.ownerUserId ?? null, {
       onSpawnBranches: async (topics) => {
         const result = await this.bridge.spawnBranches({
@@ -472,6 +509,7 @@ export class ClaudeSession implements AgentSession {
     // claude --session-id requires UUID format; michi nodeIds don't conform.
     // The placeholder is overwritten when system/init reports the real session_id.
     await this.doSpawn({ sessionId: randomUUID(), mcpConfig });
+    perf.measure('claude:spawn_fresh', tSpawnFresh, { sid: this.id });
   }
 
   async spawnResume(externalSessionId: string): Promise<void> {
@@ -571,6 +609,10 @@ export class ClaudeSession implements AgentSession {
         this.completeFollowUpsOutputBoundaryFromEnvelope(envelope);
         // Invariant 6: persist external_session_id on init before forwarding events
         if (envelope['type'] === 'system' && envelope['subtype'] === 'init') {
+          if (!this.initSeenThisTurn && this.stdinWriteAt) {
+            this.initSeenThisTurn = true;
+            perf.measure('claude:stdin_to_cli_init', this.stdinWriteAt, { sid: this.id });
+          }
           const sessionId = envelope['session_id'] as string | undefined;
           if (sessionId) {
             if (this.externalSessionId && this.externalSessionId !== sessionId) {
@@ -585,6 +627,13 @@ export class ClaudeSession implements AgentSession {
               console.warn(`[ClaudeSession] setNodeExternalSessionId failed:`, err);
             }
           }
+        } else if (!this.firstModelEnvelopeThisTurn && this.stdinWriteAt) {
+          // First non-system envelope after stdin write — Anthropic actually responded.
+          this.firstModelEnvelopeThisTurn = true;
+          perf.measure('claude:stdin_to_first_model_envelope', this.stdinWriteAt, {
+            sid: this.id,
+            type: envelope['type'] as string | undefined,
+          });
         }
         translator.feed(envelope);
       },
@@ -608,6 +657,7 @@ export class ClaudeSession implements AgentSession {
       });
     }
 
+    const tCliSpawn = perf.now();
     const child = spawnClaude({
       cwd: this.cwd,
       sessionId: opts.sessionId,
@@ -636,6 +686,11 @@ export class ClaudeSession implements AgentSession {
       systemPromptAppend,
     });
     this.child = child;
+    perf.measure('claude:cli_spawn_call', tCliSpawn, {
+      sid: this.id,
+      pid: child.pid,
+      bare: process.env.MICHI_CLAUDE_BARE === '1',
+    });
 
     let exitResolve!: () => void;
     this.exitPromise = new Promise<void>((r) => { exitResolve = r; });

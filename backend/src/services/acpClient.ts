@@ -705,6 +705,8 @@ export class AcpClient {
      * tell "still working" from "stuck".
      */
     async *prompt(sessionId: string, text: string): AsyncIterableIterator<AcpUpdate> {
+        const tPromptIn = perf.now();
+        perf.mark("acp:prompt_entered", { sid: sessionId, textLen: text.length });
         const q = this.sessionQueues.get(sessionId);
         if (!q) throw new ACPError(`unknown session: ${sessionId}`);
 
@@ -758,6 +760,8 @@ export class AcpClient {
             });
         this.sessionInFlight.set(sessionId, sendPromise);
 
+        let firstRealUpdateSeen = false;
+        let firstChunkSeen = false;
         try {
             while (true) {
                 const item = await q.get();
@@ -771,6 +775,15 @@ export class AcpClient {
                     // Synthetic — don't touch lastActivity so idle keeps growing.
                     yield update;
                     continue;
+                }
+
+                if (!firstRealUpdateSeen && kind !== "__send_complete__") {
+                    firstRealUpdateSeen = true;
+                    perf.measure("acp:prompt_to_first_update", tPromptIn, { sid: sessionId, kind });
+                }
+                if (!firstChunkSeen && kind === "agent_message_chunk") {
+                    firstChunkSeen = true;
+                    perf.measure("acp:prompt_to_first_chunk", tPromptIn, { sid: sessionId });
                 }
 
                 if (kind === "__send_complete__") {

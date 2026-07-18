@@ -32,8 +32,8 @@ describe('CommentChips', () => {
       <CommentChips comments={[mk('a', 'short', 'short body')]} />,
     );
     const btn = getByRole('button');
-    expect(btn.textContent).toMatch(/Expand/);
+    expect(btn.textContent).toMatch(/expand/i);
     fireEvent.click(btn);
-    expect(btn.textContent).toMatch(/Collapse/);
+    expect(btn.textContent).toMatch(/collapse/i);
   });
 });

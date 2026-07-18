@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { CodexSession } from '../src/agents/codex/CodexSession';
 import type { CodexAppServerClient } from '../src/agents/codex/CodexAppServerClient';
 import type { McpSlotRegistry } from '../src/services/mcpServer';
@@ -122,6 +125,64 @@ test('send streams chunks and ends on turn/completed; history is recorded', asyn
   assert.equal(history[0].content, 'hello');
   assert.equal(history[1].role, 'assistant');
   assert.equal(history[1].content, 'Hello world');
+});
+
+test('send includes existing image attachments as native localImage inputs', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-codex-image-'));
+  const imagePath = path.join(tmpDir, 'screen.png');
+  const textPath = path.join(tmpDir, 'notes.txt');
+  fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  fs.writeFileSync(textPath, 'notes');
+
+  let turnStartParams: Record<string, unknown> | undefined;
+  const client = makeStubClient({
+    request: async (method: string, params: unknown) => {
+      if (method === 'turn/start') turnStartParams = params as Record<string, unknown>;
+      return {};
+    },
+  });
+  const session = new CodexSession({
+    nodeId: 'node-image',
+    threadId: 'thread-image',
+    cwd: tmpDir,
+    workspaceId: null,
+    client,
+    mcpRegistry: makeStubMcpRegistry(),
+    bridge: makeStubBridge(),
+    mcpPort: 3001,
+  });
+  session.createMcpSlot();
+  session.wireNotifications();
+
+  try {
+    const turnPromise = (async () => {
+      for await (const _ev of session.send('What is in this image?', {
+        attachments: [
+          { name: 'screen.png', absPath: imagePath },
+          { name: 'screen-again.png', absPath: imagePath },
+          { name: 'notes.txt', absPath: textPath },
+          { name: 'missing.jpg', absPath: path.join(tmpDir, 'missing.jpg') },
+        ],
+      })) {
+        // Drain through turn_end.
+      }
+    })();
+
+    await new Promise((resolve) => setImmediate(resolve));
+    (client as any)._emit('thread-image', 'turn/completed', {
+      threadId: 'thread-image',
+      turn: { status: 'completed' },
+    });
+    await turnPromise;
+
+    assert.deepEqual(turnStartParams?.input, [
+      { type: 'text', text: 'What is in this image?' },
+      { type: 'localImage', path: imagePath },
+    ]);
+  } finally {
+    await session.dispose();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('internal Michi metadata tool calls never enter the visible event stream', async () => {
@@ -253,7 +314,7 @@ test('markCrashed terminates an in-flight drain with turn_end (terminal safety)'
   await sendPromise;
 
   assert.ok(events.includes('turn_end'), 'markCrashed should push turn_end to terminate the drain');
-  assert.ok(events.includes('mcp_server_error'), 'markCrashed should push mcp_server_error');
+  assert.ok(events.includes('runtime_error'), 'markCrashed should push runtime_error');
   const turnEnd = events[events.length - 1];
   assert.equal(turnEnd, 'turn_end', 'turn_end should be last event');
 });

@@ -92,6 +92,8 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
             return { event: CHAT_STREAM_EVENTS.usageSummary, data: { contextUsagePercentage: ev.contextUsagePercentage, totalCredits: ev.totalCredits, turnDurationMs: ev.turnDurationMs } };
         case "mcp_server_error":
             return { event: CHAT_STREAM_EVENTS.mcpServerError, data: { serverName: ev.serverName, error: ev.error } };
+        case "runtime_error":
+            throw new Error(ev.error);
         case "turn_end":
             return { event: CHAT_STREAM_EVENTS.done, data: { stopReason: ev.stopReason } };
         default:

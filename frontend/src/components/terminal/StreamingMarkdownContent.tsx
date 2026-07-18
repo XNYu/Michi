@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import MarkdownContent, { type MarkdownContentProps } from '../MarkdownContent';
 import {
   revealTailCharsForBlock,
-  splitStreamingMarkdownBlocks,
+  updateStreamingMarkdownBlocks,
+  type IncrementalStreamingMarkdownBlockState,
   type StreamingMarkdownBlock,
 } from '../../lib/streamingMarkdownBlocks';
 
@@ -12,13 +13,15 @@ type StreamingMarkdownContentProps = Omit<MarkdownContentProps, 'text'> & {
 
 type MarkdownBlockProps = Omit<MarkdownContentProps, 'text' | 'revealTailChars'> & {
   block: StreamingMarkdownBlock;
-  blockCount: number;
+  first: boolean;
+  last: boolean;
   revealTailChars?: number;
 };
 
 function MarkdownBlockInner({
   block,
-  blockCount,
+  first,
+  last,
   revealTailChars,
   ...markdownProps
 }: MarkdownBlockProps) {
@@ -29,8 +32,8 @@ function MarkdownBlockInner({
       revealTailChars={revealTailChars}
       displayContents
       trimEdges={false}
-      trimFirstChild={block.index === 0}
-      trimLastChild={block.index === blockCount - 1}
+      trimFirstChild={first}
+      trimLastChild={last}
     />
   );
 }
@@ -40,7 +43,8 @@ const MarkdownBlock = React.memo(MarkdownBlockInner, (prev, next) =>
   prev.block.index === next.block.index &&
   prev.block.start === next.block.start &&
   prev.block.end === next.block.end &&
-  prev.blockCount === next.blockCount &&
+  prev.first === next.first &&
+  prev.last === next.last &&
   prev.revealTailChars === next.revealTailChars &&
   prev.size === next.size &&
   prev.family === next.family &&
@@ -55,7 +59,15 @@ export default function StreamingMarkdownContent({
   revealTailChars,
   ...markdownProps
 }: StreamingMarkdownContentProps) {
-  const blocks = useMemo(() => splitStreamingMarkdownBlocks(text), [text]);
+  const committedStateRef = useRef<IncrementalStreamingMarkdownBlockState | null>(null);
+  const state = useMemo(
+    () => updateStreamingMarkdownBlocks(committedStateRef.current, text),
+    [text],
+  );
+  useLayoutEffect(() => {
+    committedStateRef.current = state;
+  }, [state]);
+  const blocks = state.blocks;
   if (blocks.length === 0) return null;
 
   return (
@@ -65,7 +77,8 @@ export default function StreamingMarkdownContent({
           key={block.index}
           {...markdownProps}
           block={block}
-          blockCount={blocks.length}
+          first={block.index === 0}
+          last={block.index === blocks.length - 1}
           revealTailChars={revealTailCharsForBlock(block, text.length, revealTailChars)}
         />
       ))}

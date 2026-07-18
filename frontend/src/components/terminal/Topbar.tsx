@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../state/chatStore';
+import { activeTreeRootNodeId, chatLabel, useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { IconBtn } from './primitives';
 import { checkVersion, triggerUpdate } from '../../services/api';
@@ -14,7 +14,7 @@ import { confirmDialog } from '../ui/ConfirmDialog';
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
 import { isArchiveGroupId } from '../../state/trashActions';
-import { ArtifactsIcon } from './icons';
+import { ArtifactsIcon, BranchesIcon, DigestIcon, MapIcon } from './icons';
 
 const TOPBAR_HEIGHT = 44;
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
@@ -240,10 +240,36 @@ export default function TerminalTopbar({
     }
   };
 
+  // Branches / Map / Digest are thread-scoped views: the topbar labels them
+  // with the active thread (not just the workspace) and offers a ‹ back crumb
+  // to the conversation, so the fullscreen page can't read as global.
+  const threadPage = page === 'branches' || page === 'map' || page === 'digest';
+  const activeTree =
+    activeProject?.trees.find((t) => t.id === activeProject.activeTreeId) ?? null;
+  const threadRootId = activeTreeRootNodeId(activeProject);
+  const threadRootTitle = useStructuralSelector((nodesMap) => {
+    if (!threadRootId) return '';
+    const n = nodesMap[threadRootId];
+    return n ? n.title || chatLabel(n) : '';
+  });
+  const threadTitle = activeTree
+    ? activeTree.name?.trim() || threadRootTitle || 'Untitled thread'
+    : activeProject?.name ?? '';
+  // The Digest toggle carries the unread dot that used to live on the
+  // sidebar's Digest row.
+  const hasUnreadDigest = useStructuralSelector((nodesMap) => {
+    if (!activeProject) return false;
+    return activeProject.chatIds.some((id) => {
+      const n = nodesMap[id];
+      if (!n || n.kind !== 'digest' || n.deletedAt || !n.digest) return false;
+      return n.digest.generatedAt > 0 && n.digest.generatedAt > n.digest.viewedAt;
+    });
+  });
+
   const showWorkspaceTitle =
     page === 'workspaces' || page === 'trash' || page === 'archived' ||
     page === 'workspace-manage' ||
-    (!!activeProject && (page === 'branches' || page === 'map' || page === 'digest'));
+    (!!activeProject && threadPage);
   // Home page body inherits --term-bg from the shell; the rest of the app
   // paints panes with --term-pane-bg (≈ --term-surface), which is lighter.
   // On Home, align the topbar to --term-bg so there's no white band above
@@ -544,6 +570,11 @@ export default function TerminalTopbar({
                 : 'padding-left 150ms cubic-bezier(.4,0,.2,1)',
             } as React.CSSProperties}
           >
+            {threadPage && (
+              <BreadcrumbBackButton onClick={() => _onNav('dashboard')} title="Back to thread (esc)">
+                ‹ back
+              </BreadcrumbBackButton>
+            )}
             {page !== 'workspace-manage' && (
               <span
                 style={{
@@ -584,7 +615,7 @@ export default function TerminalTopbar({
               </span>
             ) : (
               <span
-                title={activeProject!.name}
+                title={threadTitle}
                 style={{
                   fontSize: 13,
                   fontWeight: 600,
@@ -596,18 +627,19 @@ export default function TerminalTopbar({
                   minWidth: 0,
                 }}
               >
-                {activeProject!.name}
+                {threadTitle}
               </span>
             )}
           </div>
         )}
       </div>
 
-      {/* Right cluster: Update banner (when available) + Contexts popover
-          trigger. Absolutely positioned so it doesn't shrink zone-2 — that
-          would make the caption grid narrower than the Dashboard grid below
-          and dividers would no longer line up. Solid bg masks any caption
-          text that scrolls under it in overflow mode. */}
+      {/* Right cluster: Update banner (when available) + thread-view toggles
+          (Branches / Map / Digest) + Artifacts drawer trigger. Absolutely
+          positioned so it doesn't shrink zone-2 — that would make the caption
+          grid narrower than the Dashboard grid below and dividers would no
+          longer line up. Solid bg masks any caption text that scrolls under
+          it in overflow mode. */}
       <div
         style={{
           position: 'absolute',
@@ -659,7 +691,44 @@ export default function TerminalTopbar({
               )}
             </span>
           )}
-          <ArtifactsToggleButton onClick={toggleArtifacts} active={artifactsOpen} />
+          {!!activeProject && (
+            <>
+              <TopbarIconToggle
+                onClick={() => _onNav('branches')}
+                active={page === 'branches'}
+                label="Branches"
+                title="Branches"
+              >
+                <BranchesIcon size={14} />
+              </TopbarIconToggle>
+              <TopbarIconToggle
+                onClick={() => _onNav('map')}
+                active={page === 'map'}
+                label="Map"
+                title={`Map (${kbd('mod', 'M')})`}
+              >
+                <MapIcon size={14} />
+              </TopbarIconToggle>
+              <TopbarIconToggle
+                onClick={() => _onNav('digest')}
+                active={page === 'digest'}
+                label="Digest"
+                title={`Digest (${kbd('mod', 'D')})`}
+                dot={hasUnreadDigest}
+              >
+                <DigestIcon size={14} />
+              </TopbarIconToggle>
+              <div aria-hidden style={{ width: 1, height: 16, background: 'var(--term-line)', flexShrink: 0 }} />
+            </>
+          )}
+          <TopbarIconToggle
+            onClick={toggleArtifacts}
+            active={artifactsOpen}
+            label="Artifacts"
+            title={`Artifacts (${kbd('shift', 'mod', 'A')})`}
+          >
+            <ArtifactsIcon size={14} />
+          </TopbarIconToggle>
       </div>
 
       {popoverOpen && anchorRect && (
@@ -783,9 +852,11 @@ function BrandHomeButton({ onClick }: { onClick: () => void }) {
 
 function BreadcrumbBackButton({
   onClick,
+  title,
   children,
 }: {
   onClick: () => void;
+  title?: string;
   children: React.ReactNode;
 }) {
   const [hover, setHover] = React.useState(false);
@@ -793,6 +864,7 @@ function BreadcrumbBackButton({
     <button
       type="button"
       onClick={onClick}
+      title={title}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -813,17 +885,34 @@ function BreadcrumbBackButton({
   );
 }
 
-function ArtifactsToggleButton({ onClick, active }: { onClick: () => void; active?: boolean }) {
+/** Right-cluster icon toggle (thread views + Artifacts drawer). Same visual
+ *  grammar as Zone1IconButton; `dot` renders the unread badge. */
+function TopbarIconToggle({
+  onClick,
+  active,
+  label,
+  title,
+  dot,
+  children,
+}: {
+  onClick: () => void;
+  active?: boolean;
+  label: string;
+  title: string;
+  dot?: boolean;
+  children: React.ReactNode;
+}) {
   const [hover, setHover] = React.useState(false);
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label="Artifacts"
-      title={`Artifacts (${kbd('shift', 'mod', 'A')})`}
+      aria-label={label}
+      title={title}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
+        position: 'relative',
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -844,7 +933,21 @@ function ArtifactsToggleButton({ onClick, active }: { onClick: () => void; activ
         WebkitAppRegion: 'no-drag',
       } as React.CSSProperties}
     >
-      <ArtifactsIcon size={14} />
+      {children}
+      {dot && (
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: 3,
+            right: 3,
+            width: 5,
+            height: 5,
+            borderRadius: 99,
+            background: 'var(--term-accent)',
+          }}
+        />
+      )}
     </button>
   );
 }

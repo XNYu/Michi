@@ -243,6 +243,9 @@ export class ChatHub {
         if (ev.kind === "branch_overview") {
           branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
         }
+        if (ev.kind === "runtime_error") {
+          throw new Error(ev.error);
+        }
         if (ev.kind === "turn_end") {
           if (!branchOverviewPublished) {
             branchOverviewPublished = this.publishBranchOverview(chatId, log);
@@ -419,9 +422,14 @@ export class ChatHub {
     try {
       let terminalSeen = false;
       let branchOverviewPublished = false;
-      for await (const ev of session.send(log.wireText)) {
+      for await (const ev of session.send(log.wireText, {
+        attachments: log.snapshot.userMessage?.metadata?.attachments,
+      })) {
         if (ev.kind === "branch_overview") {
           branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
+        }
+        if (ev.kind === "runtime_error") {
+          throw new Error(ev.error);
         }
         if (ev.kind === "turn_end") {
           if (!branchOverviewPublished) {
