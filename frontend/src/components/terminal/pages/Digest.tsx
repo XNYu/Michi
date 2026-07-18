@@ -205,7 +205,11 @@ export default function TerminalDigest({
       if (!rootNode || rootNode.deletedAt) continue;
       const chatIds = treeChatIds.get(tree.id) ?? [];
       const msgCount = chatIds.reduce(
-        (acc, id) => acc + (nodesSnapshot[id]?.messages.length ?? 0),
+        (acc, id) => {
+          const n = nodesSnapshot[id];
+          if (!n) return acc;
+          return acc + (n.messageCount ?? n.messages.length);
+        },
         0,
       );
       const digestNode = treeDigests.get(tree.id) ?? null;
@@ -747,7 +751,7 @@ export default function TerminalDigest({
                     {n.title || chatLabel(n) || id}
                   </div>
                   <div style={{ fontSize: 9.5, color: 'var(--term-muted)' }}>
-                    {n.messages.length} msgs
+                    {n.messageCount ?? n.messages.length} msgs
                   </div>
                 </div>
                 {isNew ? (
