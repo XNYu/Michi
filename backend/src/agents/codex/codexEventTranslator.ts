@@ -6,6 +6,7 @@ const N = {
   agentMessageDelta: 'item/agentMessage/delta',
   reasoningTextDelta: 'item/reasoning/textDelta',
   reasoningSummaryTextDelta: 'item/reasoning/summaryTextDelta',
+  reasoningSummaryPartAdded: 'item/reasoning/summaryPartAdded',
   itemStarted: 'item/started',
   itemCompleted: 'item/completed',
   commandOutputDelta: 'item/commandExecution/outputDelta',
@@ -244,6 +245,12 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
       case N.agentMessageDelta: {
         const text = typeof p['delta'] === 'string' ? p['delta'] : '';
         if (text) emit({ kind: 'chunk', text });
+        break;
+      }
+
+      case N.reasoningSummaryPartAdded: {
+        const index = typeof p['summaryIndex'] === 'number' ? p['summaryIndex'] : 0;
+        if (index > 0) emit({ kind: 'thought', text: '\n' });
         break;
       }
 
