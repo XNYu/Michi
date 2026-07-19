@@ -62,7 +62,7 @@ jobs:
           CSC_LINK: ${{ secrets.CERTIFICATE_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
         run: |
-          npx electron-builder --mac --arm64 --config electron-builder.ci.json
+          npx electron-builder --mac --arm64 --config electron-builder.ci.json --publish never
 
       - name: Staple notarization ticket to DMG
         run: |
