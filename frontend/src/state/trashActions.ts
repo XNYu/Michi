@@ -37,6 +37,8 @@ interface UseTrashActionsArgs {
   activeTreeRootNodeId: (project: Project | null | undefined) => string | null;
   /** See chatStore.tsx for semantics. Optional so tests can mount without it. */
   syncPausedRef?: MutableRefObject<boolean>;
+  /** Bump the structure version so useStructuralSelector consumers re-compute. */
+  bumpStructureVersion?: () => void;
 }
 
 export function useTrashActions({
@@ -52,6 +54,7 @@ export function useTrashActions({
   trashTTLDays,
   activeTreeRootNodeId,
   syncPausedRef,
+  bumpStructureVersion,
 }: UseTrashActionsArgs) {
   const deleteNode = useCallback((nodeId: string) => {
     const project = projects.find((p) => p.chatIds.includes(nodeId));
@@ -80,6 +83,7 @@ export function useTrashActions({
     });
     nodesRef.current = next;
     setNodes(next);
+    bumpStructureVersion?.();
 
     setProjects((prev) =>
       prev.map((p) => (p.id === project.id ? { ...p } : p)),
@@ -95,6 +99,7 @@ export function useTrashActions({
     });
   }, [
     activeTreeRootNodeId,
+    bumpStructureVersion,
     cancelFns,
     nodesRef,
     projects,
@@ -196,6 +201,7 @@ export function useTrashActions({
     }
     nodesRef.current = nextNodes;
     setNodes(nextNodes);
+    bumpStructureVersion?.();
 
     // Update project: rewire branch edges (drop X's edges, add bypass edges
     // from newParent to each surviving child). Tree.rootNodeId update for
@@ -259,6 +265,7 @@ export function useTrashActions({
       return nextSel;
     });
   }, [
+    bumpStructureVersion,
     cancelFns,
     nodesRef,
     projects,
@@ -334,6 +341,7 @@ export function useTrashActions({
     }
     nodesRef.current = nextNodes;
     setNodes(nextNodes);
+    bumpStructureVersion?.();
 
     setProjects((prev) =>
       prev.map((p) => {
@@ -375,7 +383,7 @@ export function useTrashActions({
       }),
     );
     return nodeId;
-  }, [nodesRef, projects, setNodes, setProjects]);
+  }, [bumpStructureVersion, nodesRef, projects, setNodes, setProjects]);
 
   const restoreDeletion = useCallback((groupId: string): string | null => {
     const ids: string[] = [];
@@ -410,12 +418,13 @@ export function useTrashActions({
     }
     nodesRef.current = next;
     setNodes(next);
+    bumpStructureVersion?.();
 
     setProjects((prev) =>
       prev.map((p) => (ids.some((id) => p.chatIds.includes(id)) ? { ...p } : p)),
     );
     return root;
-  }, [nodesRef, restoreFromTrimSnapshot, setNodes, setProjects]);
+  }, [bumpStructureVersion, nodesRef, restoreFromTrimSnapshot, setNodes, setProjects]);
 
   const purgeDeletion = useCallback((groupId: string) => {
     const ids = new Set<string>();
@@ -448,7 +457,8 @@ export function useTrashActions({
     ids.forEach((id) => delete next[id]);
     nodesRef.current = next;
     setNodes(next);
-  }, [nodesRef, setNodes, setProjects]);
+    bumpStructureVersion?.();
+  }, [bumpStructureVersion, nodesRef, setNodes, setProjects]);
 
   const restoreLastDeletion = useCallback((): string | null => {
     const gidToAt = new Map<string, number>();

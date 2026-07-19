@@ -2247,6 +2247,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     trashTTLDays: prefs.trashTTLDays,
     activeTreeRootNodeId,
     syncPausedRef,
+    bumpStructureVersion: useCallback(() => { structureVersionRef.current += 1; }, []),
   });
 
   const setSidebarExpandedPref = useCallback(
