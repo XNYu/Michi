@@ -31,10 +31,6 @@ vi.mock('../../lib/electronBridge', () => ({
   getElectron: () => null,
 }));
 
-vi.mock('../ContextsPopover', () => ({
-  default: () => <div data-testid="contexts-popover-stub" />,
-}));
-
 beforeEach(() => {
   if (typeof window !== 'undefined') window.localStorage.clear();
 });

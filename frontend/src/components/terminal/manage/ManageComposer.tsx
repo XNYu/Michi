@@ -210,6 +210,7 @@ export default function ManageComposer({
             }
             const result = await importWorkspaceFileUpload(project.id, cwd, file, {
               onProgress: progressForFile(file.name, fileIndex, files.length),
+              subdir: '.attachments',
             });
             const abs = result.filePath.startsWith('/')
               ? result.filePath
@@ -285,6 +286,7 @@ export default function ManageComposer({
           const result = await importWorkspaceFileUpload(project.id, cwd, file, {
             originalName: fileName,
             onProgress: progressForFile(fileName, fileIndex, items.length),
+            subdir: '.attachments',
           });
           const abs = result.filePath.startsWith('/')
             ? result.filePath
@@ -364,6 +366,7 @@ export default function ManageComposer({
           }
           const result = await importWorkspaceFileUpload(project.id, cwd, file, {
             onProgress: progressForFile(file.name, fileIndex, files.length),
+            subdir: '.attachments',
           });
           const abs = result.filePath.startsWith('/')
             ? result.filePath

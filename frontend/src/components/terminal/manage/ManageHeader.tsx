@@ -82,7 +82,7 @@ export default function ManageHeader({
         )}
         {cwd && dot}
         <span>
-          {chatsCount} chats · {contextsCount} sources
+          {chatsCount} chats · {contextsCount} artifacts
         </span>
         {dot}
         <span>active {relative(lastActiveAt)}</span>

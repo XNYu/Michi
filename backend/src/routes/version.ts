@@ -18,15 +18,18 @@ async function gitMaybe(...args: string[]): Promise<string | null> {
   try { return await git(...args); } catch { return null; }
 }
 
-// Update & Restart tracks a conventional public release branch. If no matching
-// remote branch exists, return null so the button stays hidden rather than
-// guessing at an unrelated remote.
+// Update & Restart strictly tracks `amazon/dev` — the Michi internal release
+// branch. If the user has no `amazon` remote (or `amazon/dev` does not exist),
+// we return null so the button stays hidden rather than fall back to whatever
+// remote happens to be configured.
 async function pickUpstream(): Promise<{ remote: string; branch: string } | null> {
-  for (const branch of ['origin/main', 'origin/master', 'github/main', 'github/master']) {
-    const verified = await gitMaybe('rev-parse', '--verify', `refs/remotes/${branch}`);
-    if (verified) return { remote: branch.split('/')[0], branch };
-  }
-  return null;
+  const remotesOut = await gitMaybe('remote');
+  if (!remotesOut) return null;
+  const remotes = remotesOut.split('\n').map((s) => s.trim()).filter(Boolean);
+  if (!remotes.includes('amazon')) return null;
+  const verified = await gitMaybe('rev-parse', '--verify', 'refs/remotes/amazon/dev');
+  if (!verified) return null;
+  return { remote: 'amazon', branch: 'amazon/dev' };
 }
 
 export function setupVersionRoutes(): Router {

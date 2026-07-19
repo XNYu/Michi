@@ -20,6 +20,7 @@ import {
 } from "../services/userKeys";
 import { listRuntimes, getRuntime } from "../agents/registry";
 import { hasProviders } from "../agents/types";
+import { getProviderInfo, providerRequiresUserKey } from "../agents/pi/piProviders";
 import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
 
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
@@ -72,7 +73,11 @@ export function setupAgentRoutes(): Router {
             listUserProviderKeys(userId).map((r) => [r.provider, true]),
           )
         : listProviderKeyPresence(list.map((p) => p.id));
-      providers = list.map((p) => ({ ...p, hasKey: !!presence[p.id] }));
+      const hasUsableKey = (p: (typeof list)[number]): boolean =>
+        p.requiresUserKey === false
+          ? !!getProviderApiKey(p.id)
+          : !!presence[p.id];
+      providers = list.map((p) => ({ ...p, hasKey: hasUsableKey(p) }));
       // hasRequiredKey gates the welcome modal. In cloud BYOK mode the
       // global `cfg.provider` is shared across all users — another user
       // switching provider in Settings, or a redeploy resetting the
@@ -83,7 +88,7 @@ export function setupAgentRoutes(): Router {
       // ApiKeyGate / Settings picker shows which providers are saved
       // and the user can switch to one of them.
       if (userId) {
-        hasRequiredKey = list.some((p) => presence[p.id]);
+        hasRequiredKey = list.some((p) => hasUsableKey(p));
       } else {
         hasRequiredKey = !!getProviderApiKey(cfg.provider, userId);
       }
@@ -154,6 +159,23 @@ export function setupAgentRoutes(): Router {
       }
       reasoningToSet = req.body.reasoning as AgentReasoning;
     }
+    const runtimeForModel = getRuntime(patch.runtime ?? cfg.runtime);
+    const providerForModel = patch.provider ?? cfg.provider;
+    const providerInfo = runtimeForModel?.capabilities.providerModels
+      ? getProviderInfo(providerForModel)
+      : undefined;
+    if (providerInfo?.modelLocked) {
+      if (modelToSet !== undefined && modelToSet !== providerInfo.defaultModel) {
+        res.status(400).json({
+          ok: false,
+          error: `Provider model is locked to ${providerInfo.defaultModel}`,
+        });
+        return;
+      }
+      if (patch.provider !== undefined && modelToSet === undefined) {
+        modelToSet = providerInfo.defaultModel;
+      }
+    }
     updateAgentConfig(patch, userId);
     if (modelToSet !== undefined) {
       updateAgentModelForRuntime(getAgentConfig(userId).runtime, modelToSet, userId);
@@ -198,6 +220,10 @@ export function setupAgentRoutes(): Router {
       res.status(400).json({ ok: false, error: "Missing provider" });
       return;
     }
+    if (!providerRequiresUserKey(provider)) {
+      res.status(400).json({ ok: false, error: "Provider uses a built-in server key" });
+      return;
+    }
     if (!key) {
       res.status(400).json({ ok: false, error: "Empty key" });
       return;
@@ -214,6 +240,10 @@ export function setupAgentRoutes(): Router {
   });
 
   router.delete("/agent/provider-key/:provider", (req: Request<{ provider: string }>, res: Response) => {
+    if (!providerRequiresUserKey(req.params.provider)) {
+      res.status(400).json({ ok: false, error: "Provider uses a built-in server key" });
+      return;
+    }
     const userId = req.user?.id as string | undefined;
     if (userId) {
       clearUserProviderKey(userId, req.params.provider);

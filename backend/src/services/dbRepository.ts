@@ -181,10 +181,23 @@ export interface ContextRow {
   id: string;
   workspace_id: string;
   name: string;
+  /** Empty string for `link` artifacts (which carry `url`). */
   file_path: string;
   size?: number | null;
+  /** Retired UI flag; column kept for back-compat, always written 0. */
   auto_inject: number;
   source: string;
+  /** Artifact type (migration 0008): 'doc' | 'file' | 'image' | 'link'. */
+  type?: string | null;
+  /** External URL for `link` artifacts. */
+  url?: string | null;
+  /** Provenance: node/message this artifact came from. */
+  origin_node_id?: string | null;
+  origin_message_id?: string | null;
+  /** 'embedded' | 'reference' — durable so injection resolves after reload. */
+  kind?: string | null;
+  /** UI pin (shelf ordering); independent of the removed auto-inject. */
+  pinned_at?: number | null;
   created_at: number;
   updated_at: number;
   /** Per-row sync version (sync L2, migration 0006). NULL = predates versioning
@@ -485,7 +498,7 @@ export function saveNode(node: NodeRow, userId?: string): void {
       @spawned_by_agent, @current_mode_id, @pane_width, @digest, @follow_ups, @follow_ups_source_message_id,
       @acp_session_id, @runtime_id,
       @provider_id, @model_id, @reasoning, @resume_fingerprint, @composer_draft, @external_session_id,
-      @trim_snapshot, @created_at, @rev)
+      @trim_snapshot, @last_applied_turn_id, @last_applied_seq, @created_at, @rev)
     ON CONFLICT(id) DO UPDATE SET
       tree_id=excluded.tree_id, parent_node_id=excluded.parent_node_id,
       kind=excluded.kind, title=excluded.title, branch_overview=excluded.branch_overview, status=excluded.status,
@@ -516,6 +529,8 @@ export function saveNode(node: NodeRow, userId?: string): void {
       -- guard on this same statement. An explicit non-null value still wins.
       external_session_id=COALESCE(excluded.external_session_id, nodes.external_session_id),
       trim_snapshot=excluded.trim_snapshot,
+      last_applied_turn_id=excluded.last_applied_turn_id,
+      last_applied_seq=excluded.last_applied_seq,
       rev=COALESCE(excluded.rev, nodes.rev)
   `).run({
     tree_id: null,
@@ -540,6 +555,8 @@ export function saveNode(node: NodeRow, userId?: string): void {
     composer_draft: null,
     external_session_id: null,
     trim_snapshot: null,
+    last_applied_turn_id: null,
+    last_applied_seq: null,
     rev: null,
     ...node,
   });
@@ -1327,13 +1344,25 @@ export function saveContext(ctx: ContextRow, userId?: string): void {
   // Tombstone guard — contexts inside a purged workspace stay purged.
   if (isWorkspaceTombstoned(ctx.workspace_id)) return;
   getDb().prepare(`
-    INSERT INTO contexts (id, workspace_id, name, file_path, size, auto_inject, source, created_at, updated_at, rev)
-    VALUES (@id, @workspace_id, @name, @file_path, @size, @auto_inject, @source, @created_at, @updated_at, @rev)
+    INSERT INTO contexts (id, workspace_id, name, file_path, size, auto_inject, source, type, url, origin_node_id, origin_message_id, kind, pinned_at, created_at, updated_at, rev)
+    VALUES (@id, @workspace_id, @name, @file_path, @size, @auto_inject, @source, @type, @url, @origin_node_id, @origin_message_id, @kind, @pinned_at, @created_at, @updated_at, @rev)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, file_path=excluded.file_path, size=excluded.size, auto_inject=excluded.auto_inject,
-      source=excluded.source, updated_at=excluded.updated_at,
+      source=excluded.source, type=excluded.type, url=excluded.url,
+      origin_node_id=excluded.origin_node_id, origin_message_id=excluded.origin_message_id,
+      kind=excluded.kind, pinned_at=excluded.pinned_at, updated_at=excluded.updated_at,
       rev=COALESCE(excluded.rev, contexts.rev)
-  `).run({ ...ctx, size: ctx.size ?? null, rev: ctx.rev ?? null });
+  `).run({
+    ...ctx,
+    size: ctx.size ?? null,
+    type: ctx.type ?? null,
+    url: ctx.url ?? null,
+    origin_node_id: ctx.origin_node_id ?? null,
+    origin_message_id: ctx.origin_message_id ?? null,
+    kind: ctx.kind ?? null,
+    pinned_at: ctx.pinned_at ?? null,
+    rev: ctx.rev ?? null,
+  });
 }
 
 /**

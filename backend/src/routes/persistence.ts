@@ -2,6 +2,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { log } from '../services/logger';
 import { getDb, runInTransaction } from '../services/db';
+import { readPrefs, writePrefs, migrateFromSqlite } from '../services/prefsConfig';
 import {
   listWorkspaces, getWorkspace, saveWorkspace, deleteWorkspace,
   listTrees, saveTree, listNodes, saveNode, updateNodeTitle,
@@ -371,10 +372,19 @@ export function setupPersistenceRoutes(): express.Router {
   // ── User preferences (persisted to ~/.michi/config.json) ────────────────
   router.get('/prefs', (req, res) => {
     try {
-      const db = getDb();
-      const row = db.prepare("SELECT value FROM meta WHERE key = 'user_prefs'").get() as { value: string } | undefined;
-      if (!row) return res.json({ prefs: null });
-      res.json({ prefs: JSON.parse(row.value) });
+      const prefs = readPrefs();
+      if (!prefs) {
+        // One-time migration: if config.json has no prefs yet, seed from SQLite.
+        const db = getDb();
+        const row = db.prepare("SELECT value FROM meta WHERE key = 'user_prefs'").get() as { value: string } | undefined;
+        if (row) {
+          const legacy = JSON.parse(row.value);
+          migrateFromSqlite(legacy);
+          return res.json({ prefs: readPrefs() });
+        }
+        return res.json({ prefs: null });
+      }
+      res.json({ prefs });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -382,9 +392,7 @@ export function setupPersistenceRoutes(): express.Router {
 
   router.put('/prefs', (req, res) => {
     try {
-      const db = getDb();
-      const json = JSON.stringify(req.body);
-      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('user_prefs', ?)").run(json);
+      writePrefs(req.body);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

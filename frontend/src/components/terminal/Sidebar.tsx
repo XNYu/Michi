@@ -10,6 +10,7 @@ import {
   WorkspacesIcon,
   SettingsIcon,
   UserIcon,
+  ArtifactsIcon,
 } from './icons';
 import type { PageId } from '../../state/commands';
 
@@ -221,7 +222,8 @@ function BottomNav({
     badge,
     onClick,
   }: {
-    id: PageId;
+    /** Page this row navigates to. Omit for action rows (drawers) that use onClick. */
+    id?: PageId;
     glyph: React.ReactNode;
     label: string;
     kbd?: string;
@@ -229,16 +231,19 @@ function BottomNav({
     /** Overrides page-nav; used by drawer toggles (e.g. Artifacts). */
     onClick?: () => void;
   }) => {
-    const active = activePage === id;
+    const active = id !== undefined && activePage === id;
     return (
       <Row
-        onClick={() => onNav(id)}
+        onClick={() => (onClick ? onClick() : id !== undefined && onNav(id))}
         active={active}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 11,
-          padding: 'var(--sb-nav-py, 6px) 12px',
+          // Text/icons indent by --sb-inset; the row box stays full-bleed (its
+          // negative margin cancels the BottomNav container padding) so the
+          // active background still reads as a full-width highlight. See index.css.
+          padding: 'var(--sb-nav-py, 6px) calc(12px + var(--sb-inset, 0px))',
           color: active ? 'var(--term-fg)' : 'var(--term-mid)',
           background: active ? 'var(--term-alt)' : 'transparent',
           fontSize: 14,

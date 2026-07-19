@@ -521,7 +521,8 @@ const indexHtml = path.join(frontendBuild, 'index.html');
 
 if (fs.existsSync(indexHtml)) {
   app.use(express.static(frontendBuild));
-  app.get('/*splat', (req, res) => {
+  app.get('/*splat', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
     res.sendFile(indexHtml);
   });
 }

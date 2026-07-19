@@ -247,9 +247,9 @@ export interface EnsureSessionOptions {
   parentChatId?: string;
   mergeContexts?: string[];
   model?: string;
-  extraContexts?: Array<{ name: string; filePath: string; size?: number; kind?: 'embedded' | 'reference' }>;
+  extraContexts?: Array<{ name: string; filePath: string; url?: string; size?: number; kind?: 'embedded' | 'reference' }>;
   enableFollowUps?: boolean;
-  contextManifest?: Array<{ name: string; filePath: string; kind?: 'embedded' | 'reference' }>;
+  contextManifest?: Array<{ name: string; filePath: string; url?: string; kind?: 'embedded' | 'reference' }>;
   priorMessages?: Array<{ role: 'user' | 'assistant'; text: string }>;
   runtimeId?: RuntimeId;
   providerId?: string | null;
@@ -380,12 +380,12 @@ export async function importWorkspaceFile(
   cwd: string,
   originalName: string,
   content: string,
-  options?: UploadProgressOptions,
+  options?: UploadProgressOptions & { subdir?: string },
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
   try {
     return await postJsonWithUploadProgress(
       '/workspaces/import-file',
-      { workspaceId, cwd, originalName, content },
+      { workspaceId, cwd, originalName, content, subdir: options?.subdir },
       options,
     );
   } catch (err) {
@@ -398,7 +398,7 @@ export async function importWorkspaceFileBinary(
   cwd: string,
   originalName: string,
   bytes: ArrayBuffer | Uint8Array,
-  options?: UploadProgressOptions,
+  options?: UploadProgressOptions & { subdir?: string },
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   // Encode to base64 in chunks to avoid String.fromCharCode argument cap on
@@ -412,7 +412,7 @@ export async function importWorkspaceFileBinary(
   try {
     return await postJsonWithUploadProgress(
       '/workspaces/import-file',
-      { workspaceId, cwd, originalName, contentBase64 },
+      { workspaceId, cwd, originalName, contentBase64, subdir: options?.subdir },
       options,
     );
   } catch (err) {
@@ -424,7 +424,7 @@ export async function importWorkspaceFileUpload(
   workspaceId: string,
   cwd: string,
   file: File,
-  options?: UploadProgressOptions & { originalName?: string },
+  options?: UploadProgressOptions & { originalName?: string; subdir?: string },
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
   const originalName = options?.originalName ?? file.name;
   if (file.size === 0) {
@@ -435,6 +435,7 @@ export async function importWorkspaceFileUpload(
   const bytes = await readFileAsArrayBuffer(file, readProgress);
   return importWorkspaceFileBinary(workspaceId, cwd, originalName, bytes, {
     onProgress: uploadProgress,
+    subdir: options?.subdir,
   });
 }
 
@@ -1012,6 +1013,33 @@ export async function cancelPermission(
   if (!res.ok) throw new Error(`Permission response failed: ${res.status}`);
 }
 
+// ── User Input Response API ──
+
+export async function respondToUserInput(
+  chatId: string,
+  requestId: number,
+  answers: Array<{ question: string; answer: string }>,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/user-input-response`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, answers }),
+  });
+  if (!res.ok) throw new Error(`User input response failed: ${res.status}`);
+}
+
+export async function skipUserInput(
+  chatId: string,
+  requestId: number,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/user-input-response`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, skip: true }),
+  });
+  if (!res.ok) throw new Error(`User input skip failed: ${res.status}`);
+}
+
 // ── Persistence API ──
 
 export async function fetchWorkspaces(): Promise<unknown[]> {
@@ -1269,6 +1297,8 @@ export interface AgentProviderInfo {
   keyUrl?: string;
   supportsReasoning: boolean;
   hasKey?: boolean;
+  requiresUserKey?: boolean;
+  modelLocked?: boolean;
 }
 
 export interface AgentRuntimeOption {

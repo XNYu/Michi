@@ -154,6 +154,7 @@ export function runChatStream({
       return true;
     },
     onTurnStart: (data) => {
+      const env = data as typeof data & { seq?: number };
       if (data.assistantId && data.assistantId !== currentAssistantId) {
         dispatch({
           type: 'realign-assistant-id',
@@ -170,7 +171,8 @@ export function runChatStream({
       dispatch({ type: 'spawn-prompt-started', nodeId });
       trackSeq(env.seq, data.turnId);
     },
-    onChunk: (text) => {
+    onChunk: (text, seq, _assistantId, turnId) => {
+      trackSeq(seq, turnId);
       // Forward raw chunk to reducer immediately as block-first assistant data.
       dispatch({ type: 'chunk', nodeId, assistantId: currentAssistantId, text });
 
@@ -193,9 +195,14 @@ export function runChatStream({
         }
       }
     },
-    onThought: (text) => dispatch({ type: 'thought', nodeId, assistantId: currentAssistantId, text }),
+    onThought: (text, seq, _assistantId, turnId) => {
+      trackSeq(seq, turnId);
+      dispatch({ type: 'thought', nodeId, assistantId: currentAssistantId, text });
+    },
     onPlan: (entries) => dispatch({ type: 'plan', nodeId, assistantId: currentAssistantId, entries }),
     onToolCall: (toolCall) => {
+      const env = toolCall as typeof toolCall & { seq?: number; turnId?: string };
+      trackSeq(env.seq, env.turnId);
       dispatch({
         type: 'tool-call',
         nodeId,
@@ -211,6 +218,8 @@ export function runChatStream({
       });
     },
     onToolCallUpdate: (toolCall) => {
+      const env = toolCall as typeof toolCall & { seq?: number; turnId?: string };
+      trackSeq(env.seq, env.turnId);
       dispatch({
         type: 'tool-call-update',
         nodeId,
@@ -260,7 +269,7 @@ export function runChatStream({
       dispatch({ type: 'usage-summary', nodeId, contextUsagePercentage: data.contextUsagePercentage, totalCredits: data.totalCredits, turnDurationMs: data.turnDurationMs }),
     onMcpServerError: (data) =>
       dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
-    onDone: (stopReason, _assistantId, turnId, persisted) => {
+    onDone: (stopReason, _assistantId, turnId, persisted, completedAt) => {
       if (turnId) currentTurnId = turnId;
       if (persisted === false) {
         dispatch({
@@ -285,7 +294,7 @@ export function runChatStream({
         return;
       }
       // Reducer extracts metadata from assistant answer blocks.
-      dispatch({ type: 'done', nodeId, assistantId: currentAssistantId });
+      dispatch({ type: 'done', nodeId, assistantId: currentAssistantId, completedAt });
       cleanup();
       onTurnEnd?.('done', nodeId);
       onStreamComplete?.();
@@ -296,7 +305,8 @@ export function runChatStream({
       onTurnEnd?.('cancel', nodeId);
       // Note: intentionally NOT calling onStreamComplete for aborted streams
     },
-    onError: (message) => {
+    onError: (message, _assistantId, turnId) => {
+      if (turnId) currentTurnId = turnId;
       dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message });
       cleanup();
       onTurnEnd?.('error', nodeId);

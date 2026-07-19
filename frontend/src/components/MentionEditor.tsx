@@ -79,6 +79,10 @@ export interface MentionEditorProps {
 export const composerStarterKit = StarterKit.configure({
   horizontalRule: false,
   trailingNode: false,
+  // Don't open links on a plain click — the composer is an editing surface, so a
+  // bare click should place the caret, not navigate away. Cmd/Ctrl+click opens
+  // (see the click handler in editorProps.handleDOMEvents).
+  link: { openOnClick: false },
 });
 
 /**
@@ -496,7 +500,19 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
       handleDOMEvents: {
         paste: (_view, event) => {
           onPasteRef.current?.(event as ClipboardEvent);
-          return false; // let TipTap handle text paste normally
+          // If the host handler called preventDefault (e.g. long-text→file),
+          // tell ProseMirror to skip its default text insertion.
+          return event.defaultPrevented;
+        },
+        // openOnClick is off (links are editable text); Cmd/Ctrl+click opens.
+        click: (_view, event) => {
+          if (!(event.metaKey || event.ctrlKey)) return false;
+          const anchor = (event.target as HTMLElement | null)?.closest('a[href]');
+          const href = anchor?.getAttribute('href');
+          if (!href) return false;
+          event.preventDefault();
+          window.open(href, '_blank', 'noopener,noreferrer');
+          return true;
         },
       },
     },

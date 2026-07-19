@@ -411,16 +411,23 @@ export function serializeMessageRowsForNode(
   });
 }
 
-/** Build one `contexts` row. */
+/** Build one `contexts` row. `auto_inject` is retired (always 0); the artifact
+ *  fields (type/url/origin/kind/pinned_at) round-trip via migration 0008. */
 export function serializeContextRow(project: Project, c: NonNullable<Project['contexts']>[number]) {
   return {
     id: c.id,
     workspace_id: project.id,
     name: c.name,
-    file_path: c.filePath,
+    file_path: c.filePath ?? '',
     size: c.size ?? null,
-    auto_inject: c.autoInject ? 1 : 0,
+    auto_inject: 0,
     source: c.source || 'user',
+    type: c.type ?? null,
+    url: c.url ?? null,
+    origin_node_id: c.origin?.nodeId ?? null,
+    origin_message_id: c.origin?.messageId ?? null,
+    kind: c.kind ?? null,
+    pinned_at: c.pinnedAt ?? null,
     created_at: c.createdAt || Date.now(),
     updated_at: c.updatedAt || Date.now(),
   };

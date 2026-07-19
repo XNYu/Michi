@@ -32,7 +32,7 @@ export function buildAtMentionItems(
     items.push({
       id: `ctx-${ctx.id}`,
       label,
-      description: `context${ctx.autoInject ? ' · auto' : ''}`,
+      description: `${ctx.type ?? 'doc'}${ctx.pinnedAt ? ' · pinned' : ''}`,
       kind: 'context',
       token: ctx.name,
     });

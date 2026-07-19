@@ -98,6 +98,14 @@ const sampleEvents: ChatStreamEvent[] = [
     event: CHAT_STREAM_EVENTS.mcpServerError,
     data: { serverName: 'michi-tools', error: 'connection closed' },
   },
+  {
+    event: CHAT_STREAM_EVENTS.userInputRequest,
+    data: { requestId: 1, questions: [{ question: 'Pick one', options: [{ label: 'A' }], multiSelect: false }] },
+  },
+  {
+    event: CHAT_STREAM_EVENTS.userInputResolved,
+    data: { requestId: 1, answers: [{ question: 'Pick one', answer: 'A' }] },
+  },
   { event: CHAT_STREAM_EVENTS.done, data: { stopReason: 'end_turn' } },
   { event: CHAT_STREAM_EVENTS.error, data: { message: 'boom' } },
   {

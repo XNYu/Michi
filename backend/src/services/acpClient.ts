@@ -219,7 +219,14 @@ export class AcpClient {
     private exitListeners: Array<(err: Error) => void> = [];
     /** Tracks pending permission requests from kiro-cli so we can respond later. */
     private pendingPermissions = new Map<number, { sessionId: string }>();
+    /** Maps cwd-scoped session → whether it currently owns an active agent tool_call.
+     *  Used to infer which session owns incoming _kiro.dev/subagent/list_update events
+     *  (which lack a sessionId field). When multiple sessions have active agent calls,
+     *  the MOST RECENT one wins — matching kiro-cli's internal behavior. */
     private subagentOwnerSession: string | null = null;
+    /** Tracks the tool_call id that established ownership, so we can release it
+     *  when that specific call completes rather than on any tool_call_update. */
+    private subagentOwnerToolCallId: string | null = null;
     private lastMetadata = new Map<string, any>();
     /** Maps subagent sessionId → parent sessionId for tool activity forwarding. */
     private subagentParentMap = new Map<string, string>();
@@ -437,6 +444,22 @@ export class AcpClient {
                     title.includes("spawn")
                 ) {
                     this.subagentOwnerSession = sid;
+                    this.subagentOwnerToolCallId = msg.params?.update?.toolCallId ?? null;
+                }
+            }
+            // Release subagent ownership when the owning tool_call completes,
+            // preventing stale ownership from routing a different session's
+            // subagent events to the wrong parent.
+            if (updateKind === "tool_call_update" && sid === this.subagentOwnerSession) {
+                const status = msg.params?.update?.status;
+                const toolCallId = msg.params?.update?.toolCallId;
+                if (
+                    toolCallId === this.subagentOwnerToolCallId &&
+                    (status === "completed" || status === "error")
+                ) {
+                    this.subagentOwnerSession = null;
+                    this.subagentOwnerToolCallId = null;
+                    this.subagentParentMap.clear();
                 }
             }
             // Forward subagent tool_call events to the parent session

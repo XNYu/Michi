@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ChatNodeState, Project, Tree } from '../../../state/chatTypes';
-import { deriveTreeRows, firstUserSnippet, type TreeRow } from './derive';
+import { deriveTreeRows, deriveArchivedTreeRows, firstUserSnippet, type TreeRow } from './derive';
 import ContextMenu from '../../ContextMenu';
 import { buildThreadRowContextMenu } from '../../../lib/threadRowContextMenu';
 import type {
@@ -21,12 +21,24 @@ export interface ChatTreeListMenuActions {
   exportTree: (id: string) => void;
 }
 
+export interface BulkActions {
+  treeSelection: ReadonlySet<string>;
+  toggleTreeSelection: (treeId: string) => void;
+  clearTreeSelection: () => void;
+  selectAllTrees: () => void;
+  bulkArchiveTrees: () => void;
+  bulkDeleteTrees: () => void;
+  bulkUnarchiveTrees: () => void;
+}
+
 interface Props {
   workspace: Project;
   nodes: Record<string, ChatNodeState>;
   filter: string;
   onOpen: (chatId: string) => void;
   menuActions?: ChatTreeListMenuActions;
+  bulkActions?: BulkActions;
+  manageMode?: boolean;
 }
 
 function toMenuSections(sections: ThreadCtxSection[]): UiMenuSection[] {
@@ -96,24 +108,62 @@ export default function ChatTreeList({
   filter,
   onOpen,
   menuActions,
+  bulkActions,
+  manageMode = false,
 }: Props) {
   const rows = React.useMemo(
     () => deriveTreeRows(workspace, nodes, filter),
     [workspace, nodes, filter],
   );
+  const archivedRows = React.useMemo(
+    () => deriveArchivedTreeRows(workspace, nodes, filter),
+    [workspace, nodes, filter],
+  );
   const groups = React.useMemo(() => rowsToGroups(rows), [rows]);
+  const archivedGroups = React.useMemo(() => rowsToGroups(archivedRows), [archivedRows]);
   const pinned = groups.filter((g) => g.pinned);
   const rest = groups.filter((g) => !g.pinned);
 
   const [hoveredId, setHoveredId] = React.useState<string | null>(null);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [menu, setMenu] = React.useState<{ x: number; y: number; tree: Tree } | null>(null);
+  const [archivedExpanded, setArchivedExpanded] = React.useState(false);
+  const lastClickedRef = React.useRef<string | null>(null);
 
   const treeById = React.useMemo(() => {
     const m = new Map<string, Tree>();
     for (const t of workspace.trees) m.set(t.id, t);
     return m;
   }, [workspace.trees]);
+
+  const allVisibleTreeIds = React.useMemo(() => {
+    const ids: string[] = [];
+    for (const g of groups) ids.push(g.treeId);
+    if (archivedExpanded) {
+      for (const g of archivedGroups) ids.push(g.treeId);
+    }
+    return ids;
+  }, [groups, archivedGroups, archivedExpanded]);
+
+  const handleTreeClick = React.useCallback((treeId: string, e: React.MouseEvent) => {
+    if (!bulkActions || !manageMode) return;
+    e.preventDefault();
+    if (e.shiftKey && lastClickedRef.current) {
+      const startIdx = allVisibleTreeIds.indexOf(lastClickedRef.current);
+      const endIdx = allVisibleTreeIds.indexOf(treeId);
+      if (startIdx >= 0 && endIdx >= 0) {
+        const [lo, hi] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        for (let i = lo; i <= hi; i++) {
+          if (!bulkActions.treeSelection.has(allVisibleTreeIds[i])) {
+            bulkActions.toggleTreeSelection(allVisibleTreeIds[i]);
+          }
+        }
+      }
+    } else {
+      bulkActions.toggleTreeSelection(treeId);
+    }
+    lastClickedRef.current = treeId;
+  }, [bulkActions, manageMode, allVisibleTreeIds]);
 
   const openMenuForTree = (tree: Tree | undefined, x: number, y: number) => {
     if (!tree || !menuActions) return;
@@ -127,6 +177,8 @@ export default function ChatTreeList({
         buildThreadRowContextMenu({
           treeId: menu.tree.id,
           tree: menu.tree,
+          treeSelection: bulkActions?.treeSelection,
+          clearTreeSelection: bulkActions?.clearTreeSelection,
           actions: {
             activateTree: menuActions.activateTree,
             archiveTree: menuActions.archiveTree,
@@ -141,7 +193,7 @@ export default function ChatTreeList({
       )
     : [];
 
-  if (groups.length === 0) {
+  if (groups.length === 0 && archivedGroups.length === 0) {
     return (
       <div
         style={{
@@ -156,7 +208,7 @@ export default function ChatTreeList({
     );
   }
 
-  const renderGroup = (g: TreeGroup) => (
+  const renderGroup = (g: TreeGroup, isArchived?: boolean) => (
     <TreeBlock
       key={g.treeId}
       group={g}
@@ -165,6 +217,7 @@ export default function ChatTreeList({
       selectedId={selectedId}
       onHover={setHoveredId}
       onSelect={(id) => {
+        if (manageMode && bulkActions) return;
         setSelectedId(id);
         onOpen(id);
       }}
@@ -174,7 +227,11 @@ export default function ChatTreeList({
         openMenuForTree(tree, e.clientX, e.clientY);
       }}
       onMoreClick={(rect, tree) => openMenuForTree(tree, rect.right, rect.bottom)}
-      menuEnabled={!!menuActions}
+      menuEnabled={!!menuActions && !manageMode}
+      manageMode={manageMode}
+      checked={bulkActions ? bulkActions.treeSelection.has(g.treeId) : false}
+      onCheck={(e) => handleTreeClick(g.treeId, e)}
+      isArchived={isArchived}
     />
   );
 
@@ -187,17 +244,61 @@ export default function ChatTreeList({
         .chat-tree-block:has([data-hovered="true"]) { border-top-color: transparent; }
         .chat-tree-block:has([data-hovered="true"]) + .chat-tree-block { border-top-color: transparent; }
       `}</style>
-      <div role="list">
+
+
+      <div role="list" style={manageMode ? { userSelect: 'none' } : undefined}>
         {pinned.length > 0 && (
           <>
             <SectionLabel icon={<StarGlyph filled />} text="PINNED" tone="pin" />
-            {pinned.map(renderGroup)}
+            {pinned.map((g) => renderGroup(g))}
             <div style={{ height: 6 }} />
             <SectionLabel text="RECENT" />
           </>
         )}
-        {rest.map(renderGroup)}
+        {rest.map((g) => renderGroup(g))}
       </div>
+
+      {/* Archived section */}
+      {archivedGroups.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={() => setArchivedExpanded((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              padding: '10px 10px',
+              border: 'none',
+              borderTop: '1px solid var(--term-line)',
+              borderBottom: archivedExpanded ? '1px solid var(--term-line)' : 'none',
+              background: 'var(--term-alt)',
+              cursor: 'pointer',
+              fontFamily: 'var(--ui-font)',
+              fontSize: 11,
+              color: 'var(--term-muted)',
+              letterSpacing: '.08em',
+              textTransform: 'uppercase',
+              textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: 9, transition: 'transform 100ms', transform: archivedExpanded ? 'rotate(90deg)' : 'none' }}>
+              ▶
+            </span>
+            ARCHIVED
+            <span style={{ fontWeight: 600, color: 'var(--term-fg)', fontSize: 11, letterSpacing: 0, textTransform: 'none' }}>
+              {archivedGroups.length}
+            </span>
+          </button>
+          {archivedExpanded && (
+            <div role="list" style={manageMode ? { userSelect: 'none' } : undefined}>
+              {archivedGroups.map((g) => renderGroup(g, true))}
+            </div>
+          )}
+        </div>
+      )}
+
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -209,6 +310,7 @@ export default function ChatTreeList({
     </>
   );
 }
+
 
 function SectionLabel({
   text,
@@ -258,6 +360,10 @@ interface TreeBlockProps {
   onContextMenu: (e: React.MouseEvent, tree: Tree | undefined) => void;
   onMoreClick: (rect: DOMRect, tree: Tree | undefined) => void;
   menuEnabled: boolean;
+  manageMode?: boolean;
+  checked?: boolean;
+  onCheck?: (e: React.MouseEvent) => void;
+  isArchived?: boolean;
 }
 
 function TreeBlock({
@@ -270,6 +376,10 @@ function TreeBlock({
   onContextMenu,
   onMoreClick,
   menuEnabled,
+  manageMode,
+  checked,
+  onCheck,
+  isArchived,
 }: TreeBlockProps) {
   return (
     <div
@@ -277,20 +387,57 @@ function TreeBlock({
       style={{
         padding: '2px 0',
         transition: 'border-color 100ms',
+        opacity: isArchived && !manageMode ? 0.7 : 1,
       }}
     >
-      <ChatRow
-        row={group.root}
-        isBranch={false}
-        hovered={hoveredId === group.root.nodeId}
-        selected={selectedId === group.root.nodeId}
-        onHover={onHover}
-        onSelect={onSelect}
-        onContextMenu={(e) => onContextMenu(e, tree)}
-        onMoreClick={(r) => onMoreClick(r, tree)}
-        menuEnabled={menuEnabled}
-      />
-      {group.branches.map((b) => (
+      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+        {manageMode && (
+          <label
+            onClick={(e) => { e.stopPropagation(); onCheck?.(e); }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 28,
+              height: 36,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                border: checked ? '1.5px solid var(--term-accent)' : '1.5px solid var(--term-muted)',
+                background: checked ? 'var(--term-accent)' : 'transparent',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                color: '#fff',
+                transition: 'all 80ms',
+              }}
+            >
+              {checked && '✓'}
+            </span>
+          </label>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <ChatRow
+            row={group.root}
+            isBranch={false}
+            hovered={hoveredId === group.root.nodeId}
+            selected={selectedId === group.root.nodeId}
+            onHover={onHover}
+            onSelect={onSelect}
+            onContextMenu={(e) => onContextMenu(e, tree)}
+            onMoreClick={(r) => onMoreClick(r, tree)}
+            menuEnabled={menuEnabled}
+            isArchived={isArchived}
+          />
+        </div>
+      </div>
+      {!manageMode && group.branches.map((b) => (
         <ChatRow
           key={b.nodeId}
           row={b}
@@ -304,7 +451,7 @@ function TreeBlock({
           menuEnabled={false}
         />
       ))}
-      {group.overflow && (
+      {!manageMode && group.overflow && (
         <div
           style={{
             paddingLeft: 40,
@@ -330,6 +477,7 @@ interface ChatRowProps {
   onContextMenu: (e: React.MouseEvent) => void;
   onMoreClick: (rect: DOMRect) => void;
   menuEnabled: boolean;
+  isArchived?: boolean;
 }
 
 function ChatRow({
@@ -342,6 +490,7 @@ function ChatRow({
   onContextMenu,
   onMoreClick,
   menuEnabled,
+  isArchived,
 }: ChatRowProps) {
   const node = row.node;
   const snippet = firstUserSnippet(node);
@@ -403,7 +552,7 @@ function ChatRow({
             fontSize: isBranch ? 14 : 15,
             lineHeight: 1.3,
             fontWeight: 500,
-            color: 'var(--term-fg)',
+            color: isArchived ? 'var(--term-muted)' : 'var(--term-fg)',
             flex: 1,
             minWidth: 0,
             whiteSpace: 'nowrap',
@@ -412,6 +561,22 @@ function ChatRow({
           }}
         >
           {node.title || 'Untitled'}
+          {isArchived && (
+            <span
+              style={{
+                marginLeft: 8,
+                fontSize: 9,
+                padding: '1px 5px',
+                border: '1px solid var(--term-line)',
+                color: 'var(--term-muted)',
+                letterSpacing: '.04em',
+                verticalAlign: 'middle',
+                fontWeight: 400,
+              }}
+            >
+              archived
+            </span>
+          )}
         </span>
         <span
           style={{

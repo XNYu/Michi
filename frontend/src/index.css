@@ -662,9 +662,12 @@ body {
 }
 /* Pull interactive rows out to the sidebar edge so their borderLeft (selection
    indicator) and absolute-positioned streaming bars stay flush against the
-   sidebar's true edge. Each row adds --sb-inset to its own inline padding so
-   text stays indented. Net visual: bars flush, text indented.
-   Elements with .sb-flush are excluded (e.g. the mark-all-read button). */
+   sidebar's true edge, cancelling the tree container's --sb-inset padding.
+   Each indicator row folds +--sb-inset back into its OWN inline horizontal
+   padding (ThreadRow / BranchRow / WorkspaceRow / merge rows / BottomNav), so
+   the text stays indented while the box stays full-bleed. Net: bars flush,
+   text indented. Elements with .sb-flush opt out and simply ride the container
+   inset (e.g. mark-all-read / show-more toggles that have no edge indicator). */
 .terminal-sidebar .t-row-hover:not(.sb-flush) {
   margin-left: calc(-1 * var(--sb-inset, 0px));
   margin-right: calc(-1 * var(--sb-inset, 0px));
@@ -1247,7 +1250,7 @@ html[data-vibrancy="on"],
   transform: scale(1.15);
 }
 .t-add-btn:active {
-  transform: scale(0.92);
+  transform: translateY(1px);
 }
 .t-add-btn:focus-visible {
   outline: none;
@@ -1289,7 +1292,7 @@ html[data-vibrancy="on"],
   color: var(--term-fg);
 }
 .ws-action-btn:active {
-  transform: scale(0.9);
+  transform: translateY(1px);
 }
 
 /* Composer pre-textarea blocks — unified visual language built on the

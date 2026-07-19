@@ -1,9 +1,9 @@
 -- 0001_workspace_owner: add owner_user_id column to workspaces and create
 -- a lookup index. NO backfill — this migration runs unconditionally on
--- every local or desktop runtime, and a blanket UPDATE would
+-- every microVM (AgentSpace, Electron, etc.), and a blanket UPDATE would
 -- mis-stamp other users' workspaces with the dev account's userId.
 --
--- In desktop mode (MICHI_CLOUD unset) the column stays NULL
+-- In desktop / AgentSpace mode (MICHI_CLOUD unset) the column stays NULL
 -- and is never read — ownership middleware and dbRepository filters all
 -- gate on MICHI_CLOUD === '1'. In cloud mode, saveWorkspace stamps
 -- owner_user_id from req.user.id on INSERT (persistence.ts).

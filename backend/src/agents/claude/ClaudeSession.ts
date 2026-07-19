@@ -158,6 +158,10 @@ export class ClaudeSession implements AgentSession {
     number,
     { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout }
   >();
+  private readonly pendingUserInputs = new Map<
+    number,
+    { resolve: (answers: Array<{ question: string; answer: string }> | null) => void; timer: NodeJS.Timeout }
+  >();
 
   // Disposed callback
   private disposedCallback: (() => void) | undefined;
@@ -254,7 +258,7 @@ export class ClaudeSession implements AgentSession {
       // Inject per-chat preamble on the first real turn, then mark consumed.
       // Empty prefix is a no-op. The warm-init turn does NOT pass through
       // this branch — it uses its own envelope path in warmInit().
-      const outgoingText = this.firstTurnPrefixConsumed || !this.firstTurnPrefix
+      let outgoingText = this.firstTurnPrefixConsumed || !this.firstTurnPrefix
         ? text
         : `${this.firstTurnPrefix}\n\n---\n\n${text}`;
       this.firstTurnPrefixConsumed = true;
@@ -310,6 +314,7 @@ export class ClaudeSession implements AgentSession {
     } finally {
       this.finishFollowUpsHookPocTurn();
       this.releaseTurnLock();
+      this.idleGate.open();
     }
   }
 
@@ -422,6 +427,7 @@ export class ClaudeSession implements AgentSession {
       this.lastUsedAt = Date.now();
     } finally {
       this.releaseTurnLock();
+      this.idleGate.open();
     }
   }
 
@@ -454,6 +460,22 @@ export class ClaudeSession implements AgentSession {
     entry.resolve(null);
   }
 
+  respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>): void {
+    const entry = this.pendingUserInputs.get(requestId);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.pendingUserInputs.delete(requestId);
+    entry.resolve(answers);
+  }
+
+  skipUserInput(requestId: number): void {
+    const entry = this.pendingUserInputs.get(requestId);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.pendingUserInputs.delete(requestId);
+    entry.resolve(null);
+  }
+
   async dispose(): Promise<void> {
     if (this.state === 'disposed') return;
     this.state = 'disposed';
@@ -466,6 +488,13 @@ export class ClaudeSession implements AgentSession {
       entry.resolve(null);
     }
     this.pendingPermissions.clear();
+
+    // Reject pending user inputs
+    for (const [, entry] of this.pendingUserInputs) {
+      clearTimeout(entry.timer);
+      entry.resolve(null);
+    }
+    this.pendingUserInputs.clear();
 
     const child = this.child;
     if (child) {
@@ -637,6 +666,7 @@ export class ClaudeSession implements AgentSession {
       },
       ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       onApprove: this.makeOnApprove(),
+      onAskUser: this.makeOnAskUser(),
     }, {
       nodeId: this.nodeId,
       workspaceId: this.workspaceId,
@@ -696,6 +726,7 @@ export class ClaudeSession implements AgentSession {
       },
       ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       onApprove: this.makeOnApprove(),
+      onAskUser: this.makeOnAskUser(),
     }, {
       nodeId: this.nodeId,
       workspaceId: this.workspaceId,
@@ -850,14 +881,14 @@ export class ClaudeSession implements AgentSession {
       if (!trimmed) return;
       console.warn(`[ClaudeSession] stderr: ${trimmed.slice(0, 200)}`);
       // claude CLI prints this when the awsCredentialExport hook can't
-      // produce credentials. Surface a user-visible banner with a generic
-      // recovery hint.
-      if (!this.awsCredentialNoticeSent && /awsCredentialExport did not return a valid value/i.test(trimmed)) {
-        this.awsCredentialNoticeSent = true;
+      // produce creds — almost always a missing/expired Midway cookie.
+      // Surface as a user-visible banner so they know to run `mwinit -o`.
+      if (!this.mwinitNoticeSent && /awsCredentialExport did not return a valid value/i.test(trimmed)) {
+        this.mwinitNoticeSent = true;
         this.queue.push({
           kind: 'mcp_server_error',
-          serverName: 'aws-credentials',
-          error: 'AWS credentials unavailable. Refresh your AWS credentials in the terminal, then retry.',
+          serverName: 'midway',
+          error: 'AWS credentials unavailable. Run `mwinit -o` in your terminal to refresh your Midway cookie, then retry.',
         });
       }
     });
@@ -896,6 +927,7 @@ export class ClaudeSession implements AgentSession {
     // crashed), the user's send() will naturally time out via the heartbeat
     // / turn-level supervision. The 5s spawn-init timeout no longer applies.
     this.state = 'idle';
+    this.startIdlePump();
   }
 
   private armFollowUpsHookPoc(userTurnCount: number): void {
@@ -1278,6 +1310,39 @@ export class ClaudeSession implements AgentSession {
       }, APPROVE_TIMEOUT_MS);
       this.pendingPermissions.set(requestId, { resolve, timer });
     });
+  }
+
+  // ---- User input handling (ask_user MCP tool) ------------------------------
+
+  private makeOnAskUser() {
+    return async (questions: Array<{
+      question: string;
+      header?: string;
+      options: Array<{ label: string; description?: string }>;
+      multiSelect: boolean;
+    }>): Promise<Record<string, string> | null> => {
+      const requestId = ++this.nextRequestId;
+
+      this.queue.push({ kind: 'user_input_request', requestId, questions });
+
+      const answers = await new Promise<Array<{ question: string; answer: string }> | null>((resolve) => {
+        const timer = setTimeout(() => {
+          this.pendingUserInputs.delete(requestId);
+          resolve(null);
+        }, APPROVE_TIMEOUT_MS);
+        this.pendingUserInputs.set(requestId, { resolve, timer });
+      });
+
+      if (answers) {
+        this.queue.push({ kind: 'user_input_resolved', requestId, answers });
+        const result: Record<string, string> = {};
+        for (const a of answers) result[a.question] = a.answer;
+        return result;
+      }
+
+      this.queue.push({ kind: 'user_input_resolved', requestId, answers: [] });
+      return null;
+    };
   }
 }
 

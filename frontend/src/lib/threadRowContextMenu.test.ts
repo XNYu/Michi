@@ -180,4 +180,83 @@ describe('buildThreadRowContextMenu', () => {
     item.onSelect();
     expect(openMoveDialog).toHaveBeenCalledTimes(1);
   });
+
+  describe('multi-select', () => {
+    it('shows batch actions when right-clicked tree is in selection with ≥2 members', () => {
+      const sections = buildThreadRowContextMenu(
+        baseArgs({
+          treeId: 't1',
+          treeSelection: new Set(['t1', 't2', 't3']),
+          clearTreeSelection: vi.fn(),
+        }),
+      );
+      const labels = sections.flatMap((s) => s.items.map((i) => i.label));
+      expect(labels).toContain('Archive 3 threads');
+      expect(labels).toContain('Export 3 threads…');
+      expect(labels).toContain('Delete 3 threads…');
+      expect(labels).toContain('Clear selection');
+      // Single-target items should NOT appear
+      expect(labels).not.toContain('Rename…');
+      expect(labels).not.toContain('Archive');
+    });
+
+    it('falls back to single-target when right-clicked tree is NOT in selection', () => {
+      const sections = buildThreadRowContextMenu(
+        baseArgs({
+          treeId: 't1',
+          treeSelection: new Set(['t2', 't3']),
+          clearTreeSelection: vi.fn(),
+        }),
+      );
+      const labels = sections.flatMap((s) => s.items.map((i) => i.label));
+      expect(labels).toContain('Rename…');
+      expect(labels).toContain('Archive');
+      expect(labels).not.toContain('Archive 2 threads');
+    });
+
+    it('falls back to single-target when selection has only 1 member', () => {
+      const sections = buildThreadRowContextMenu(
+        baseArgs({
+          treeId: 't1',
+          treeSelection: new Set(['t1']),
+          clearTreeSelection: vi.fn(),
+        }),
+      );
+      const labels = sections.flatMap((s) => s.items.map((i) => i.label));
+      expect(labels).toContain('Rename…');
+      expect(labels).not.toContain('Archive 1 threads');
+    });
+
+    it('batch Archive calls archiveTree for each selected tree and clears selection', () => {
+      const clearTreeSelection = vi.fn();
+      const args = baseArgs({
+        treeId: 't1',
+        treeSelection: new Set(['t1', 't2']),
+        clearTreeSelection,
+      });
+      const sections = buildThreadRowContextMenu(args);
+      const archive = sections.flatMap((s) => s.items).find((i) => i.label === 'Archive 2 threads')!;
+      archive.onSelect();
+      expect(args.actions.archiveTree).toHaveBeenCalledWith('t1');
+      expect(args.actions.archiveTree).toHaveBeenCalledWith('t2');
+      expect(clearTreeSelection).toHaveBeenCalled();
+    });
+
+    it('batch Delete calls deleteTree for each selected tree after confirm', () => {
+      const clearTreeSelection = vi.fn();
+      const spy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const args = baseArgs({
+        treeId: 't1',
+        treeSelection: new Set(['t1', 't2']),
+        clearTreeSelection,
+      });
+      const sections = buildThreadRowContextMenu(args);
+      const del = sections.flatMap((s) => s.items).find((i) => i.label === 'Delete 2 threads…')!;
+      del.onSelect();
+      expect(args.actions.deleteTree).toHaveBeenCalledWith('t1');
+      expect(args.actions.deleteTree).toHaveBeenCalledWith('t2');
+      expect(clearTreeSelection).toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
 });

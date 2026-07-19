@@ -1,8 +1,25 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, ViewMode } from './chatTypes';
 export type { ViewMode } from './chatTypes';
 
 type PaneUpdater<T> = T | ((prev: T) => T);
+
+const PANE_OPEN_KEY = 'michi:panes:open';
+const PANE_FOCUS_KEY = 'michi:panes:focus';
+
+function readPaneMap<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (raw) return JSON.parse(raw) as T;
+  } catch { /* corrupt or missing */ }
+  return fallback;
+}
+
+function writePaneMap(key: string, value: unknown): void {
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(value));
+  } catch { /* quota or private browsing */ }
+}
 
 /**
  * Remove a set of dead node ids from the pane maps across EVERY pane key
@@ -61,8 +78,12 @@ interface UsePaneStateArgs {
 }
 
 export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
-  const [openPanesMap, setOpenPanesMap] = useState<Record<string, string[]>>({});
-  const [focusedPaneMap, setFocusedPaneMap] = useState<Record<string, string | null>>({});
+  const [openPanesMap, setOpenPanesMap] = useState<Record<string, string[]>>(
+    () => readPaneMap<Record<string, string[]>>(PANE_OPEN_KEY, {}),
+  );
+  const [focusedPaneMap, setFocusedPaneMap] = useState<Record<string, string | null>>(
+    () => readPaneMap<Record<string, string | null>>(PANE_FOCUS_KEY, {}),
+  );
   const [viewMode, setViewModeState] = useState<ViewMode>('two');
 
   const activeProjectForPane = useMemo(
@@ -142,6 +163,18 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   openPanesMapRef.current = openPanesMap;
   const focusedPaneMapRef = useRef(focusedPaneMap);
   focusedPaneMapRef.current = focusedPaneMap;
+
+  // Persist pane layout to sessionStorage so refresh restores it.
+  useEffect(() => { writePaneMap(PANE_OPEN_KEY, openPanesMap); }, [openPanesMap]);
+  useEffect(() => { writePaneMap(PANE_FOCUS_KEY, focusedPaneMap); }, [focusedPaneMap]);
+  useEffect(() => {
+    const flush = () => {
+      writePaneMap(PANE_OPEN_KEY, openPanesMapRef.current);
+      writePaneMap(PANE_FOCUS_KEY, focusedPaneMapRef.current);
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   /**
    * Remove `deadIds` from EVERY pane key. Used by the chatStore effect that

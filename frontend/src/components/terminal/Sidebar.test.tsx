@@ -37,6 +37,24 @@ describe('TerminalSidebar BottomNav', () => {
     expect(screen.queryByText('Digest')).toBeNull();
   });
 
+  it('dispatches michi:toggle-artifacts when the Artifacts row is clicked', () => {
+    const spy = vi.fn();
+    window.addEventListener('michi:toggle-artifacts', spy);
+    render(
+      wrap(
+        <TerminalSidebar
+          activePage="dashboard"
+          onNav={() => {}}
+          onOpenPalette={() => {}}
+          onNewThread={() => {}}
+        />,
+      ),
+    );
+    fireEvent.click(screen.getByText('Artifacts'));
+    expect(spy).toHaveBeenCalledTimes(1);
+    window.removeEventListener('michi:toggle-artifacts', spy);
+  });
+
   it('navigates to the home page when the Home row is clicked', () => {
     const onNav = vi.fn();
     render(

@@ -5,25 +5,30 @@ import ContextList from './ContextList';
 import type { ContextEntry } from '../../../state/chatTypes';
 
 const NOW = 1_716_000_000_000;
-const ctx = (id: string, name: string, autoInject: boolean): ContextEntry => ({
+const ctx = (
+  id: string,
+  name: string,
+  opts: Partial<ContextEntry> = {},
+): ContextEntry => ({
   id,
   name,
   filePath: `path/${name}`,
   size: 1024,
-  autoInject,
+  type: 'doc',
   source: 'user',
   createdAt: NOW,
   updatedAt: NOW,
+  ...opts,
 });
 
 function renderRow(props: Partial<React.ComponentProps<typeof ContextList>> = {}) {
   return render(
     <ContextList
-      contexts={[ctx('1', 'a.md', false)]}
+      contexts={[ctx('1', 'a.md')]}
       filter=""
       selectedContextId={null}
       onSelect={() => {}}
-      onToggleAutoInject={() => {}}
+      onPin={() => {}}
       onDelete={() => {}}
       onPreview={() => {}}
       onAdd={() => {}}
@@ -39,21 +44,30 @@ function hoverFirstRow() {
 }
 
 describe('ContextList', () => {
-  it('splits into Auto-injecting and Available groups', () => {
+  it('groups artifacts by type (Documents / Files / Images / Links)', () => {
     render(
       <ContextList
-        contexts={[ctx('1', 'a.md', true), ctx('2', 'b.md', false)]}
+        contexts={[
+          ctx('1', 'a.md', { type: 'doc' }),
+          ctx('2', 'b.ts', { type: 'file' }),
+          ctx('3', 'diagram', { type: 'image' }),
+          ctx('4', 'stripe-api', { type: 'link', filePath: '', url: 'https://stripe.com' }),
+        ]}
         filter=""
         selectedContextId={null}
         onSelect={() => {}}
-        onToggleAutoInject={() => {}}
+        onPin={() => {}}
         onDelete={() => {}}
         onPreview={() => {}}
         onAdd={() => {}}
       />,
     );
-    expect(screen.getByText(/auto-injecting/i).parentElement?.textContent).toContain('1');
-    expect(screen.getByText(/^available/i).parentElement?.textContent).toContain('1');
+    expect(screen.getByText(/documents/i)).not.toBeNull();
+    expect(screen.getByText(/^files/i)).not.toBeNull();
+    expect(screen.getByText(/images/i)).not.toBeNull();
+    expect(screen.getByText(/links/i)).not.toBeNull();
+    // Link row renders its url as the meta line.
+    expect(screen.queryByText('https://stripe.com')).not.toBeNull();
   });
 
   it('sorts favorite artifacts to the top of their group', () => {
@@ -79,8 +93,8 @@ describe('ContextList', () => {
   it('describes a favorite as removable without implying auto-injection', () => {
     const onPin = vi.fn();
     renderRow({
-      contexts: [ctx('1', 'a.md', true)],
-      onToggleAutoInject: onToggle,
+      contexts: [ctx('1', 'a.md', { pinnedAt: NOW })],
+      onPin,
     });
     hoverFirstRow();
     const favoriteButton = screen.getByRole('button', { name: 'Remove a.md from favorites' });
@@ -99,7 +113,7 @@ describe('ContextList', () => {
   it('hover reveals the trash button; clicking it calls onDelete', () => {
     const onDelete = vi.fn();
     renderRow({
-      contexts: [ctx('1', 'a.md', false)],
+      contexts: [ctx('1', 'a.md')],
       onDelete,
     });
     hoverFirstRow();
@@ -110,7 +124,7 @@ describe('ContextList', () => {
   it('hover reveals the preview button; clicking it calls onPreview with the file path', () => {
     const onPreview = vi.fn();
     renderRow({
-      contexts: [ctx('1', 'a.md', false)],
+      contexts: [ctx('1', 'a.md')],
       onPreview,
     });
     hoverFirstRow();
@@ -121,11 +135,11 @@ describe('ContextList', () => {
   it('filter hides non-matching contexts', () => {
     render(
       <ContextList
-        contexts={[ctx('1', 'apples.md', false), ctx('2', 'bananas.md', false)]}
+        contexts={[ctx('1', 'apples.md'), ctx('2', 'bananas.md')]}
         filter="app"
         selectedContextId={null}
         onSelect={() => {}}
-        onToggleAutoInject={() => {}}
+        onPin={() => {}}
         onDelete={() => {}}
         onPreview={() => {}}
         onAdd={() => {}}

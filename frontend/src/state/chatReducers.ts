@@ -20,6 +20,7 @@ export const NODE_ACTIVITY_ACTIONS = new Set<ChatAction['type']>([
   'agent-spawn',
   'image-block',
   'permission-request',
+  'user-input-request',
   'observer-turn-start',
 ]);
 
@@ -103,8 +104,10 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
                   id: a.context.id ?? c.id,
                   name: a.context.name,
                   filePath: a.context.filePath,
+                  url: a.context.url ?? c.url,
+                  type: a.context.type ?? c.type,
                   size: a.context.size ?? c.size,
-                  autoInject: a.context.autoInject ?? c.autoInject,
+                  origin: a.context.origin ?? c.origin,
                   kind: a.context.kind ?? c.kind,
                   updatedAt: now,
                 }
@@ -124,8 +127,10 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
         id: a.context.id ?? `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
         name,
         filePath: a.context.filePath,
+        url: a.context.url,
+        type: a.context.type ?? (a.context.url ? 'link' : 'doc'),
         size: a.context.size,
-        autoInject: a.context.autoInject,
+        origin: a.context.origin,
         source: a.context.source ?? 'user',
         kind: a.context.kind,
         createdAt: now,
@@ -147,7 +152,10 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
                   id: a.context.id ?? c.id,
                   name: a.context.name,
                   filePath: a.context.filePath,
+                  url: a.context.url ?? c.url,
+                  type: a.context.type ?? c.type,
                   size: a.context.size ?? c.size,
+                  origin: a.context.origin ?? c.origin,
                   kind: a.context.kind ?? c.kind,
                   updatedAt: now,
                 }
@@ -159,7 +167,10 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
         id: a.context.id ?? `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
         name: a.context.name,
         filePath: a.context.filePath,
+        url: a.context.url,
+        type: a.context.type ?? (a.context.url ? 'link' : 'doc'),
         size: a.context.size,
+        origin: a.context.origin,
         source: a.context.source ?? 'agent',
         kind: a.context.kind,
         createdAt: now,
@@ -170,10 +181,18 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
     case 'delete-context': {
       return { ...p, contexts: (p.contexts ?? []).filter((c) => c.id !== a.contextId) };
     }
-    case 'toggle-auto-inject': {
+    case 'pin-context': {
       const contexts = (p.contexts ?? []).map((c) =>
-        c.id === a.contextId ? { ...c, autoInject: !c.autoInject, updatedAt: Date.now() } : c,
+        c.id === a.contextId ? { ...c, pinnedAt: a.now, updatedAt: a.now } : c,
       );
+      return { ...p, contexts };
+    }
+    case 'unpin-context': {
+      const contexts = (p.contexts ?? []).map((c) => {
+        if (c.id !== a.contextId) return c;
+        const { pinnedAt, ...rest } = c;
+        return { ...rest, updatedAt: Date.now() } as ContextEntry;
+      });
       return { ...p, contexts };
     }
     case 'rename-context': {
@@ -544,7 +563,7 @@ export function reduceNodes(
           [action.nodeId]: {
             ...n,
             messages: msgs,
-            lastAssistantAt: Date.now(),
+            lastAssistantAt: action.completedAt ?? Date.now(),
             backgroundTurnAssistantId:
               n.backgroundTurnAssistantId === action.assistantId
                 ? undefined
@@ -571,8 +590,9 @@ export function reduceNodes(
           error: undefined,
           streamingIdleMs: undefined,
           pendingPermission: null,
+          pendingUserInput: n.pendingUserInput?.resolved ? n.pendingUserInput : null,
           messages: msgs,
-          lastAssistantAt: Date.now(),
+          lastAssistantAt: action.completedAt ?? Date.now(),
           followUps: extractedFollowUps.length > 0 ? extractedFollowUps : n.followUps,
           followUpsGenerating: false,
           // Preserve previous source when this turn produced no follow-ups (kept in sync
@@ -651,6 +671,7 @@ export function reduceNodes(
           messages: msgs,
           streamingIdleMs: undefined,
           pendingPermission: null,
+          pendingUserInput: n.pendingUserInput?.resolved ? n.pendingUserInput : null,
           followUpsGenerating: false,
         },
       };

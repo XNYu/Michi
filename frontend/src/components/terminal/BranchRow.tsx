@@ -145,9 +145,12 @@ export default function BranchRow({
           alignItems: 'center',
           gap: 6,
           paddingTop: 'var(--sb-row-py, 4px)',
-          paddingRight: 10,
+          // +--sb-inset on both sides indents the text while the full-bleed row
+          // box (negative margin cancels the container inset) keeps the borderLeft
+          // indicator + streaming bar flush to the sidebar edge. See index.css.
+          paddingRight: 'calc(10px + var(--sb-inset, 0px))',
           paddingBottom: 'var(--sb-row-py, 4px)',
-          paddingLeft: 8 + depth * 10,
+          paddingLeft: `calc(${8 + depth * 10}px + var(--sb-inset, 0px))`,
           background: selected
             ? 'var(--term-select-f)'
             : focused ? 'var(--term-alt)'
@@ -229,7 +232,7 @@ export default function BranchRow({
             aria-hidden
             style={{
               position: 'absolute',
-              right: 6,
+              right: 2,
               top: 5,
               bottom: 5,
               width: 2,

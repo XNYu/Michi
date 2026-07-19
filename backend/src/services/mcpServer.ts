@@ -101,6 +101,12 @@ export interface McpSlot {
         | { behavior: "allow"; updatedInput?: unknown }
         | { behavior: "deny"; message: string }
     >;
+    onAskUser?: (questions: Array<{
+        question: string;
+        header?: string;
+        options: Array<{ label: string; description?: string }>;
+        multiSelect: boolean;
+    }>) => Promise<Record<string, string> | null>;
 }
 
 export interface McpSlotCallbacks {
@@ -120,6 +126,7 @@ export interface McpSlotCallbacks {
         | { behavior: "allow"; updatedInput?: unknown }
         | { behavior: "deny"; message: string }
     >;
+    onAskUser?: McpSlot["onAskUser"];
 }
 
 export class McpSlotRegistry {
@@ -385,6 +392,59 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             const binding = resolveSlotBinding(slot);
             const result = readNode(binding.workspaceId, slot.ownerUserId, String(args?.nodeId ?? ""));
             return { content: [{ type: "text", text: result.text }] };
+        },
+    );
+
+    server.registerTool(
+        "ask_user",
+        {
+            description:
+                "Ask the user one or more structured questions with selectable options. " +
+                "Use when you need the user to make a choice or provide input before proceeding. " +
+                "Each question can be single-select or multi-select, and users can always type a custom answer.",
+            inputSchema: {
+                questions: z.array(z.object({
+                    question: z.string().describe("The question to ask the user."),
+                    header: z.string().optional().describe("Short label (max 12 chars) displayed as a chip/tag."),
+                    options: z.array(z.object({
+                        label: z.string().describe("Display text for this option (1-5 words)."),
+                        description: z.string().optional().describe("Explanation of what this option means."),
+                    })).min(2).max(4).describe("Available choices (2-4 options)."),
+                    multiSelect: z.boolean().default(false).describe("Allow multiple selections."),
+                })).min(1).max(4).describe("Questions to ask (1-4)."),
+            },
+        },
+        async (args) => {
+            if (!slot.onAskUser) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({ error: "ask_user callback not configured" }),
+                    }],
+                };
+            }
+            const questions = Array.isArray(args?.questions) ? args.questions : [];
+            const parsed = questions.map((q: any) => ({
+                question: String(q.question ?? ""),
+                header: typeof q.header === "string" ? q.header : undefined,
+                options: Array.isArray(q.options)
+                    ? q.options.map((o: any) => ({
+                        label: String(o.label ?? ""),
+                        description: typeof o.description === "string" ? o.description : undefined,
+                    }))
+                    : [],
+                multiSelect: q.multiSelect === true,
+            }));
+            const answers = await slot.onAskUser(parsed);
+            if (!answers) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: "The user did not answer the questions (skipped or timed out).",
+                    }],
+                };
+            }
+            return { content: [{ type: "text", text: JSON.stringify({ answers }) }] };
         },
     );
 

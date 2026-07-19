@@ -201,6 +201,7 @@ export class KiroRuntime implements AgentRuntime {
             // show_image is a Claude-runtime side-effect tool; the Kiro runtime
             // does not expose it. Satisfy the required callback with a stub.
             onShowImage: () => ({ error: "show_image is not supported on the Kiro runtime" }),
+            onAskUser: (questions) => this.handleAskUser(getSlotId()!, questions),
         };
     }
 

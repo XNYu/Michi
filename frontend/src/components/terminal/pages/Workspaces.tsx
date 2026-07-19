@@ -165,8 +165,9 @@ function fourteenDaySpark(nodeIds: string[], snapshot: Record<string, ChatNodeSt
 }
 
 function shortModelLabel(modelId: string): string {
-  // claude-opus-4-5 -> opus, claude-sonnet-4-5 -> sonnet, gpt-5 -> gpt-5
+  // claude-fable-5 -> fable, claude-opus-4-5 -> opus, claude-sonnet-4-5 -> sonnet, gpt-5 -> gpt-5
   const m = modelId.toLowerCase();
+  if (m.includes('fable')) return 'fable';
   if (m.includes('opus')) return 'opus';
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return 'haiku';

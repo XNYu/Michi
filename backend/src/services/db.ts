@@ -248,27 +248,34 @@ function migrateV1(db: DatabaseSync): void {
 	    );
     CREATE INDEX IF NOT EXISTS idx_contexts_workspace ON contexts(workspace_id);
 
-    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-      content,
-      content=messages,
-      content_rowid=rowid
-    );
-
-    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-      INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-      INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-      INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-      INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
 
 	    INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '1');
 	  `);
-}
 
+  // FTS5 full-text index - optional. Node 22.11 ships sqlite without FTS5;
+  // gracefully skip so the app still starts (search falls back to LIKE).
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content,
+        content=messages,
+        content_rowid=rowid
+      );
+      CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+      END;
+    `);
+  } catch {
+    // FTS5 unavailable
+  }
+}
 function columnExists(db: DatabaseSync, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{ name: string }>;
   return rows.some((row) => row.name === column);

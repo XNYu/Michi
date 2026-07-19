@@ -241,22 +241,27 @@ export default function WorkspaceRow({
   const filteredLiveTrees = forceExpand && unreadTreeIds
     ? liveTrees.filter((t) => unreadTreeIds.has(t.id))
     : liveTrees;
+  // Pinned trees always visible — preview limit applies only to unpinned.
+  const pinnedTrees = filteredLiveTrees.filter((t) => !!t.pinnedAt);
+  const unpinnedTrees = filteredLiveTrees.filter((t) => !t.pinnedAt);
+  const previewUnpinned = unpinnedTrees.slice(0, THREAD_PREVIEW_LIMIT);
   // The active tree must stay visible even when its recency rank falls past
   // the preview cap (opening a historical thread via search/palette does NOT
   // bump lastActiveAt) — append it below the preview slice so the sidebar
   // can reveal & scroll to it.
-  const previewTrees = filteredLiveTrees.slice(0, THREAD_PREVIEW_LIMIT);
   const activeBeyondCap =
-    activeTreeId !== null && !previewTrees.some((t) => t.id === activeTreeId)
-      ? filteredLiveTrees.find((t) => t.id === activeTreeId)
+    activeTreeId !== null
+    && !pinnedTrees.some((t) => t.id === activeTreeId)
+    && !previewUnpinned.some((t) => t.id === activeTreeId)
+      ? unpinnedTrees.find((t) => t.id === activeTreeId)
       : undefined;
   const displayedLiveTrees = forceExpand
     ? filteredLiveTrees
     : showAllThreads
       ? filteredLiveTrees
       : activeBeyondCap
-        ? [...previewTrees, activeBeyondCap]
-        : previewTrees;
+        ? [...pinnedTrees, ...previewUnpinned, activeBeyondCap]
+        : [...pinnedTrees, ...previewUnpinned];
 
   const getNodeOpenState = useCallback(
     (id: string): OpenState =>
@@ -334,7 +339,10 @@ export default function WorkspaceRow({
           //   glyph lands at x[6,21] — centered between the sidebar edge and
           //   the text.
           gap: 6,
-          padding: 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 4px',
+          // +--sb-inset on both sides indents the folder glyph + name; the row
+          // box stays full-bleed (negative margin cancels the tree container
+          // inset) so the isActiveWorkspaceAway borderLeft hugs the true edge.
+          padding: 'var(--sb-row-py, 5px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(4px + var(--sb-inset, 0px))',
           fontFamily: 'var(--ui-font)',
           background: menu ? 'var(--term-alt)' : undefined,
           borderLeft: isActiveWorkspaceAway
@@ -469,7 +477,7 @@ export default function WorkspaceRow({
             aria-hidden
             style={{
               position: 'absolute',
-              right: 4,
+              right: 2,
               top: 5,
               bottom: 5,
               width: 2,
@@ -537,7 +545,7 @@ export default function WorkspaceRow({
               onRenameEnd,
             }),
           )}
-          {!forceExpand && filteredLiveTrees.length > THREAD_PREVIEW_LIMIT && (
+          {!forceExpand && unpinnedTrees.length > THREAD_PREVIEW_LIMIT && (
             <button
               type="button"
               className="t-row-hover sb-flush"

@@ -9,11 +9,14 @@ export class EventQueue {
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private lastPushMs = Date.now();
   private readonly onHeartbeat: (idleMs: number) => void;
+  private _disposed = false;
 
   constructor(onHeartbeat: (idleMs: number) => void) {
     this.onHeartbeat = onHeartbeat;
     this.startHeartbeat();
   }
+
+  get isDisposed(): boolean { return this._disposed; }
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
@@ -50,16 +53,23 @@ export class EventQueue {
     }
   }
 
-  dispose(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = undefined;
-    }
-    // Drain any waiter
+  /** Resolve any pending pull() with null without disposing the queue.
+   *  Used by send() to kick the idle pump out of its blocking pull() so
+   *  it can re-check the gate and yield control. */
+  interruptWaiter(): void {
     if (this.waiter) {
       const w = this.waiter;
       this.waiter = undefined;
       w(null);
     }
+  }
+
+  dispose(): void {
+    this._disposed = true;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    this.interruptWaiter();
   }
 }

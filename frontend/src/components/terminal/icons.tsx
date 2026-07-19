@@ -61,6 +61,17 @@ export function WorkspacesIcon({ size = 14, className }: IconProps) {
   );
 }
 
+export function ArtifactsIcon({ size = 14, className }: IconProps) {
+  // Stacked layers — reads as "a collection of things" (the artifact shelf).
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 2l6 3-6 3-6-3 6-3z" />
+      <path d="M2 8l6 3 6-3" />
+      <path d="M2 11l6 3 6-3" />
+    </svg>
+  );
+}
+
 export function SettingsIcon({ size = 14, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

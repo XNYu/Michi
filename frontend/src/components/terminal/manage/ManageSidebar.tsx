@@ -6,6 +6,10 @@ import { confirmDialog } from '../../ui/ConfirmDialog';
 interface Props {
   workspace: Project;
   onSaveInstructions: (text: string) => void;
+  manageMode: boolean;
+  onToggleManageMode: () => void;
+  bulkActions?: BulkActions;
+  hasArchivedSelection?: boolean;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -55,7 +59,14 @@ const faintMeta: React.CSSProperties = {
   marginTop: 2,
 };
 
-export default function ManageSidebar({ workspace, onSaveInstructions }: Props) {
+export default function ManageSidebar({
+  workspace,
+  onSaveInstructions,
+  manageMode,
+  onToggleManageMode,
+  bulkActions,
+  hasArchivedSelection,
+}: Props) {
   const saved = workspace.instructions ?? '';
   const [instr, setInstr] = React.useState(saved);
   // Reset the draft whenever we navigate to a different workspace, or the
@@ -212,6 +223,25 @@ export default function ManageSidebar({ workspace, onSaveInstructions }: Props) 
         </div>
       </div>
     </aside>
+  );
+}
+
+function SidebarManageBtn({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <span
+      role="button"
+      onClick={onClick}
+      style={{
+        cursor: 'pointer',
+        color: danger ? 'var(--term-danger, #e55)' : 'var(--term-muted)',
+        fontSize: 11,
+        padding: '4px 10px',
+        border: '1px solid ' + (danger ? 'var(--term-danger, #e55)' : 'var(--term-line)'),
+        letterSpacing: '.02em',
+      }}
+    >
+      {label}
+    </span>
   );
 }
 

@@ -226,6 +226,8 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             defaultModel: p.defaultModel,
             keyUrl: p.keyUrl,
             supportsReasoning: p.supportsReasoning,
+            requiresUserKey: p.requiresUserKey,
+            modelLocked: p.modelLocked,
         }));
     }
 

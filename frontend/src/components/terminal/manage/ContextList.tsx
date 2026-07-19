@@ -7,10 +7,23 @@ interface Props {
   filter: string;
   selectedContextId: string | null;
   onSelect: (id: string) => void;
-  onToggleAutoInject: (id: string, next: boolean) => void;
+  onPin: (id: string) => void;
   onDelete: (id: string) => void;
   onPreview: (filePath: string) => void;
   onAdd: () => void;
+}
+
+/** Artifact type → display group. Absent type falls back to url→link else doc. */
+const TYPE_GROUPS: Array<{ key: 'doc' | 'file' | 'image' | 'link'; title: string }> = [
+  { key: 'doc', title: 'Documents' },
+  { key: 'file', title: 'Files' },
+  { key: 'image', title: 'Images' },
+  { key: 'link', title: 'Links' },
+];
+
+function artifactType(c: ContextEntry): 'doc' | 'file' | 'image' | 'link' {
+  if (c.type) return c.type;
+  return c.url ? 'link' : 'doc';
 }
 
 function fmtBytes(n: number | undefined): string {
@@ -25,7 +38,7 @@ export default function ContextList({
   filter,
   selectedContextId,
   onSelect,
-  onToggleAutoInject,
+  onPin,
   onDelete,
   onPreview,
   onAdd,
@@ -35,7 +48,8 @@ export default function ContextList({
     ? contexts.filter(
         (c) =>
           c.name.toLowerCase().includes(norm) ||
-          c.filePath.toLowerCase().includes(norm),
+          c.filePath.toLowerCase().includes(norm) ||
+          (c.url ?? '').toLowerCase().includes(norm),
       )
     : contexts;
 
@@ -129,22 +143,20 @@ function Strip({
 
 function Section({
   title,
-  subtitle,
   count,
   rows,
   selectedId,
   onSelect,
-  onToggleAutoInject,
+  onPin,
   onDelete,
   onPreview,
 }: {
   title: string;
-  subtitle: string;
   count: number;
   rows: ContextEntry[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onToggleAutoInject: (id: string, next: boolean) => void;
+  onPin: (id: string) => void;
   onDelete: (id: string) => void;
   onPreview: (filePath: string) => void;
 }) {
@@ -183,16 +195,6 @@ function Section({
           · {count}
         </span>
         <span style={{ flex: 1 }} />
-        <span
-          style={{
-            fontSize: 11.5,
-            color: 'var(--term-faint, var(--term-muted))',
-            fontStyle: 'italic',
-            fontFamily: 'var(--ui-font)',
-          }}
-        >
-          {subtitle}
-        </span>
       </div>
       {rows.map((c) => {
         const isLink = artifactType(c) === 'link';
@@ -282,15 +284,14 @@ function Section({
                   fontFamily: 'var(--ui-font)',
                 }}
               >
-                {c.kind === 'reference' ? '↗ ' : ''}
-                {c.filePath}
+                {metaLine}
               </div>
             </div>
             {hovered ? (
               <RowActions
                 favorite={!!c.pinnedAt}
                 onPreview={() => onPreview(c.filePath)}
-                onPin={() => onToggleAutoInject(c.id, !c.autoInject)}
+                onPin={() => onPin(c.id)}
                 onDelete={() => onDelete(c.id)}
                 contextName={c.name}
               />

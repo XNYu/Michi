@@ -2,6 +2,7 @@ import { spawn, execSync, ChildProcessWithoutNullStreams } from 'node:child_proc
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { resolveClaudeCliModelId } from './claudeModelCatalog';
 
 export class ClaudeBinaryNotFoundError extends Error {
   constructor(message: string) {
@@ -139,8 +140,8 @@ export function preflightClaudeAuth(): void {
     return;
   }
 
-  // Some claude distributions auto-detect Bedrock from AWS_PROFILE /
-  // AWS_ACCESS_KEY_ID without requiring
+  // Amazon-internal / toolbox-distributed claude binaries often auto-detect
+  // Bedrock from AWS_PROFILE / AWS_ACCESS_KEY_ID without requiring
   // CLAUDE_CODE_USE_BEDROCK=1. Accept that signal as evidence of credible auth.
   if (process.env.AWS_PROFILE || process.env.AWS_ACCESS_KEY_ID) return;
 
@@ -202,7 +203,7 @@ export function buildClaudeArgv(args: SpawnClaudeArgs): string[] {
   }
 
   if (args.model) {
-    argv.push('--model', args.model);
+    argv.push('--model', resolveClaudeCliModelId(args.model));
   }
 
   if (args.effort) {

@@ -135,6 +135,12 @@ export class CodexSession implements AgentSession {
     { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout }
   >();
 
+  // User input state — same pattern as permissions
+  private readonly pendingUserInputs = new Map<
+    number,
+    { resolve: (answers: Array<{ question: string; answer: string }> | null) => void; timer: NodeJS.Timeout }
+  >();
+
   /** Called when a tool is granted always-allow, with the canonical tool name. */
   public onAlwaysAllow: ((canonicalTool: string) => void) | null = null;
 
@@ -421,12 +427,17 @@ export class CodexSession implements AgentSession {
     if (this.state === 'crashed' || this.state === 'disposed') return;
     this.state = 'crashed';
 
-    // Reject all pending permissions with cancel
+    // Reject all pending permissions and user inputs with cancel
     for (const [, entry] of this.pendingPermissions) {
       clearTimeout(entry.timer);
       entry.resolve(null);
     }
     this.pendingPermissions.clear();
+    for (const [, entry] of this.pendingUserInputs) {
+      clearTimeout(entry.timer);
+      entry.resolve(null);
+    }
+    this.pendingUserInputs.clear();
 
     this.queue.push({ kind: 'runtime_error', error: reason });
     this.queue.push({ kind: 'turn_end', stopReason: 'error' });
@@ -740,6 +751,11 @@ export class CodexSession implements AgentSession {
       entry.resolve(null);
     }
     this.pendingPermissions.clear();
+    for (const [, entry] of this.pendingUserInputs) {
+      clearTimeout(entry.timer);
+      entry.resolve(null);
+    }
+    this.pendingUserInputs.clear();
 
     // Unsubscribe notification handler
     this.unsubscribeNotification?.();

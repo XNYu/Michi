@@ -9,6 +9,7 @@ import {
   type DurableTurnSnapshot,
 } from "michi-shared";
 import type { AgentSession } from "./types";
+import type { NormalizedEvent } from "../services/chatEvents";
 import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEvents";
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
 import { extractBranchOverview } from "../services/messageSerialization";

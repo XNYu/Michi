@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchAgentStatus, saveAgentOptions, saveProviderKey, verifyProviderKey } from '../services/api';
 import type { AgentStatus, VerifyProviderKeyResult } from '../services/api';
+import { providerOptionSuffix, providerRequiresUserKey } from '../lib/providerCapabilities';
 
 /**
  * Capability-driven welcome/key gate.
@@ -93,7 +94,7 @@ export default function ApiKeyGate() {
   // backend's choice or the first provider.
   useEffect(() => {
     if (!status) return;
-    const providers = status.providers ?? [];
+    const providers = (status.providers ?? []).filter(providerRequiresUserKey);
     if (providers.length === 0) return;
     if (!selectedProvider) {
       setSelectedProvider(status.provider ?? providers[0]!.id);
@@ -151,7 +152,7 @@ export default function ApiKeyGate() {
   if (status.hasRequiredKey) return null;
   if (dismissed) return null;
 
-  const providers = status.providers ?? [];
+  const providers = (status.providers ?? []).filter(providerRequiresUserKey);
   const selectedProviderInfo =
     providers.find((p) => p.id === selectedProvider) ||
     providers.find((p) => p.id === status.provider) ||
@@ -288,7 +289,7 @@ export default function ApiKeyGate() {
             >
               {providers.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.label}{(p.hasKey ?? false) ? ' - key saved' : ''}
+                  {p.label}{providerOptionSuffix(p)}
                 </option>
               ))}
             </select>

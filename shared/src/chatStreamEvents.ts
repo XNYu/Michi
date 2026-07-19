@@ -44,6 +44,28 @@ export interface SubagentInfo {
   dependsOn: string[];
 }
 
+export interface UserInputOption {
+  label: string;
+  description?: string;
+}
+
+export interface UserInputQuestion {
+  question: string;
+  header?: string;
+  options: UserInputOption[];
+  multiSelect: boolean;
+}
+
+export interface UserInputRequestPayload {
+  requestId: number;
+  questions: UserInputQuestion[];
+}
+
+export interface UserInputAnswer {
+  question: string;
+  answer: string;
+}
+
 export const CHAT_STREAM_EVENTS = {
   chunk: "chunk",
   thought: "thought",
@@ -60,6 +82,8 @@ export const CHAT_STREAM_EVENTS = {
   contextSaved: "context_saved",
   contextUpdated: "context_updated",
   permissionRequest: "permission_request",
+  userInputRequest: "user_input_request",
+  userInputResolved: "user_input_resolved",
   subagentListUpdate: "subagent_list_update",
   subagentToolActivity: "subagent_tool_activity",
   contextUsage: "context_usage",
@@ -96,6 +120,8 @@ export interface ChatStreamPayloads {
     detail?: string;
     options: PermissionOption[];
   };
+  user_input_request: UserInputRequestPayload;
+  user_input_resolved: { requestId: number; answers: UserInputAnswer[] };
   subagent_list_update: { subagents: SubagentInfo[] };
   subagent_tool_activity: { subagentSessionId: string; title: string; status: string };
   context_usage: { contextUsagePercentage: number };
@@ -258,6 +284,40 @@ const parsers = {
       title: stringOrEmpty(data.title),
       detail: optionalString(data.detail),
       options,
+    };
+  },
+  user_input_request: (data) => {
+    const questions = Array.isArray(data.questions)
+      ? (data.questions as Array<Record<string, unknown>>).map((q) => {
+          const options = Array.isArray(q.options)
+            ? (q.options as Array<Record<string, unknown>>).map((o) => ({
+                label: stringOrEmpty(o.label),
+                description: optionalString(o.description),
+              }))
+            : [];
+          return {
+            question: stringOrEmpty(q.question),
+            header: optionalString(q.header),
+            options,
+            multiSelect: q.multiSelect === true,
+          };
+        })
+      : [];
+    return {
+      requestId: optionalFiniteNumber(data.requestId) ?? 0,
+      questions,
+    };
+  },
+  user_input_resolved: (data) => {
+    const answers = Array.isArray(data.answers)
+      ? (data.answers as Array<Record<string, unknown>>).map((a) => ({
+          question: stringOrEmpty(a.question),
+          answer: stringOrEmpty(a.answer),
+        }))
+      : [];
+    return {
+      requestId: optionalFiniteNumber(data.requestId) ?? 0,
+      answers,
     };
   },
   subagent_list_update: (data) => {

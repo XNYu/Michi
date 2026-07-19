@@ -1,6 +1,6 @@
-import type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo } from "michi-shared";
+import type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo, UserInputAnswer, UserInputQuestion } from "michi-shared";
 
-export type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo } from "michi-shared";
+export type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo, UserInputAnswer, UserInputQuestion } from "michi-shared";
 
 export type NormalizedEvent =
     | { kind: "chunk"; text: string }
@@ -27,6 +27,8 @@ export type NormalizedEvent =
     | { kind: "context_updated"; contextId?: string; name: string; filePath: string; size?: number }
     | { kind: "image"; path: string; caption?: string; mimeType: string; size: number }
     | { kind: "permission_request"; requestId: number; toolCallId?: string; title: string; detail?: string; options: PermissionOption[] }
+    | { kind: "user_input_request"; requestId: number; questions: UserInputQuestion[] }
+    | { kind: "user_input_resolved"; requestId: number; answers: UserInputAnswer[] }
     | { kind: "subagent_list_update"; subagents: SubagentInfo[] }
     | { kind: "subagent_tool_activity"; subagentSessionId: string; title: string; status: string }
     | { kind: "context_usage"; contextUsagePercentage: number }

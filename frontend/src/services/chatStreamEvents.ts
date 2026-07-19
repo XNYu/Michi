@@ -8,6 +8,9 @@ import {
   type PlanEntry,
   type SpawnBranchTopic,
   type ToolCallStreamPayload,
+  type UserInputAnswer,
+  type UserInputQuestion,
+  type UserInputRequestPayload,
 } from 'michi-shared';
 
 export { CHAT_STREAM_EVENTS, parseChatStreamEvent };
@@ -19,6 +22,9 @@ export type {
   PlanEntry,
   SpawnBranchTopic,
   ToolCallStreamPayload,
+  UserInputAnswer,
+  UserInputQuestion,
+  UserInputRequestPayload,
 };
 
 export interface StreamHandlers {
@@ -41,12 +47,14 @@ export interface StreamHandlers {
   onContextUpdated?: (name: string, filePath: string, size?: number, contextId?: string) => void;
   onImage?: (data: ChatStreamPayloads['image']) => void;
   onPermissionRequest?: (data: ChatStreamPayloads['permission_request']) => void;
+  onUserInputRequest?: (data: ChatStreamPayloads['user_input_request']) => void;
+  onUserInputResolved?: (data: ChatStreamPayloads['user_input_resolved']) => void;
   onSubagentListUpdate?: (data: ChatStreamPayloads['subagent_list_update']) => void;
   onSubagentToolActivity?: (data: ChatStreamPayloads['subagent_tool_activity']) => void;
   onContextUsage?: (data: ChatStreamPayloads['context_usage']) => void;
   onUsageSummary?: (data: ChatStreamPayloads['usage_summary']) => void;
   onMcpServerError?: (data: ChatStreamPayloads['mcp_server_error']) => void;
-  onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean) => void;
+  onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean, completedAt?: number) => void;
   onAborted?: () => void;
   onError?: (msg: string, assistantId?: string, turnId?: string) => void;
 }
@@ -127,6 +135,12 @@ export function dispatchChatStreamEvent(
     case CHAT_STREAM_EVENTS.permissionRequest:
       handlers.onPermissionRequest?.(streamEvent.data);
       return;
+    case CHAT_STREAM_EVENTS.userInputRequest:
+      handlers.onUserInputRequest?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.userInputResolved:
+      handlers.onUserInputResolved?.(streamEvent.data);
+      return;
     case CHAT_STREAM_EVENTS.subagentListUpdate:
       handlers.onSubagentListUpdate?.(streamEvent.data);
       return;
@@ -149,12 +163,15 @@ export function dispatchChatStreamEvent(
           streamEvent.data.assistantId,
           streamEvent.data.turnId,
           streamEvent.data.persisted,
+          streamEvent.data.completedAt,
         );
       } else {
         handlers.onDone?.(
           streamEvent.data.stopReason,
           streamEvent.data.assistantId,
           streamEvent.data.turnId,
+          undefined,
+          streamEvent.data.completedAt,
         );
       }
       return;

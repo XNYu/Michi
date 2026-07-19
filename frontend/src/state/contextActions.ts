@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { reduceProject } from './chatReducers';
-import type { Project } from './chatTypes';
+import type { Project, ProjectAction } from './chatTypes';
 
 interface UseContextActionsArgs {
   projects: Project[];
@@ -18,10 +18,12 @@ export function useContextActions({
       name: string,
       filePath: string,
       opts?: {
-        autoInject?: boolean;
+        url?: string;
+        type?: 'doc' | 'file' | 'image' | 'link';
         source?: 'user' | 'agent';
         size?: number;
         kind?: 'embedded' | 'reference';
+        origin?: { nodeId: string; messageId?: string };
       },
     ) => {
       const p = projects.find((p) => p.id === activeProjectId);
@@ -35,9 +37,11 @@ export function useContextActions({
                 context: {
                   name,
                   filePath,
+                  url: opts?.url,
+                  type: opts?.type,
                   size: opts?.size,
                   source: opts?.source ?? 'user',
-                  autoInject: opts?.autoInject,
+                  origin: opts?.origin,
                   kind: opts?.kind,
                 },
               })
@@ -51,7 +55,7 @@ export function useContextActions({
   const updateContext = useCallback(
     (
       contextId: string,
-      patch: { name?: string; filePath?: string; autoInject?: boolean; size?: number },
+      patch: { name?: string; filePath?: string; size?: number },
     ) => {
       const p = projects.find((p) => p.id === activeProjectId);
       if (!p) return;
@@ -67,8 +71,11 @@ export function useContextActions({
                   id: contextId,
                   name: patch.name ?? existing.name,
                   filePath: patch.filePath ?? existing.filePath,
+                  url: existing.url,
+                  type: existing.type,
                   size: patch.size ?? existing.size,
-                  autoInject: patch.autoInject ?? existing.autoInject,
+                  origin: existing.origin,
+                  kind: existing.kind,
                 },
               })
             : proj,
@@ -93,16 +100,18 @@ export function useContextActions({
     [activeProjectId, projects, setProjects],
   );
 
-  const toggleAutoInject = useCallback(
+  const pinContext = useCallback(
     (contextId: string) => {
       const p = projects.find((p) => p.id === activeProjectId);
       if (!p) return;
+      const existing = p.contexts?.find((c) => c.id === contextId);
+      const now = Date.now();
+      // Toggle: pinned → unpin, unpinned → pin.
+      const action: ProjectAction = existing?.pinnedAt
+        ? { type: 'unpin-context', projectId: p.id, contextId }
+        : { type: 'pin-context', projectId: p.id, contextId, now };
       setProjects((prev) =>
-        prev.map((proj) =>
-          proj.id === p.id
-            ? reduceProject(proj, { type: 'toggle-auto-inject', projectId: p.id, contextId })
-            : proj,
-        ),
+        prev.map((proj) => (proj.id === p.id ? reduceProject(proj, action) : proj)),
       );
     },
     [activeProjectId, projects, setProjects],
@@ -112,6 +121,6 @@ export function useContextActions({
     createContext,
     updateContext,
     deleteContext,
-    toggleAutoInject,
+    pinContext,
   };
 }

@@ -13,13 +13,14 @@ import { formatQuotedMessage } from '../../lib/quoteFormat';
 import { buildAnchorMap, type ChildAnchor } from '../../state/branchAnchors';
 import { formatCommentsBlock, joinMessageParts } from '../../lib/commentFormat';
 import { getElectron } from '../../lib/electronBridge';
-import { getWebUploadCwd, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
+import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
 import { saveAgentOptions } from '../../services/api';
 import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
+import UserInputBanner from './UserInputBanner';
 import MergeBanner from './MergeBanner';
 import PaneFind from './PaneFind';
 import { ComposerShell, type ComposerShellHandle } from './ComposerShell';
@@ -40,21 +41,101 @@ const sidebarAnimatingRef = { current: false };
 const animationEndCallbacks = new Set<() => void>();
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 800;
 const USER_SCROLL_INTENT_WINDOW_MS = 1200;
+// Mount-time scroll restore: the target is re-derived from the anchor's live
+// rect and re-applied every time the content's size changes — the container
+// sets overflow-anchor:none, so nothing else compensates when
+// content-visibility inflation (72px estimates → real heights), composer
+// measurement or image loads shift the content under the viewport. The
+// restore holds the anchor until the layout has been quiet for QUIET_MS
+// (hard cap MAX_MS), or the user scrolls.
+const RESTORE_QUIET_MS = 350;
+const RESTORE_MAX_MS = 3000;
 
-// Persists scroll position across pane unmount/remount AND page refresh.
-// Backed by localStorage with an LRU cap so it doesn't grow unbounded.
-const SCROLL_CACHE_LS_KEY = 'michi:paneScrollPositions';
+// Persists per-pane scroll anchors across pane unmount/remount AND page
+// refresh. Backed by localStorage with an LRU cap so it doesn't grow
+// unbounded.
+//
+// Entries are message anchors, NOT pixel scrollTops: message frames render
+// with content-visibility:auto (72px intrinsic-size estimates until they come
+// near the viewport), so scrollHeight right after mount bears no relation to
+// the layout a pixel offset was measured under — restoring one lands on an
+// arbitrary message, usually clamped toward the top. An anchor id survives
+// the estimate → real-height inflation.
+const SCROLL_CACHE_LS_KEY = 'michi:paneScrollAnchors';
 const SCROLL_CACHE_MAX_ENTRIES = 200;
 
+export interface PaneScrollEntry {
+  /** data-msg-id of the topmost visible message when the pane was left. */
+  anchorId: string | null;
+  /** anchor top − viewport top at save time, px (≤ 0 when the viewport sat partway into the anchor message). */
+  offset: number;
+  /** Pane was left pinned within 24px of the bottom (and not mid-stream). */
+  atBottom: boolean;
+  /**
+   * Max message createdAt present when the pane was left. Messages newer
+   * than this landed after the user last had the pane open — the unread
+   * horizon. Deliberately independent of node.viewedAt, which activateTree
+   * resets to Date.now() in the same click that opens the pane, before the
+   * pane can read it.
+   */
+  lastSeen: number;
+}
+
+/**
+ * Where the first unseen message sits after an unread restore, as a fraction
+ * of the viewport height from the top — upper-middle, matching the 30% anchor
+ * used when a freshly-sent user message is scrolled into view.
+ */
+const UNSEEN_TOP_FRACTION = 0.3;
+
+export interface PaneRestoreTarget {
+  /**
+   * unseen — anchorId is the first message newer than the saved lastSeen
+   *          horizon; park it at UNSEEN_TOP_FRACTION of the viewport height
+   *          (offset is unused and 0).
+   * anchor — anchorId is the message the user was looking at when they
+   *          left; put it back at its saved viewport offset.
+   * bottom — pin to the bottom (left-at-bottom, first visit on this
+   *          device, or the saved anchor is unusable).
+   */
+  kind: 'unseen' | 'anchor' | 'bottom';
+  anchorId?: string;
+  offset: number;
+}
+
+/**
+ * Decide where a freshly-mounted idle pane should land, from the anchor
+ * entry saved when it was last left and the node's current messages.
+ * Returns null when there is nothing to position over (no messages).
+ */
+export function resolvePaneRestore(
+  saved: PaneScrollEntry | undefined,
+  messages: readonly { id: string; createdAt?: number }[],
+): PaneRestoreTarget | null {
+  if (messages.length === 0) return null;
+  if (saved && saved.lastSeen > 0) {
+    const firstUnseen = messages.find((m) => (m.createdAt ?? 0) > saved.lastSeen);
+    if (firstUnseen) return { kind: 'unseen', anchorId: firstUnseen.id, offset: 0 };
+  }
+  if (saved && !saved.atBottom && saved.anchorId) {
+    return { kind: 'anchor', anchorId: saved.anchorId, offset: saved.offset };
+  }
+  return { kind: 'bottom', offset: 0 };
+}
+
 const paneScrollCache = (() => {
-  const map = new Map<string, number>();
+  const map = new Map<string, PaneScrollEntry>();
 
   // Hydrate from localStorage on startup
   try {
+    // Drop the pre-anchor pixel cache from earlier builds.
+    window.localStorage.removeItem('michi:paneScrollPositions');
     const raw = window.localStorage.getItem(SCROLL_CACHE_LS_KEY);
     if (raw) {
-      const entries: [string, number][] = JSON.parse(raw);
-      for (const [k, v] of entries) map.set(k, v);
+      const entries: [string, PaneScrollEntry][] = JSON.parse(raw);
+      for (const [k, v] of entries) {
+        if (v && typeof v === 'object' && typeof v.lastSeen === 'number') map.set(k, v);
+      }
     }
   } catch { /* corrupt or missing — start fresh */ }
 
@@ -74,13 +155,15 @@ const paneScrollCache = (() => {
     if (flushTimer == null) flushTimer = setTimeout(flush, 1000);
   }
 
-  window.addEventListener('beforeunload', () => {
+  // pagehide rather than beforeunload: panes write their final anchor on
+  // beforeunload, which fires first — flushing here catches those writes.
+  window.addEventListener('pagehide', () => {
     if (flushTimer != null) { clearTimeout(flushTimer); flush(); }
   });
 
   return {
     get(key: string) { return map.get(key); },
-    set(key: string, value: number) {
+    set(key: string, value: PaneScrollEntry) {
       map.delete(key); // reinsert at end for LRU ordering
       map.set(key, value);
       scheduleFlush();
@@ -92,6 +175,7 @@ const EMPTY_CONTEXTS: ContextEntry[] = [];
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 const EMPTY_SAME_TREE_NODES: ChatNodeState[] = [];
 const EMPTY_MERGE_SOURCE_LABELS: string[] = [];
+const EMPTY_CONTEXT_NAMES: ReadonlySet<string> = new Set();
 
 function anchorEqual(a: ChildAnchor, b: ChildAnchor): boolean {
   return (
@@ -237,6 +321,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     switchAgent,
     resolvePermission,
     denyPermission,
+    resolveUserInputRequest,
+    skipUserInputRequest,
     addPendingComment,
     editPendingComment,
     removePendingComment,
@@ -256,6 +342,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const { prefs } = usePrefs();
   const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
+  // Latest node state for callbacks that outlive their render closure — the
+  // unmount-time scroll save reads messages through this.
+  const nLatestRef = useRef(n);
+  nLatestRef.current = n;
   const hasCommittedRef = useRef(false);
   useEffect(() => {
     if (!perf.enabled()) return;
@@ -472,6 +562,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         const result = await importWorkspaceFileUpload(activeProject.id, cwd, file, {
           onProgress: progressForFile(file.name, fileIndex, files.length),
+          subdir: '.attachments',
         });
         const abs = result.filePath.startsWith('/')
           ? result.filePath
@@ -495,6 +586,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   // Paste-to-attach: scan clipboardData for file items (typically images
   // copied from screenshots / browsers) and pipe them through the same
+  const PASTE_AS_FILE_THRESHOLD = 10_000;
+
   // import path as drag-and-drop. Text pastes fall through to the textarea.
   const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
@@ -570,6 +663,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         const result = await importWorkspaceFileUpload(activeProject.id, cwd, file, {
           originalName: fileName,
           onProgress: progressForFile(fileName, fileIndex, items.length),
+          subdir: '.attachments',
         });
         const abs = result.filePath.startsWith('/')
           ? result.filePath
@@ -626,6 +720,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             }
             const result = await importWorkspaceFileUpload(activeProject.id, cwd, file, {
               onProgress: progressForFile(file.name, fileIndex, files.length),
+              subdir: '.attachments',
             });
             const abs = result.filePath.startsWith('/')
               ? result.filePath
@@ -671,29 +766,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }
     return null;
   })());
-  // Restore saved scroll position on mount (idle threads only — streaming
-  // threads are handled by follow mode). Save on unmount.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const shouldPin =
-      n?.status === 'streaming' ||
-      !!n?.followUpsGenerating ||
-      (n?.followUps.length ?? 0) > 0;
-    if (!shouldPin) {
-      const saved = paneScrollCache.get(nodeId);
-      if (saved != null) {
-        el.scrollTop = saved;
-        prevScrollTopRef.current = saved;
-        followRef.current = saved >= el.scrollHeight - el.clientHeight - 24;
-      }
-    }
-    return () => {
-      paneScrollCache.set(nodeId, el.scrollTop);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // performance.now() timestamp until which follow-mode auto-pinning is
   // suppressed. Set when a user message lands so the smooth-scroll-to-30%
   // animation can complete before the assistant's first streamed token
@@ -711,6 +783,176 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // ResizeObserver/animation-end pin can run the same anchor-vs-tail
   // logic without recapturing message state in its `[]` deps closure.
   const pinFnRef = useRef<(() => void) | null>(null);
+
+  // ── Scroll persistence ─────────────────────────────────────────────────
+  // True while the mount-time restore below is still positioning the
+  // viewport. Saves are suppressed during that window: a save would capture
+  // the half-restored position AND advance the lastSeen horizon — under
+  // StrictMode's dev double-mount the first cleanup fires exactly then, and
+  // without the guard it poisons the entry the second mount restores from
+  // (read chats snapped to the bottom, unread chats lost their horizon).
+  const restoreInFlightRef = useRef(false);
+  // Capture where the user is in this pane as a message anchor plus the
+  // newest message timestamp (see PaneScrollEntry). Runs on unmount,
+  // debounced while scrolling, and on beforeunload so a refresh keeps it
+  // fresh too.
+  const savePaneScroll = useCallback(() => {
+    if (restoreInFlightRef.current) return;
+    const el = scrollRef.current;
+    const node = nLatestRef.current;
+    if (!el || !node || node.messages.length === 0) return;
+    const lastSeen = node.messages.reduce((mx, m) => Math.max(mx, m.createdAt ?? 0), 0);
+    // Mid-stream the tail keeps growing after the pane closes, so "at the
+    // bottom now" is not "at the bottom on reopen" — save the anchor instead
+    // and the user resumes at the point they stopped watching.
+    const atBottom =
+      node.status !== 'streaming' &&
+      el.scrollTop >= el.scrollHeight - el.clientHeight - 24;
+    let anchorId: string | null = null;
+    let offset = 0;
+    if (!atBottom) {
+      const viewTop = el.getBoundingClientRect().top;
+      for (const f of Array.from(el.querySelectorAll<HTMLElement>('[data-msg-id]'))) {
+        const r = f.getBoundingClientRect();
+        if (r.bottom > viewTop + 1) { // topmost message still (partly) visible
+          anchorId = f.getAttribute('data-msg-id');
+          offset = r.top - viewTop;
+          break;
+        }
+      }
+    }
+    paneScrollCache.set(nodeId, { anchorId, offset, atBottom, lastSeen });
+  }, [nodeId]);
+  const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePaneScrollSave = useCallback(() => {
+    if (scrollSaveTimerRef.current != null) clearTimeout(scrollSaveTimerRef.current);
+    scrollSaveTimerRef.current = setTimeout(() => {
+      scrollSaveTimerRef.current = null;
+      savePaneScroll();
+    }, 250);
+  }, [savePaneScroll]);
+
+  // Position the viewport on mount. Streaming panes are handled by follow
+  // mode; idle panes land on the target picked by resolvePaneRestore()
+  // (unseen message → saved anchor → bottom).
+  // A single scrollTop assignment cannot work here: message frames use
+  // content-visibility:auto, so heights inflate from 72px estimates to real
+  // values progressively after mount — and each write moves the viewport,
+  // which makes the browser render more frames near it, which shifts the
+  // anchor again. With overflow-anchor:none on the container, nothing
+  // compensates for that drift, so the restore keeps re-deriving the target
+  // from the anchor's live rect (ResizeObserver on the content) until the
+  // layout goes quiet, the hard cap elapses, or the user scrolls. The first
+  // pass runs synchronously inside the layout effect so the pre-paint frame
+  // is already positioned.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let finishRestore: (() => void) | null = null;
+    let liveTrustRaf: number | null = null;
+    const live = n?.status === 'streaming' || !!n?.followUpsGenerating;
+    const restore = live
+      ? null
+      : resolvePaneRestore(paneScrollCache.get(nodeId), n?.messages ?? []);
+    if (restore) {
+      // Follow mode stays on only when we land at the bottom — otherwise the
+      // streaming-follow / resize pins would yank the restored position back
+      // down (this is what previously sent every followUps-bearing pane to
+      // the bottom on open). The bottom case keeps follow ON, so the
+      // existing follow pins take over once this restore finishes.
+      followRef.current = restore.kind === 'bottom';
+      const targetFor = (): number => {
+        if (restore.kind !== 'bottom' && restore.anchorId) {
+          const msgEl = el.querySelector<HTMLElement>(`[data-msg-id="${restore.anchorId}"]`);
+          if (msgEl) {
+            const wanted = restore.kind === 'unseen'
+              ? el.clientHeight * UNSEEN_TOP_FRACTION
+              : restore.offset;
+            const delta = msgEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
+            return Math.max(0, el.scrollTop + delta - wanted);
+          }
+          // Anchor message gone (deleted/trimmed) — fall through to bottom.
+        }
+        return el.scrollHeight - el.clientHeight;
+      };
+      let done = false;
+      let ro: ResizeObserver | null = null;
+      let quietTimer: ReturnType<typeof setTimeout> | null = null;
+      let capTimer: ReturnType<typeof setTimeout> | null = null;
+      restoreInFlightRef.current = true;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        restoreInFlightRef.current = false;
+        ro?.disconnect();
+        if (quietTimer != null) clearTimeout(quietTimer);
+        if (capTimer != null) clearTimeout(capTimer);
+        el.removeEventListener('wheel', finish);
+        el.removeEventListener('touchstart', finish);
+        el.removeEventListener('pointerdown', finish);
+      };
+      finishRestore = finish;
+      const armQuiet = () => {
+        if (quietTimer != null) clearTimeout(quietTimer);
+        quietTimer = setTimeout(finish, RESTORE_QUIET_MS);
+      };
+      const apply = () => {
+        if (done) return;
+        const target = targetFor();
+        if (Math.abs(el.scrollTop - target) > 1) {
+          // Our own writes emit scroll events; keep the follow-mode
+          // direction detector from reading them as user intent.
+          programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+          el.scrollTop = target;
+          prevScrollTopRef.current = el.scrollTop;
+          armQuiet();
+        }
+      };
+      apply();
+      armQuiet();
+      capTimer = setTimeout(finish, RESTORE_MAX_MS);
+      if (typeof ResizeObserver !== 'undefined') {
+        ro = new ResizeObserver(() => apply());
+        ro.observe(el);
+        if (el.firstElementChild) ro.observe(el.firstElementChild);
+      }
+      el.addEventListener('wheel', finish, { passive: true });
+      el.addEventListener('touchstart', finish, { passive: true });
+      el.addEventListener('pointerdown', finish);
+    } else {
+      // Live pane (streaming / follow-ups generating) or no messages yet:
+      // there is no restore pass, but StrictMode's dev double-mount still
+      // fires this effect's cleanup synchronously, before any frame — where
+      // the layout is the unsettled content-visibility estimate. Guard that
+      // window too so the cleanup save can't poison the entry; the flag
+      // clears one frame after mount, once geometry is real.
+      restoreInFlightRef.current = true;
+      liveTrustRaf = requestAnimationFrame(() => {
+        liveTrustRaf = null;
+        restoreInFlightRef.current = false;
+      });
+    }
+    window.addEventListener('beforeunload', savePaneScroll);
+    return () => {
+      // Unmounting mid-restore (StrictMode's dev double-mount, or an
+      // open-and-close within RESTORE_QUIET_MS) skips the save: the
+      // half-restored position would overwrite the entry this restore was
+      // reading, and the stale entry is strictly better data.
+      const restoreWasActive = restoreInFlightRef.current;
+      finishRestore?.();
+      if (liveTrustRaf != null) {
+        cancelAnimationFrame(liveTrustRaf);
+        restoreInFlightRef.current = false;
+      }
+      window.removeEventListener('beforeunload', savePaneScroll);
+      if (scrollSaveTimerRef.current != null) {
+        clearTimeout(scrollSaveTimerRef.current);
+        scrollSaveTimerRef.current = null;
+      }
+      if (!restoreWasActive) savePaneScroll();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const composerHandle = useRef<ComposerShellHandle>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const composerToolbarRef = useRef<HTMLDivElement>(null);
@@ -934,6 +1176,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   const activeProjectEdges = activeProject?.edges ?? EMPTY_EDGES;
   const mentionContexts = activeProject?.contexts ?? EMPTY_CONTEXTS;
+
+  const contextNamesSet = useMemo(() => {
+    if (mentionContexts.length === 0) return EMPTY_CONTEXT_NAMES;
+    return new Set(mentionContexts.map(c => c.name.toLowerCase()));
+  }, [mentionContexts]);
 
   const parentTitle = useStructuralSelector(
     useCallback((nodesMap) => {
@@ -1217,6 +1464,24 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // Type an `@` at the caret; MentionEditor's suggestion opens on it.
     inputRef.current?.editor?.chain().focus().insertContent('@').run();
   }, []);
+
+  // "Cite" from the Artifacts drawer: append `@name ` as plain text at the
+  // caret. resolveAtMentions parses the wire token on send, so no formal chip
+  // node is required. Only the focused pane (event's target nodeId) reacts.
+  useEffect(() => {
+    const onCite = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { nodeId?: string; name?: string } | undefined;
+      if (!detail || detail.nodeId !== nodeId || !detail.name) return;
+      const ed = inputRef.current?.editor;
+      if (!ed) return;
+      // Insert a leading space when the composer isn't empty / doesn't already
+      // end in whitespace, so the @token stays a standalone mention.
+      const endsWithSpace = /\s$/.test(ed.getText());
+      ed.chain().focus().insertContent(`${endsWithSpace ? '' : ' '}@${detail.name} `).run();
+    };
+    window.addEventListener('michi:cite-artifact', onCite);
+    return () => window.removeEventListener('michi:cite-artifact', onCite);
+  }, [nodeId]);
 
   const openModelMenu = useCallback((
     anchor: { x: number; y: number; anchorBottom: number },
@@ -1555,6 +1820,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         onPointerDown={markUserScrollIntent}
         onKeyDown={markUserScrollIntentFromKey}
         onScroll={(e) => {
+          // Keep the persisted anchor fresh so a refresh (which skips React
+          // unmount) still restores to the latest position.
+          schedulePaneScrollSave();
           const el = e.currentTarget;
           const prev = prevScrollTopRef.current;
           const cur = el.scrollTop;
@@ -1589,7 +1857,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             prefs.terminalDensity === 'dense' ? 22 : prefs.terminalDensity === 'compact' ? 24 : 32,
           // Reserve clearance equal to the measured composer height + 12px top
           // gutter + 12px breathing buffer so the last message scrolls clear.
-          paddingBottom: n.pendingPermission ? 12 : composerHeight + 24,
+          paddingBottom: (n.pendingPermission || (n.pendingUserInput && !n.pendingUserInput.resolved)) ? 12 : composerHeight + 24,
           fontSize:
             prefs.terminalDensity === 'dense'
               ? 11
@@ -1623,7 +1891,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           contextNames={contextNamesSet}
         />
       </div>
-      {!n.pendingPermission && (
+      {!n.pendingPermission && !(n.pendingUserInput && !n.pendingUserInput.resolved) && (
       <div
         aria-hidden
         style={{
@@ -1639,7 +1907,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       />
       )}
       <MergeBanner nodeId={nodeId} />
-      {!n.pendingPermission && (
+      {!n.pendingPermission && !(n.pendingUserInput && !n.pendingUserInput.resolved) && (
       <ComposerShell
         ref={composerHandle}
         position="absolute"

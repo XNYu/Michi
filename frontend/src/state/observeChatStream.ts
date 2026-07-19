@@ -130,6 +130,9 @@ export function createBackgroundTurnBinding({
       onFollowUpsStatus: (status) => dispatch({ type: 'follow-ups-status', nodeId, status }),
       onCommands: (commands) => dispatch({ type: 'set-commands', nodeId, commands }),
       onPermissionRequest: (permission) => dispatch({ type: 'permission-request', nodeId, permission }),
+      onUserInputRequest: (data) =>
+        dispatch({ type: 'user-input-request', nodeId, userInput: { requestId: data.requestId, questions: data.questions, answers: [] } }),
+      onUserInputResolved: () => dispatch({ type: 'user-input-resolved', nodeId }),
       onSubagentListUpdate: (data) =>
         dispatch({ type: 'subagent-list-update', nodeId, subagents: data.subagents }),
       onSubagentToolActivity: (data) =>
@@ -152,7 +155,7 @@ export function createBackgroundTurnBinding({
         }),
       onMcpServerError: (data) =>
         dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
-      onDone: (stopReason, incomingAssistantId, incomingTurnId, persisted) => {
+      onDone: (stopReason, incomingAssistantId, incomingTurnId, persisted, completedAt) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
         if (!assistantId) return;
         if (persisted === false) {
@@ -173,7 +176,7 @@ export function createBackgroundTurnBinding({
           onTerminal?.();
           return;
         }
-        dispatch({ type: 'done', nodeId, assistantId });
+        dispatch({ type: 'done', nodeId, assistantId, completedAt });
         onTurnEnd?.('done', nodeId);
         onStreamComplete?.();
         onTerminal?.();

@@ -13,7 +13,7 @@ import type {
 import type { DigestState } from './digest';
 import { parseBranchOverviewEntries } from 'michi-shared';
 
-export const STATE_SCHEMA_VERSION = 5;
+export const STATE_SCHEMA_VERSION = 6;
 
 export interface SavedState {
   version: number;
@@ -272,18 +272,37 @@ export function mapTreeRow(row: Record<string, unknown>): Tree | null {
   };
 }
 
-/** Map one `contexts` row → ContextEntry, or null when required fields missing. */
+/** Map one `contexts` row → ContextEntry (artifact), or null when required
+ *  fields missing. A `link` artifact has a `url` and no file_path; every other
+ *  type has a file_path. Require at least one so links survive reload. */
 export function mapContextRow(row: Record<string, unknown>): ContextEntry | null {
   const id = asString(row.id);
   const name = asString(row.name);
-  const filePath = asString(row.file_path);
-  if (!id || !name || !filePath) return null;
+  const filePath = asString(row.file_path) ?? '';
+  const url = asString(row.url);
+  if (!id || !name || (!filePath && !url)) return null;
+  const rawType = asString(row.type);
+  const type: ContextEntry['type'] =
+    rawType === 'file' || rawType === 'image' || rawType === 'link' || rawType === 'doc'
+      ? rawType
+      : url
+        ? 'link'
+        : 'doc';
+  const rawKind = asString(row.kind);
+  const kind: ContextEntry['kind'] =
+    rawKind === 'embedded' || rawKind === 'reference' ? rawKind : undefined;
+  const originNodeId = asString(row.origin_node_id);
+  const originMessageId = asString(row.origin_message_id);
   return {
     id,
     name,
     filePath,
+    url: url ?? undefined,
+    type,
+    kind,
+    origin: originNodeId ? { nodeId: originNodeId, messageId: originMessageId ?? undefined } : undefined,
     size: asOptionalNumber(row.size),
-    autoInject: row.auto_inject === 1 || row.auto_inject === true || undefined,
+    pinnedAt: asOptionalNumber(row.pinned_at),
     source: row.source === 'agent' ? 'agent' : 'user',
     createdAt: asNumber(row.created_at, Date.now()),
     updatedAt: asNumber(row.updated_at, Date.now()),
@@ -603,7 +622,7 @@ export function hydrateBackendWorkspaces(
 export function hydrateSavedState(saved: unknown): HydratedState {
   if (!saved || typeof saved !== 'object') return emptyHydrated();
   const s = saved as Partial<SavedState>;
-  if (![1, 2, 3, 4, 5].includes(s.version ?? 0)) return emptyHydrated();
+  if (![1, 2, 3, 4, 5, 6].includes(s.version ?? 0)) return emptyHydrated();
   if (!Array.isArray(s.projects) || !s.nodes || typeof s.nodes !== 'object') {
     return emptyHydrated();
   }
@@ -744,17 +763,47 @@ export function hydrateSavedState(saved: unknown): HydratedState {
   for (const p of projects) {
     const rawContexts = Array.isArray((p as any).contexts) ? (p as any).contexts : [];
     p.contexts = rawContexts
-      .filter((c: any) => typeof c?.name === 'string' && typeof c?.filePath === 'string' && c.filePath)
-      .map((c: any) => ({
-        id: typeof c.id === 'string' ? c.id : `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
-        name: c.name,
-        filePath: c.filePath,
-        size: typeof c.size === 'number' && Number.isFinite(c.size) ? c.size : undefined,
-        autoInject: c.autoInject === true || undefined,
-        source: c.source === 'agent' ? 'agent' : 'user',
-        createdAt: typeof c.createdAt === 'number' ? c.createdAt : now,
-        updatedAt: typeof c.updatedAt === 'number' ? c.updatedAt : now,
-      }));
+      // Keep any artifact with a name plus at least one payload: a filePath
+      // (doc/file/image) OR a url (link). Pre-artifact rows always had filePath.
+      .filter(
+        (c: any) =>
+          typeof c?.name === 'string' &&
+          ((typeof c?.filePath === 'string' && c.filePath) || typeof c?.url === 'string'),
+      )
+      .map((c: any) => {
+        const url = typeof c.url === 'string' ? c.url : undefined;
+        const filePath = typeof c.filePath === 'string' ? c.filePath : '';
+        const type: ContextEntry['type'] =
+          c.type === 'file' || c.type === 'image' || c.type === 'link' || c.type === 'doc'
+            ? c.type
+            : url
+              ? 'link'
+              : 'doc';
+        const kind: ContextEntry['kind'] =
+          c.kind === 'embedded' || c.kind === 'reference' ? c.kind : undefined;
+        const originNodeId =
+          c.origin && typeof c.origin.nodeId === 'string' ? c.origin.nodeId : undefined;
+        return {
+          id: typeof c.id === 'string' ? c.id : `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          name: c.name,
+          filePath,
+          url,
+          type,
+          kind,
+          origin: originNodeId
+            ? {
+                nodeId: originNodeId,
+                messageId:
+                  c.origin && typeof c.origin.messageId === 'string' ? c.origin.messageId : undefined,
+              }
+            : undefined,
+          size: typeof c.size === 'number' && Number.isFinite(c.size) ? c.size : undefined,
+          pinnedAt: typeof c.pinnedAt === 'number' && Number.isFinite(c.pinnedAt) ? c.pinnedAt : undefined,
+          source: c.source === 'agent' ? 'agent' : 'user',
+          createdAt: typeof c.createdAt === 'number' ? c.createdAt : now,
+          updatedAt: typeof c.updatedAt === 'number' ? c.updatedAt : now,
+        };
+      });
   }
 
   return {

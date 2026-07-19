@@ -187,6 +187,16 @@ export function buildMetadataSystemPrompt(
     return renderHead(true, metadataOutputMode);
 }
 
+const ASK_USER_INSTRUCTION = `
+
+Tool override — AskUserQuestion:
+Do NOT use the built-in AskUserQuestion tool. It does not work in this environment.
+Instead, use the MCP tool ____michi_internal____ask_user to ask the user structured
+questions with selectable options. The schema is identical: questions[] with question,
+header, options[{label, description}], and multiSelect. The tool blocks until the user
+responds in the UI.`;
+
+
 export interface FirstTurnPrefixInput {
     cwd: string;
     contextManifest?: ExtraContext[];
@@ -222,7 +232,11 @@ export function buildFirstTurnPrefix(input: FirstTurnPrefixInput): string {
     }
 
     if (input.contextManifest && input.contextManifest.length > 0) {
-        const lines = input.contextManifest.map((m) => `- ${m.name} — ${m.filePath}`).join("\n");
+        // Link artifacts have `url` and no filePath; list them by URL so the
+        // manifest never prints "— undefined".
+        const lines = input.contextManifest
+            .map((m) => `- ${m.name} — ${m.url ? m.url : m.filePath}`)
+            .join("\n");
         parts.push(`${CONTEXT_MANIFEST_HEADER}\n${lines}\n`);
     }
 
@@ -245,6 +259,12 @@ export function buildFirstTurnPrefix(input: FirstTurnPrefixInput): string {
 
 function renderExtraContexts(ctxs: ExtraContext[], cwd: string): string {
     const blocks = ctxs.map((ctx) => {
+        // Link artifact: url-only, no file to read. The agent is NOT told to
+        // fetch it — it reads the URL only if its own tools happen to reach it
+        // (e.g. an internal-docs tool). The bare marker keeps that honest.
+        if (ctx.url) {
+            return `### @${ctx.name}\n\n[Link: ${ctx.url}]`;
+        }
         if (ctx.kind === "reference") {
             return `### @${ctx.name}\n\n[Referenced file at: ${ctx.filePath}]`;
         }

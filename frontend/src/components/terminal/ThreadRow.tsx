@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useChatNode, useChatProjects, useStructuralSelector } from '../../state/chatStore';
+import { useChatNode, useChatActions, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
 import ContextMenu from '../ContextMenu';
@@ -77,6 +77,7 @@ export default function ThreadRow({
   moveTargets,
 }: Props) {
   const { treeSelection, focusedNodeId, projects } = useChatProjects();
+  const { clearTreeSelection } = useChatActions();
   const { prefs } = usePrefs();
   const selected = treeSelection.has(tree.id);
   const n = useChatNode(tree.rootNodeId);
@@ -139,6 +140,8 @@ export default function ThreadRow({
           treeId: tree.id,
           tree,
           moveTargets,
+          treeSelection,
+          clearTreeSelection,
           actions: {
             activateTree: actions.activateTree,
             archiveTree: actions.archiveTree,
@@ -178,7 +181,11 @@ export default function ThreadRow({
           display: 'flex',
           alignItems: 'center',
           gap: 5,
-          padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 8px',
+          // Horizontal padding folds in --sb-inset so the label indents from the
+          // sidebar edge, while the row box stays full-bleed (its negative margin
+          // cancels the tree container's inset padding) — keeping the borderLeft
+          // selection indicator and the streaming bar flush to the true edge.
+          padding: 'var(--sb-row-py, 4px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(8px + var(--sb-inset, 0px))',
           background: selected
             ? 'var(--term-select-f)'
             : isActive ? 'var(--term-alt)'
@@ -283,7 +290,7 @@ export default function ThreadRow({
             aria-hidden
             style={{
               position: 'absolute',
-              right: 6,
+              right: 2,
               top: 5,
               bottom: 5,
               width: 2,

@@ -35,11 +35,11 @@ describe('MarkdownContent links', () => {
 
   it('autolinks scheme-less domain.tld/path', () => {
     const { container } = render(
-      <MarkdownContent text="open docs.example.com/ec2/home please" />,
+      <MarkdownContent text="open console.aws.amazon.com/ec2/home please" />,
     );
-    const a = byHref(container, 'docs.example.com/ec2/home')!;
+    const a = byHref(container, 'console.aws.amazon.com/ec2/home')!;
     expect(a).toBeTruthy();
-    expect(a.getAttribute('href')).toBe('https://docs.example.com/ec2/home');
+    expect(a.getAttribute('href')).toBe('https://console.aws.amazon.com/ec2/home');
     expect(a.getAttribute('target')).toBe('_blank');
   });
 
@@ -51,10 +51,10 @@ describe('MarkdownContent links', () => {
   });
 
   it('keeps trailing sentence punctuation out of the link', () => {
-    const { container } = render(<MarkdownContent text="visit docs.example.com/x." />);
-    const a = byHref(container, 'docs.example.com/x')!;
-    expect(a.getAttribute('href')).toBe('https://docs.example.com/x');
-    expect(container.textContent).toContain('docs.example.com/x.');
+    const { container } = render(<MarkdownContent text="visit console.aws.amazon.com/x." />);
+    const a = byHref(container, 'console.aws.amazon.com/x')!;
+    expect(a.getAttribute('href')).toBe('https://console.aws.amazon.com/x');
+    expect(container.textContent).toContain('console.aws.amazon.com/x.');
   });
 
   it('does NOT linkify path-less tokens (package.json, bare domain, e.g.)', () => {
@@ -64,20 +64,41 @@ describe('MarkdownContent links', () => {
     expect(anchors(container)).toHaveLength(0);
   });
 
-  it('does NOT linkify inside inline code or code blocks', () => {
+  it('does NOT linkify scheme-less URLs inside inline code or code blocks', () => {
     const { container } = render(
-      <MarkdownContent text={'`docs.example.com/x`\n\n```\nsee foo.com/bar\n```'} />,
+      <MarkdownContent text={'`console.aws.amazon.com/x`\n\n```\nsee foo.com/bar\n```'} />,
     );
     expect(anchors(container)).toHaveLength(0);
   });
 
+  it('linkifies full https URLs inside inline code', () => {
+    const { container } = render(
+      <MarkdownContent text={'`https://example.com/path`'} />,
+    );
+    const a = byHref(container, 'example.com/path')!;
+    expect(a).toBeTruthy();
+    expect(a.getAttribute('href')).toBe('https://example.com/path');
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.closest('code')).toBeTruthy();
+  });
+
+  it('linkifies full https URLs inside fenced code blocks', () => {
+    const { container } = render(
+      <MarkdownContent text={'```\nhttps://example.com/path\n```'} />,
+    );
+    const a = byHref(container, 'example.com/path')!;
+    expect(a).toBeTruthy();
+    expect(a.getAttribute('href')).toBe('https://example.com/path');
+    expect(a.getAttribute('target')).toBe('_blank');
+  });
+
   it('still autolinks while the streaming reveal animation is active', () => {
     const { container } = render(
-      <MarkdownContent text="open docs.example.com/ec2/home now" revealTailChars={8} />,
+      <MarkdownContent text="open console.aws.amazon.com/ec2/home now" revealTailChars={8} />,
     );
-    const a = byHref(container, 'docs.example.com/ec2/home')!;
+    const a = byHref(container, 'console.aws.amazon.com/ec2/home')!;
     expect(a).toBeTruthy();
-    expect(a.getAttribute('href')).toBe('https://docs.example.com/ec2/home');
+    expect(a.getAttribute('href')).toBe('https://console.aws.amazon.com/ec2/home');
   });
 
   it('does NOT double-link a real https URL', () => {

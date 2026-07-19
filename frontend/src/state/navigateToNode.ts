@@ -12,13 +12,18 @@ export interface NavigateToNodeDeps {
 }
 
 /**
- * Open `nodeId`'s pane wherever it lives: switching workspace and/or thread
- * when needed, and landing both the focused pane and sidebar focus on it.
+ * Open `nodeId`'s pane wherever it lives — switching workspace and/or thread
+ * when needed — and land both the focused pane and the sidebar focus on it,
+ * so the sidebar reveal effect (WorkspaceTree) expands down to its row.
  *
- * Whenever the destination differs from the current slot, seed the target pane
- * via `openPaneInTree` before switching. `openPane` writes through the current
- * pane key, so calling it around workspace/tree state updates can put the pane
- * into the old slot.
+ * Whenever the destination differs from the current slot (different workspace
+ * OR different thread), the pane is seeded via `openPaneInTree` BEFORE the
+ * switch: `openPane` writes through the still-active paneKey, so calling it
+ * around `selectProject`/`activateTree` (state updates that haven't committed
+ * yet) drops the pane into the OLD slot, and the workspace-switch auto-open
+ * effect then focuses the destination tree's root instead of the target node.
+ * Same stale-slot family as the cross-tree bug fixed in CommandPalette
+ * (9c13635), which left the cross-workspace → active-tree path broken.
  */
 export function navigateToNode(
   deps: NavigateToNodeDeps,
@@ -30,6 +35,7 @@ export function navigateToNode(
     deps.projects.find((p) => p.chatIds.includes(nodeId));
   const treeId = project ? findTreeIdForNode(nodeId, project) : null;
   if (!project || !treeId) {
+    // Unknown home (shouldn't happen for live nodes) — keep legacy behavior.
     deps.openPane(nodeId);
     return;
   }

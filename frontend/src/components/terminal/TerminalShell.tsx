@@ -19,6 +19,7 @@ const TerminalMap = React.lazy(() => import('./pages/Map'));
 const TerminalBranches = React.lazy(() => import('./pages/Branches'));
 const TerminalDigest = React.lazy(() => import('./pages/Digest'));
 const TerminalSettings = React.lazy(() => import('./pages/Settings'));
+const ArtifactsDrawer = React.lazy(() => import('./ArtifactsDrawer'));
 const TerminalWorkspaces = React.lazy(() => import('./pages/Workspaces'));
 const TerminalWorkspaceManage = React.lazy(() => import('./pages/WorkspaceManage'));
 const TerminalTrash = React.lazy(() => import('./pages/Trash'));
@@ -172,6 +173,14 @@ export default function TerminalShell() {
         setPaletteOpen((v) => !v);
         return;
       }
+      // ⇧⌘A → Artifacts drawer (right side, same mechanism as Settings).
+      // Routes through michi:toggle-artifacts so the shortcut, the topbar
+      // button, and the sidebar row all share one toggle path.
+      if (meta && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('michi:toggle-artifacts'));
+        return;
+      }
       // ⌘K toggles the palette. Works inside inputs so a second ⌘K dismisses
       // the open palette (whose own search input has focus).
       if (meta && !e.shiftKey && (e.key === 'k' || e.key === 'K')) {
@@ -187,11 +196,13 @@ export default function TerminalShell() {
         }
         return;
       }
-      // ⌘; → toggle Contexts popover. Works inside inputs (the modifier means
-      // the user isn't typing a `;` into a field).
+      // ⌘; → toggle the Artifacts drawer (legacy Contexts shortcut; Contexts
+      // are now artifacts). Goes through the same michi:toggle-artifacts event
+      // as the topbar / sidebar buttons so there's a single toggle path. Works
+      // inside inputs (the modifier means the user isn't typing a `;`).
       if (meta && !e.shiftKey && !e.altKey && e.key === ';') {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent('michi:toggle-contexts'));
+        window.dispatchEvent(new CustomEvent('michi:toggle-artifacts'));
         return;
       }
       // ⌘W close focused pane. Must run before the isEditable gate: TPane
@@ -343,6 +354,12 @@ export default function TerminalShell() {
     const onEvt = () => setPage('home');
     window.addEventListener('michi:goto-home', onEvt as EventListener);
     return () => window.removeEventListener('michi:goto-home', onEvt as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onEvt = () => setArtifactsOpen((v) => !v);
+    window.addEventListener('michi:toggle-artifacts', onEvt as EventListener);
+    return () => window.removeEventListener('michi:toggle-artifacts', onEvt as EventListener);
   }, []);
 
   useEffect(() => {
@@ -527,6 +544,11 @@ export default function TerminalShell() {
         onClose={() => setSettingsOpen(false)}
         onNav={handleNav}
       />
+      {artifactsOpen && (
+        <React.Suspense fallback={null}>
+          <ArtifactsDrawer open={artifactsOpen} onClose={() => setArtifactsOpen(false)} />
+        </React.Suspense>
+      )}
     </div>
   );
 }

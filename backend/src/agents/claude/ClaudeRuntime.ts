@@ -20,6 +20,7 @@ import { getWorkspaceInstructions } from '../../services/dbRepository';
 import { agentConfigEvents, resolveModel } from '../../services/agentConfig';
 import type { ModelChangedEvent } from '../../services/agentConfig';
 import { ClaudeSessionManager, ClaudeConcurrencyError } from './ClaudeSessionManager';
+import { chatHub } from '../chatHub';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -64,7 +65,8 @@ export class ClaudeRuntime implements AgentRuntime {
     mcpRegistry: McpSlotRegistry,
     mcpPort: number,
   ) {
-    const concurrencyCap = parseInt(process.env.MICHI_CLAUDE_MAX_CONCURRENT ?? '10', 10);
+    const concurrencyCap = parseInt(process.env.MICHI_CLAUDE_MAX_CONCURRENT ?? '15', 10);
+    const sessionsPerSlot = parseInt(process.env.MICHI_CLAUDE_POOL_SESSIONS_PER_CWD ?? '3', 10);
     const waitForWarmFlag = (process.env.MICHI_CLAUDE_WAIT_FOR_WARM ?? '').trim().toLowerCase();
     const waitForWarm = !['0', 'false', 'off', 'no'].includes(waitForWarmFlag);
     // Pre-flight auth check at construction — fail fast if credentials are absent
@@ -83,6 +85,8 @@ export class ClaudeRuntime implements AgentRuntime {
       currentModel: resolveModel('claude'),
       poolDisabled: process.env.MICHI_CLAUDE_POOL_DISABLED === '1',
       waitForWarm,
+      sessionsPerSlot,
+      onSelfTurn: (info) => chatHub.startSelfTurn(info),
     });
 
     // Keep the pool's model_set aligned with the user's global model choice.

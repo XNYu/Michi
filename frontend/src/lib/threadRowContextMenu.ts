@@ -48,10 +48,71 @@ export interface BuildThreadRowArgs {
   /** Other workspaces this thread can be moved to. When empty or absent the
    *  "Move to workspace" section is omitted. */
   moveTargets?: readonly MoveTargetWorkspace[];
+  /** Current multi-selection of tree IDs. When the right-clicked tree is in
+   *  this set and the set has ≥2 members, the menu shows batch actions for
+   *  the entire selection (matching Finder / treeContextMenu behavior). */
+  treeSelection?: ReadonlySet<string>;
+  /** Callback to clear the selection after a batch action completes. */
+  clearTreeSelection?: () => void;
 }
 
 export function buildThreadRowContextMenu(args: BuildThreadRowArgs): ContextMenuSection[] {
-  const { treeId, tree, actions, moveTargets } = args;
+  const { treeId, tree, actions, moveTargets, treeSelection, clearTreeSelection } = args;
+
+  // Multi-select path: if the right-clicked tree is in the selection and there
+  // are ≥2 selected, show batch operations on the whole selection.
+  const targetIsSelected = treeSelection?.has(treeId) ?? false;
+  const isMulti = targetIsSelected && (treeSelection?.size ?? 0) >= 2;
+
+  if (isMulti) {
+    const scope = Array.from(treeSelection!);
+    const count = scope.length;
+    const sections: ContextMenuSection[] = [
+      {
+        items: [
+          {
+            label: `Archive ${count} threads`,
+            keys: 'A',
+            onSelect: () => {
+              for (const id of scope) actions.archiveTree(id);
+              clearTreeSelection?.();
+            },
+          },
+          {
+            label: `Export ${count} threads…`,
+            keys: 'E',
+            onSelect: () => {
+              for (const id of scope) actions.exportTree(id);
+              clearTreeSelection?.();
+            },
+          },
+        ],
+      },
+      {
+        items: [
+          {
+            label: 'Clear selection',
+            keys: 'esc',
+            onSelect: () => clearTreeSelection?.(),
+          },
+          {
+            label: `Delete ${count} threads…`,
+            danger: true,
+            keys: 'D',
+            onSelect: () => {
+              if (window.confirm(`Move ${count} threads to trash?`)) {
+                for (const id of scope) actions.deleteTree(id);
+                clearTreeSelection?.();
+              }
+            },
+          },
+        ],
+      },
+    ];
+    return sections;
+  }
+
+  // Single-target path (original behavior).
   const archived = !!tree.archivedAt;
   const pinned = !!tree.pinnedAt;
   const items: ContextMenuItem[] = [

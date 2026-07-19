@@ -13,6 +13,7 @@ import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
 import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
 import { resolvePolicy } from "../permissionPolicy";
+import { followUpReminder } from "../preamble";
 
 export interface PiSessionDeps {
     bridge: AgentToolBridge;
@@ -364,7 +365,7 @@ export class PiSession implements AgentSession {
         const textWithReminder = promptText + followUpReminder(userTurnCount, this.enableFollowUps);
 
         // Kick off the prompt; don't await it here — yield events as they arrive.
-        const promptPromise = this.agent.prompt(rawText).catch((err: unknown) => {
+        const promptPromise = this.agent.prompt(textWithReminder).catch((err: unknown) => {
             // If agent_end already finished the turn, drop late rejections.
             if (terminated) return;
             // Provider/runtime threw before agent_end could fire. Surface as turn_end:error.

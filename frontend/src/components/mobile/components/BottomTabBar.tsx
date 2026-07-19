@@ -10,7 +10,7 @@ interface Props {
 const TABS: Array<{ id: MobileTab; label: string; glyph: string }> = [
   { id: 'threads', label: 'Threads', glyph: '◉' },
   { id: 'spaces', label: 'Spaces', glyph: '⬚' },
-  { id: 'contexts', label: 'Contexts', glyph: '@' },
+  { id: 'contexts', label: 'Artifacts', glyph: '@' },
   { id: 'settings', label: 'Settings', glyph: '⚙' },
 ];
 

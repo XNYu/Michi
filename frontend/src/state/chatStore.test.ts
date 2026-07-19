@@ -459,7 +459,7 @@ describe('hydrateSavedState v4 contexts', () => {
             name: 'api-spec',
             filePath: 'docs/api.md',
             size: 1234,
-            autoInject: true,
+            type: 'doc',
             source: 'user',
         });
     });
@@ -583,7 +583,7 @@ describe('hydrateBackendWorkspaces', () => {
         expect(result.projects[0].contexts![0]).toMatchObject({
             name: 'notes',
             filePath: 'docs/notes.md',
-            autoInject: true,
+            type: 'doc',
             source: 'agent',
         });
         expect(result.nodes.n1.chatId).toBeNull();
@@ -863,7 +863,7 @@ describe('reduceProject context actions', () => {
     it('update-context-by-name updates an existing context without duplicating it', () => {
         const withOne = reduceProject(baseProject, {
             type: 'upsert-context', projectId: 'p1',
-            context: { name: 'api-spec', filePath: '.contexts/api-spec.md', source: 'user', autoInject: true },
+            context: { name: 'api-spec', filePath: '.contexts/api-spec.md', source: 'user' },
         });
         const updated = reduceProject(withOne, {
             type: 'update-context-by-name', projectId: 'p1',
@@ -872,7 +872,6 @@ describe('reduceProject context actions', () => {
         expect(updated.contexts).toHaveLength(1);
         expect(updated.contexts![0].size).toBe(123);
         expect(updated.contexts![0].source).toBe('user');
-        expect(updated.contexts![0].autoInject).toBe(true);
     });
 
     it('delete-context removes by id', () => {
@@ -887,20 +886,20 @@ describe('reduceProject context actions', () => {
         expect(deleted.contexts).toHaveLength(0);
     });
 
-    it('toggle-auto-inject flips the flag', () => {
+    it('pin-context / unpin-context toggles pinnedAt', () => {
         const withOne = reduceProject(baseProject, {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/api.md' },
         });
         const id = withOne.contexts![0].id;
-        const toggled = reduceProject(withOne, {
-            type: 'toggle-auto-inject', projectId: 'p1', contextId: id,
+        const pinned = reduceProject(withOne, {
+            type: 'pin-context', projectId: 'p1', contextId: id, now: 12345,
         });
-        expect(toggled.contexts![0].autoInject).toBe(true);
-        const toggledBack = reduceProject(toggled, {
-            type: 'toggle-auto-inject', projectId: 'p1', contextId: id,
+        expect(pinned.contexts![0].pinnedAt).toBe(12345);
+        const unpinned = reduceProject(pinned, {
+            type: 'unpin-context', projectId: 'p1', contextId: id,
         });
-        expect(toggledBack.contexts![0].autoInject).toBeFalsy();
+        expect(unpinned.contexts![0].pinnedAt).toBeUndefined();
     });
 
     it('rename-context validates name format', () => {

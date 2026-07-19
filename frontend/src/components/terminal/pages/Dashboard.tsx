@@ -200,6 +200,7 @@ export default function TerminalDashboard() {
         }
         const result = await importWorkspaceFileUpload(activeProject.id, cwd, file, {
           onProgress: progressForFile(file.name, fileIndex, files.length),
+          subdir: '.attachments',
         });
         const abs = result.filePath.startsWith('/')
           ? result.filePath

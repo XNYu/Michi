@@ -538,7 +538,7 @@ function ModelPane({
 
       {showApiKeys && agentStatus && (() => {
         const active = (agentStatus.providers ?? []).find((p) => p.id === agentStatus.provider);
-        return active ? (
+        return active && providerRequiresUserKey(active) ? (
           <ProviderKeyControls
             key={active.id}
             provider={active}
@@ -663,7 +663,7 @@ function ProviderPicker({
       >
         {providers.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.label}{(p.hasKey ?? false) ? ' - key saved' : ''}
+            {p.label}{providerOptionSuffix(p)}
           </option>
         ))}
       </select>
@@ -737,6 +737,11 @@ function ProviderModelPicker({
       )}
       {saveError && (
         <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{saveError}</div>
+      )}
+      {locked && (
+        <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
+          Model is managed by this built-in provider.
+        </div>
       )}
     </div>
   );

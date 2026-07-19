@@ -19,6 +19,9 @@ vi.mock('../../state/prefs', () => ({
 // display (treeSelection / focusedNodeId / projects).
 vi.mock('../../state/chatStore', () => ({
   useChatNode: () => ({ title: 'Root title' }),
+  useChatActions: () => ({
+    clearTreeSelection: vi.fn(),
+  }),
   useChatProjects: () => ({
     projects: [],
     openPanes: [],

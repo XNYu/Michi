@@ -82,6 +82,16 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
                     options: ev.options,
                 },
             };
+        case "user_input_request":
+            return {
+                event: CHAT_STREAM_EVENTS.userInputRequest,
+                data: { requestId: ev.requestId, questions: ev.questions },
+            };
+        case "user_input_resolved":
+            return {
+                event: CHAT_STREAM_EVENTS.userInputResolved,
+                data: { requestId: ev.requestId, answers: ev.answers },
+            };
         case "subagent_list_update":
             return { event: CHAT_STREAM_EVENTS.subagentListUpdate, data: { subagents: ev.subagents } };
         case "subagent_tool_activity":

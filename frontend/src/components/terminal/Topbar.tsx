@@ -13,7 +13,6 @@ import { IconBtn } from './primitives';
 import { checkVersion, triggerUpdate } from '../../services/api';
 import { getElectron } from '../../lib/electronBridge';
 import SidebarToggleButton from './SidebarToggleButton';
-import ContextsPopover from '../ContextsPopover';
 import PaneCaption from './PaneCaption';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
@@ -142,10 +141,8 @@ export default function TerminalTopbar({
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [updating, setUpdating] = useState(false);
 
-  // Contexts popover state (preserved from the previous Topbar implementation).
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
-  const contextsBtnRef = useRef<HTMLButtonElement>(null);
+  // The Artifacts button is a plain toggle for the right-side drawer
+  // (owned by TerminalShell). It reflects no open/close state of its own.
 
   // Caption strip scroll sync — when Dashboard scrolls horizontally (overflow
   // mode, ≥3 panes), the caption strip mirrors it so cell ↔ pane stays
@@ -181,24 +178,9 @@ export default function TerminalTopbar({
     return () => window.removeEventListener('michi:sidebar-resizing', onResizing as EventListener);
   }, []);
 
-  const openContextsPopover = useCallback(() => {
-    const r = contextsBtnRef.current?.getBoundingClientRect();
-    if (!r) return;
-    setAnchorRect(r);
-    setPopoverOpen(true);
+  const toggleArtifacts = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('michi:toggle-artifacts'));
   }, []);
-
-  const toggleContextsPopover = useCallback(() => {
-    if (popoverOpen) setPopoverOpen(false);
-    else openContextsPopover();
-  }, [popoverOpen, openContextsPopover]);
-
-  // ⌘; from TerminalShell flips the popover via this custom event.
-  useEffect(() => {
-    const onToggle = () => toggleContextsPopover();
-    window.addEventListener('michi:toggle-contexts', onToggle);
-    return () => window.removeEventListener('michi:toggle-contexts', onToggle);
-  }, [toggleContextsPopover]);
 
   // Only the packaged Electron build should ever offer Update & Restart.
   // Vite dev (`npm run dev`, `electron:dev`) flips import.meta.env.DEV true;
@@ -739,14 +721,6 @@ export default function TerminalTopbar({
             <ArtifactsIcon size={14} />
           </TopbarIconToggle>
       </div>
-
-      {popoverOpen && anchorRect && (
-        <ContextsPopover
-          anchorRect={anchorRect}
-          anchorEl={contextsBtnRef.current}
-          onClose={() => setPopoverOpen(false)}
-        />
-      )}
     </div>
   );
 }

@@ -78,7 +78,7 @@ export default function StructureDrawer({
         {(project.contexts ?? []).length > 0 && (
           <>
             <div className="m-drawer-divider" />
-            <div className="m-drawer-section-label">Contexts</div>
+            <div className="m-drawer-section-label">Artifacts</div>
             <div style={{ paddingBottom: 12 }}>
               {(project.contexts ?? []).map((c) => (
                 <div key={c.id} className="m-drawer-node" style={{ paddingLeft: 14 }}>
@@ -86,8 +86,8 @@ export default function StructureDrawer({
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {c.name}
                   </span>
-                  {c.autoInject && (
-                    <span style={{ color: 'var(--term-accent)', fontSize: 10 }}>auto</span>
+                  {c.pinnedAt && (
+                    <span style={{ color: 'var(--term-accent)', fontSize: 10 }}>pin</span>
                   )}
                 </div>
               ))}

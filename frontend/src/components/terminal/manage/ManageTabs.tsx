@@ -12,7 +12,7 @@ interface Props {
 
 const TAB_LABELS: Record<Tab, string> = {
   chats: 'Chats',
-  contexts: 'Sources',
+  contexts: 'Artifacts',
   digests: 'Digests',
 };
 

@@ -144,6 +144,13 @@ export interface PermissionRequest {
   options: Array<{ optionId: string; name: string; kind: string }>;
 }
 
+export interface UserInputRequest {
+  requestId: number;
+  questions: UserInputQuestion[];
+  answers: UserInputAnswer[];
+  resolved?: boolean;
+}
+
 export interface SubagentInfo {
   sessionId: string;
   sessionName: string;
@@ -359,6 +366,8 @@ export interface ChatNodeState {
   currentModeId?: string | null;
   /** Pending tool-call permission request from the agent. Present while awaiting user approval. */
   pendingPermission?: PermissionRequest | null;
+  /** Pending AskUserQuestion from the agent. Present while awaiting user answers. */
+  pendingUserInput?: UserInputRequest | null;
   /** User-set pane width in pixels. undefined = flex (1fr). Persisted. */
   paneWidth?: number;
   subagents?: SubagentInfo[];
@@ -466,13 +475,35 @@ export interface Tree {
   kind?: 'normal' | 'merge';
 }
 
+/**
+ * A workspace-scoped artifact (the 3a "Artifacts" shelf). One flat list per
+ * project, four types. What it IS (`type`) is orthogonal to how "use it"
+ * resolves (`kind`):
+ *
+ *   type=doc   kind=embedded  → filePath under .contexts/; @-mention inlines body
+ *   type=file  kind=reference → filePath is an abs disk path; @-mention emits
+ *                               `[Referenced file at: <path>]`
+ *   type=image kind=reference → filePath (abs path / .attachments); same as file
+ *   type=link  (no kind)      → url only, no file; @-mention emits `[Link: <url>]`
+ *
+ * Exactly one of `filePath` (doc/file/image) or `url` (link) is the payload.
+ */
 export interface ContextEntry {
   id: string;
+  /** Unique per project, [\p{L}\p{N}_-]+. */
   name: string;
+  /** '' for link artifacts (they carry `url`). Otherwise the path/rel-path. */
   filePath: string;
+  /** External URL for link artifacts. Mutually exclusive with a real filePath. */
+  url?: string;
+  /** What this artifact IS. Absent on legacy rows → inferred (url→link, else doc). */
+  type?: 'doc' | 'file' | 'image' | 'link';
   /** Best-effort byte/char estimate used for first-message budget checks. */
   size?: number;
-  autoInject?: boolean;
+  /** Provenance breadcrumb: the node/message this artifact came from. Metadata only. */
+  origin?: { nodeId: string; messageId?: string };
+  /** Presence = pinned to the top of the shelf. UI ordering only; NOT injection. */
+  pinnedAt?: number;
   source: 'user' | 'agent';
   /**
    * `embedded` (default if absent): file lives under the workspace's
@@ -563,6 +594,7 @@ export type ChatAction =
       type: 'done';
       nodeId: string;
       assistantId: string;
+      completedAt?: number;
     }
   | { type: 'error'; nodeId: string; assistantId: string; message: string }
   | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
@@ -632,6 +664,8 @@ export type ChatAction =
   | { type: 'spawn-prompt-started'; nodeId: string }
   | { type: 'permission-request'; nodeId: string; permission: PermissionRequest }
   | { type: 'permission-resolved'; nodeId: string }
+  | { type: 'user-input-request'; nodeId: string; userInput: UserInputRequest }
+  | { type: 'user-input-resolved'; nodeId: string; answers?: UserInputAnswer[] }
   | { type: 'subagent-list-update'; nodeId: string; subagents: SubagentInfo[] }
   | { type: 'subagent-tool-activity'; nodeId: string; subagentSessionId: string; title: string; status: string }
   | { type: 'context-usage'; nodeId: string; contextUsagePercentage: number }
@@ -663,9 +697,11 @@ export type ProjectAction =
         id?: string;
         name: string;
         filePath: string;
+        url?: string;
+        type?: 'doc' | 'file' | 'image' | 'link';
         size?: number;
         source?: 'user' | 'agent';
-        autoInject?: boolean;
+        origin?: { nodeId: string; messageId?: string };
         kind?: 'embedded' | 'reference';
       };
     }
@@ -676,13 +712,17 @@ export type ProjectAction =
         id?: string;
         name: string;
         filePath: string;
+        url?: string;
+        type?: 'doc' | 'file' | 'image' | 'link';
         size?: number;
         source?: 'user' | 'agent';
+        origin?: { nodeId: string; messageId?: string };
         kind?: 'embedded' | 'reference';
       };
     }
   | { type: 'delete-context'; projectId: string; contextId: string }
-  | { type: 'toggle-auto-inject'; projectId: string; contextId: string }
+  | { type: 'pin-context'; projectId: string; contextId: string; now: number }
+  | { type: 'unpin-context'; projectId: string; contextId: string }
   | { type: 'rename-context'; projectId: string; contextId: string; newName: string };
 
 export interface ChatContextValue {
@@ -885,22 +925,29 @@ export interface ChatContextValue {
     name: string,
     filePath: string,
     opts?: {
-      autoInject?: boolean;
+      url?: string;
+      type?: 'doc' | 'file' | 'image' | 'link';
       source?: 'user' | 'agent';
       size?: number;
       kind?: 'embedded' | 'reference';
+      origin?: { nodeId: string; messageId?: string };
     },
   ) => void;
   updateContext: (
     contextId: string,
-    patch: { name?: string; filePath?: string; autoInject?: boolean; size?: number },
+    patch: { name?: string; filePath?: string; size?: number },
   ) => void;
   deleteContext: (contextId: string) => void;
-  toggleAutoInject: (contextId: string) => void;
+  /** Toggle the shelf pin (pinnedAt) for an artifact. UI ordering only. */
+  pinContext: (contextId: string) => void;
   /** Approve a pending tool-call permission request. */
   resolvePermission: (nodeId: string, optionId: string) => void;
   /** Deny/cancel a pending tool-call permission request. */
   denyPermission: (nodeId: string) => void;
+  /** Submit answers to a pending AskUserQuestion request. */
+  resolveUserInputRequest: (nodeId: string, answers: Array<{ question: string; answer: string }>) => void;
+  /** Skip/dismiss a pending AskUserQuestion request. */
+  skipUserInputRequest: (nodeId: string) => void;
   /** Whether initial data has been loaded from backend/localStorage. */
   hydrated: boolean;
   /** Tree-level multi-select for bulk operations. */
@@ -1024,6 +1071,8 @@ export type ChatActionsValue = Pick<
   | 'createDigest'
   | 'resolvePermission'
   | 'denyPermission'
+  | 'resolveUserInputRequest'
+  | 'skipUserInputRequest'
   | 'addPendingComment'
   | 'editPendingComment'
   | 'removePendingComment'

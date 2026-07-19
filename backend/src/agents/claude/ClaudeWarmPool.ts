@@ -11,8 +11,11 @@
  *   - workspaceSet: most-recently-active cwds (capacity 3 by default)
  *   - model_set:    current global model + at most one in-grace old model
  *
- * Pool entries are the Cartesian product. Steady state: 3. Peak (during
- * a model grace period): 6.
+ * Pool entries are the Cartesian product. Each (cwd, model) slot holds up
+ * to `sessionsPerSlot` pre-warmed sessions (default 3) so fan-out /
+ * follow-up branch bursts don't cold-spawn. Steady state:
+ * 3 cwds × 1 model × 3 sessions = 9. Peak (during a model grace period):
+ * 3 × 2 × 3 = 18.
  *
  * Design doc: docs/superpowers/specs/2026-05-23-claude-warm-pool-design.md
  */
@@ -42,6 +45,8 @@ export interface WarmPoolOptions {
     currentModel: string;
     /** Max distinct cwds tracked. Default 3. */
     workspaceCapacity?: number;
+    /** Number of pre-warmed sessions per (cwd, model) slot. Default 3. */
+    sessionsPerSlot?: number;
     /** How long an old model lingers after a switch before its entries are
      *  killed. Default 1h. */
     modelGraceMs?: number;
@@ -58,6 +63,7 @@ function entryKey(cwd: string, model: string): string {
 
 export class ClaudeWarmPool {
     readonly workspaceCapacity: number;
+    readonly sessionsPerSlot: number;
     readonly modelGraceMs: number;
     readonly idleTtlMs: number;
     private readonly spawner: Spawner;
@@ -67,7 +73,8 @@ export class ClaudeWarmPool {
     /** MRU-first: head = most-recently-activated cwd. */
     private workspaceSet: string[] = [];
     private modelSet = new Map<string, ModelEntry>();
-    private entries = new Map<string, PoolEntry>();
+    /** Each slot (cwd|model) holds an array of up to sessionsPerSlot entries. */
+    private entries = new Map<string, PoolEntry[]>();
     private inflight = new Map<string, Promise<void>>();
     private shuttingDown = false;
 
@@ -75,6 +82,7 @@ export class ClaudeWarmPool {
         this.spawner = opts.spawner;
         this.currentModel = opts.currentModel;
         this.workspaceCapacity = opts.workspaceCapacity ?? 3;
+        this.sessionsPerSlot = opts.sessionsPerSlot ?? 3;
         this.modelGraceMs = opts.modelGraceMs ?? 3_600_000;
         this.idleTtlMs = opts.idleTtlMs ?? 3_600_000;
         this.disabled = opts.disabled ?? false;
@@ -83,22 +91,32 @@ export class ClaudeWarmPool {
 
     /** Number of warm entries currently held. */
     size(): number {
-        return this.entries.size;
+        let total = 0;
+        for (const arr of this.entries.values()) {
+            total += arr.length;
+        }
+        return total;
     }
 
     /** Evict the oldest warm entry. Used by ClaudeSessionManager when the
      * global Claude subprocess budget needs room for an active chat. */
     async evictOldest(reason: string = 'evicted'): Promise<boolean> {
         let oldestKey: string | null = null;
+        let oldestIdx = -1;
         let oldestEntry: PoolEntry | null = null;
-        for (const [k, entry] of this.entries) {
-            if (!oldestEntry || entry.warmedAt < oldestEntry.warmedAt) {
-                oldestKey = k;
-                oldestEntry = entry;
+        for (const [k, arr] of this.entries) {
+            for (let i = 0; i < arr.length; i++) {
+                if (!oldestEntry || arr[i].warmedAt < oldestEntry.warmedAt) {
+                    oldestKey = k;
+                    oldestIdx = i;
+                    oldestEntry = arr[i];
+                }
             }
         }
-        if (!oldestKey || !oldestEntry) return false;
-        this.entries.delete(oldestKey);
+        if (!oldestKey || !oldestEntry || oldestIdx < 0) return false;
+        const arr = this.entries.get(oldestKey)!;
+        arr.splice(oldestIdx, 1);
+        if (arr.length === 0) this.entries.delete(oldestKey);
         clearTimeout(oldestEntry.ttlTimer);
         await oldestEntry.session.dispose?.().catch(() => {});
         perf.mark(`warmpool:${reason}`, { cwd: oldestEntry.cwd, model: oldestEntry.model });
@@ -117,26 +135,35 @@ export class ClaudeWarmPool {
     take(cwd: string, model: string): ClaudeSession | null {
         if (this.disabled || this.shuttingDown) return null;
         const k = entryKey(cwd, model);
-        const entry = this.entries.get(k);
-        if (!entry) {
+        const arr = this.entries.get(k);
+        if (!arr || arr.length === 0) {
             perf.mark(this.inflight.has(k) ? 'warmpool:miss_inflight' : 'warmpool:miss', { cwd, model });
             return null;
         }
-        // Liveness check; if dead, drop and miss
-        if (!entry.session.isAlive?.()) {
-            this.entries.delete(k);
+        // Find the first alive entry (newest first for freshness)
+        for (let i = arr.length - 1; i >= 0; i--) {
+            const entry = arr[i];
+            if (!entry.session.isAlive?.()) {
+                arr.splice(i, 1);
+                clearTimeout(entry.ttlTimer);
+                perf.mark('warmpool:miss_dead', { cwd, model });
+                continue;
+            }
+            // Found a live one — take it
+            arr.splice(i, 1);
+            if (arr.length === 0) this.entries.delete(k);
             clearTimeout(entry.ttlTimer);
-            perf.mark('warmpool:miss_dead', { cwd, model });
-            return null;
+            perf.mark('warmpool:hit', { cwd, model, remaining: arr.length });
+            // Background replenish (don't await — caller already has the session)
+            if (this.workspaceSet.includes(cwd) && this.modelSet.has(model)) {
+                void this.warmSlot(cwd, model);
+            }
+            return entry.session;
         }
+        // All entries were dead
         this.entries.delete(k);
-        clearTimeout(entry.ttlTimer);
-        perf.mark('warmpool:hit', { cwd, model });
-        // Background replenish (don't await — caller already has the session)
-        if (this.workspaceSet.includes(cwd) && this.modelSet.has(model)) {
-            void this.warmSlot(cwd, model);
-        }
-        return entry.session;
+        perf.mark('warmpool:miss', { cwd, model });
+        return null;
     }
 
     /**
@@ -147,12 +174,18 @@ export class ClaudeWarmPool {
     async waitForInflight(cwd: string, model: string): Promise<ClaudeSession | null> {
         if (this.disabled || this.shuttingDown) return null;
         const k = entryKey(cwd, model);
-        const existing = this.inflight.get(k);
-        if (!existing) return null;
+        // Check for any inflight spawn for this slot (sub-keys are `${k}#N`)
+        const inflightPromises: Promise<void>[] = [];
+        for (const [key, promise] of this.inflight) {
+            if (key.startsWith(k + '#') || key === k) {
+                inflightPromises.push(promise);
+            }
+        }
+        if (inflightPromises.length === 0) return null;
 
         const t0 = perf.now();
         perf.mark('warmpool:wait_inflight_start', { cwd, model });
-        await existing.catch(() => {});
+        await Promise.race(inflightPromises).catch(() => {});
 
         const session = this.take(cwd, model);
         perf.measure(session ? 'warmpool:wait_inflight_hit' : 'warmpool:wait_inflight_miss', t0, {
@@ -164,8 +197,8 @@ export class ClaudeWarmPool {
 
     /**
      * Promote `cwd` to MRU in workspaceSet. If `cwd` is new to the set,
-     * warm one entry per active model. If LRU pushes the capacity, evict
-     * the oldest cwd (kill all its entries).
+     * warm entries per active model (up to sessionsPerSlot each). If LRU
+     * pushes the capacity, evict the oldest cwd (kill all its entries).
      *
      * Idempotent for cwds already in the set — only adjusts MRU order.
      * Resolves once all warm spawns for new entries complete. Spawn
@@ -187,25 +220,34 @@ export class ClaudeWarmPool {
             const evicted = this.workspaceSet.pop()!;
             this.evictWorkspace(evicted);
         }
-        // Warm one entry per active model
-        const warmups = Array.from(this.modelSet.keys()).map((m) => this.warmSlot(cwd, m));
+        // Warm sessionsPerSlot entries per active model
+        const warmups: Promise<void>[] = [];
+        for (const m of this.modelSet.keys()) {
+            for (let i = 0; i < this.sessionsPerSlot; i++) {
+                warmups.push(this.warmSlot(cwd, m));
+            }
+        }
         await Promise.all(warmups);
     }
 
     private async warmSlot(cwd: string, model: string): Promise<void> {
         if (this.disabled || this.shuttingDown) return;
         const k = entryKey(cwd, model);
-        if (this.entries.has(k)) return;
-        const existing = this.inflight.get(k);
+        const arr = this.entries.get(k) ?? [];
+        if (arr.length >= this.sessionsPerSlot) return;
+        // Use a sub-key to deduplicate concurrent warmSlot calls for the same
+        // logical slot. Each inflight spawn uses `${k}#${index}`.
+        const subKey = `${k}#${arr.length}`;
+        const existing = this.inflight.get(subKey);
         if (existing) return existing;
 
         let task!: Promise<void>;
         task = this.spawnWarmSlot(k, cwd, model).finally(() => {
-            if (this.inflight.get(k) === task) {
-                this.inflight.delete(k);
+            if (this.inflight.get(subKey) === task) {
+                this.inflight.delete(subKey);
             }
         });
-        this.inflight.set(k, task);
+        this.inflight.set(subKey, task);
         return task;
     }
 
@@ -221,30 +263,56 @@ export class ClaudeWarmPool {
                 } catch { /* best-effort */ }
                 return;
             }
-            const ttlTimer = setTimeout(() => this.expireEntry(k), this.idleTtlMs);
+            // Check capacity again (another spawn may have landed while we were in-flight)
+            const arr = this.entries.get(k) ?? [];
+            if (arr.length >= this.sessionsPerSlot) {
+                try {
+                    await (session as unknown as { dispose?: () => Promise<void> }).dispose?.();
+                } catch { /* best-effort */ }
+                return;
+            }
+            const ttlTimer = setTimeout(() => this.expireEntry(k, session), this.idleTtlMs);
             ttlTimer.unref?.();
-            this.entries.set(k, { cwd, model, session, warmedAt: Date.now(), ttlTimer });
+            const entry: PoolEntry = { cwd, model, session, warmedAt: Date.now(), ttlTimer };
+            if (!this.entries.has(k)) this.entries.set(k, []);
+            this.entries.get(k)!.push(entry);
             session.onDisposed?.(() => {
-                const current = this.entries.get(k);
-                if (current?.session !== session) return;
-                clearTimeout(current.ttlTimer);
-                this.entries.delete(k);
+                const currentArr = this.entries.get(k);
+                if (!currentArr) return;
+                const idx = currentArr.findIndex(e => e.session === session);
+                if (idx >= 0) {
+                    clearTimeout(currentArr[idx].ttlTimer);
+                    currentArr.splice(idx, 1);
+                    if (currentArr.length === 0) this.entries.delete(k);
+                }
             });
-            perf.measure('warmpool:slot_ready', t0, { cwd, model });
+            perf.measure('warmpool:slot_ready', t0, { cwd, model, depth: (this.entries.get(k)?.length ?? 0) });
+            // Continue filling the slot if not at capacity yet
+            if ((this.entries.get(k)?.length ?? 0) < this.sessionsPerSlot) {
+                void this.warmSlot(cwd, model);
+            }
         } catch (err) {
             perf.mark('warmpool:slot_failed', { cwd, model, error: (err as Error).message });
             // Swallow — next take() returns null, caller cold-spawns.
         }
     }
 
-    private expireEntry(k: string): void {
-        const entry = this.entries.get(k);
-        if (!entry) return;
-        this.entries.delete(k);
+    private expireEntry(k: string, session: ClaudeSession): void {
+        const arr = this.entries.get(k);
+        if (!arr) return;
+        const idx = arr.findIndex(e => e.session === session);
+        if (idx < 0) return;
+        const entry = arr[idx];
+        arr.splice(idx, 1);
+        if (arr.length === 0) this.entries.delete(k);
         try {
             void (entry.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
         } catch { /* best-effort */ }
         perf.mark('warmpool:ttl_expired', { cwd: entry.cwd, model: entry.model });
+        // Replenish the slot
+        if (this.workspaceSet.includes(entry.cwd) && this.modelSet.has(entry.model)) {
+            void this.warmSlot(entry.cwd, entry.model);
+        }
     }
 
     /**
@@ -296,7 +364,12 @@ export class ClaudeWarmPool {
         this.modelSet.set(newModel, { graceTimer: null });
         // Start grace BEFORE awaiting warm so the clock starts immediately
         this.startGrace(oldModel);
-        const warmups = this.workspaceSet.map((cwd) => this.warmSlot(cwd, newModel));
+        const warmups: Promise<void>[] = [];
+        for (const cwd of this.workspaceSet) {
+            for (let i = 0; i < this.sessionsPerSlot; i++) {
+                warmups.push(this.warmSlot(cwd, newModel));
+            }
+        }
         await Promise.all(warmups);
     }
 
@@ -312,12 +385,14 @@ export class ClaudeWarmPool {
         const entry = this.modelSet.get(model);
         if (entry?.graceTimer) clearTimeout(entry.graceTimer);
         this.modelSet.delete(model);
-        for (const [k, e] of this.entries) {
-            if (e.model === model) {
-                clearTimeout(e.ttlTimer);
-                try {
-                    void (e.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
-                } catch { /* best-effort */ }
+        for (const [k, arr] of this.entries) {
+            if (arr[0]?.model === model) {
+                for (const e of arr) {
+                    clearTimeout(e.ttlTimer);
+                    try {
+                        void (e.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
+                    } catch { /* best-effort */ }
+                }
                 this.entries.delete(k);
             }
         }
@@ -325,12 +400,14 @@ export class ClaudeWarmPool {
     }
 
     private evictWorkspace(cwd: string): void {
-        for (const [k, entry] of this.entries) {
-            if (entry.cwd === cwd) {
-                clearTimeout(entry.ttlTimer);
-                try {
-                    void (entry.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
-                } catch { /* best-effort */ }
+        for (const [k, arr] of this.entries) {
+            if (arr[0]?.cwd === cwd) {
+                for (const entry of arr) {
+                    clearTimeout(entry.ttlTimer);
+                    try {
+                        void (entry.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
+                    } catch { /* best-effort */ }
+                }
                 this.entries.delete(k);
             }
         }
@@ -343,12 +420,14 @@ export class ClaudeWarmPool {
     async shutdown(): Promise<void> {
         this.shuttingDown = true;
         this.workspaceSet = [];
-        for (const e of this.entries.values()) {
-            clearTimeout(e.ttlTimer);
-            try {
-                await (e.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
-            } catch {
-                /* best-effort */
+        for (const arr of this.entries.values()) {
+            for (const e of arr) {
+                clearTimeout(e.ttlTimer);
+                try {
+                    await (e.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
+                } catch {
+                    /* best-effort */
+                }
             }
         }
         this.entries.clear();

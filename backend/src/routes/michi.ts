@@ -317,11 +317,20 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const stem = base.slice(0, base.length - ext.length).replace(/[^a-zA-Z0-9_-]/g, "_") || "file";
         const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, "");
 
-        const dir = path.join(cwd, ".contexts");
+        // Allowlist the write subdir. Message attachments land in .attachments/
+        // so they stay out of the agent's "workspace context" folder
+        // (.contexts/ — which the first-turn manifest advertises); anything
+        // unrecognised falls back to the legacy .contexts/, so this is
+        // backward compatible and can never escape the sandbox.
+        const subdirRaw: unknown = req.body?.subdir;
+        const subdir =
+            subdirRaw === ".attachments" || subdirRaw === ".contexts" ? subdirRaw : ".contexts";
+
+        const dir = path.join(cwd, subdir);
         try {
             fs.mkdirSync(dir, { recursive: true });
         } catch (err) {
-            return res.status(500).json({ error: `mkdir .contexts failed: ${(err as Error).message}` });
+            return res.status(500).json({ error: `mkdir ${subdir} failed: ${(err as Error).message}` });
         }
 
         let name = stem;
@@ -336,7 +345,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
         const target = path.join(dir, filename);
         if (!target.startsWith(dir + path.sep)) {
-            return res.status(400).json({ error: "resolved path escapes .contexts" });
+            return res.status(400).json({ error: `resolved path escapes ${subdir}` });
         }
         try {
             fs.writeFileSync(target, bytes);
@@ -346,7 +355,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         res.json({
             name,
             displayName: base,
-            filePath: `.contexts/${filename}`,
+            filePath: `${subdir}/${filename}`,
             size: bytes.length,
         });
     });
@@ -491,15 +500,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     return res.status(400).json({ error: "extraContexts must be an array of at most 20 items" });
                 }
                 for (const item of extraContexts) {
+                    // A `link` artifact carries `url` and an empty filePath; a
+                    // file/doc artifact carries a real filePath. Require exactly
+                    // one to be present.
                     if (
                         typeof item !== "object" || item === null ||
                         typeof item.name !== "string" || item.name.length > 64 ||
-                        typeof item.filePath !== "string" || !item.filePath
+                        typeof item.filePath !== "string" ||
+                        (!item.filePath && typeof item.url !== "string")
                     ) {
-                        return res.status(400).json({ error: "each extraContext must have name (string, ≤64 chars) and filePath (string)" });
+                        return res.status(400).json({ error: "each extraContext must have name (≤64 chars) and either filePath or url" });
                     }
                     if (item.filePath.includes('..')) {
                         return res.status(400).json({ error: 'filePath must not contain ..' });
+                    }
+                    if ('url' in item && item.url !== undefined && typeof item.url !== 'string') {
+                        return res.status(400).json({ error: 'extraContext.url must be a string when provided' });
                     }
                     if ('size' in item && (typeof item.size !== 'number' || !Number.isFinite(item.size) || item.size < 0)) {
                         return res.status(400).json({ error: 'extraContext.size must be a non-negative number when provided' });
@@ -520,12 +536,16 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     if (
                         typeof item !== "object" || item === null ||
                         typeof item.name !== "string" || item.name.length > 64 ||
-                        typeof item.filePath !== "string" || !item.filePath
+                        typeof item.filePath !== "string" ||
+                        (!item.filePath && typeof item.url !== "string")
                     ) {
-                        return res.status(400).json({ error: "each contextManifest item must have name (string, ≤64 chars) and filePath (string)" });
+                        return res.status(400).json({ error: "each contextManifest item must have name (≤64 chars) and either filePath or url" });
                     }
                     if (item.filePath.includes('..')) {
                         return res.status(400).json({ error: 'contextManifest filePath must not contain ..' });
+                    }
+                    if ('url' in item && item.url !== undefined && typeof item.url !== 'string') {
+                        return res.status(400).json({ error: 'contextManifest.url must be a string when provided' });
                     }
                     if ('size' in item && (typeof item.size !== 'number' || !Number.isFinite(item.size) || item.size < 0)) {
                         return res.status(400).json({ error: 'contextManifest.size must be a non-negative number when provided' });
@@ -797,16 +817,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 throw new Error(`${label} must be an array of at most ${max} items`);
             }
             for (const item of raw) {
+                // Link artifacts carry `url` and an empty filePath; file/doc
+                // artifacts carry a real filePath. Require exactly one.
                 if (
                     typeof item !== "object" || item === null ||
                     typeof (item as ExtraContext).name !== "string" || (item as ExtraContext).name.length > 64 ||
-                    typeof (item as ExtraContext).filePath !== "string" || !(item as ExtraContext).filePath
+                    typeof (item as ExtraContext).filePath !== "string" ||
+                    (!(item as ExtraContext).filePath && typeof (item as ExtraContext).url !== "string")
                 ) {
-                    throw new Error(`each ${label} item must have name (string, <=64 chars) and filePath (string)`);
+                    throw new Error(`each ${label} item must have name (<=64 chars) and either filePath or url`);
                 }
                 const ctx = item as ExtraContext;
                 if (ctx.filePath.includes("..")) {
                     throw new Error(`${label} filePath must not contain ..`);
+                }
+                if ("url" in ctx && ctx.url !== undefined && typeof ctx.url !== "string") {
+                    throw new Error(`${label}.url must be a string when provided`);
                 }
                 if ("size" in ctx && ctx.size !== undefined && (typeof ctx.size !== "number" || !Number.isFinite(ctx.size) || ctx.size < 0)) {
                     throw new Error(`${label}.size must be a non-negative number when provided`);

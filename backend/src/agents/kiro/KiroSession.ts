@@ -1,6 +1,7 @@
 import type { AgentSession, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { KiroRuntime } from "./KiroRuntime";
+import { followUpReminder } from "../preamble";
 
 export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
 
@@ -127,8 +128,8 @@ export class KiroSession implements AgentSession {
         const textForModel = text + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
 
         const transportText = this.firstMessagePreamble
-            ? `${this.firstMessagePreamble}\n${text}`
-            : text;
+            ? `${this.firstMessagePreamble}\n${textForModel}`
+            : textForModel;
         this.firstMessagePreamble = null;
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
@@ -301,6 +302,18 @@ export class KiroSession implements AgentSession {
                     serverName: String(update.serverName ?? ""),
                     error: String(update.error ?? ""),
                 };
+            } else if (kind === "user_input_request") {
+                yield {
+                    kind: "user_input_request" as const,
+                    requestId: update.requestId,
+                    questions: Array.isArray(update.questions) ? update.questions : [],
+                };
+            } else if (kind === "user_input_resolved") {
+                yield {
+                    kind: "user_input_resolved" as const,
+                    requestId: update.requestId,
+                    answers: Array.isArray(update.answers) ? update.answers : [],
+                };
             } else if (kind === "available_commands_update") {
                 // Kiro publishes its slash-command catalog (e.g. /compact,
                 // /mode, custom per-agent commands) via this update. We
@@ -355,5 +368,13 @@ export class KiroSession implements AgentSession {
 
     cancelPermission(requestId: number): void {
         this.runtime.cancelPermission(this.nativeSessionId, requestId);
+    }
+
+    respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>): void {
+        this.runtime.respondToUserInput(requestId, answers);
+    }
+
+    skipUserInput(requestId: number): void {
+        this.runtime.skipUserInput(requestId);
     }
 }

@@ -70,7 +70,14 @@ export default function ProfilePage({ onNav }: { onNav?: (p: PageId) => void } =
       <ProfilePageStyles />
 
       <div className="profile-shell">
-        <SideNav onNav={onNav} providerCount={agentStatus?.providers?.filter((p) => p.hasKey).length ?? 0} />
+        <SideNav
+          onNav={onNav}
+          providerCount={
+            agentStatus?.providers
+              ?.filter(providerRequiresUserKey)
+              .filter((p) => p.hasKey).length ?? 0
+          }
+        />
 
         <section className="profile-main">
           <ProfileHero
@@ -403,7 +410,7 @@ function ApiKeysSection({
   status: AgentStatus | null;
   onChanged: () => void;
 }) {
-  const providers = status?.providers ?? [];
+  const providers = (status?.providers ?? []).filter(providerRequiresUserKey);
   const saved = providers.filter((p) => p.hasKey);
   const missing = providers.filter((p) => !p.hasKey);
   const [pendingId, setPendingId] = useState<string | null>(null);

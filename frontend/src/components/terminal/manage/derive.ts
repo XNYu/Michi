@@ -138,6 +138,47 @@ export function deriveTreeRows(
   return rows;
 }
 
+export function deriveArchivedTreeRows(
+  project: Project,
+  nodes: Record<string, ChatNodeState>,
+  filter: string,
+): TreeRow[] {
+  if (project.trees.length === 0) return [];
+
+  const norm = filter.trim().toLowerCase();
+  const rows: TreeRow[] = [];
+
+  const archivedTrees = [...project.trees]
+    .filter((t) => !!t.archivedAt)
+    .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0));
+
+  for (const tree of archivedTrees) {
+    const rootNode = nodes[tree.rootNodeId];
+    if (!rootNode || rootNode.deletedAt) continue;
+
+    if (norm) {
+      const title = (tree.name?.trim() || rootNode.title || '').toLowerCase();
+      if (!title.includes(norm)) continue;
+    }
+
+    rows.push({
+      kind: 'label',
+      treeId: tree.id,
+      title: (tree.name?.trim() || rootNode.title || 'Untitled') as string,
+      lastActiveAt: tree.lastActiveAt,
+    });
+    rows.push({
+      kind: 'root',
+      treeId: tree.id,
+      nodeId: rootNode.nodeId,
+      node: rootNode,
+      branchCount: 0,
+      pinned: false,
+    });
+  }
+  return rows;
+}
+
 export function deriveDigests(
   project: Project,
   nodes: Record<string, ChatNodeState>,

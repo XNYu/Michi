@@ -30,6 +30,8 @@ export interface ClaudeSessionManagerDeps {
   currentModel: string;
   poolDisabled?: boolean;
   waitForWarm?: boolean;
+  sessionsPerSlot?: number;
+  onSelfTurn?: SelfTurnCallback;
 }
 
 export interface CreateClaudeSessionOptions {
@@ -76,6 +78,7 @@ export class ClaudeSessionManager {
       spawner: (cwd, model) => this.spawnWarmSession(cwd, model),
       currentModel: deps.currentModel,
       disabled: deps.poolDisabled,
+      sessionsPerSlot: deps.sessionsPerSlot,
     });
   }
 
@@ -320,6 +323,9 @@ export class ClaudeSessionManager {
     });
     if (this.active.get(id) !== session) {
       return false;
+    }
+    if (this.deps.onSelfTurn) {
+      session.onSelfTurn(this.deps.onSelfTurn);
     }
     sessionRegistry.registerSession(session as AgentSession);
     return true;

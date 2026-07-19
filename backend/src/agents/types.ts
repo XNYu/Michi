@@ -17,7 +17,10 @@ export interface AgentTurnInput {
 }
 export type ExtraContext = {
   name: string;
+  /** Empty string for `link` artifacts (which carry `url` instead). */
   filePath: string;
+  /** External URL for `link` artifacts. Mutually exclusive with a real filePath. */
+  url?: string;
   size?: number;
   kind?: "embedded" | "reference";
 };
@@ -55,6 +58,10 @@ export interface AgentProviderInfo {
   defaultModel: string;
   keyUrl?: string;
   supportsReasoning: boolean;
+  /** False for operator-managed built-in providers that users cannot edit. */
+  requiresUserKey?: boolean;
+  /** True when the provider exposes exactly one user-visible model choice. */
+  modelLocked?: boolean;
 }
 
 export interface AgentRuntimeOption {
@@ -172,6 +179,8 @@ export interface AgentSession {
   setModel?(modelId: string): Promise<void>;
   respondToPermission?(requestId: number, optionId: string): void;
   cancelPermission?(requestId: number): void;
+  respondToUserInput?(requestId: number, answers: Array<{ question: string; answer: string }>): void;
+  skipUserInput?(requestId: number): void;
 }
 
 export interface AgentRuntime {

@@ -3,7 +3,7 @@ import { useChatStore } from '../../../state/chatStore';
 import MarkdownContent from '../../MarkdownContent';
 
 export default function ContextsScreen() {
-  const { activeProject, toggleAutoInject } = useChatStore();
+  const { activeProject, pinContext } = useChatStore();
   const [viewing, setViewing] = useState<string | null>(null);
 
   const contexts = activeProject?.contexts ?? [];
@@ -12,7 +12,7 @@ export default function ContextsScreen() {
     return (
       <div className="m-screen">
         <div className="m-screen-header">
-          <span className="m-screen-title">Contexts</span>
+          <span className="m-screen-title">Artifacts</span>
         </div>
         <div className="m-empty">
           <div className="m-empty-headline">No workspace selected</div>
@@ -26,15 +26,15 @@ export default function ContextsScreen() {
   return (
     <div className="m-screen">
       <div className="m-screen-header">
-        <span className="m-screen-title">Contexts</span>
+        <span className="m-screen-title">Artifacts</span>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--term-muted)' }}>
           {contexts.length}
         </span>
       </div>
       {contexts.length === 0 ? (
         <div className="m-empty">
-          <div className="m-empty-headline">No contexts</div>
-          <div className="m-empty-sub">Add contexts on desktop. Mobile is read-only.</div>
+          <div className="m-empty-headline">No artifacts</div>
+          <div className="m-empty-sub">Add artifacts on desktop. Mobile is read-only.</div>
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -52,14 +52,14 @@ export default function ContextsScreen() {
                 </div>
               </div>
               <button
-                aria-label="Toggle auto-inject"
+                aria-label="Toggle pin"
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleAutoInject(c.id);
+                  pinContext(c.id);
                 }}
                 style={{
-                  background: c.autoInject ? 'var(--term-accent)' : 'transparent',
-                  color: c.autoInject ? 'var(--term-bg)' : 'var(--term-muted)',
+                  background: c.pinnedAt ? 'var(--term-accent)' : 'transparent',
+                  color: c.pinnedAt ? 'var(--term-bg)' : 'var(--term-muted)',
                   border: '1px solid var(--term-line)',
                   borderRadius: 4,
                   padding: '4px 8px',
@@ -70,7 +70,7 @@ export default function ContextsScreen() {
                   textTransform: 'uppercase',
                 }}
               >
-                auto
+                pin
               </button>
             </div>
           ))}

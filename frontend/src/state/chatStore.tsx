@@ -149,18 +149,6 @@ export type {
  */
 export const CHATS_WORKSPACE_ID = 'chats-default';
 
-async function waitForNodeTurnEnd(
-  nodesRef: { current: Record<string, ChatNodeState> },
-  nodeId: string,
-): Promise<void> {
-  while (
-    nodesRef.current[nodeId]?.status === 'streaming'
-    || !!nodesRef.current[nodeId]?.backgroundTurnAssistantId
-  ) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
-  }
-}
-
 /**
  * High-frequency action types that throttle React renders to one per animation
  * frame and DO NOT advance the structure version. Streamed token / heartbeat /
@@ -1205,11 +1193,19 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   }, []);
 
   // When the user moves focus to a node, mark it as viewed so the unread
-  // indicator clears. This is the data-layer close of the read loop.
+  // indicator clears. On cleanup (focus departing), re-stamp viewedAt so any
+  // lastAssistantAt that landed while focused is covered — without this, a
+  // node that completed streaming while you were looking at it would show
+  // unread the moment you navigated away.
   useEffect(() => {
     if (focusedNodeId !== null) {
       dispatch({ type: 'node-viewed', nodeId: focusedNodeId, viewedAt: Date.now() });
     }
+    return () => {
+      if (focusedNodeId !== null) {
+        dispatch({ type: 'node-viewed', nodeId: focusedNodeId, viewedAt: Date.now() });
+      }
+    };
   }, [focusedNodeId, dispatch]);
 
   // Bulk close of the read loop — used by the unread filter's "Read all"
@@ -1464,19 +1460,19 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         ...peerBlocks,
       ];
 
-      // Resolve reusable contexts: auto-inject + @mentions.
-      const autoCtxs = (owningProject?.contexts ?? []).filter(c => c.autoInject);
+      // Resolve reusable artifacts to inject. `extraContexts` is what actually
+      // gets injected this turn — ONLY explicit @mentions (auto-inject was
+      // removed). `contextManifest` lists EVERY artifact on the shelf so the
+      // agent knows what it can @mention / read — links carry a url and no
+      // filePath, so pass both and let the backend pick per type.
       const mentionCtxs = resolveAtMentions(text, owningProject?.contexts ?? []);
-      const autoIds = new Set(autoCtxs.map(c => c.id));
-      const dedupedMentions = mentionCtxs.filter(c => !autoIds.has(c.id));
-      const allContexts = [...autoCtxs, ...dedupedMentions];
 
-      const extraContexts = allContexts.length > 0
-        ? allContexts.map(c => ({ name: c.name, filePath: c.filePath, size: c.size, kind: c.kind }))
+      const extraContexts = mentionCtxs.length > 0
+        ? mentionCtxs.map(c => ({ name: c.name, filePath: c.filePath, url: c.url, size: c.size, kind: c.kind }))
         : undefined;
 
       const contextManifest = (owningProject?.contexts ?? []).length > 0
-        ? (owningProject!.contexts!).map(c => ({ name: c.name, filePath: c.filePath, kind: c.kind }))
+        ? (owningProject!.contexts!).map(c => ({ name: c.name, filePath: c.filePath, url: c.url, kind: c.kind }))
         : undefined;
 
       let chatId = n.chatId;
@@ -1691,13 +1687,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       // Auto-open in a pane so it's visible in the dashboard view immediately.
       setOpenPanes((prev) => (prev.includes(nodeId) ? prev : [...prev, nodeId]));
       setFocusedPane(nodeId);
-      // The third body-generated follow-up makes the parent visibly complete,
-      // but its hidden overview tool may still be finishing. Create/focus the
-      // child immediately, then wait for the parent session history to settle
-      // before forking so the child receives the complete answer context.
-      if (parent.backgroundTurnAssistantId) {
-        await waitForNodeTurnEnd(nodesRef, parentNodeId);
-      }
       // Pass the original digest parent through to startStream so the digest
       // content lands as a preamble even though we re-anchored the branch edge.
       void startStream(
@@ -1958,6 +1947,22 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     cancelPermission(node.chatId, node.pendingPermission.requestId)
       .catch(() => toast.error('Failed to send permission denial'));
     dispatch({ type: 'permission-resolved', nodeId });
+  }, [dispatch]);
+
+  const resolveUserInputRequest = useCallback((nodeId: string, answers: Array<{ question: string; answer: string }>) => {
+    const node = nodesRef.current[nodeId];
+    if (!node?.chatId || !node.pendingUserInput) return;
+    respondToUserInput(node.chatId, node.pendingUserInput.requestId, answers)
+      .catch(() => toast.error('Failed to send user input response'));
+    dispatch({ type: 'user-input-resolved', nodeId, answers });
+  }, [dispatch]);
+
+  const skipUserInputRequest = useCallback((nodeId: string) => {
+    const node = nodesRef.current[nodeId];
+    if (!node?.chatId || !node.pendingUserInput) return;
+    skipUserInput(node.chatId, node.pendingUserInput.requestId)
+      .catch(() => toast.error('Failed to skip user input'));
+    dispatch({ type: 'user-input-resolved', nodeId, answers: [] });
   }, [dispatch]);
 
   const setMinimized = useCallback(
@@ -2324,7 +2329,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     createContext,
     updateContext,
     deleteContext,
-    toggleAutoInject,
+    pinContext,
   } = useContextActions({
     projects,
     activeProjectId,
@@ -2576,9 +2581,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createContext,
       updateContext,
       deleteContext,
-      toggleAutoInject,
+      pinContext,
       resolvePermission,
       denyPermission,
+      resolveUserInputRequest,
+      skipUserInputRequest,
       hydrated,
       treeSelection,
       toggleTreeSelection,
@@ -2686,9 +2693,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createContext,
       updateContext,
       deleteContext,
-      toggleAutoInject,
+      pinContext,
       resolvePermission,
       denyPermission,
+      resolveUserInputRequest,
+      skipUserInputRequest,
       hydrated,
       treeSelection,
       toggleTreeSelection,
@@ -2768,6 +2777,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createDigest,
       resolvePermission,
       denyPermission,
+      resolveUserInputRequest,
+      skipUserInputRequest,
       addPendingComment,
       editPendingComment,
       removePendingComment,
@@ -2833,6 +2844,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createDigest,
       resolvePermission,
       denyPermission,
+      resolveUserInputRequest,
+      skipUserInputRequest,
       addPendingComment,
       editPendingComment,
       removePendingComment,

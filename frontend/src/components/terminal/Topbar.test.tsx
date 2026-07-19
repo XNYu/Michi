@@ -23,11 +23,6 @@ vi.mock('../../lib/electronBridge', () => ({
   getElectron: () => null,
 }));
 
-// Stub ContextsPopover so its internals don't matter to structural tests.
-vi.mock('../ContextsPopover', () => ({
-  default: () => <div data-testid="contexts-popover-stub" />,
-}));
-
 function Wrap({ children }: { children: React.ReactNode }) {
   return (
     <PrefsProvider>
@@ -100,13 +95,26 @@ describe('TerminalTopbar', () => {
     expect(screen.queryByTitle(/^\/.*$/)).toBeNull();
   });
 
-  it('renders the Contexts popover trigger button', () => {
+  it('renders the Artifacts drawer trigger button', () => {
     render(
       <Wrap>
         <TerminalTopbar {...baseProps} />
       </Wrap>,
     );
-    expect(screen.getByTitle(/Contexts/)).toBeTruthy();
+    expect(screen.getByTitle(/Artifacts/)).toBeTruthy();
+  });
+
+  it('dispatches michi:toggle-artifacts when the Artifacts button is clicked', () => {
+    const spy = vi.fn();
+    window.addEventListener('michi:toggle-artifacts', spy);
+    render(
+      <Wrap>
+        <TerminalTopbar {...baseProps} />
+      </Wrap>,
+    );
+    fireEvent.click(screen.getByTitle(/Artifacts/));
+    expect(spy).toHaveBeenCalledTimes(1);
+    window.removeEventListener('michi:toggle-artifacts', spy);
   });
 
   // getElectron is mocked to null above, so showBrowserBrand is true and the

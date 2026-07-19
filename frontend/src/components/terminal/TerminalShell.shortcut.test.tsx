@@ -103,16 +103,30 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('TerminalShell shortcuts', () => {
-  it('Cmd+; dispatches michi:toggle-contexts', () => {
+  it('Cmd+; dispatches michi:toggle-artifacts (legacy Contexts shortcut)', () => {
     render(<TerminalShell />);
     const spy = vi.fn();
-    window.addEventListener('michi:toggle-contexts', spy);
+    window.addEventListener('michi:toggle-artifacts', spy);
     try {
       window.dispatchEvent(new KeyboardEvent('keydown', {
         key: ';', metaKey: true, bubbles: true,
       }));
     } finally {
-      window.removeEventListener('michi:toggle-contexts', spy);
+      window.removeEventListener('michi:toggle-artifacts', spy);
+    }
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('Shift+Cmd+A dispatches michi:toggle-artifacts', () => {
+    render(<TerminalShell />);
+    const spy = vi.fn();
+    window.addEventListener('michi:toggle-artifacts', spy);
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'a', metaKey: true, shiftKey: true, bubbles: true,
+      }));
+    } finally {
+      window.removeEventListener('michi:toggle-artifacts', spy);
     }
     expect(spy).toHaveBeenCalledTimes(1);
   });

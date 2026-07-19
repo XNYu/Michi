@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import remarkMath from 'remark-math';
+import { remarkCurrencyGuard } from './remarkCurrencyGuard';
 import { rehypeAutolinkBareUrls } from './rehypeAutolinkBareUrls';
 import MarkdownRendererAdapter from './MarkdownRendererAdapter';
 import LegacyCodeBlock, { languageFromClassName } from './LegacyCodeBlock';
@@ -36,9 +38,22 @@ export interface MarkdownContentProps {
   appendStreamingTail?: boolean;
 }
 
+/** Returns true when the text contains math delimiters that remark-math recognises. */
+function hasMath(text: string): boolean {
+  return /\$[^$]|\\\[|\\\(/.test(text);
+}
+
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames || []), 'br'],
+  attributes: {
+    ...defaultSchema.attributes,
+    // Preserve remark-math's marker classNames through sanitize so rehype-katex
+    // (which runs afterwards) can find the math nodes to render.
+    // Also allow mention-chip spans with data-mention for user message @mentions.
+    div: [...(defaultSchema.attributes?.div ?? []), ['className', 'math', 'math-display']],
+    span: [...(defaultSchema.attributes?.span ?? []), ['className', 'math', 'math-inline', 'mention-chip'], 'dataMention'],
+  },
 };
 
 type HastNode = {
@@ -55,6 +70,21 @@ interface StreamingRevealState {
 
 const STREAM_REVEAL_SKIP_TAGS = new Set(['code', 'pre', 'svg', 'math', 'annotation']);
 const WHITESPACE_RE = /^\s+$/;
+
+/** KaTeX renders `<span class="katex">…</span>`; the tail-reveal plugin must not
+ *  split its visual text into per-char spans, so detect math containers by class. */
+function classList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((c): c is string => typeof c === 'string');
+  if (typeof value === 'string') return value.split(/\s+/);
+  return [];
+}
+
+function isMathNode(node: HastNode): boolean {
+  if (node.type !== 'element') return false;
+  return classList(node.properties?.className).some(
+    (c) => c === 'katex' || c === 'katex-display' || c === 'math' || c === 'math-display' || c === 'math-inline',
+  );
+}
 
 function allText(node: HastNode): string {
   if (node.type === 'text') return typeof node.value === 'string' ? node.value : '';
@@ -78,7 +108,8 @@ function renderedText(node: HastNode, skip = false): string {
   if (skip) return '';
   if (node.type === 'text') return typeof node.value === 'string' ? node.value : '';
   if (!Array.isArray(node.children)) return '';
-  const shouldSkip = node.type === 'element' && !!node.tagName && STREAM_REVEAL_SKIP_TAGS.has(node.tagName);
+  const shouldSkip =
+    (node.type === 'element' && !!node.tagName && STREAM_REVEAL_SKIP_TAGS.has(node.tagName)) || isMathNode(node);
   return node.children.map((child) => renderedText(child, shouldSkip)).join('');
 }
 
@@ -88,7 +119,12 @@ function domRevealText(node: Node, skip = false): string {
   if (node.nodeType !== 1) return '';
 
   const element = node as Element;
-  const shouldSkip = STREAM_REVEAL_SKIP_TAGS.has(element.localName);
+  const shouldSkip =
+    STREAM_REVEAL_SKIP_TAGS.has(element.localName) ||
+    element.classList.contains('katex') ||
+    element.classList.contains('katex-display') ||
+    element.classList.contains('math-display') ||
+    element.classList.contains('math-inline');
   return Array.from(element.childNodes).map((child) => domRevealText(child, shouldSkip)).join('');
 }
 
@@ -152,7 +188,7 @@ function createStreamingRevealPlugin(state: StreamingRevealState) {
               child.type === 'element' &&
               !!child.tagName &&
               STREAM_REVEAL_SKIP_TAGS.has(child.tagName)
-            );
+            ) || isMathNode(child);
             next.push({ ...child, children: transformChildren(child.children, childSkip) });
           } else {
             next.push(child);

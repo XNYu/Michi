@@ -316,6 +316,15 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
                   }),
                 ),
             }}
+            bulkActions={{
+              treeSelection: store.treeSelection,
+              toggleTreeSelection: store.toggleTreeSelection,
+              clearTreeSelection: store.clearTreeSelection,
+              selectAllTrees: store.selectAllTrees,
+              bulkArchiveTrees: store.bulkArchiveTrees,
+              bulkDeleteTrees: store.bulkDeleteTrees,
+              bulkUnarchiveTrees: store.bulkUnarchiveTrees,
+            }}
           />
         )}
         {tab === 'contexts' && (
@@ -327,7 +336,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
               selectedContextId={selectedContextId}
               onSelect={setSelectedContextId}
               onAdd={handleAddContext}
-              onToggleAutoInject={(id) => store.toggleAutoInject?.(id)}
+              onPin={(id) => store.pinContext?.(id)}
               onDelete={(id) => store.deleteContext?.(id)}
               onPreview={(filePath) => {
                 const electron = getElectron();
@@ -411,6 +420,27 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
       <ManageSidebar
         workspace={project}
         onSaveInstructions={(text) => store.setProjectInstructions(project.id, text)}
+        manageMode={manageMode}
+        onToggleManageMode={() => {
+          if (manageMode) {
+            store.clearTreeSelection();
+          }
+          setManageMode((v) => !v);
+        }}
+        bulkActions={{
+          treeSelection: store.treeSelection,
+          toggleTreeSelection: store.toggleTreeSelection,
+          clearTreeSelection: store.clearTreeSelection,
+          selectAllTrees: store.selectAllTrees,
+          bulkArchiveTrees: store.bulkArchiveTrees,
+          bulkDeleteTrees: store.bulkDeleteTrees,
+          bulkUnarchiveTrees: store.bulkUnarchiveTrees,
+        }}
+        hasArchivedSelection={
+          Array.from(store.treeSelection).some((id) =>
+            project.trees.some((t) => t.id === id && !!t.archivedAt),
+          )
+        }
       />
     </div>
   );

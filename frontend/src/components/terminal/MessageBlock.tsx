@@ -330,6 +330,28 @@ function ThinkingIndicator() {
 }
 
 /**
+ * Wrap @contextName tokens in the user message with `<span class="mention-chip">`
+ * so they render as styled clickable chips. Matches known context names greedily
+ * (longest first) so names with spaces resolve correctly.
+ */
+export function highlightMentions(text: string, contextNames: ReadonlySet<string>): string {
+  if (contextNames.size === 0) return text;
+  // Sort names longest-first so "foo bar" matches before "foo".
+  const sorted = [...contextNames].sort((a, b) => b.length - a.length);
+  let result = text;
+  for (const name of sorted) {
+    // Build a case-insensitive pattern for this specific name after @
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?:^|(?<=\\s))@(${escaped})(?=\\s|[,;:!?）)}\\]"]|$)`, 'giu');
+    result = result.replace(re, (full, matched: string) => {
+      const htmlEsc = matched.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      return `<span class="mention-chip" data-mention="${htmlEsc}">@${htmlEsc}</span>`;
+    });
+  }
+  return result;
+}
+
+/**
  * Display-time markdown prep for USER message text. Chat line breaks are
  * literal `\n` (Shift+Enter, pasted email bodies), but markdown collapses a
  * single newline into a space — so suffix every plain line with the two-space
@@ -858,6 +880,10 @@ function MessageBlockInner({
           <div
             className="terminal-message terminal-message-user"
             data-density={density}
+            onClick={onMentionClick ? (e) => {
+              const chip = (e.target as HTMLElement).closest('[data-mention]');
+              if (chip) onMentionClick((chip as HTMLElement).dataset.mention!);
+            } : undefined}
             style={{
               // The paper-card recipe (background, border-right accent, drop
               // shadow, padding, max-width) lives in index.css. Only the

@@ -7,9 +7,9 @@ export type WorkspaceIconMode = 'badge' | 'outline' | 'mono' | 'folder' | 'none'
 interface Props {
   project: Project;
   mode: WorkspaceIconMode;
-  /** When true, the (otherwise muted) folder glyph picks up the brand accent so
-   *  the active workspace reads as the single colored anchor — instead of every
-   *  workspace getting its own rainbow hue. Only consulted by `folder` mode. */
+  /** Folder mode tints every workspace with its own accent; `active` makes that
+   *  workspace the anchor (full opacity + heavier stroke + faint fill) while the
+   *  rest sit back at reduced opacity. Only consulted by `folder` mode. */
   active?: boolean;
 }
 
@@ -22,6 +22,11 @@ export default function WorkspaceIcon({ project, mode, active = false }: Props) 
   const letter = initialOf(project.name);
 
   if (mode === 'folder') {
+    // Every workspace gets its own accent-colored outline (hollow, so it stays
+    // far quieter than the old filled letter-badges that read as rainbow noise).
+    // The active workspace is the anchor: full opacity + slightly heavier stroke
+    // + a faint accent fill. Inactive folders keep their hue but sit back at
+    // reduced opacity, so identity and the active anchor both come through.
     return (
       <span
         aria-hidden
@@ -33,11 +38,12 @@ export default function WorkspaceIcon({ project, mode, active = false }: Props) 
           // left-aligned to the thread rows below it. Keep math in sync there.
           width: 15, height: SIZE,
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          color: active ? 'var(--term-accent)' : 'var(--term-muted)', flexShrink: 0,
+          color: accent, opacity: active ? 1 : 0.7, flexShrink: 0,
         }}
       >
-        <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+        <svg width={15} height={15} viewBox="0 0 24 24"
+             fill={active ? `${accent}22` : 'none'} stroke="currentColor"
+             strokeWidth={active ? 1.9 : 1.7} strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
         </svg>
       </span>

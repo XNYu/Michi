@@ -171,10 +171,19 @@ export const contexts = sqliteTable('contexts', {
   id:          text('id').primaryKey(),
   workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
   name:        text('name').notNull(),
+  // '' for link artifacts (which carry `url`). NOT NULL retained from baseline.
   filePath:    text('file_path').notNull(),
   size:        integer('size'),
+  // Retired UI flag; column kept for back-compat, always written 0.
   autoInject:  integer('auto_inject').notNull().default(0),
   source:      text('source').notNull().default('user'),
+  // Artifact fields (migration 0008). All nullable so legacy rows migrate cleanly.
+  type:            text('type'),
+  url:             text('url'),
+  originNodeId:    text('origin_node_id'),
+  originMessageId: text('origin_message_id'),
+  kind:            text('kind'),
+  pinnedAt:        integer('pinned_at'),
   createdAt:   integer('created_at').notNull(),
   updatedAt:   integer('updated_at').notNull(),
   // rev: per-row sync version (sync L2). Nullable — NULL = predates versioning.

@@ -44,8 +44,15 @@ export interface VerifyPiProviderKeyResult {
 }
 
 export const OPENROUTER_FREE_PROVIDER_ID = "openrouter-free";
-export const OPENROUTER_FREE_PRIMARY_MODEL = "openrouter/owl-alpha";
-export const OPENROUTER_FREE_FALLBACK_MODEL = "openrouter/free";
+
+// Locked model + fallback for the built-in "OpenRouter Free Trial" provider.
+// Overridable per-deployment via env so the free model can be swapped
+// (e.g. when OpenRouter rotates cloaked/free slugs) without a redeploy of code.
+// Read once at import time — the server process picks these up at boot.
+export const OPENROUTER_FREE_PRIMARY_MODEL =
+    process.env.OPENROUTER_FREE_MODEL || "nvidia/nemotron-3-ultra-550b-a55b:free";
+export const OPENROUTER_FREE_FALLBACK_MODEL =
+    process.env.OPENROUTER_FREE_FALLBACK_MODEL || "openrouter/free";
 
 export const PI_PROVIDERS: PiProviderInfo[] = [
     {

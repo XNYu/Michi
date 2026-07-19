@@ -431,6 +431,7 @@ export default function WorkspaceTree({
       }
       setFocusedNodeId(rootNodeId);
       anchorRef.current = rootNodeId;
+      treeAnchorRef.current = tree.id;
       onActivate?.();
     },
     [
@@ -949,7 +950,9 @@ function MergedGroupsSection({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 5,
-                padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 8px',
+                // +--sb-inset indents the text; full-bleed box keeps the focused
+                // borderLeft flush to the sidebar edge (see index.css / ThreadRow).
+                padding: 'var(--sb-row-py, 4px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(8px + var(--sb-inset, 0px))',
                 background: isFocused ? 'var(--term-alt)' : 'transparent',
                 borderLeft: isFocused
                   ? '2px solid var(--term-accent)'
@@ -995,7 +998,7 @@ function MergedGroupsSection({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 28px',
+                    padding: 'var(--sb-row-py, 4px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(28px + var(--sb-inset, 0px))',
                     background: focused ? 'var(--term-alt)' : undefined,
                     borderLeft: focused
                       ? '2px solid var(--term-accent)'
@@ -1037,7 +1040,7 @@ function MergedGroupsSection({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    padding: 'var(--sb-row-py, 4px) 10px var(--sb-row-py, 4px) 28px',
+                    padding: 'var(--sb-row-py, 4px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(28px + var(--sb-inset, 0px))',
                     background: focused ? 'var(--term-alt)' : undefined,
                     borderLeft: focused
                       ? '2px solid var(--term-accent)'

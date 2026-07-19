@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import type { RuntimeId, AgentReasoning } from "../agents/types";
 import { getUserAgentConfig, upsertUserAgentConfig } from "./dbRepository";
+import { OPENROUTER_FREE_PRIMARY_MODEL } from "../agents/pi/piProviders";
 
 export interface AgentConfig {
   runtime: RuntimeId;
@@ -20,7 +21,8 @@ const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 // Empty string means "let the runtime pick from listModels()".
 const BUILTIN_DEFAULT_MODEL_BY_RUNTIME: Record<string, string> = {
   claude: "sonnet",
-  pi: "openrouter/owl-alpha",
+  // Keep in lockstep with the locked free-trial model (env-overridable).
+  pi: OPENROUTER_FREE_PRIMARY_MODEL,
   kiro: "",
 };
 

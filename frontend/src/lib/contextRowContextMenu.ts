@@ -10,11 +10,11 @@ export interface ContextRowMenuItem {
 
 export function buildContextRowMenu(opts: {
     context: ContextEntry;
-    onToggleAutoInject: () => void;
+    onPin: () => void;
     onRename: () => void;
     onDelete: () => void;
 }): ContextRowMenuItem[] {
-    const { context, onToggleAutoInject, onRename, onDelete } = opts;
+    const { context, onPin, onRename, onDelete } = opts;
     return [
         {
             label: context.pinnedAt ? 'Remove from favorites' : 'Add to favorites',
