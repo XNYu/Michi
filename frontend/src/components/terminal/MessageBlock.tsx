@@ -193,16 +193,45 @@ const THOUGHT_TAIL_MAX_HEIGHT = 7 * 11 * 1.5;
 
 type ThoughtMode = 'tail' | 'expanded' | 'collapsed';
 
+/** Step-list renderer for Codex reasoning summaries (split by \n). */
+function CodexStepList({ text, streaming }: { text: string; streaming?: boolean }) {
+  const parts = text.split('\n').filter((s) => s.trim().length > 0);
+  if (parts.length === 0) return null;
+  return (
+    <div style={{ paddingLeft: 4, lineHeight: 1.7 }}>
+      {parts.map((part, i) => {
+        const isLast = i === parts.length - 1;
+        const done = !isLast || !streaming;
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+            <span style={{ opacity: done ? 0.5 : 1, fontSize: 10 }}>
+              {done ? '✓' : '●'}
+            </span>
+            <span style={{ opacity: done ? 0.7 : 1 }}>
+              {part}
+              {!done && (
+                <span className="typing-dot" style={{ marginLeft: 2, animationDelay: '0s' }} />
+              )}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TermThoughtBlock({
   text,
   streaming,
   children,
   toolCount,
+  runtimeId,
 }: {
   text: string;
   streaming?: boolean;
   children?: React.ReactNode;
   toolCount?: number;
+  runtimeId?: string | null;
 }) {
   // Default mode: tail while streaming, collapsed once finished.
   // User clicks cycle: tail/collapsed → expanded → (streaming ? tail : collapsed).
@@ -241,11 +270,16 @@ function TermThoughtBlock({
   };
 
   const marker = mode === 'expanded' ? '▾' : '▸';
+  const codexStepCount = runtimeId === 'codex'
+    ? text.split('\n').filter((s) => s.trim().length > 0).length
+    : 0;
   const headerLabel = mode === 'expanded'
     ? 'HIDE REASONING'
     : toolCount && toolCount > 0
       ? `WORKED THROUGH ${toolCount} ${toolCount === 1 ? 'STEP' : 'STEPS'}`
-      : 'THINKING';
+      : runtimeId === 'codex' && codexStepCount > 0 && !streaming
+        ? `WORKED THROUGH ${codexStepCount} ${codexStepCount === 1 ? 'STEP' : 'STEPS'}`
+        : 'THINKING';
 
   return (
     <div style={{ marginBottom: 8, fontSize: 11 }}>
@@ -276,12 +310,16 @@ function TermThoughtBlock({
             overflow: 'hidden',
           }}
         >
-          <MarkdownContent
-            text={text}
-            size="xs"
-            style={thoughtProseVars}
-            className="[&_a]:underline"
-          />
+          {runtimeId === 'codex' ? (
+            <CodexStepList text={text} streaming={streaming} />
+          ) : (
+            <MarkdownContent
+              text={text}
+              size="xs"
+              style={thoughtProseVars}
+              className="[&_a]:underline"
+            />
+          )}
           {children}
         </div>
       )}
@@ -297,12 +335,16 @@ function TermThoughtBlock({
             marginTop: 4,
           }}
         >
-          <MarkdownContent
-            text={text}
-            size="xs"
-            style={thoughtProseVars}
-            className="[&_a]:underline"
-          />
+          {runtimeId === 'codex' ? (
+            <CodexStepList text={text} streaming={streaming} />
+          ) : (
+            <MarkdownContent
+              text={text}
+              size="xs"
+              style={thoughtProseVars}
+              className="[&_a]:underline"
+            />
+          )}
           {children}
         </div>
       )}
@@ -541,15 +583,16 @@ interface ThinkingRunViewProps {
   tools: ToolCallState[];
   streaming: boolean;
   subagents?: readonly SubagentInfo[];
+  runtimeId?: string | null;
 }
 
-function ThinkingRunViewInner({ blocks, tools, streaming, subagents }: ThinkingRunViewProps) {
+function ThinkingRunViewInner({ blocks, tools, streaming, subagents, runtimeId }: ThinkingRunViewProps) {
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const text = useMemo(() => thinkingRunRawText(blocks), [blocks]);
   const groups = useMemo(() => thinkingToolGroups(blocks, toolsById), [blocks, toolsById]);
   const toolCount = useMemo(() => groups.reduce((n, g) => n + g.length, 0), [groups]);
   return (
-    <TermThoughtBlock text={text} streaming={streaming} toolCount={toolCount}>
+    <TermThoughtBlock text={text} streaming={streaming} toolCount={toolCount} runtimeId={runtimeId}>
       {groups.length > 0
         ? groups.map((group) => (
             <ToolCallGroup
@@ -568,7 +611,8 @@ const ThinkingRunView = React.memo(ThinkingRunViewInner, (prev, next) =>
   sameBlockRefs(prev.blocks, next.blocks) &&
   sameToolRefs(prev.tools, next.tools) &&
   prev.streaming === next.streaming &&
-  prev.subagents === next.subagents,
+  prev.subagents === next.subagents &&
+  prev.runtimeId === next.runtimeId,
 );
 
 function LegacyAssistantBody({
@@ -649,6 +693,7 @@ function BlockAssistantBody({
               tools={tools}
               streaming={run.id === liveThinkingId}
               subagents={subagents}
+              runtimeId={runtimeId}
             />
           );
         }
@@ -967,7 +1012,7 @@ function MessageBlockInner({
             <TermPlanBlock entries={m.plan} />
           )}
           {!hasAssistantBlocks(m) && showThoughts && m.thought && (
-            <TermThoughtBlock text={m.thought} streaming={m.streaming} />
+            <TermThoughtBlock text={m.thought} streaming={m.streaming} runtimeId={runtimeId} />
           )}
           {m.streaming && !hasAssistantBlocks(m) && !m.text && !m.thought && m.toolCalls.length === 0 && (
             <ThinkingIndicator />
