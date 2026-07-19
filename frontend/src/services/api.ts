@@ -524,6 +524,7 @@ export function streamMessage(
   let resumeTimer: ReturnType<typeof setTimeout> | null = null;
   let resumeAttempt = 0;
   let cancelledByUser = false;
+  let sawFirstByte = false;
   const resumeForeground = (): boolean => {
     if (!resumeTurnId || cancelledByUser || resumeCancel || resumeTimer) return false;
     resumeCancel = subscribeChat(nodeId, {
@@ -598,6 +599,7 @@ export function streamMessage(
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`stream failed: ${res.status}`);
+      sawFirstByte = true;
       startupMark('stream_response_headers', { chatId: nodeId, nodeId, status: res.status, durMs: Date.now() - startedAt });
 
       const reader = res.body.getReader();
@@ -679,7 +681,11 @@ export function streamMessage(
       // possible. Surface a terminal error rather than silently mixing feeds.
       settleError('stream closed before completion');
     } catch (err: any) {
-      if (!terminalSeen && !cancelledByUser && resumeForeground()) return;
+      // Only attempt foreground resume if we received a successful HTTP
+      // response (the turn was started on the backend). When the POST itself
+      // fails (409 turn-already-active, 404, etc.) the turn was never started
+      // and subscribing to it always 410s — surface the real error instead.
+      if (!terminalSeen && !cancelledByUser && sawFirstByte && resumeForeground()) return;
       if (err?.name === 'AbortError') {
         // A user/navigation abort finalizes as aborted. A watchdog abort with
         // no stamped turn id cannot safely resume.

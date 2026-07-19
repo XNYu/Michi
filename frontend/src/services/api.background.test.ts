@@ -221,3 +221,20 @@ describe('background SSE', () => {
     expect(String(fetchMock.mock.calls[2][0])).toContain('/chats/n-stop/cancel');
   });
 });
+
+describe('foreground stream startup failures', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('surfaces POST 409 without replaying a turn that never started', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 409 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onError = vi.fn();
+
+    streamMessage('n-conflict', 'retry', { onError });
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith('stream failed: 409');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/chats/n-conflict/message');
+  });
+});

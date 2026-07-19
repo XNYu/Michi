@@ -58,7 +58,7 @@ const KIRO_SMOOTH_CONFIG: SmoothConfig = {
   resumeBufferMs: 0,
   targetLagMs: 500,
   finishLagMs: 160,
-  minTypewriterCps: 8,
+  minTypewriterCps: 22,  // raised from 8 — prevents visual stall before tool calls
   maxTypewriterCps: 1200,
 };
 
@@ -72,7 +72,7 @@ const KIRO_CJK_SMOOTH_CONFIG: SmoothConfig = {
   resumeBufferMs: 120,
   targetLagMs: 500,
   finishLagMs: 140,
-  minTypewriterCps: 8,
+  minTypewriterCps: 20,  // raised from 8 — prevents visual stall before tool calls
   maxTypewriterCps: Number.POSITIVE_INFINITY,
 };
 
