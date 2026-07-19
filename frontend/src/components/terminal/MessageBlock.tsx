@@ -194,6 +194,16 @@ const THOUGHT_TAIL_MAX_HEIGHT = 7 * 11 * 1.5;
 type ThoughtMode = 'tail' | 'expanded' | 'collapsed';
 
 /** Step-list renderer for Codex reasoning summaries (split by \n). */
+/** Strip lightweight Markdown formatting (bold, italic, code) so step text renders as plain text. */
+function stripInlineMarkdown(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/_(.+?)_/g, '$1')
+    .replace(/`(.+?)`/g, '$1');
+}
+
 function CodexStepList({ text, streaming }: { text: string; streaming?: boolean }) {
   const parts = text.split('\n').filter((s) => s.trim().length > 0);
   if (parts.length === 0) return null;
@@ -208,7 +218,7 @@ function CodexStepList({ text, streaming }: { text: string; streaming?: boolean 
               {done ? '✓' : '●'}
             </span>
             <span style={{ opacity: done ? 0.7 : 1 }}>
-              {part}
+              {stripInlineMarkdown(part)}
               {!done && (
                 <span className="typing-dot" style={{ marginLeft: 2, animationDelay: '0s' }} />
               )}
