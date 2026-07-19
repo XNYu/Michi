@@ -620,6 +620,28 @@ export class AcpClient {
         this.pending.clear();
     }
 
+    private notify(method: string, params?: any): Promise<void> {
+        return new Promise((resolve, reject) => {
+            if (this.stopped || this.exitError) {
+                reject(new ACPNotRunningError(this.exitError?.message || "ACP process stopped"));
+                return;
+            }
+            if (!this.proc?.stdin || this.proc.stdin.destroyed) {
+                reject(new ACPNotRunningError("ACP process is not running"));
+                return;
+            }
+            const payload = JSON.stringify({
+                jsonrpc: "2.0",
+                method,
+                ...(params !== undefined ? { params } : {}),
+            });
+            this.proc.stdin.write(payload + "\n", (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+    }
+
     private send(
         method: string,
         params?: any,
@@ -884,7 +906,7 @@ export class AcpClient {
         if (!this.sessionQueues.has(sessionId)) return;
         this.cancelPermissionsForSession(sessionId);
         try {
-            await this.send("session/cancel", { sessionId });
+            await this.notify("session/cancel", { sessionId });
         } catch {
             // best-effort
         }

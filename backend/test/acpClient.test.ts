@@ -68,3 +68,38 @@ describe('AcpClient RPC error diagnostics', () => {
     });
   });
 });
+
+describe('AcpClient cancellation transport', () => {
+  test('sends session/cancel as a JSON-RPC notification', async () => {
+    const client = new AcpClient('/bin/false', '/tmp') as any;
+    const writes: string[] = [];
+    client.proc = {
+      stdin: {
+        destroyed: false,
+        write(payload: string, callback?: (error?: Error | null) => void) {
+          writes.push(payload);
+          callback?.(null);
+          return true;
+        },
+      },
+    };
+    client.sessionQueues.set('session-1', {});
+
+    const cancelPromise = client.cancel('session-1');
+    const payload = JSON.parse(writes[0].trim()) as Record<string, unknown>;
+
+    // Let the old request-based implementation settle so a failing assertion
+    // cannot leave its idle timer running.
+    if (typeof payload.id === 'number') {
+      client.dispatch({ jsonrpc: '2.0', id: payload.id, result: null });
+    }
+    await cancelPromise;
+
+    assert.deepEqual(payload, {
+      jsonrpc: '2.0',
+      method: 'session/cancel',
+      params: { sessionId: 'session-1' },
+    });
+    assert.equal(client.pending.size, 0);
+  });
+});
