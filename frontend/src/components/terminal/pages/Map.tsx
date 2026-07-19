@@ -23,11 +23,11 @@ const FIT_PADDING = 48;
 
 type MapMode = 'overview' | 'thread' | 'graph';
 type ZoomMode = 'auto' | 'manual';
-const DEFAULT_MAP_MODE: MapMode = 'graph';
+const DEFAULT_MAP_MODE: MapMode = 'thread';
 const EMPTY_TREES: readonly Tree[] = [];
-// Overview/thread remain implemented below, but are temporarily hidden from
-// the toolbar while graph is the only supported public Map view.
-const VISIBLE_MAP_MODES: readonly MapMode[] = ['graph'];
+// Workspace-wide overview/graph code remains available internally, but the
+// public Map surface is intentionally scoped to the active thread.
+const VISIBLE_MAP_MODES: readonly MapMode[] = ['thread'];
 
 type TreeSummary = {
   tree: Tree;
@@ -179,8 +179,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   const layoutTrees = useStableLayoutTrees(projectTrees);
   const activeTreeId = activeProject?.activeTreeId ?? null;
 
-  // Live chat ids = project chatIds minus anything in the trash, archived
-  // trees, and digest nodes — digests aren't part of the map's global graph view.
+  // The public Map is thread-scoped: only live chats reachable from the
+  // active tree root participate in layout, selection, and actions.
   const computedLiveIds = useMemo(
     () => visibleMapNodeIds(activeProject, nodesSnapshot),
     [activeProject, nodesSnapshot],

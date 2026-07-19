@@ -59,7 +59,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
       { id: 'nav.home',       group: 'nav', glyph: '◐', label: 'Go to home',            keys: kbd('mod', '0'), run: () => ctx.setPage('home') },
       { id: 'nav.branches',   group: 'nav', glyph: '≡', label: 'Open branch overview',  run: () => ctx.setPage('branches') },
       { id: 'nav.map',        group: 'nav', glyph: '⎇', label: 'Open map',              keys: kbd('mod', 'M'), run: () => ctx.setPage('map') },
-      { id: 'nav.digest',     group: 'nav', glyph: '§', label: 'Open workspace digest', keys: kbd('mod', 'D'), run: () => ctx.setPage('digest') },
+      { id: 'nav.digest',     group: 'nav', glyph: '§', label: 'Open thread digest',    keys: kbd('mod', 'D'), run: () => ctx.setPage('digest') },
       { id: 'nav.workspaces', group: 'nav', glyph: '▢', label: 'Switch workspace…',     keys: kbd('mod', 'O'), run: () => ctx.setPage('workspaces') },
       { id: 'nav.trash',      group: 'nav', glyph: '🗑', label: 'Open trash',            run: () => ctx.setPage('trash') },
       { id: 'nav.archived',   group: 'nav', glyph: '▣', label: 'Open archived nodes',    run: () => ctx.setPage('archived') },

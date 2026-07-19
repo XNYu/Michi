@@ -6,60 +6,32 @@ type MapNodeVisibilityState = {
 };
 
 export function visibleMapNodeIds(
-  project: Pick<Project, 'chatIds' | 'trees' | 'edges'> | null | undefined,
+  project: Pick<Project, 'chatIds' | 'trees' | 'edges' | 'activeTreeId'> | null | undefined,
   nodes: Record<string, MapNodeVisibilityState | undefined>,
 ): string[] {
-  if (!project) return [];
+  if (!project?.activeTreeId) return [];
+  const activeTree = project.trees.find((tree) => tree.id === project.activeTreeId);
+  const rootNode = activeTree ? nodes[activeTree.rootNodeId] : undefined;
+  if (!activeTree || activeTree.archivedAt || !rootNode || rootNode.deletedAt) return [];
 
-  const liveTreeIds = new Set(
-    (project.trees ?? [])
-      .filter((tree) => !tree.archivedAt && !nodes[tree.rootNodeId]?.deletedAt)
-      .map((tree) => tree.id),
-  );
-
-  const treeIdByRoot = new Map(
-    (project.trees ?? []).map((tree) => [tree.rootNodeId, tree.id] as const),
-  );
-  const parentOf = new Map<string, string>();
+  const children = new Map<string, string[]>();
   for (const edge of project.edges) {
     if (edge.kind !== undefined && edge.kind !== 'branch') continue;
-    parentOf.set(edge.target, edge.source);
+    const next = children.get(edge.source) ?? [];
+    next.push(edge.target);
+    children.set(edge.source, next);
   }
-  const resolvedTreeIds = new Map<string, string | null>();
 
-  const treeIdForNode = (nodeId: string): string | null => {
-    const cached = resolvedTreeIds.get(nodeId);
-    if (cached !== undefined || resolvedTreeIds.has(nodeId)) return cached ?? null;
-
-    const path: string[] = [];
-    const seen = new Set<string>();
-    let current: string | undefined = nodeId;
-    let treeId: string | null = null;
-    while (current) {
-      if (seen.has(current)) break;
-      seen.add(current);
-      path.push(current);
-
-      if (resolvedTreeIds.has(current)) {
-        treeId = resolvedTreeIds.get(current) ?? null;
-        break;
-      }
-      const rootTreeId = treeIdByRoot.get(current);
-      if (rootTreeId) {
-        treeId = rootTreeId;
-        break;
-      }
-      current = parentOf.get(current);
-    }
-
-    for (const id of path) resolvedTreeIds.set(id, treeId);
-    return treeId;
-  };
-
-  return project.chatIds.filter((id) => {
+  const reachable = new Set<string>();
+  const queue = [activeTree.rootNodeId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (reachable.has(id)) continue;
     const node = nodes[id];
-    if (node?.deletedAt || node?.kind === 'digest' || node?.kind === 'artifact') return false;
-    const treeId = treeIdForNode(id);
-    return !!treeId && liveTreeIds.has(treeId);
-  });
+    if (!node || node.deletedAt || node.kind === 'digest' || node.kind === 'artifact') continue;
+    reachable.add(id);
+    for (const childId of children.get(id) ?? []) queue.push(childId);
+  }
+
+  return project.chatIds.filter((id) => reachable.has(id));
 }

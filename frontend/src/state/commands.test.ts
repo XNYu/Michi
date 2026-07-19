@@ -36,6 +36,7 @@ describe('buildCommands', () => {
     expect(navIds).toEqual([
       'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
     ]);
+    expect(cmds.map((c) => c.label)).toContain('Open thread digest');
   });
 
   it('omits selection action commands when selection is empty', () => {

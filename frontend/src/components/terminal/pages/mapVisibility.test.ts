@@ -22,9 +22,14 @@ function project(overrides: Partial<Project> = {}): Project {
 }
 
 describe('visibleMapNodeIds', () => {
-  it('excludes archived tree nodes while keeping live tree nodes', () => {
+  it('keeps only the active thread even when another thread is live', () => {
     expect(
-      visibleMapNodeIds(project(), {
+      visibleMapNodeIds(project({
+        trees: [
+          { id: 'live-tree', rootNodeId: 'live-root', createdAt: 0, lastActiveAt: 0 },
+          { id: 'archived-tree', rootNodeId: 'archived-root', createdAt: 0, lastActiveAt: 0 },
+        ],
+      }), {
         'live-root': {},
         'live-child': {},
         'archived-root': {},
@@ -33,6 +38,10 @@ describe('visibleMapNodeIds', () => {
         deleted: { deletedAt: 1 },
       }),
     ).toEqual(['live-root', 'live-child']);
+  });
+
+  it('returns no nodes when there is no active thread', () => {
+    expect(visibleMapNodeIds(project({ activeTreeId: null }), { 'live-root': {} })).toEqual([]);
   });
 
   it('hides a whole tree when its root is deleted', () => {

@@ -5,9 +5,6 @@ import { findTreeIdForNode, descendants } from '../../../state/tree';
 import MarkdownContent from '../../MarkdownContent';
 import { Dot, Tag } from '../primitives';
 import type { PageId } from '../../../state/commands';
-import { requestDigest } from '../../../lib/digestPrompt';
-import type { ChatNodeState, Tree } from '../../../state/chatTypes';
-import { visibleMessageText } from '../../../state/assistantBlocks';
 
 const DIGEST_PROSE = 'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
 
@@ -90,37 +87,6 @@ function formatRelative(ts: number): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-type ThreadStatus = 'generating' | 'fresh' | 'stale' | 'none' | 'empty';
-
-interface ThreadRow {
-  tree: Tree;
-  rootNode: ChatNodeState;
-  digestNode: ChatNodeState | null;
-  staleCount: number;
-  status: ThreadStatus;
-  preview: string;
-  /** Live chat-node ids belonging to this tree (root + descendants). Used as
-   * sources when the user kicks off "create digest" from this row. */
-  chatIds: string[];
-  /** Total assistant/user messages across the tree's chat nodes — used to
-   * decide if there's anything worth digesting. */
-  msgCount: number;
-}
-
-function firstSnippet(node: ChatNodeState | null | undefined, max = 140): string {
-  if (!node) return '';
-  for (const m of node.messages) {
-    if (m.role !== 'assistant') continue;
-    const t = visibleMessageText(m).replace(/\s+/g, ' ').trim();
-    if (t.length > 0) return t.length > max ? t.slice(0, max) + '…' : t;
-  }
-  for (const m of node.messages) {
-    const t = visibleMessageText(m).replace(/\s+/g, ' ').trim();
-    if (t.length > 0) return t.length > max ? t.slice(0, max) + '…' : t;
-  }
-  return '';
-}
-
 export default function TerminalDigest({
   onNav,
 }: {
@@ -128,6 +94,7 @@ export default function TerminalDigest({
 }) {
   const {
     activeProject,
+    createDigest,
     refreshDigest,
     setDigestPrompt,
     markDigestViewed,
@@ -136,20 +103,64 @@ export default function TerminalDigest({
   } = useChatStore();
   const nodesSnapshot = useChatNodesSnapshot();
 
-  // View state. `null` = index page, otherwise = detail of that digest node.
-  const [focusedDigestId, setFocusedDigestId] = useState<string | null>(null);
-  const focusedDigestNode = useChatNode(focusedDigestId ?? '');
+  const [requestedDigestId, setRequestedDigestId] = useState<string | null>(null);
+  const [createPrompt, setCreatePrompt] = useState('');
+  const [creating, setCreating] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
 
-  // Map-page click and other call sites set the focused digest by event.
-  useEffect(() => {
-    const onFocus = (e: Event) => {
-      const ce = e as CustomEvent<{ nodeId?: string }>;
-      if (ce.detail?.nodeId) setFocusedDigestId(ce.detail.nodeId);
+  const activeTree = activeProject?.trees.find((tree) => tree.id === activeProject.activeTreeId) ?? null;
+  const threadState = useMemo(() => {
+    if (!activeProject || !activeTree) return null;
+    const isAliveChat = (id: string) => {
+      const node = nodesSnapshot[id];
+      return !!node && node.kind === 'chat' && !node.deletedAt;
     };
-    window.addEventListener('michi:focus-digest', onFocus as EventListener);
-    return () => window.removeEventListener('michi:focus-digest', onFocus as EventListener);
-  }, []);
+    if (!isAliveChat(activeTree.rootNodeId)) return null;
+
+    const chatIds = [
+      activeTree.rootNodeId,
+      ...descendants(activeTree.rootNodeId, activeProject.edges, (id) => {
+        const node = nodesSnapshot[id];
+        return !!node && !node.deletedAt;
+      }),
+    ].filter(isAliveChat);
+
+    let digestId: string | null = null;
+    let digestScore = -1;
+    for (const id of activeProject.chatIds) {
+      const node = nodesSnapshot[id];
+      if (!node || node.kind !== 'digest' || node.deletedAt || !node.digest) continue;
+      const belongsToActiveThread = node.digest.sources.some(
+        (sourceId) => findTreeIdForNode(sourceId, activeProject) === activeTree.id,
+      );
+      if (!belongsToActiveThread) continue;
+      const score = node.digest.generatedAt || 0;
+      if (score >= digestScore) {
+        digestId = id;
+        digestScore = score;
+      }
+    }
+
+    return {
+      chatIds,
+      digestId,
+      messageCount: chatIds.reduce((sum, id) => {
+        const node = nodesSnapshot[id];
+        return sum + (node?.messageCount ?? node?.messages.length ?? 0);
+      }, 0),
+    };
+  }, [activeProject, activeTree, nodesSnapshot]);
+
+  const focusedDigestId = requestedDigestId ?? threadState?.digestId ?? null;
+  const focusedDigestNode = useChatNode(focusedDigestId ?? '');
+
+  // A thread switch must immediately move the page to that thread's digest,
+  // even if the user was watching a freshly-created digest in the prior one.
+  useEffect(() => {
+    setRequestedDigestId(null);
+    setCreatePrompt('');
+    setCreating(false);
+  }, [activeProject?.id, activeProject?.activeTreeId]);
 
   // Clear unread state once the user has the detail view open and the digest
   // has finished generating. We wait for `idle` so a streaming digest the user
@@ -162,93 +173,6 @@ export default function TerminalDigest({
     if (node.digest.generatedAt <= node.digest.viewedAt) return;
     markDigestViewed(focusedDigestId);
   }, [focusedDigestId, focusedDigestNode, markDigestViewed]);
-
-  // Per-thread row data for the index view. One row per live tree.
-  const rows = useMemo<ThreadRow[]>(() => {
-    if (!activeProject) return [];
-
-    // Build tree -> [chat node ids] map by walking descendants from each root.
-    const isAlive = (id: string) => {
-      const n = nodesSnapshot[id];
-      return !!n && !n.deletedAt;
-    };
-    const treeChatIds = new Map<string, string[]>();
-    for (const t of activeProject.trees) {
-      if (!isAlive(t.rootNodeId)) continue;
-      const desc = descendants(t.rootNodeId, activeProject.edges, isAlive);
-      const ids = [t.rootNodeId, ...desc].filter((id) => {
-        const n = nodesSnapshot[id];
-        return n && n.kind === 'chat' && !n.deletedAt;
-      });
-      treeChatIds.set(t.id, ids);
-    }
-
-    // For each tree, find the most recent digest whose first surviving source
-    // resolves back to this tree. Mirrors the lookup used in the detail view.
-    const treeDigests = new Map<string, ChatNodeState>();
-    for (const id of activeProject.chatIds) {
-      const n = nodesSnapshot[id];
-      if (!n || n.kind !== 'digest' || n.deletedAt || !n.digest) continue;
-      const src = n.digest.sources.find((sid) => nodesSnapshot[sid]);
-      const tid = src ? findTreeIdForNode(src, activeProject) : null;
-      if (!tid) continue;
-      const prev = treeDigests.get(tid);
-      if (!prev || (n.digest.generatedAt || 0) > (prev.digest!.generatedAt || 0)) {
-        treeDigests.set(tid, n);
-      }
-    }
-
-    const out: ThreadRow[] = [];
-    const sortedTrees = [...activeProject.trees].sort((a, b) => a.createdAt - b.createdAt);
-    for (const tree of sortedTrees) {
-      const rootNode = nodesSnapshot[tree.rootNodeId];
-      if (!rootNode || rootNode.deletedAt) continue;
-      const chatIds = treeChatIds.get(tree.id) ?? [];
-      const msgCount = chatIds.reduce(
-        (acc, id) => {
-          const n = nodesSnapshot[id];
-          if (!n) return acc;
-          return acc + (n.messageCount ?? n.messages.length);
-        },
-        0,
-      );
-      const digestNode = treeDigests.get(tree.id) ?? null;
-      // A digest is stale when (a) a covered source's fingerprint changed, or
-      // (b) the tree gained chats the digest hasn't seen yet (branched after
-      // the digest was generated). Both cases mean a rebuild is warranted.
-      const fingerprintStale = digestNode
-        ? staleSources(digestNode.digest!, nodesSnapshot).length
-        : 0;
-      const newSinceDigest = digestNode
-        ? chatIds.filter((id) => !digestNode.digest!.sources.includes(id)).length
-        : 0;
-      const staleCount = fingerprintStale + newSinceDigest;
-      let status: ThreadStatus;
-      if (digestNode && digestNode.digest!.status === 'streaming') {
-        status = 'generating';
-      } else if (digestNode) {
-        status = staleCount > 0 ? 'stale' : 'fresh';
-      } else if (msgCount === 0 || chatIds.length === 0) {
-        status = 'empty';
-      } else {
-        status = 'none';
-      }
-      const preview = digestNode
-        ? (parseDigestStructure(digestNode.digest!.content).tldr || digestNode.digest!.content || '').replace(/\s+/g, ' ').trim().slice(0, 180)
-        : firstSnippet(rootNode);
-      out.push({
-        tree,
-        rootNode,
-        digestNode,
-        staleCount,
-        status,
-        preview: preview.length > 180 ? preview.slice(0, 180) + '…' : preview,
-        chatIds,
-        msgCount,
-      });
-    }
-    return out;
-  }, [activeProject, nodesSnapshot]);
 
   // Detail view's digest source-of-truth. Prefer the reactive useChatNode
   // subscription so streaming updates land without re-navigation.
@@ -289,6 +213,21 @@ export default function TerminalDigest({
     return ids.length > 0 ? ids : d.sources;
   }, [digestNode, activeProject, nodesSnapshot]);
 
+  const createCurrentDigest = async () => {
+    if (!activeProject || !threadState || creating || threadState.chatIds.length === 0) return;
+    setCreating(true);
+    try {
+      const nodeId = await createDigest(
+        activeProject.id,
+        threadState.chatIds,
+        createPrompt.trim() || undefined,
+      );
+      setRequestedDigestId(nodeId);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   if (!activeProject) {
     return (
       <div
@@ -306,20 +245,147 @@ export default function TerminalDigest({
     );
   }
 
-  // INDEX VIEW — card grid of all threads in this workspace.
-  if (!digestNode) {
+  if (!activeTree || !threadState) {
     return (
-      <DigestIndex
-        rows={rows}
-        onOpen={(row) => setFocusedDigestId(row.digestNode!.nodeId)}
-        onCreate={(row) => requestDigest(activeProject.id, row.chatIds)}
-      />
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--term-muted)',
+          fontSize: 13,
+        }}
+      >
+        — no active thread —
+      </div>
     );
   }
 
-  // DETAIL VIEW — existing single-digest layout.
+  if (!digestNode) {
+    const threadTitle = activeTree.name?.trim()
+      || nodesSnapshot[activeTree.rootNodeId]?.title
+      || 'Untitled thread';
+    return (
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 28,
+          background: 'var(--term-page-bg, var(--term-bg))',
+        }}
+      >
+        <div
+          style={{
+            width: 'min(680px, 100%)',
+            border: '1px solid var(--term-line)',
+            background: 'var(--term-surface)',
+            boxShadow: '0 14px 40px color-mix(in srgb, var(--term-fg) 6%, transparent)',
+          }}
+        >
+          <div style={{ padding: '24px 26px 18px', borderBottom: '1px solid var(--term-line)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <span style={{ width: 4, height: 26, background: 'var(--term-digest)' }} />
+              <span style={{ color: 'var(--term-digest)', fontSize: 15, fontWeight: 700 }}>§</span>
+              <span style={{ color: 'var(--term-fg)', fontSize: 20, fontWeight: 600 }}>
+                Create this thread’s digest
+              </span>
+            </div>
+            <div style={{ color: 'var(--term-mid)', fontSize: 13, lineHeight: 1.6 }}>
+              Summarize <strong style={{ color: 'var(--term-fg)' }}>{threadTitle}</strong> into one living digest.
+              It will cover {threadState.chatIds.length} chat{threadState.chatIds.length === 1 ? '' : 's'} and update from this thread only.
+            </div>
+            <div style={{ marginTop: 10, display: 'flex', gap: 14, color: 'var(--term-muted)', fontSize: 10.5 }}>
+              <span>{threadState.messageCount} messages</span>
+              <span>·</span>
+              <span>{threadState.chatIds.length} sources</span>
+            </div>
+          </div>
+
+          <div style={{ padding: '18px 20px 20px' }}>
+            <label
+              htmlFor="thread-digest-guidance"
+              style={{
+                display: 'block',
+                marginBottom: 8,
+                color: 'var(--term-muted)',
+                fontSize: 10,
+                letterSpacing: '.12em',
+              }}
+            >
+              OPTIONAL GUIDANCE
+            </label>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                border: '1px solid var(--term-line-s)',
+                background: 'var(--term-bg)',
+                padding: '12px 14px',
+              }}
+            >
+              <span aria-hidden style={{ color: 'var(--term-digest)', fontSize: 13, paddingTop: 2 }}>›_</span>
+              <textarea
+                id="thread-digest-guidance"
+                aria-label="Digest guidance (optional)"
+                value={createPrompt}
+                onChange={(event) => setCreatePrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing) return;
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void createCurrentDigest();
+                  }
+                }}
+                placeholder="e.g. Focus on decisions, unresolved questions, and next steps…"
+                rows={4}
+                autoFocus
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: 'none',
+                  outline: 'none',
+                  resize: 'vertical',
+                  background: 'transparent',
+                  color: 'var(--term-fg)',
+                  fontFamily: 'var(--ui-font)',
+                  fontSize: 14,
+                  lineHeight: 1.55,
+                  padding: 0,
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              <span style={{ color: 'var(--term-muted)', fontSize: 10.5 }}>⌘↵ to create</span>
+              <button
+                type="button"
+                onClick={() => void createCurrentDigest()}
+                disabled={creating}
+                style={{
+                  padding: '7px 14px',
+                  border: '1px solid var(--term-digest)',
+                  background: creating ? 'var(--term-alt)' : 'var(--term-digest)',
+                  color: creating ? 'var(--term-muted)' : 'var(--term-bg)',
+                  fontFamily: 'var(--ui-font)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: creating ? 'wait' : 'pointer',
+                }}
+              >
+                {creating ? 'creating…' : 'Create digest'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const d = digestNode.digest!;
-  const title = digestNode.title || 'Workspace digest';
+  const title = digestNode.title || 'Thread digest';
 
   return (
     <div style={{ flex: 1, display: 'flex', minHeight: 0, background: 'var(--term-page-bg, var(--term-bg))' }}>
@@ -334,21 +400,6 @@ export default function TerminalDigest({
           } as React.CSSProperties}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <span
-              onClick={() => setFocusedDigestId(null)}
-              style={{
-                fontSize: 11,
-                color: 'var(--term-muted)',
-                cursor: 'pointer',
-                fontFamily: 'var(--ui-font)',
-                padding: '2px 6px',
-                border: '1px solid var(--term-line)',
-                WebkitAppRegion: 'no-drag',
-              } as React.CSSProperties}
-              title="Back to digest index"
-            >
-              ← all
-            </span>
             <span style={{ width: 4, height: 24, background: 'var(--term-digest)' }} />
             <span style={{ color: 'var(--term-digest)', fontSize: 14, fontWeight: 700 }}>§</span>
             <span
@@ -407,7 +458,7 @@ export default function TerminalDigest({
             </button>
           </div>
           <div style={{ display: 'flex', gap: 18, fontSize: 11, color: 'var(--term-muted)' }}>
-            <span><span style={{ color: 'var(--term-mid)' }}>scope</span> workspace</span>
+            <span><span style={{ color: 'var(--term-mid)' }}>scope</span> thread</span>
             <span>
               <span style={{ color: 'var(--term-mid)' }}>sources</span> {liveSources.length} chat
               {liveSources.length === 1 ? '' : 's'}
@@ -764,279 +815,6 @@ export default function TerminalDigest({
           })}
         </div>
       </aside>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Index view — card grid, one row per thread.
-// ---------------------------------------------------------------------------
-
-const STATUS_META: Record<
-  ThreadStatus,
-  { label: string; glyph: string; color: string; tagColor: string }
-> = {
-  generating: { label: 'GENERATING', glyph: '⟳', color: 'var(--term-select)', tagColor: 'var(--term-select)' },
-  fresh: { label: 'FRESH', glyph: '●', color: 'var(--term-digest)', tagColor: 'var(--term-digest)' },
-  stale: { label: 'STALE', glyph: '◐', color: 'var(--term-select)', tagColor: 'var(--term-select)' },
-  none: { label: 'NO DIGEST', glyph: '○', color: 'var(--term-mid)', tagColor: 'var(--term-mid)' },
-  empty: { label: 'EMPTY', glyph: '─', color: 'var(--term-faint)', tagColor: 'var(--term-faint)' },
-};
-
-/** Status indicator drawn with CSS shapes so all variants share an exact
- *  optical center with the adjacent uppercase label (text glyphs like ●/◐/○
- *  sit at x-height and drift below the cap-line). */
-function StatusGlyph({ status, color }: { status: ThreadStatus; color: string }) {
-  const base: React.CSSProperties = {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    flexShrink: 0,
-    color,
-  };
-  if (status === 'fresh') {
-    return <span style={{ ...base, background: color }} />;
-  }
-  if (status === 'none') {
-    return <span style={{ ...base, border: `1px solid ${color}` }} />;
-  }
-  if (status === 'stale') {
-    return (
-      <span
-        style={{
-          ...base,
-          border: `1px solid ${color}`,
-          background: `linear-gradient(90deg, ${color} 50%, transparent 50%)`,
-        }}
-      />
-    );
-  }
-  if (status === 'empty') {
-    return <span style={{ width: 8, height: 1, background: color, flexShrink: 0 }} />;
-  }
-  // generating — bordered ring with a transparent quadrant, spinning + pulsing
-  return (
-    <span
-      style={{
-        ...base,
-        border: `1.5px solid ${color}`,
-        borderTopColor: 'transparent',
-        animation: 'tspin 1.1s linear infinite, tpulse-glyph 1.1s ease-in-out infinite',
-      }}
-    />
-  );
-}
-
-function DigestIndex({
-  rows,
-  onOpen,
-  onCreate,
-}: {
-  rows: ThreadRow[];
-  onOpen: (row: ThreadRow) => void;
-  onCreate: (row: ThreadRow) => void;
-}) {
-  const counts = useMemo(() => {
-    const c = { total: rows.length, generating: 0, fresh: 0, stale: 0, none: 0, empty: 0 };
-    for (const r of rows) c[r.status]++;
-    return c;
-  }, [rows]);
-
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--term-page-bg, var(--term-bg))' }}>
-      {/* toolbar */}
-      <div
-        style={{
-          height: 36,
-          borderBottom: '1px solid var(--term-line)',
-          background: 'var(--term-surface)',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 14px',
-          gap: 14,
-          fontSize: 11,
-          flexShrink: 0,
-          WebkitAppRegion: 'drag',
-        } as React.CSSProperties}
-      >
-        <span style={{ color: 'var(--term-fg)', fontWeight: 600 }}>
-          {counts.total} thread{counts.total === 1 ? '' : 's'}
-        </span>
-        {counts.generating > 0 && (
-          <>
-            <span style={{ color: 'var(--term-muted)' }}>·</span>
-            <span style={{ color: 'var(--term-select)' }}>{counts.generating} generating</span>
-          </>
-        )}
-        {counts.fresh > 0 && (
-          <>
-            <span style={{ color: 'var(--term-muted)' }}>·</span>
-            <span style={{ color: 'var(--term-digest)' }}>{counts.fresh} fresh</span>
-          </>
-        )}
-        {counts.stale > 0 && (
-          <>
-            <span style={{ color: 'var(--term-muted)' }}>·</span>
-            <span style={{ color: 'var(--term-select)' }}>{counts.stale} stale</span>
-          </>
-        )}
-        {counts.none > 0 && (
-          <>
-            <span style={{ color: 'var(--term-muted)' }}>·</span>
-            <span style={{ color: 'var(--term-mid)' }}>{counts.none} no digest</span>
-          </>
-        )}
-      </div>
-
-      {rows.length === 0 ? (
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--term-muted)',
-            fontSize: 13,
-          }}
-        >
-          — no threads in this workspace —
-        </div>
-      ) : (
-        <div
-          className="term-scrollbar"
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: 18,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: 14,
-            alignContent: 'start',
-          }}
-        >
-          {rows.map((row) => (
-            <DigestIndexCard
-              key={row.tree.id}
-              row={row}
-              onOpen={() => onOpen(row)}
-              onCreate={() => onCreate(row)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DigestIndexCard({
-  row,
-  onOpen,
-  onCreate,
-}: {
-  row: ThreadRow;
-  onOpen: () => void;
-  onCreate: () => void;
-}) {
-  const meta = STATUS_META[row.status];
-  const title = row.tree.name || row.rootNode.title || chatLabel(row.rootNode) || row.rootNode.nodeId;
-  const ts = row.digestNode?.digest?.generatedAt;
-  const interactive =
-    row.status === 'fresh' ||
-    row.status === 'stale' ||
-    row.status === 'none' ||
-    row.status === 'generating';
-
-  const onClick = () => {
-    if (row.status === 'fresh' || row.status === 'stale' || row.status === 'generating') onOpen();
-    else if (row.status === 'none') onCreate();
-  };
-
-  return (
-    <div
-      onClick={interactive ? onClick : undefined}
-      style={{
-        position: 'relative',
-        border: '1px solid var(--term-line)',
-        background: 'var(--term-surface)',
-        padding: '12px 14px 14px',
-        cursor: interactive ? 'pointer' : 'default',
-        opacity: row.status === 'empty' ? 0.55 : 1,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        minHeight: 130,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, lineHeight: 1 }}>
-        <StatusGlyph status={row.status} color={meta.color} />
-        <span style={{ color: meta.color, fontWeight: 700, letterSpacing: '.12em', lineHeight: 1 }}>{meta.label}</span>
-        {row.status === 'stale' && row.staleCount > 0 && (
-          <span style={{ color: 'var(--term-muted)' }}>· {row.staleCount} src changed</span>
-        )}
-        <div style={{ flex: 1 }} />
-        <span style={{ color: 'var(--term-muted)' }}>
-          {row.status === 'generating' ? 'streaming…' : ts ? formatRelative(ts) : '—'}
-        </span>
-      </div>
-
-      <div
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 13.5,
-          fontWeight: 600,
-          color: 'var(--term-fg)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-        title={title}
-      >
-        {title}
-      </div>
-
-      <div
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 11.5,
-          color: 'var(--term-muted)',
-          lineHeight: 1.55,
-          flex: 1,
-          overflow: 'hidden',
-          display: '-webkit-box',
-          WebkitLineClamp: 3,
-          WebkitBoxOrient: 'vertical',
-        }}
-      >
-        {row.preview || (row.status === 'empty' ? 'no content yet' : '—')}
-      </div>
-
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          fontSize: 10,
-          color: 'var(--term-muted)',
-          paddingTop: 6,
-          borderTop: '1px dashed var(--term-line)',
-        }}
-      >
-        <span>{row.msgCount} msg</span>
-        {row.digestNode && (
-          <>
-            <span>·</span>
-            <span>{row.digestNode.digest!.sources.length} sources</span>
-          </>
-        )}
-        <div style={{ flex: 1 }} />
-        {row.status === 'fresh' || row.status === 'stale' ? (
-          <span style={{ color: 'var(--term-accent)' }}>open ▸</span>
-        ) : row.status === 'generating' ? (
-          <span style={{ color: 'var(--term-select)' }}>watching ▸</span>
-        ) : row.status === 'none' ? (
-          <span style={{ color: 'var(--term-accent)' }}>+ create digest</span>
-        ) : null}
-      </div>
     </div>
   );
 }

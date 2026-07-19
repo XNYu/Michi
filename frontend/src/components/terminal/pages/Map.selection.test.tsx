@@ -149,7 +149,7 @@ describe('Map selection actions', () => {
     }
   });
 
-  it('disables Merge and Digest for a cross-thread selection', () => {
+  it('ignores selected nodes from other threads', () => {
     storeState.project = {
       ...sameTreeProject(),
       edges: [],
@@ -159,12 +159,19 @@ describe('Map selection actions', () => {
       ],
     };
 
+    const digestSpy = vi.fn();
+    window.addEventListener('michi:digest-prompt', digestSpy as EventListener);
     render(<TerminalMap />);
 
     expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Digest' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByRole('button', { name: 'Merge' }).getAttribute('title')).toMatch(/single thread/i);
-    expect(screen.getByRole('button', { name: 'Digest' }).getAttribute('title')).toMatch(/single thread/i);
+    expect((screen.getByRole('button', { name: 'Digest' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText('Node n2')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Digest' }));
+    expect((digestSpy.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      projectId: 'p1',
+      sourceIds: ['n1'],
+    });
+    window.removeEventListener('michi:digest-prompt', digestSpy as EventListener);
   });
 
   it('disables Merge and Digest while any selected node is streaming', () => {

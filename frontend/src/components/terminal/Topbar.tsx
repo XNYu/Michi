@@ -17,6 +17,7 @@ import PaneCaption from './PaneCaption';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
 import { confirmDialog } from '../ui/ConfirmDialog';
+import { findTreeIdForNode } from '../../state/tree';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
@@ -251,11 +252,16 @@ export default function TerminalTopbar({
   // The Digest toggle carries the unread dot that used to live on the
   // sidebar's Digest row.
   const hasUnreadDigest = useStructuralSelector((nodesMap) => {
-    if (!activeProject) return false;
+    if (!activeProject?.activeTreeId) return false;
     return activeProject.chatIds.some((id) => {
       const n = nodesMap[id];
       if (!n || n.kind !== 'digest' || n.deletedAt || !n.digest) return false;
-      return n.digest.generatedAt > 0 && n.digest.generatedAt > n.digest.viewedAt;
+      const belongsToActiveThread = n.digest.sources.some(
+        (sourceId) => findTreeIdForNode(sourceId, activeProject) === activeProject.activeTreeId,
+      );
+      return belongsToActiveThread
+        && n.digest.generatedAt > 0
+        && n.digest.generatedAt > n.digest.viewedAt;
     });
   });
 
@@ -630,8 +636,11 @@ export default function TerminalTopbar({
           positioned so it doesn't shrink zone-2 — that would make the caption
           grid narrower than the Dashboard grid below and dividers would no
           longer line up. Solid bg masks any caption text that scrolls under
-          it in overflow mode. */}
+          it in overflow mode. Under vibrancy the CSS override makes this
+          transparent so it doesn't composite a solid rectangle over the
+          translucent topbar (same fix as the zone-1 spacer). */}
       <div
+        className="terminal-topbar-right"
         style={{
           position: 'absolute',
           right: 0,
@@ -767,13 +776,13 @@ function Zone1IconButton({
           height: ZONE1_BUTTON_W,
           padding: '0 6px',
           background: active
-            ? 'var(--term-select-f)'
+            ? 'color-mix(in srgb, var(--term-fg) 8%, transparent)'
             : showHover
-            ? 'var(--term-hover-bg, var(--term-alt))'
+            ? 'color-mix(in srgb, var(--term-fg) 5%, transparent)'
             : 'transparent',
           border: 'none',
           borderRadius: 4,
-          color: active ? 'var(--term-select)' : showHover ? 'var(--term-mid)' : 'var(--term-faint)',
+          color: active ? 'var(--term-fg)' : showHover ? 'var(--term-mid)' : 'var(--term-faint)',
           cursor: disabled ? 'default' : 'pointer',
           opacity: disabled ? 0.3 : 1,
           transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease), opacity var(--t-quick) var(--t-ease)',
@@ -903,13 +912,13 @@ function TopbarIconToggle({
         height: ZONE1_BUTTON_W,
         padding: '0 6px',
         background: active
-          ? 'var(--term-select-f)'
+          ? 'color-mix(in srgb, var(--term-fg) 8%, transparent)'
           : hover
-          ? 'var(--term-hover-bg, var(--term-alt))'
+          ? 'color-mix(in srgb, var(--term-fg) 5%, transparent)'
           : 'transparent',
         border: 'none',
         borderRadius: 4,
-        color: active ? 'var(--term-select)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
+        color: active ? 'var(--term-fg)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
         cursor: 'pointer',
         transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
         flexShrink: 0,
