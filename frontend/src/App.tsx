@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import TerminalShell from './components/terminal/TerminalShell';
-const MobileShell = React.lazy(() => import('./components/mobile/MobileShell'));
-import { useMediaQuery, MOBILE_QUERY } from './components/mobile/hooks/useMediaQuery';
 import ApiKeyGate from './components/ApiKeyGate';
 import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
 import { LandingPage } from './components/LandingPage';
@@ -206,13 +204,7 @@ function AppToaster() {
 }
 
 function ShellSwitcher() {
-  const isMobile = useMediaQuery(MOBILE_QUERY);
-  if (!isMobile) return <TerminalShell />;
-  return (
-    <React.Suspense fallback={null}>
-      <MobileShell />
-    </React.Suspense>
-  );
+  return <TerminalShell />;
 }
 
 function StartupInteractiveMark({ surface }: { surface: string }) {

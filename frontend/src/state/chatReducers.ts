@@ -9,7 +9,7 @@ import {
   projectAssistantStreamEvent,
   nextToolBlockPlacement,
 } from './assistantBlocks';
-import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS } from '@amzn/michi-shared';
+import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS } from 'michi-shared';
 
 export const NODE_ACTIVITY_ACTIONS = new Set<ChatAction['type']>([
   'user-send',

@@ -4,7 +4,7 @@ import type { MentionRecord } from '../components/mentions';
 import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
-import type { BranchOverviewEntry } from '@amzn/michi-shared';
+import type { BranchOverviewEntry } from 'michi-shared';
 
 export type { AgentStatus } from '../services/api';
 
