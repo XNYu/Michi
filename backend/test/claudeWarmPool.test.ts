@@ -76,7 +76,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             spawned.push({ cwd, model });
             return fakeSession(`${cwd}/${model}`);
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
         await pool.registerWorkspace('/tmp/a');
         assert.deepEqual(spawned, [{ cwd: '/tmp/a', model: 'sonnet' }]);
         assert.equal(pool.size(), 1);
@@ -88,7 +88,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             spawnCount++;
             return fakeSession(`${cwd}/${model}`);
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
         await pool.registerWorkspace('/tmp/a');
         await pool.registerWorkspace('/tmp/a');
         assert.equal(spawnCount, 1);
@@ -106,7 +106,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
                 warmInit: async () => {},
             } as unknown as ClaudeSession;
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
 
         const warm = pool.registerWorkspace('/tmp/a');
         await new Promise((r) => setImmediate(r));
@@ -126,7 +126,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             dispose: async () => { disposed.push(`${cwd}/${model}`); },
             warmInit: async () => {},
         } as unknown as ClaudeSession);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
 
         await pool.registerWorkspace('/tmp/a');
         await new Promise((r) => setTimeout(r, 5));
@@ -146,7 +146,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             spawnCount++;
             return fakeSession(`${cwd}/${model}/${spawnCount}`);
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
         await pool.registerWorkspace('/tmp/a');
         assert.equal(spawnCount, 1);
 
@@ -167,7 +167,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             spawnCount++;
             return fakeSession(`${cwd}/${model}`);
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
         await pool.registerWorkspace('/tmp/a');
         assert.equal(pool.take('/tmp/b', 'sonnet'), null);
         await new Promise((r) => setImmediate(r));
@@ -185,7 +185,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             }
             return fakeSession(`${cwd}/${model}/${spawnCount}`);
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
 
         const warm = pool.registerWorkspace('/tmp/a');
         await new Promise((r) => setImmediate(r));
@@ -206,7 +206,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             await new Promise<void>((resolve) => { releaseSpawn = resolve; });
             throw new Error('warm failed');
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
 
         const warm = pool.registerWorkspace('/tmp/a');
         await new Promise((r) => setImmediate(r));
@@ -223,7 +223,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
         const spawner: Spawner = async () => {
             throw new Error('boom');
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet' });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1 });
         await pool.registerWorkspace('/tmp/a');
         // No entry was registered
         assert.equal(pool.size(), 0);
@@ -232,7 +232,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
 
     test('Model change Case 1: switch back to in-grace model cancels grace, old becomes grace', async () => {
         const spawner: Spawner = async (cwd, model) => fakeSession(`${cwd}/${model}`);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', modelGraceMs: 60_000 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, modelGraceMs: 60_000 });
         await pool.registerWorkspace('/tmp/a');
         await pool.notifyModelChange('opus');     // opus warmed; sonnet → grace
         assert.equal(pool.size(), 2, 'after switching to opus, both models warm for /tmp/a');
@@ -247,7 +247,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
 
     test('Model change Case 2: brand new model warms for all cwds in workspaceSet', async () => {
         const spawner: Spawner = async (cwd, model) => fakeSession(`${cwd}/${model}`);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', modelGraceMs: 60_000 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, modelGraceMs: 60_000 });
         await pool.registerWorkspace('/tmp/a');
         await pool.registerWorkspace('/tmp/b');
         assert.equal(pool.size(), 2);
@@ -259,7 +259,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
 
     test('Model change Case 3: third model evicts the in-grace model', async () => {
         const spawner: Spawner = async (cwd, model) => fakeSession(`${cwd}/${model}`);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', modelGraceMs: 60_000 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, modelGraceMs: 60_000 });
         await pool.registerWorkspace('/tmp/a');
         await pool.notifyModelChange('opus');    // sonnet → grace, opus current
         assert.equal(pool.size(), 2);
@@ -278,7 +278,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             dispose: async () => { disposed.push(`${cwd}/${model}`); },
             warmInit: async () => {},
         } as unknown as ClaudeSession);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', modelGraceMs: 30 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, modelGraceMs: 30 });
         await pool.registerWorkspace('/tmp/a');
         await pool.notifyModelChange('opus');
         assert.equal(pool.size(), 2);
@@ -299,7 +299,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             dispose: async () => { disposed.push(`${cwd}/${model}`); },
             warmInit: async () => {},
         } as unknown as ClaudeSession);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', workspaceCapacity: 3 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, workspaceCapacity: 3 });
         await pool.registerWorkspace('/tmp/a');
         await pool.registerWorkspace('/tmp/b');
         await pool.registerWorkspace('/tmp/c');
@@ -317,7 +317,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
 
     test('MRU promote does NOT evict (re-registering an existing cwd)', async () => {
         const spawner: Spawner = async (cwd, model) => fakeSession(`${cwd}/${model}`);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', workspaceCapacity: 3 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, workspaceCapacity: 3 });
         await pool.registerWorkspace('/tmp/a');
         await pool.registerWorkspace('/tmp/b');
         await pool.registerWorkspace('/tmp/c');
@@ -337,12 +337,59 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             spawnCount++;
             return fakeSession(`${cwd}/${model}`);
         };
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', modelGraceMs: 60_000 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, modelGraceMs: 60_000 });
         await pool.registerWorkspace('/tmp/a');
         assert.equal(spawnCount, 1);
         await pool.notifyModelChange('sonnet');
         assert.equal(spawnCount, 1, 'no spawn for same-model change');
         assert.equal(pool.size(), 1);
+        await pool.shutdown();
+    });
+
+    test('sessionsPerSlot: registerWorkspace fills the slot to depth', async () => {
+        let spawnCount = 0;
+        const spawner: Spawner = async (cwd, model) => {
+            spawnCount++;
+            return fakeSession(`${cwd}/${model}/${spawnCount}`);
+        };
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 2 });
+        await pool.registerWorkspace('/tmp/a');
+        assert.equal(pool.size(), 2, 'slot warmed to sessionsPerSlot depth');
+        assert.equal(spawnCount, 2);
+
+        // Take one → immediate second hit without waiting for replenish
+        assert.ok(pool.take('/tmp/a', 'sonnet'), 'first take hits');
+        assert.ok(pool.take('/tmp/a', 'sonnet'), 'second take hits from remaining depth');
+
+        // Background replenish refills toward depth
+        for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+        assert.ok(pool.size() >= 1, 'replenish restores depth after takes');
+        await pool.shutdown();
+    });
+
+    test('sessionsPerSlot: dead entries are skipped and a live one is handed out', async () => {
+        let spawnCount = 0;
+        const alive = new Map<string, boolean>();
+        const spawner: Spawner = async (cwd, model) => {
+            spawnCount++;
+            const id = `${cwd}/${model}/${spawnCount}`;
+            alive.set(id, true);
+            return {
+                id,
+                isAlive: () => alive.get(id) ?? false,
+                dispose: async () => {},
+                warmInit: async () => {},
+            } as unknown as ClaudeSession;
+        };
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 2 });
+        await pool.registerWorkspace('/tmp/a');
+        assert.equal(pool.size(), 2);
+
+        // Kill the newest entry; take() must skip it and return the older live one
+        alive.set('/tmp/a/sonnet/2', false);
+        const got = pool.take('/tmp/a', 'sonnet');
+        assert.ok(got, 'take should skip the dead entry and hit the live one');
+        assert.equal(got!.id, '/tmp/a/sonnet/1');
         await pool.shutdown();
     });
 
@@ -354,7 +401,7 @@ describe('ClaudeWarmPool — registerWorkspace + replenish', () => {
             dispose: async () => { disposed.push(`${cwd}/${model}`); },
             warmInit: async () => {},
         } as unknown as ClaudeSession);
-        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', idleTtlMs: 30 });
+        const pool = new ClaudeWarmPool({ spawner, currentModel: 'sonnet', sessionsPerSlot: 1, idleTtlMs: 30 });
         await pool.registerWorkspace('/tmp/a');
         assert.equal(pool.size(), 1);
 

@@ -11,7 +11,7 @@ import {
   type UserInputAnswer,
   type UserInputQuestion,
   type UserInputRequestPayload,
-} from 'michi-shared';
+} from '@amzn/michi-shared';
 
 export { CHAT_STREAM_EVENTS, parseChatStreamEvent };
 export type {

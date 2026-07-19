@@ -66,7 +66,7 @@ export class ClaudeRuntime implements AgentRuntime {
     mcpPort: number,
   ) {
     const concurrencyCap = parseInt(process.env.MICHI_CLAUDE_MAX_CONCURRENT ?? '15', 10);
-    const sessionsPerSlot = parseInt(process.env.MICHI_CLAUDE_POOL_SESSIONS_PER_CWD ?? '3', 10);
+    const sessionsPerSlot = parseInt(process.env.MICHI_CLAUDE_POOL_SESSIONS_PER_CWD ?? '2', 10);
     const waitForWarmFlag = (process.env.MICHI_CLAUDE_WAIT_FOR_WARM ?? '').trim().toLowerCase();
     const waitForWarm = !['0', 'false', 'off', 'no'].includes(waitForWarmFlag);
     // Pre-flight auth check at construction — fail fast if credentials are absent

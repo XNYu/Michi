@@ -305,10 +305,11 @@ export class ClaudeSessionManager {
   }
 
   private async reclaimForWarm(): Promise<void> {
-    while (this.totalCount() >= this.deps.concurrencyCap) {
-      if (await this.pool.evictOldest('capacity_evicted_for_warm')) continue;
-      break;
-    }
+    // Warm spawns never evict other warm entries: with multi-session slots,
+    // a landed entry immediately triggers a refill, so evict-for-warm churns
+    // the pool forever when the cap is at or below the warm target. At cap,
+    // reserveSlot throws and spawnWarmSlot swallows it; take() misses and
+    // the caller cold-spawns.
   }
 
   private totalCount(): number {

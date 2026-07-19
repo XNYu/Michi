@@ -12,10 +12,10 @@
  *   - model_set:    current global model + at most one in-grace old model
  *
  * Pool entries are the Cartesian product. Each (cwd, model) slot holds up
- * to `sessionsPerSlot` pre-warmed sessions (default 3) so fan-out /
+ * to `sessionsPerSlot` pre-warmed sessions (default 2) so fan-out /
  * follow-up branch bursts don't cold-spawn. Steady state:
- * 3 cwds × 1 model × 3 sessions = 9. Peak (during a model grace period):
- * 3 × 2 × 3 = 18.
+ * 3 cwds × 1 model × 2 sessions = 6. Peak (during a model grace period):
+ * 3 × 2 × 2 = 12.
  *
  * Design doc: docs/superpowers/specs/2026-05-23-claude-warm-pool-design.md
  */
@@ -45,7 +45,7 @@ export interface WarmPoolOptions {
     currentModel: string;
     /** Max distinct cwds tracked. Default 3. */
     workspaceCapacity?: number;
-    /** Number of pre-warmed sessions per (cwd, model) slot. Default 3. */
+    /** Number of pre-warmed sessions per (cwd, model) slot. Default 2. */
     sessionsPerSlot?: number;
     /** How long an old model lingers after a switch before its entries are
      *  killed. Default 1h. */
@@ -82,7 +82,7 @@ export class ClaudeWarmPool {
         this.spawner = opts.spawner;
         this.currentModel = opts.currentModel;
         this.workspaceCapacity = opts.workspaceCapacity ?? 3;
-        this.sessionsPerSlot = opts.sessionsPerSlot ?? 3;
+        this.sessionsPerSlot = opts.sessionsPerSlot ?? 2;
         this.modelGraceMs = opts.modelGraceMs ?? 3_600_000;
         this.idleTtlMs = opts.idleTtlMs ?? 3_600_000;
         this.disabled = opts.disabled ?? false;
@@ -309,10 +309,9 @@ export class ClaudeWarmPool {
             void (entry.session as unknown as { dispose?: () => Promise<void> }).dispose?.();
         } catch { /* best-effort */ }
         perf.mark('warmpool:ttl_expired', { cwd: entry.cwd, model: entry.model });
-        // Replenish the slot
-        if (this.workspaceSet.includes(entry.cwd) && this.modelSet.has(entry.model)) {
-            void this.warmSlot(entry.cwd, entry.model);
-        }
+        // No replenish here: TTL expiry means the workspace has been idle for
+        // the full TTL, so let the slot drain. take()-hit replenish restores
+        // depth as soon as the workspace becomes active again.
     }
 
     /**
