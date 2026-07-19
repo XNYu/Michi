@@ -64,9 +64,23 @@ jobs:
         run: |
           npx electron-builder --mac --arm64 --config electron-builder.ci.json --publish never
 
-      - name: Staple notarization ticket to DMG
+      - name: Notarize & staple DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           DMG=$(ls -t dist-electron/*.dmg | head -1)
+
+          # electron-builder notarizes the .app inside the DMG, but not the DMG
+          # container itself — so the DMG has no ticket to staple. Submit the DMG
+          # for its own notarization first, then staple that ticket to it.
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
           echo "DMG_PATH=$DMG" >> $GITHUB_ENV
