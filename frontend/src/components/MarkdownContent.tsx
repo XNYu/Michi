@@ -476,6 +476,9 @@ function MarkdownContentInner({
               </code>
             );
           },
+          del({ children }: any) {
+            return <>{`~~`}{children}{`~~`}</>;
+          },
         }}
       />
     </div>
