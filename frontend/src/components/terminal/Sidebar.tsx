@@ -10,7 +10,7 @@ import {
   WorkspacesIcon,
   SettingsIcon,
   UserIcon,
-  ArtifactsIcon,
+
 } from './icons';
 import type { PageId } from '../../state/commands';
 
@@ -303,14 +303,6 @@ function BottomNav({
         flexShrink: 0,
       }}
     >
-      {/* Branches / Map / Digest are thread-scoped views — their entries live
-          in the Topbar right cluster now, next to Artifacts. */}
-      <Item
-        glyph={<ArtifactsIcon size={15} />}
-        label="Artifacts"
-        kbd="⇧⌘A"
-        onClick={() => window.dispatchEvent(new CustomEvent('michi:toggle-artifacts'))}
-      />
       <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
       <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
       <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />

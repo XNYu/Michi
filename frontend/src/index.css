@@ -768,6 +768,13 @@ html[data-vibrancy="on"],
 [data-vibrancy="on"] .terminal-topbar > div[aria-hidden] {
   background: transparent !important;
 }
+/* Same double-tint problem on the RIGHT side: the right-cluster (thread view
+   toggles + Artifacts trigger) paints its own solid background to mask caption
+   text. Under vibrancy that solid block is visible against the translucent
+   topbar. Transparent lets the topbar's single tint layer show uniformly. */
+[data-vibrancy="on"] .terminal-topbar-right {
+  background: transparent !important;
+}
 [data-vibrancy="on"] .terminal-sidebar {
   background: var(--term-vibrancy-tint) !important;
   -webkit-backdrop-filter: none !important;
@@ -2025,7 +2032,7 @@ html[data-vibrancy="on"],
 :root {
   --ui-popover-bg: var(--term-surface);
   --ui-popover-border: 1px solid var(--term-line);
-  --ui-popover-radius: 4px;
+  --ui-popover-radius: 0;
   --ui-popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 
   --ui-tooltip-bg: var(--term-surface);
@@ -2683,7 +2690,7 @@ html[data-vibrancy="on"],
   flex-direction: column;
   max-height: min(70vh, 640px);
   border: 1px solid var(--term-line-s);
-  border-radius: var(--ui-popover-radius, 4px);
+  border-radius: 0;
   font-family: var(--ui-font);
   animation: scaleIn 180ms cubic-bezier(.2, .8, .2, 1) both;
   -webkit-app-region: no-drag;
@@ -2716,7 +2723,7 @@ html[data-vibrancy="on"],
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
   color: var(--term-mid);
   cursor: pointer;
