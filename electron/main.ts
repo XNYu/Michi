@@ -295,6 +295,36 @@ function probeKiroCli(): boolean {
   return false;
 }
 
+/**
+ * Load a .env file into an object (does NOT pollute process.env).
+ * Supports KEY=VALUE, KEY="VALUE", KEY='VALUE', comments (#), blank lines.
+ * Returns an empty object if the file doesn't exist or is unreadable.
+ */
+function loadDotenv(filePath: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return result;
+  }
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+    // Strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
 function resolveBackendEntry(): string | null {
   // In dev mode backend runs via nodemon externally; don't fork.
   if (isDev) return null;
@@ -312,6 +342,17 @@ async function startBackend(): Promise<number | null> {
   }
   const port = await chooseBackendPort();
 
+  // Load ~/.michi/.env so users can persist runtime API keys in one place
+  // that works regardless of launch method (terminal, Dock, Spotlight).
+  // Values from this file do NOT override existing process.env entries —
+  // explicit env vars and launchctl setenv still take precedence.
+  const michiEnvPath = path.join(os.homedir(), '.michi', '.env');
+  const userDotenv = loadDotenv(michiEnvPath);
+  const userDotenvKeys = Object.keys(userDotenv);
+  if (userDotenvKeys.length > 0) {
+    elog('INFO', 'boot', 'loaded ~/.michi/.env', { keys: userDotenvKeys.length });
+  }
+
   // Packaged builds fall back to Pi only when kiro-cli is not installed, so
   // the dmg works for users without kiro-cli while developers with kiro-cli on
   // disk still get the kiro default. Dev keeps the agentConfig default (Kiro)
@@ -320,6 +361,7 @@ async function startBackend(): Promise<number | null> {
   // config still wins — only first-run packaged builds with no config see
   // this default.
   const env: NodeJS.ProcessEnv = {
+    ...userDotenv,
     ...process.env,
     PORT: String(port),
     MICHI_LOG_DIR: LOG_DIR,
