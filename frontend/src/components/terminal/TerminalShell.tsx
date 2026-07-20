@@ -111,12 +111,6 @@ export default function TerminalShell() {
     }, [activeProject, openPanes]),
   );
 
-  const anyPaneStreaming = useStructuralSelector(
-    React.useCallback((nodesMap: Record<string, ChatNodeState>) =>
-      openPanes.some((id) => nodesMap[id]?.status === 'streaming'),
-    [openPanes]),
-  );
-
   useEffect(() => {
     const onResize = () => setWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
@@ -457,7 +451,6 @@ export default function TerminalShell() {
   return (
     <div
       className="terminal-shell"
-      data-streaming-active={anyPaneStreaming || undefined}
       style={{
         ...cssVars,
         width: '100%',

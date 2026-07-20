@@ -304,10 +304,6 @@ export default function TerminalTopbar({
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
   // The right cluster sits over the rightmost pane in the grid — mirror its
   // focus dim so the Context button area matches that pane's color.
-  const rightmostPaneId = openPanes[openPanes.length - 1];
-  const rightmostUnfocused =
-    !!rightmostPaneId && focusedPane != null && focusedPane !== rightmostPaneId;
-
   // On dashboard, zone 2 hosts per-pane caption cells aligned to Dashboard's
   // column template. Mirrors Dashboard.tsx logic so the cell strip resizes in
   // lockstep with the pane grid below.
@@ -442,10 +438,15 @@ export default function TerminalTopbar({
       <div
         style={{
           flex: 1,
-          background: topbarBg,
+          // No background here — cells carry their own bg (with focus dim).
+          // A bg here would bleed through wherever cell bg is transparent
+          // (e.g. under the right-cluster icons area).
           display: 'flex',
           alignItems: 'stretch',
           minWidth: 0,
+          // Clip scrolling cell content so it never extends under the
+          // absolutely-positioned right cluster (icons). Without this,
+          overflow: 'visible',
           paddingLeft: sidebarCollapsed ? COLLAPSED_LEFT_PAD : 0,
           transition: 'padding-left 200ms cubic-bezier(.4,0,.2,1)',
         }}
@@ -471,9 +472,12 @@ export default function TerminalTopbar({
               // strip has the same scrollWidth as the pane strip — required
               // for the scroll-sync to stay aligned at the right edge.
               paddingRight: overflowPanes ? 'calc(50vw - 240px)' : 0,
-              // Strip itself stays draggable — only the inline chip overrides
-              // to no-drag. Empty cell space is window-drag region.
-            }}
+              // No mask on cells strip — masking also fades cell backgrounds,
+              // revealing Zone 2's undimmed bg (the white-bleed bug). Cells
+              // extend fully under the right cluster; their bg + dim is correct.
+              // Text overflow is handled by PaneCaption's own ellipsis + the
+              // paddingRight below which pushes grid content left of icons.
+            } as React.CSSProperties}
             className={overflowPanes ? 'hide-sb' : undefined}
           >
             {openPanes.map((id, i) => {
@@ -494,11 +498,13 @@ export default function TerminalTopbar({
                   style={{
                     display: 'flex',
                     alignItems: 'center',
+                    overflow: 'hidden',
                     minWidth: 0,
                     // 12px baseline so the chip never hugs the cell's left
                     // edge; first cell when sidebar is collapsed adds the
                     // traffic-light + zone-1 icon clearance on top.
                     paddingLeft: firstCellLeftPad + 12,
+                    paddingRight: 0,
                     // First cell's left pad shrinks/grows opposite the sidebar
                     // spacer (zone1Width → 0 as spacer goes 0 → sidebar_width).
                     // Without a matching transition, padding flips instantly
@@ -521,7 +527,11 @@ export default function TerminalTopbar({
                     // Match TPane's dimming formula so the caption cell mirrors
                     // its pane below — unfocused panes get a dim title strip.
                     background: 'var(--term-pane-bg, var(--term-surface))',
-                    opacity: focusedPane == null || isCellFocused ? 1 : 1 - prefs.focusDim / 100 * 0.5,
+                    // Dim unfocused cells using brightness only — NOT opacity.
+                    // opacity < 1 makes the cell semi-transparent, revealing the
+                    // topbar container bg (white) behind it. brightness() darkens
+                    // without transparency, so the right-cluster icons area
+                    // (transparent) correctly shows the dimmed cell bg.
                     filter: focusedPane == null || isCellFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
                   }}
                 >
@@ -554,7 +564,9 @@ export default function TerminalTopbar({
               // positioned over zone 2's left edge. Mirror the dashboard's
               // firstCellLeftPad so MAP/DIGEST · name doesn't slide under it.
               paddingLeft: (sidebarCollapsed ? zone1Width : 0) + 14,
-              paddingRight: 14,
+              // Extra right padding clears the absolutely-positioned right
+              // cluster so the title/breadcrumb text doesn't run under icons.
+              paddingRight: 160,
               minWidth: 0,
               flex: 1,
               fontFamily: 'var(--ui-font)',
@@ -635,10 +647,9 @@ export default function TerminalTopbar({
           (Branches / Map / Digest) + Artifacts drawer trigger. Absolutely
           positioned so it doesn't shrink zone-2 — that would make the caption
           grid narrower than the Dashboard grid below and dividers would no
-          longer line up. Solid bg masks any caption text that scrolls under
-          it in overflow mode. Under vibrancy the CSS override makes this
-          transparent so it doesn't composite a solid rectangle over the
-          translucent topbar (same fix as the zone-1 spacer). */}
+          longer line up. Background is transparent so icons inherit the cell
+          color beneath them (including focus dim). Title text is clipped by
+          PaneCaption's own overflow:hidden + text-overflow:ellipsis. */}
       <div
         className="terminal-topbar-right"
         style={{
@@ -650,14 +661,11 @@ export default function TerminalTopbar({
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          padding: '0 14px',
-          background: topbarBg,
-          opacity: rightmostUnfocused ? 1 - prefs.focusDim / 100 * 0.5 : 1,
-          filter: rightmostUnfocused ? `brightness(${1 - prefs.focusDim / 100 * 0.6})` : 'none',
-          // Match the pane caption + TPane body dim/bright transition so the
-          // right-side floating strip (update chip / actions) fades in sync
-          // with the rest when the rightmost pane focuses/blurs.
-          transition: 'opacity var(--t-soft) var(--t-ease), filter var(--t-soft) var(--t-ease)',
+          padding: '0 14px 0 14px',
+          // Fully transparent — icons inherit whatever is beneath them
+          // (the pane cell background, which already handles focus dim).
+          // Title text is hidden by a mask on the cells strip instead.
+          background: 'transparent',
         } as React.CSSProperties}
       >
         {updateAvailable && !updateDismissed && (
