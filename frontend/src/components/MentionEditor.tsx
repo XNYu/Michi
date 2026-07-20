@@ -11,7 +11,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Mention from '@tiptap/extension-mention';
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion';
 import type { EditorState } from '@tiptap/pm/state';
-import type { ContextEntry, ChatNodeState } from '../state/chatStore';
+import type { ArtifactEntry, ChatNodeState } from '../state/chatStore';
 import type { AgentCommand, SessionMode } from '../services/api';
 import type { MentionRecord } from './mentions';
 import { buildAtMentionItems, type AtMentionItem } from './mentionItems';
@@ -47,7 +47,7 @@ export interface MentionEditorProps {
   'data-testid'?: string;
 
   /** @-mention suggestion data source (was AtMentionPopup's props). */
-  contexts: ContextEntry[];
+  artifacts: ArtifactEntry[];
   sameTreeNodes: ChatNodeState[];
   currentNodeId: string;
 
@@ -299,7 +299,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     onChange,
     disabled,
     className,
-    contexts,
+    artifacts,
     sameTreeNodes,
     currentNodeId,
     agentCommands,
@@ -318,13 +318,13 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   const editorRef = useRef<Editor | null>(null);
 
   // Refs the (mount-time) ProseMirror plugin callbacks read for fresh values.
-  const contextsRef = useRef(contexts);
+  const contextsRef = useRef(artifacts);
   const nodesRef = useRef(sameTreeNodes);
   const currentNodeIdRef = useRef(currentNodeId);
   const onSubmitRef = useRef(onSubmit);
   const onPasteRef = useRef(onPaste);
   const onSwitchAgentRef = useRef(onSwitchAgent);
-  contextsRef.current = contexts;
+  contextsRef.current = artifacts;
   nodesRef.current = sameTreeNodes;
   currentNodeIdRef.current = currentNodeId;
   onSubmitRef.current = onSubmit;

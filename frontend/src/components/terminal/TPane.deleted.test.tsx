@@ -27,7 +27,7 @@ const deletedNode: ChatNodeState = {
 const mockProject = {
   id: 'p1', name: 'P', cwd: '/tmp/p1', chatIds: ['n1'], edges: [],
   trees: [{ id: 'tr1', rootNodeId: 'n1', createdAt: 0, lastActiveAt: 0 }],
-  activeTreeId: 'tr1', contexts: [], createdAt: 0,
+  activeTreeId: 'tr1', artifacts: [], createdAt: 0,
 };
 
 vi.mock('../../state/chatStore', async () => {

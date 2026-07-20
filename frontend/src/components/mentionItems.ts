@@ -1,4 +1,4 @@
-import type { ContextEntry, ChatNodeState } from '../state/chatStore';
+import type { ArtifactEntry, ChatNodeState } from '../state/chatStore';
 
 export interface AtMentionItem {
   /** Unique key for dedup / rendering. */
@@ -14,19 +14,19 @@ export interface AtMentionItem {
 }
 
 /**
- * Build the list of mentionable items from contexts + same-tree nodes.
+ * Build the list of mentionable items from artifacts + same-tree nodes.
  * Filters by query (case-insensitive substring match).
  */
 export function buildAtMentionItems(
   query: string,
-  contexts: ContextEntry[],
+  artifacts: ArtifactEntry[],
   sameTreeNodes: ChatNodeState[],
   currentNodeId: string,
 ): AtMentionItem[] {
   const q = query.toLowerCase();
   const items: AtMentionItem[] = [];
 
-  for (const ctx of contexts) {
+  for (const ctx of artifacts) {
     const label = ctx.name;
     if (q && !label.toLowerCase().includes(q)) continue;
     items.push({

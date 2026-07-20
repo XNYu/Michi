@@ -13,7 +13,7 @@ function mkProject(): Project {
     createdAt: 0,
     trees: [{ id: 't1', rootNodeId: 'r', createdAt: 0, lastActiveAt: 100 }],
     activeTreeId: 't1',
-    contexts: [],
+    artifacts: [],
   };
 }
 
@@ -96,7 +96,7 @@ describe('ChatTreeList', () => {
         { id: 't2', rootNodeId: 'r2', createdAt: 1, lastActiveAt: 200, pinnedAt: 500 },
       ],
       activeTreeId: 't1',
-      contexts: [],
+      artifacts: [],
     };
     const nodes: Record<string, ChatNodeState> = {
       r1: { ...NODES.r, nodeId: 'r1', title: 'unpinned chat' } as any,

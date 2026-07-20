@@ -22,7 +22,7 @@ const project: Project = {
   edges: [],
   trees: [{ id: 'tree-1', rootNodeId: 'parent', createdAt: 1, lastActiveAt: 1 }],
   activeTreeId: 'tree-1',
-  contexts: [],
+  artifacts: [],
   createdAt: 1,
 };
 
@@ -52,16 +52,16 @@ function fullWorkspace(status: 'idle' | 'streaming' = 'idle') {
       id: 'assistant-durable', node_id: 'parent', role: 'assistant',
       content: 'durable answer', seq: 0, created_at: 3,
     }],
-    contexts: [{
+    artifacts: [{
       id: 'ctx-1', workspace_id: 'ws-1', name: 'recovered',
-      file_path: '.contexts/recovered.md', source: 'agent', type: 'doc',
+      file_path: '.artifacts/recovered.md', source: 'agent', type: 'doc',
       created_at: 2, updated_at: 3,
     }],
   };
 }
 
 describe('background durable-gap workspace reconciliation', () => {
-  it('atomically restores canonical messages, graph and contexts while keeping local compose state', () => {
+  it('atomically restores canonical messages, graph and artifacts while keeping local compose state', () => {
     const local = node({
       composerDraft: { value: 'do not lose this draft', mentions: [] },
       pendingQueued: [{
@@ -91,7 +91,7 @@ describe('background durable-gap workspace reconciliation', () => {
     expect(recoveredProject.edges).toEqual([
       expect.objectContaining({ source: 'parent', target: 'child', kind: 'branch' }),
     ]);
-    expect(recoveredProject.contexts).toEqual([
+    expect(recoveredProject.artifacts).toEqual([
       expect.objectContaining({ id: 'ctx-1', name: 'recovered', source: 'agent' }),
     ]);
     expect(result!.nodes.child).toEqual(expect.objectContaining({
@@ -130,8 +130,8 @@ describe('background durable-gap workspace reconciliation', () => {
   it('preserves unsynced local rename and newer context edits during reconciliation', () => {
     const localProject: Project = {
       ...project,
-      contexts: [{
-        id: 'ctx-1', name: 'recovered', filePath: '.contexts/local.md',
+      artifacts: [{
+        id: 'ctx-1', name: 'recovered', filePath: '.artifacts/local.md',
         source: 'user', createdAt: 2, updatedAt: 99,
       }],
     };
@@ -147,8 +147,8 @@ describe('background durable-gap workspace reconciliation', () => {
     expect(result!.nodes.parent).toEqual(expect.objectContaining({
       title: 'Local rename', titleNeedsPersistence: true,
     }));
-    expect(result!.projects[0]!.contexts?.[0]).toEqual(expect.objectContaining({
-      id: 'ctx-1', filePath: '.contexts/local.md', source: 'user', updatedAt: 99,
+    expect(result!.projects[0]!.artifacts?.[0]).toEqual(expect.objectContaining({
+      id: 'ctx-1', filePath: '.artifacts/local.md', source: 'user', updatedAt: 99,
     }));
   });
 });

@@ -408,7 +408,7 @@ describe('hydrate v1→v2 migration', () => {
 });
 
 describe('hydrateSavedState v2→v3 migration', () => {
-    it('adds contexts array to v2 projects', () => {
+    it('adds artifacts array to v2 projects', () => {
         const v2State = {
             version: 2,
             activeProjectId: 'p1',
@@ -423,12 +423,12 @@ describe('hydrateSavedState v2→v3 migration', () => {
             },
         };
         const result = hydrateSavedState(v2State);
-        expect(result.projects[0].contexts).toEqual([]);
+        expect(result.projects[0].artifacts).toEqual([]);
     });
 });
 
-describe('hydrateSavedState v4 contexts', () => {
-    it('preserves file-based contexts across reloads', () => {
+describe('hydrateSavedState v4 artifacts', () => {
+    it('preserves file-based artifacts across reloads', () => {
         const v4State = {
             version: 4,
             activeProjectId: 'p1',
@@ -437,7 +437,7 @@ describe('hydrateSavedState v4 contexts', () => {
                 createdAt: 1000,
                 trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1000, lastActiveAt: 1000 }],
                 activeTreeId: 't1',
-                contexts: [{
+                artifacts: [{
                     id: 'ctx1',
                     name: 'api-spec',
                     filePath: 'docs/api.md',
@@ -453,8 +453,8 @@ describe('hydrateSavedState v4 contexts', () => {
             },
         };
         const result = hydrateSavedState(v4State);
-        expect(result.projects[0].contexts).toHaveLength(1);
-        expect(result.projects[0].contexts![0]).toMatchObject({
+        expect(result.projects[0].artifacts).toHaveLength(1);
+        expect(result.projects[0].artifacts![0]).toMatchObject({
             id: 'ctx1',
             name: 'api-spec',
             filePath: 'docs/api.md',
@@ -464,7 +464,7 @@ describe('hydrateSavedState v4 contexts', () => {
         });
     });
 
-    it('drops old text-body contexts without file paths', () => {
+    it('drops old text-body artifacts without file paths', () => {
         const v3State = {
             version: 3,
             activeProjectId: 'p1',
@@ -473,14 +473,14 @@ describe('hydrateSavedState v4 contexts', () => {
                 createdAt: 1000,
                 trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1000, lastActiveAt: 1000 }],
                 activeTreeId: 't1',
-                contexts: [{ id: 'ctx1', name: 'legacy', body: 'old text', source: 'user' }],
+                artifacts: [{ id: 'ctx1', name: 'legacy', body: 'old text', source: 'user' }],
             }],
             nodes: {
                 n1: { nodeId: 'n1', kind: 'chat', chatId: 'c1', projectId: 'p1', messages: [], followUps: [], status: 'idle' },
             },
         };
         const result = hydrateSavedState(v3State);
-        expect(result.projects[0].contexts).toEqual([]);
+        expect(result.projects[0].artifacts).toEqual([]);
     });
 });
 
@@ -495,7 +495,7 @@ describe('hydrateBackendWorkspaces', () => {
                 composer_draft: JSON.stringify({ __michiPendingSpawnPrompt: 'Resume this child after a missed event' }),
                 created_at: 1,
             }],
-            edges: [], messages: [], contexts: [],
+            edges: [], messages: [], artifacts: [],
         }]);
 
         expect(result.nodes['n-spawn']).toMatchObject({
@@ -556,7 +556,7 @@ describe('hydrateBackendWorkspaces', () => {
                         created_at: 120,
                     },
                 ],
-                contexts: [
+                artifacts: [
                     {
                         id: 'ctx1',
                         workspace_id: 'p1',
@@ -580,7 +580,7 @@ describe('hydrateBackendWorkspaces', () => {
             activeTreeId: 't1',
             chatIds: ['n1'],
         });
-        expect(result.projects[0].contexts![0]).toMatchObject({
+        expect(result.projects[0].artifacts![0]).toMatchObject({
             name: 'notes',
             filePath: 'docs/notes.md',
             type: 'doc',
@@ -617,7 +617,7 @@ describe('hydrateBackendWorkspaces', () => {
                 nodes: [{ id: 'n1', workspace_id: 'p1', kind: 'chat', status: 'idle', created_at: 1 }],
                 edges: [],
                 messages: [],
-                contexts: [],
+                artifacts: [],
             },
             {
                 workspace: { id: 'p2', name: 'B', created_at: 2, active_tree_id: 't2' },
@@ -625,7 +625,7 @@ describe('hydrateBackendWorkspaces', () => {
                 nodes: [{ id: 'd1', workspace_id: 'p2', kind: 'digest', status: 'idle', digest: JSON.stringify(digest), created_at: 2 }],
                 edges: [{ id: 'e1', workspace_id: 'p2', source_node_id: 'n1', target_node_id: 'd1', kind: 'digest-source' }],
                 messages: [],
-                contexts: [],
+                artifacts: [],
             },
         ], 'p2');
 
@@ -648,13 +648,13 @@ describe('hydrateBackendWorkspaces', () => {
                 workspace: { id: 'p1', name: 'Trashed', created_at: 1, active_tree_id: 't1', deleted_at: 9 },
                 trees: [{ id: 't1', workspace_id: 'p1', root_node_id: 'n1', created_at: 1, last_active_at: 1 }],
                 nodes: [{ id: 'n1', workspace_id: 'p1', kind: 'chat', status: 'idle', created_at: 1 }],
-                edges: [], messages: [], contexts: [],
+                edges: [], messages: [], artifacts: [],
             },
             {
                 workspace: { id: 'p2', name: 'Live', created_at: 2, active_tree_id: 't2' },
                 trees: [{ id: 't2', workspace_id: 'p2', root_node_id: 'n2', created_at: 2, last_active_at: 2 }],
                 nodes: [{ id: 'n2', workspace_id: 'p2', kind: 'chat', status: 'idle', created_at: 2 }],
-                edges: [], messages: [], contexts: [],
+                edges: [], messages: [], artifacts: [],
             },
         ]);
         expect(result.activeProjectId).toBe('p2');
@@ -666,13 +666,13 @@ describe('hydrateBackendWorkspaces', () => {
                 workspace: { id: 'p1', name: 'Trashed', created_at: 1, active_tree_id: 't1', deleted_at: 9 },
                 trees: [{ id: 't1', workspace_id: 'p1', root_node_id: 'n1', created_at: 1, last_active_at: 1 }],
                 nodes: [{ id: 'n1', workspace_id: 'p1', kind: 'chat', status: 'idle', created_at: 1 }],
-                edges: [], messages: [], contexts: [],
+                edges: [], messages: [], artifacts: [],
             },
             {
                 workspace: { id: 'p2', name: 'Live', created_at: 2, active_tree_id: 't2' },
                 trees: [{ id: 't2', workspace_id: 'p2', root_node_id: 'n2', created_at: 2, last_active_at: 2 }],
                 nodes: [{ id: 'n2', workspace_id: 'p2', kind: 'chat', status: 'idle', created_at: 2 }],
-                edges: [], messages: [], contexts: [],
+                edges: [], messages: [], artifacts: [],
             },
         ], 'p1');
         expect(result.activeProjectId).toBe('p2');
@@ -801,7 +801,7 @@ describe('reduceProject context actions', () => {
         createdAt: 1000,
         trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1000, lastActiveAt: 1000 }],
         activeTreeId: 't1',
-        contexts: [],
+        artifacts: [],
     };
 
     it('upsert-context inserts a new context', () => {
@@ -809,9 +809,9 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/api.md', source: 'user' },
         });
-        expect(result.contexts).toHaveLength(1);
-        expect(result.contexts![0].name).toBe('api-spec');
-        expect(result.contexts![0].source).toBe('user');
+        expect(result.artifacts).toHaveLength(1);
+        expect(result.artifacts![0].name).toBe('api-spec');
+        expect(result.artifacts![0].source).toBe('user');
     });
 
     it('upsert-context dedupes name with suffix', () => {
@@ -823,8 +823,8 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/v2.md' },
         });
-        expect(withTwo.contexts).toHaveLength(2);
-        expect(withTwo.contexts![1].name).toBe('api-spec-2');
+        expect(withTwo.artifacts).toHaveLength(2);
+        expect(withTwo.artifacts![1].name).toBe('api-spec-2');
     });
 
     it('upsert-context updates existing by id', () => {
@@ -832,46 +832,46 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/api-spec.md' },
         });
-        const id = withOne.contexts![0].id;
+        const id = withOne.artifacts![0].id;
         const updated = reduceProject(withOne, {
             type: 'upsert-context', projectId: 'p1',
             context: { id, name: 'api-spec', filePath: 'docs/api-spec-v2.md' },
         });
-        expect(updated.contexts).toHaveLength(1);
-        expect(updated.contexts![0].filePath).toBe('docs/api-spec-v2.md');
+        expect(updated.artifacts).toHaveLength(1);
+        expect(updated.artifacts![0].filePath).toBe('docs/api-spec-v2.md');
     });
 
     it('keeps one context when a live agent SSE follows a durable workspace reload', () => {
         const hydrated = {
             ...baseProject,
-            contexts: [{
-                id: 'ctx-durable', name: 'notes', filePath: '.contexts/notes.md',
+            artifacts: [{
+                id: 'ctx-durable', name: 'notes', filePath: '.artifacts/notes.md',
                 size: 2, source: 'agent' as const, createdAt: 1, updatedAt: 1,
             }],
         };
         const afterLiveEvent = reduceProject(hydrated, {
             type: 'upsert-context', projectId: 'p1',
             context: {
-                id: 'ctx-durable', name: 'notes', filePath: '.contexts/notes.md',
+                id: 'ctx-durable', name: 'notes', filePath: '.artifacts/notes.md',
                 size: 11, source: 'agent',
             },
         });
-        expect(afterLiveEvent.contexts).toHaveLength(1);
-        expect(afterLiveEvent.contexts![0]).toMatchObject({ id: 'ctx-durable', size: 11, name: 'notes' });
+        expect(afterLiveEvent.artifacts).toHaveLength(1);
+        expect(afterLiveEvent.artifacts![0]).toMatchObject({ id: 'ctx-durable', size: 11, name: 'notes' });
     });
 
     it('update-context-by-name updates an existing context without duplicating it', () => {
         const withOne = reduceProject(baseProject, {
             type: 'upsert-context', projectId: 'p1',
-            context: { name: 'api-spec', filePath: '.contexts/api-spec.md', source: 'user' },
+            context: { name: 'api-spec', filePath: '.artifacts/api-spec.md', source: 'user' },
         });
         const updated = reduceProject(withOne, {
             type: 'update-context-by-name', projectId: 'p1',
-            context: { name: 'api-spec', filePath: '.contexts/api-spec.md', size: 123, source: 'agent' },
+            context: { name: 'api-spec', filePath: '.artifacts/api-spec.md', size: 123, source: 'agent' },
         });
-        expect(updated.contexts).toHaveLength(1);
-        expect(updated.contexts![0].size).toBe(123);
-        expect(updated.contexts![0].source).toBe('user');
+        expect(updated.artifacts).toHaveLength(1);
+        expect(updated.artifacts![0].size).toBe(123);
+        expect(updated.artifacts![0].source).toBe('user');
     });
 
     it('delete-context removes by id', () => {
@@ -879,11 +879,11 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/api.md' },
         });
-        const id = withOne.contexts![0].id;
+        const id = withOne.artifacts![0].id;
         const deleted = reduceProject(withOne, {
             type: 'delete-context', projectId: 'p1', contextId: id,
         });
-        expect(deleted.contexts).toHaveLength(0);
+        expect(deleted.artifacts).toHaveLength(0);
     });
 
     it('pin-context / unpin-context toggles pinnedAt', () => {
@@ -891,15 +891,15 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/api.md' },
         });
-        const id = withOne.contexts![0].id;
+        const id = withOne.artifacts![0].id;
         const pinned = reduceProject(withOne, {
             type: 'pin-context', projectId: 'p1', contextId: id, now: 12345,
         });
-        expect(pinned.contexts![0].pinnedAt).toBe(12345);
+        expect(pinned.artifacts![0].pinnedAt).toBe(12345);
         const unpinned = reduceProject(pinned, {
             type: 'unpin-context', projectId: 'p1', contextId: id,
         });
-        expect(unpinned.contexts![0].pinnedAt).toBeUndefined();
+        expect(unpinned.artifacts![0].pinnedAt).toBeUndefined();
     });
 
     it('rename-context validates name format', () => {
@@ -907,11 +907,11 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'api-spec', filePath: 'docs/api.md' },
         });
-        const id = withOne.contexts![0].id;
+        const id = withOne.artifacts![0].id;
         const renamed = reduceProject(withOne, {
             type: 'rename-context', projectId: 'p1', contextId: id, newName: 'invalid name!',
         });
-        expect(renamed.contexts![0].name).toBe('api-spec'); // unchanged
+        expect(renamed.artifacts![0].name).toBe('api-spec'); // unchanged
     });
 
     it('rename-context rejects duplicate names', () => {
@@ -923,11 +923,11 @@ describe('reduceProject context actions', () => {
             type: 'upsert-context', projectId: 'p1',
             context: { name: 'bar', filePath: 'b.txt' },
         });
-        const barId = p.contexts![1].id;
+        const barId = p.artifacts![1].id;
         const renamed = reduceProject(p, {
             type: 'rename-context', projectId: 'p1', contextId: barId, newName: 'foo',
         });
-        expect(renamed.contexts![1].name).toBe('bar'); // unchanged
+        expect(renamed.artifacts![1].name).toBe('bar'); // unchanged
     });
 });
 

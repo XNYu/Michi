@@ -13,14 +13,14 @@ import type { SpawnedBranch } from "../toolBridge";
  * michi expects:
  *   chunk / thought (assistant text/reasoning streamed)
  *   tool_call / tool_call_update (chips for tool calls)
- *   spawn_branches / context_saved / context_updated (tool side effects with payload)
+ *   spawn_branches / artifact_saved / artifact_updated (tool side effects with payload)
  *   context_usage / usage_summary (one-shot at run end)
  *   turn_end (closes SSE)
  *
  * Title and follow-ups are emitted as inline `[TITLE:]` / `[FOLLOW-UP n/3:]`
  * sentinels in the assistant's text stream and parsed by the frontend; they
  * do NOT come through tool calls. This mapper only cares about the two
- * side-effect tools (spawn_branches, save_context, update_context).
+ * side-effect tools (spawn_branches, save_artifact, update_artifact).
  */
 const MAX_TOOL_PAYLOAD = 16 * 1024;
 
@@ -98,22 +98,22 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
             if (name === "spawn_branches" && !isError) {
                 const created: SpawnedBranch[] = result?.details?.created ?? [];
                 yield { kind: "spawn_branches", topics: created };
-            } else if (name === "save_context" && !isError) {
+            } else if (name === "save_artifact" && !isError) {
                 const d = result?.details;
                 if (d?.name && d?.filePath) {
                     yield {
-                        kind: "context_saved",
+                        kind: "artifact_saved",
                         contextId: typeof d.id === "string" ? d.id : undefined,
                         name: d.name,
                         filePath: d.filePath,
                         size: d.size,
                     };
                 }
-            } else if (name === "update_context" && !isError) {
+            } else if (name === "update_artifact" && !isError) {
                 const d = result?.details;
                 if (d?.name && d?.filePath) {
                     yield {
-                        kind: "context_updated",
+                        kind: "artifact_updated",
                         contextId: typeof d.id === "string" ? d.id : undefined,
                         name: d.name,
                         filePath: d.filePath,

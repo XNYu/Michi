@@ -21,7 +21,7 @@ import type { NormalizedEvent } from "../../services/chatEvents";
  *
  * Title and follow-ups are emitted as inline `[TITLE:]` / `[FOLLOW-UP n/3:]`
  * sentinels in the LLM's text stream — not as tools — so this factory
- * handles the side-effect tools (spawn_branches, save_context, update_context) and the
+ * handles the side-effect tools (spawn_branches, save_artifact, update_artifact) and the
  * read-only globalContext tools (list_threads, search_messages, read_node).
  *
  * spawn_branches forces sequential execution because it mutates the chat
@@ -133,10 +133,10 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     },
                 };
 
-            case "save_context":
+            case "save_artifact":
                 return {
                     name: t.name,
-                    label: "Save context",
+                    label: "Save artifact",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
@@ -159,10 +159,10 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     },
                 };
 
-            case "update_context":
+            case "update_artifact":
                 return {
                     name: t.name,
-                    label: "Update context",
+                    label: "Update artifact",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {

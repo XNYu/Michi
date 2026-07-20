@@ -19,7 +19,7 @@ vi.mock('../../state/chatStore', async () => {
   return {
     ...actual,
     useChatStore: () => ({
-      activeProject: { id: 'p1', name: 'P', contexts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 },
+      activeProject: { id: 'p1', name: 'P', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 },
       activeProjectId: 'p1',
       projects: [],
       openPanes: storeState.openPanes, focusedPane: storeState.focusedPane, focusedNodeId: null,
@@ -37,7 +37,7 @@ vi.mock('../../state/chatStore', async () => {
       sendMessage: () => {}, createContext: () => {},
     }),
     useChatProjects: () => ({
-      activeProject: { id: 'p1', name: 'P', contexts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 },
+      activeProject: { id: 'p1', name: 'P', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 },
       activeProjectId: 'p1',
       projects: [],
       order: [],

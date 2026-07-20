@@ -79,8 +79,8 @@ export const CHAT_STREAM_EVENTS = {
   followUps: "follow_ups",
   followUpsStatus: "follow_ups_status",
   commands: "commands",
-  contextSaved: "context_saved",
-  contextUpdated: "context_updated",
+  artifactSaved: "artifact_saved",
+  artifactUpdated: "artifact_updated",
   permissionRequest: "permission_request",
   userInputRequest: "user_input_request",
   userInputResolved: "user_input_resolved",
@@ -111,8 +111,8 @@ export interface ChatStreamPayloads {
   follow_ups: { followUps: string[] };
   follow_ups_status: { status: "in_progress" | "completed" | "failed" };
   commands: { commands: AgentCommand[] };
-  context_saved: { contextId?: string; name: string; filePath: string; size?: number };
-  context_updated: { contextId?: string; name: string; filePath: string; size?: number };
+  artifact_saved: { contextId?: string; name: string; filePath: string; size?: number };
+  artifact_updated: { contextId?: string; name: string; filePath: string; size?: number };
   permission_request: {
     requestId: number;
     toolCallId?: string;
@@ -258,13 +258,13 @@ const parsers = {
     return { status };
   },
   commands: (data) => ({ commands: parseCommands(data.commands) }),
-  context_saved: (data) => ({
+  artifact_saved: (data) => ({
     contextId: optionalString(data.contextId),
     name: stringOrEmpty(data.name),
     filePath: stringOrEmpty(data.filePath),
     size: optionalFiniteNumber(data.size),
   }),
-  context_updated: (data) => ({
+  artifact_updated: (data) => ({
     contextId: optionalString(data.contextId),
     name: stringOrEmpty(data.name),
     filePath: stringOrEmpty(data.filePath),

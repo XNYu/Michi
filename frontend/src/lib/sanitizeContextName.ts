@@ -9,7 +9,7 @@
  * importWorkspaceFile, which replaces disallowed chars with "_" and does
  * not collapse runs. We use "-" for display-friendly reference names; the
  * server's stricter rule still applies to embedded files written under
- * .contexts/.
+ * .artifacts/.
  */
 export function sanitizeContextName(rawName: string, existing: string[]): string {
   const stem = rawName.replace(/\.[^./\\]+$/, '');

@@ -1,7 +1,7 @@
 import { resolveAtMentions, resolveAtNodeMentions, buildNodeTranscriptBlock, stripNodeMentionTokens, rewriteNodeMentionsForDisplay } from './contextBudget';
-import type { ChatNodeState, ContextEntry } from './chatTypes';
+import type { ChatNodeState, ArtifactEntry } from './chatTypes';
 
-const mkCtx = (id: string, name: string, filePath: string, size?: number): ContextEntry => ({
+const mkCtx = (id: string, name: string, filePath: string, size?: number): ArtifactEntry => ({
     id, name, filePath, size, source: 'user', createdAt: 1000, updatedAt: 1000,
 });
 

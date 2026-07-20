@@ -29,7 +29,7 @@ import { rowsToAgentMessages } from "./historyAdapter";
  *   - providerModels=true (a single binary catalog of providers/models is
  *     advertised; the active one is read from agentConfig)
      *   - reasoning=true / apiKeys=true / saveContext=true / spawnBranches=true
-     *     (saveContext covers both save_context and update_context tools)
+     *     (saveContext covers both save_artifact and update_artifact tools)
  *   - modes=false / permissions=false / warmSessions=false
  *
  * Pi sessions are in-memory only. There is no persistent ACP process or MCP
@@ -116,7 +116,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
      * and seeding them into a fresh PiSession. Tool calls / thinking blocks
      * are not persisted, so the rehydrated transcript is text-only — the
      * model can still continue the conversation, but won't see prior
-     * spawn_branches / save_context calls in its context.
+     * spawn_branches / save_artifact calls in its context.
      *
      * chatId === nodeId for Pi, so opts.sessionId is the row id for both
      * the nodes lookup (parent chain) and the messages lookup (history).

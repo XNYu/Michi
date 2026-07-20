@@ -30,7 +30,7 @@ function makeActiveProject(overrides: Record<string, unknown> = {}) {
     createdAt: 0,
     trees: [],
     activeTreeId: null,
-    contexts: [],
+    artifacts: [],
     ...overrides,
   };
 }

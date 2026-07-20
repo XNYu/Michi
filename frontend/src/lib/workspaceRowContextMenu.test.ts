@@ -10,7 +10,7 @@ const mkProject = (overrides: Partial<Project> = {}): Project => ({
   createdAt: 0,
   trees: [],
   activeTreeId: null,
-  contexts: [],
+  artifacts: [],
   ...overrides,
 });
 

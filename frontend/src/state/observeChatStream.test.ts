@@ -18,8 +18,8 @@ describe('createBackgroundTurnBinding', () => {
   it('runs the shared structural side-effect adapter exactly once per seq', () => {
     const dispatch = vi.fn<(action: ChatAction) => void>();
     const onSpawnBranches = vi.fn();
-    const onContextSaved = vi.fn();
-    const onContextUpdated = vi.fn();
+    const onArtifactSaved = vi.fn();
+    const onArtifactUpdated = vi.fn();
     const lastTurnRef = { current: '' };
     const lastSeqRef = { current: -1 };
     const handlers = createBackgroundTurnBinding({
@@ -28,7 +28,7 @@ describe('createBackgroundTurnBinding', () => {
       dispatch,
       lastTurnRef,
       lastSeqRef,
-      extraHandlers: { onSpawnBranches, onContextSaved, onContextUpdated },
+      extraHandlers: { onSpawnBranches, onArtifactSaved, onArtifactUpdated },
     }).createHandlers();
 
     dispatchChatStreamEvent({
@@ -45,17 +45,17 @@ describe('createBackgroundTurnBinding', () => {
     dispatchChatStreamEvent(spawn, handlers);
     dispatchChatStreamEvent(spawn, handlers);
     dispatchChatStreamEvent({
-      event: CHAT_STREAM_EVENTS.contextSaved,
+      event: CHAT_STREAM_EVENTS.artifactSaved,
       data: { ...envelope(2), name: 'notes', filePath: '/tmp/notes.md', size: 12 },
     }, handlers);
     dispatchChatStreamEvent({
-      event: CHAT_STREAM_EVENTS.contextUpdated,
+      event: CHAT_STREAM_EVENTS.artifactUpdated,
       data: { ...envelope(3), name: 'notes', filePath: '/tmp/notes.md', size: 18 },
     }, handlers);
 
     expect(onSpawnBranches).toHaveBeenCalledTimes(1);
-    expect(onContextSaved).toHaveBeenCalledWith('notes', '/tmp/notes.md', 12, undefined);
-    expect(onContextUpdated).toHaveBeenCalledWith('notes', '/tmp/notes.md', 18, undefined);
+    expect(onArtifactSaved).toHaveBeenCalledWith('notes', '/tmp/notes.md', 12, undefined);
+    expect(onArtifactUpdated).toHaveBeenCalledWith('notes', '/tmp/notes.md', 18, undefined);
     expect(lastTurnRef.current).toBe('self-turn-1');
     expect(lastSeqRef.current).toBe(3);
   });

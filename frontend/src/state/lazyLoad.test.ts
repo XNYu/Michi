@@ -21,7 +21,7 @@ function project(overrides: Partial<Project> = {}): Project {
   return {
     id: 'ws-1', name: 'WS', chatIds: ['n1'], edges: [], createdAt: 1,
     trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1, lastActiveAt: 1 }],
-    activeTreeId: 't1', contexts: [], ...overrides,
+    activeTreeId: 't1', artifacts: [], ...overrides,
   };
 }
 function placeholderNode(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
@@ -73,7 +73,7 @@ describe('meta hydration', () => {
     ],
     edges: [{ source_node_id: 'n1', target_node_id: 'n2', kind: 'branch' }],
     messages: [],
-    contexts: [],
+    artifacts: [],
   };
 
   it('builds placeholder nodes with counts and no bodies', () => {

@@ -2,14 +2,14 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ContextList from './ContextList';
-import type { ContextEntry } from '../../../state/chatTypes';
+import type { ArtifactEntry } from '../../../state/chatTypes';
 
 const NOW = 1_716_000_000_000;
 const ctx = (
   id: string,
   name: string,
-  opts: Partial<ContextEntry> = {},
-): ContextEntry => ({
+  opts: Partial<ArtifactEntry> = {},
+): ArtifactEntry => ({
   id,
   name,
   filePath: `path/${name}`,
@@ -24,7 +24,7 @@ const ctx = (
 function renderRow(props: Partial<React.ComponentProps<typeof ContextList>> = {}) {
   return render(
     <ContextList
-      contexts={[ctx('1', 'a.md')]}
+      artifacts={[ctx('1', 'a.md')]}
       filter=""
       selectedContextId={null}
       onSelect={() => {}}
@@ -47,7 +47,7 @@ describe('ContextList', () => {
   it('groups artifacts by type (Documents / Files / Images / Links)', () => {
     render(
       <ContextList
-        contexts={[
+        artifacts={[
           ctx('1', 'a.md', { type: 'doc' }),
           ctx('2', 'b.ts', { type: 'file' }),
           ctx('3', 'diagram', { type: 'image' }),
@@ -73,7 +73,7 @@ describe('ContextList', () => {
   it('sorts favorite artifacts to the top of their group', () => {
     render(
       <ContextList
-        contexts={[
+        artifacts={[
           ctx('1', 'older.md', { createdAt: NOW }),
           ctx('2', 'favorite.md', { createdAt: NOW - 1000, pinnedAt: NOW }),
         ]}
@@ -93,7 +93,7 @@ describe('ContextList', () => {
   it('describes a favorite as removable without implying auto-injection', () => {
     const onPin = vi.fn();
     renderRow({
-      contexts: [ctx('1', 'a.md', { pinnedAt: NOW })],
+      artifacts: [ctx('1', 'a.md', { pinnedAt: NOW })],
       onPin,
     });
     hoverFirstRow();
@@ -113,7 +113,7 @@ describe('ContextList', () => {
   it('hover reveals the trash button; clicking it calls onDelete', () => {
     const onDelete = vi.fn();
     renderRow({
-      contexts: [ctx('1', 'a.md')],
+      artifacts: [ctx('1', 'a.md')],
       onDelete,
     });
     hoverFirstRow();
@@ -124,7 +124,7 @@ describe('ContextList', () => {
   it('hover reveals the preview button; clicking it calls onPreview with the file path', () => {
     const onPreview = vi.fn();
     renderRow({
-      contexts: [ctx('1', 'a.md')],
+      artifacts: [ctx('1', 'a.md')],
       onPreview,
     });
     hoverFirstRow();
@@ -132,10 +132,10 @@ describe('ContextList', () => {
     expect(onPreview).toHaveBeenCalledWith('path/a.md');
   });
 
-  it('filter hides non-matching contexts', () => {
+  it('filter hides non-matching artifacts', () => {
     render(
       <ContextList
-        contexts={[ctx('1', 'apples.md'), ctx('2', 'bananas.md')]}
+        artifacts={[ctx('1', 'apples.md'), ctx('2', 'bananas.md')]}
         filter="app"
         selectedContextId={null}
         onSelect={() => {}}

@@ -27,7 +27,7 @@ import { stateProjectKey, stateIndexKey, useWorkspacePersistence } from './works
 const project: Project = {
   id: 'ws-1', name: 'Workspace', chatIds: ['n1'], edges: [], createdAt: 1,
   trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1, lastActiveAt: 1 }],
-  activeTreeId: 't1', contexts: [],
+  activeTreeId: 't1', artifacts: [],
 };
 const node: ChatNodeState = {
   nodeId: 'n1', projectId: 'ws-1', kind: 'chat', chatId: null,

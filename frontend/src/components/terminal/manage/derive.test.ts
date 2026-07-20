@@ -16,7 +16,7 @@ function mkProject(overrides: Partial<Project> = {}): Project {
     createdAt: 0,
     trees: [],
     activeTreeId: null,
-    contexts: [],
+    artifacts: [],
     ...overrides,
   };
 }
@@ -38,7 +38,7 @@ describe('deriveHeaderCounts', () => {
   it('returns zeroed shape for empty project', () => {
     expect(deriveHeaderCounts(mkProject(), {})).toEqual({
       chats: 0,
-      contexts: 0,
+      artifacts: 0,
       branches: 0,
       lastActiveAt: 0,
     });
@@ -56,9 +56,9 @@ describe('deriveHeaderCounts', () => {
     expect(deriveHeaderCounts(project, nodes).chats).toBe(1);
   });
 
-  it('counts contexts and branch edges', () => {
+  it('counts artifacts and branch edges', () => {
     const project = mkProject({
-      contexts: [
+      artifacts: [
         { id: 'ctx1', name: 'a.md', filePath: 'a.md', source: 'user', createdAt: 0, updatedAt: 0 },
         { id: 'ctx2', name: 'b.md', filePath: 'b.md', source: 'user', createdAt: 0, updatedAt: 0 },
       ],
@@ -68,7 +68,7 @@ describe('deriveHeaderCounts', () => {
       ],
     });
     const r = deriveHeaderCounts(project, {});
-    expect(r.contexts).toBe(2);
+    expect(r.artifacts).toBe(2);
     expect(r.branches).toBe(1);
   });
 

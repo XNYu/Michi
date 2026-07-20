@@ -88,7 +88,7 @@ describe('background feed hydration gate', () => {
         acp_session_id: 'chat-live', status: 'streaming', last_applied_turn_id: 'turn-live',
         last_applied_seq: 4, message_count: 2, created_at: 1,
       }],
-      edges: [], messages: [], contexts: [],
+      edges: [], messages: [], artifacts: [],
     }]);
 
     renderHook(() => useChatNodesSnapshot(), { wrapper });
@@ -133,7 +133,7 @@ describe('background feed hydration gate', () => {
         composer_draft: JSON.stringify({ __michiPendingSpawnPrompt: 'Investigate the durable gap' }),
         created_at: 1,
       }],
-      edges: [], messages: [], contexts: [],
+      edges: [], messages: [], artifacts: [],
     }]);
 
     const { result } = renderHook(
@@ -237,7 +237,7 @@ describe('background feed hydration gate', () => {
         id: 'node-gap', workspace_id: 'ws-gap', tree_id: 'tree-gap',
         acp_session_id: 'chat-gap', status: 'streaming', message_count: 1, created_at: 1,
       }],
-      edges: [], messages: [], contexts: [],
+      edges: [], messages: [], artifacts: [],
     }]);
     apiMocks.fetchWorkspace.mockResolvedValue({
       workspace: { id: 'ws-gap', name: 'Gap', active_tree_id: 'tree-gap', created_at: 1 },
@@ -261,9 +261,9 @@ describe('background feed hydration gate', () => {
         id: 'assistant-gap', node_id: 'node-gap', role: 'assistant',
         content: 'durable body', seq: 0, created_at: 2,
       }],
-      contexts: [{
+      artifacts: [{
         id: 'ctx-gap', workspace_id: 'ws-gap', name: 'durable-context',
-        file_path: '.contexts/durable-context.md', source: 'agent', type: 'doc',
+        file_path: '.artifacts/durable-context.md', source: 'agent', type: 'doc',
         created_at: 2, updated_at: 2,
       }],
     });
@@ -295,7 +295,7 @@ describe('background feed hydration gate', () => {
     expect(result.current.store.projects[0].edges).toEqual([
       expect.objectContaining({ source: 'node-gap', target: 'spawned' }),
     ]);
-    expect(result.current.store.projects[0].contexts).toEqual([
+    expect(result.current.store.projects[0].artifacts).toEqual([
       expect.objectContaining({ id: 'ctx-gap', name: 'durable-context' }),
     ]);
   });

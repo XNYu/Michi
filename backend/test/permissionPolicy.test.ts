@@ -17,7 +17,7 @@ import { canonicalPermissionToolName, resolvePolicy } from '../src/agents/permis
 describe('resolvePolicy', () => {
     // ── Read-only / intentional tools default to allow ────────────────────────
 
-    for (const tool of ['read', 'ls', 'grep', 'find', 'list_threads', 'search_messages', 'read_node', 'spawn_branches', 'save_context', 'update_context']) {
+    for (const tool of ['read', 'ls', 'grep', 'find', 'list_threads', 'search_messages', 'read_node', 'spawn_branches', 'save_artifact', 'update_artifact']) {
         test(`allows read-only/intentional tool "${tool}"`, () => {
             assert.equal(resolvePolicy(null, tool, {}), 'allow');
         });

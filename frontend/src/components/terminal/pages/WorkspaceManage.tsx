@@ -22,7 +22,7 @@ interface Props {
   onNav: (p: PageId) => void;
 }
 
-type Tab = 'chats' | 'contexts' | 'digests';
+type Tab = 'chats' | 'artifacts' | 'digests';
 
 export default function WorkspaceManage({ workspaceId, onNav }: Props) {
   const store = useChatStore();
@@ -62,7 +62,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
       try {
         const r = await electron.chooseFiles();
         if (!r.canceled && r.paths) {
-          const existing = (project.contexts ?? []).map((c) => c.name);
+          const existing = (project.artifacts ?? []).map((c) => c.name);
           for (const p of r.paths) {
             const base = p.split('/').pop() ?? p;
             const name = sanitizeContextName(base, existing);
@@ -99,7 +99,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
     const electron = getElectron();
     setImporting(true);
     try {
-      const existing = (project.contexts ?? []).map((c) => c.name);
+      const existing = (project.artifacts ?? []).map((c) => c.name);
       for (const [fileIndex, file] of files.entries()) {
         const electronPath = electron?.getPathForFile?.(file) ?? null;
         if (electronPath) {
@@ -167,8 +167,8 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
     setDropzoneVisible(false);
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
-    // Auto-switch to contexts tab so the user sees the new entries.
-    setTab('contexts');
+    // Auto-switch to artifacts tab so the user sees the new entries.
+    setTab('artifacts');
     await handleImportFiles(files);
   }, [handleImportFiles]);
 
@@ -212,7 +212,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
   const digests = deriveDigests(project, nodes);
   const tabCounts = {
     chats: counts.chats,
-    contexts: counts.contexts,
+    artifacts: counts.artifacts,
     digests: digests.length,
   };
 
@@ -278,7 +278,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
           name={project.name}
           cwd={project.cwd}
           chatsCount={counts.chats}
-          contextsCount={counts.contexts}
+          contextsCount={counts.artifacts}
           branchesCount={counts.branches}
           lastActiveAt={counts.lastActiveAt}
         />
@@ -327,11 +327,11 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
             }}
           />
         )}
-        {tab === 'contexts' && (
+        {tab === 'artifacts' && (
           <>
             <UploadProgressBar progress={uploadProgress} compact />
             <ContextList
-              contexts={project.contexts ?? []}
+              artifacts={project.artifacts ?? []}
               filter={filter}
               selectedContextId={selectedContextId}
               onSelect={setSelectedContextId}

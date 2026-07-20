@@ -6,7 +6,6 @@ const N = {
   agentMessageDelta: 'item/agentMessage/delta',
   reasoningTextDelta: 'item/reasoning/textDelta',
   reasoningSummaryTextDelta: 'item/reasoning/summaryTextDelta',
-  reasoningSummaryPartAdded: 'item/reasoning/summaryPartAdded',
   itemStarted: 'item/started',
   itemCompleted: 'item/completed',
   commandOutputDelta: 'item/commandExecution/outputDelta',
@@ -218,12 +217,14 @@ export interface CodexTranslatorHandle {
 export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): CodexTranslatorHandle {
   let turnStartMs: number = Date.now();
   let lastRuntimeError: string | undefined;
+  let lastReasoningSummaryPartKey: string | undefined;
   const outputBuffers = new Map<string, string>();
   const toolPresentations = new Map<string, ToolPresentation>();
 
   function startTurn(): void {
     turnStartMs = Date.now();
     lastRuntimeError = undefined;
+    lastReasoningSummaryPartKey = undefined;
     outputBuffers.clear();
     toolPresentations.clear();
   }
@@ -248,14 +249,25 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
         break;
       }
 
-      case N.reasoningSummaryPartAdded: {
-        const index = typeof p['summaryIndex'] === 'number' ? p['summaryIndex'] : 0;
-        if (index > 0) emit({ kind: 'thought', text: '\n' });
+      case N.reasoningSummaryTextDelta: {
+        const text = typeof p['delta'] === 'string' ? p['delta'] : '';
+        if (!text) break;
+
+        // summaryIndex is scoped to a reasoning item and commonly resets to 0
+        // after a tool call. The item + index pair identifies the real summary
+        // part boundary, including transitions between separate reasoning items.
+        const itemId = typeof p['itemId'] === 'string' ? p['itemId'] : '';
+        const summaryIndex = typeof p['summaryIndex'] === 'number' ? p['summaryIndex'] : 0;
+        const partKey = `${itemId}:${summaryIndex}`;
+        if (lastReasoningSummaryPartKey !== undefined && lastReasoningSummaryPartKey !== partKey) {
+          emit({ kind: 'thought', text: '\n' });
+        }
+        lastReasoningSummaryPartKey = partKey;
+        emit({ kind: 'thought', text });
         break;
       }
 
-      case N.reasoningTextDelta:
-      case N.reasoningSummaryTextDelta: {
+      case N.reasoningTextDelta: {
         const text = typeof p['delta'] === 'string' ? p['delta'] : '';
         if (text) emit({ kind: 'thought', text });
         break;

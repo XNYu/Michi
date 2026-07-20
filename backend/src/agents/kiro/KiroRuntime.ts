@@ -121,7 +121,7 @@ export class KiroRuntime implements AgentRuntime {
     private readonly defaultCwd: string;
 
     constructor(
-        /** Bridge for spawn_branches/save_context/update_context business effects. */
+        /** Bridge for spawn_branches/save_artifact/update_artifact business effects. */
         private readonly bridge: AgentToolBridge,
         private readonly mcpRegistry: McpSlotRegistry | undefined,
         mcpPort: number,
@@ -194,8 +194,8 @@ export class KiroRuntime implements AgentRuntime {
     private makeSlotCallbacks(getSlotId: () => string | undefined): McpSlotCallbacks {
         return {
             onSpawnBranches: async (topics) => this.handleSpawnBranches(getSlotId()!, topics),
-            onSaveContext: (name, body) => this.handleSaveContext(getSlotId()!, name, body),
-            onUpdateContext: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
+            onSaveArtifact: (name, body) => this.handleSaveContext(getSlotId()!, name, body),
+            onUpdateArtifact: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
             onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
             metadataDoneSentinel: KIRO_METADATA_DONE_SENTINEL,
             // show_image is a Claude-runtime side-effect tool; the Kiro runtime
@@ -244,7 +244,7 @@ export class KiroRuntime implements AgentRuntime {
         if (!result) return null;
         const client = this.getClient(slot.cwd);
         client?.injectUpdate(parentChatId, {
-            sessionUpdate: "context_saved",
+            sessionUpdate: "artifact_saved",
             contextId: result.id,
             name: result.name,
             filePath: result.filePath,
@@ -262,7 +262,7 @@ export class KiroRuntime implements AgentRuntime {
         if (!result) return null;
         const client = this.getClient(slot.cwd);
         client?.injectUpdate(parentChatId, {
-            sessionUpdate: "context_updated",
+            sessionUpdate: "artifact_updated",
             contextId: result.id,
             name: result.name,
             filePath: result.filePath,

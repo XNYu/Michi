@@ -63,10 +63,105 @@ describe('codexEventTranslator', () => {
   test('item/reasoning/summaryTextDelta emits thought', () => {
     const { emitted, feed } = makeTranslator();
 
-    feed('item/reasoning/summaryTextDelta', { delta: 'Summary reasoning' });
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+      delta: 'Summary reasoning',
+    });
 
     assert.equal(emitted.length, 1);
     assert.deepEqual(emitted[0], { kind: 'thought', text: 'Summary reasoning' });
+  });
+
+  test('keeps deltas from the same reasoning summary part together', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+      delta: 'Filtering tools ',
+    });
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+      delta: 'by criteria',
+    });
+
+    assert.deepEqual(emitted, [
+      { kind: 'thought', text: 'Filtering tools ' },
+      { kind: 'thought', text: 'by criteria' },
+    ]);
+  });
+
+  test('separates summary parts when a new reasoning item resets summaryIndex', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('item/reasoning/summaryPartAdded', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+    });
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+      delta: 'Filtering tools by specific criteria',
+    });
+    feed('item/reasoning/summaryPartAdded', {
+      itemId: 'reasoning-2',
+      summaryIndex: 0,
+    });
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-2',
+      summaryIndex: 0,
+      delta: 'Testing page access with curl',
+    });
+
+    assert.deepEqual(emitted, [
+      { kind: 'thought', text: 'Filtering tools by specific criteria' },
+      { kind: 'thought', text: '\n' },
+      { kind: 'thought', text: 'Testing page access with curl' },
+    ]);
+  });
+
+  test('separates multiple summary parts within one reasoning item', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+      delta: 'Inspecting the page',
+    });
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 1,
+      delta: 'Checking the response',
+    });
+
+    assert.deepEqual(emitted, [
+      { kind: 'thought', text: 'Inspecting the page' },
+      { kind: 'thought', text: '\n' },
+      { kind: 'thought', text: 'Checking the response' },
+    ]);
+  });
+
+  test('resets reasoning summary boundaries at the start of a new turn', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-1',
+      summaryIndex: 0,
+      delta: 'First turn',
+    });
+    startTurn();
+    feed('item/reasoning/summaryTextDelta', {
+      itemId: 'reasoning-2',
+      summaryIndex: 0,
+      delta: 'Second turn',
+    });
+
+    assert.deepEqual(emitted, [
+      { kind: 'thought', text: 'First turn' },
+      { kind: 'thought', text: 'Second turn' },
+    ]);
   });
 
   // ── Tool items: item/started ────────────────────────────────────────────────
@@ -160,7 +255,7 @@ describe('codexEventTranslator', () => {
         id: 'item-003',
         type: 'mcpToolCall',
         server: '__michi_internal__',
-        tool: 'save_context',
+        tool: 'save_artifact',
         arguments: { key: 'value' },
       },
     });
@@ -169,7 +264,7 @@ describe('codexEventTranslator', () => {
     const ev = emitted[0] as unknown as AnyEv;
     assert.equal(ev['kind'], 'tool_call');
     assert.equal(ev['toolCallId'], 'item-003');
-    assert.equal(ev['title'], 'save_context');
+    assert.equal(ev['title'], 'save_artifact');
     assert.ok(typeof ev['detail'] === 'string' && (ev['detail'] as string).includes('value'));
   });
 

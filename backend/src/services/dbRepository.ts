@@ -1366,7 +1366,7 @@ export function saveContext(ctx: ContextRow, userId?: string): void {
 }
 
 /**
- * Durable projection for agent save_context/update_context side effects.
+ * Durable projection for agent save_artifact/update_artifact side effects.
  * Reuses the existing row id for a workspace/name pair so an SSE replay (or a
  * later full workspace load) observes one context rather than a duplicate.
  */

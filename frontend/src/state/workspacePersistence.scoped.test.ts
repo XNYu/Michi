@@ -19,7 +19,7 @@ const mkProject = (id: string, chatIds: string[]): any => ({
   edges: [],
   trees: [{ id: `t-${id}`, rootNodeId: chatIds[0], createdAt: 1, lastActiveAt: 1 }],
   activeTreeId: `t-${id}`,
-  contexts: [],
+  artifacts: [],
   createdAt: 1,
 });
 

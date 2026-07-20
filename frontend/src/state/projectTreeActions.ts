@@ -60,7 +60,7 @@ export function useProjectActions({
         createdAt: now,
         trees: [],
         activeTreeId: null,
-        contexts: [],
+        artifacts: [],
       };
       setProjects((prev) => [project, ...prev]);
       setActiveProjectId(projectId);
@@ -89,7 +89,7 @@ export function useProjectActions({
         createdAt: now,
         trees: [],
         activeTreeId: null,
-        contexts: [],
+        artifacts: [],
       };
       return [fresh, ...prev];
     });

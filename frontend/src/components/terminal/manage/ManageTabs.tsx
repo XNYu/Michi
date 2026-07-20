@@ -1,22 +1,22 @@
 import React from 'react';
 
-type Tab = 'chats' | 'contexts' | 'digests';
+type Tab = 'chats' | 'artifacts' | 'digests';
 
 interface Props {
   activeTab: Tab;
   onChange: (t: Tab) => void;
-  counts: { chats: number; contexts: number; digests: number };
+  counts: { chats: number; artifacts: number; digests: number };
   filter: string;
   onFilterChange: (s: string) => void;
 }
 
 const TAB_LABELS: Record<Tab, string> = {
   chats: 'Chats',
-  contexts: 'Artifacts',
+  artifacts: 'Artifacts',
   digests: 'Digests',
 };
 
-const TABS: Tab[] = ['chats', 'contexts', 'digests'];
+const TABS: Tab[] = ['chats', 'artifacts', 'digests'];
 
 export default function ManageTabs({ activeTab, onChange, counts, filter, onFilterChange }: Props) {
   return (

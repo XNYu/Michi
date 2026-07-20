@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildContextRowMenu } from './contextRowContextMenu';
-import type { ContextEntry } from '../state/chatTypes';
+import type { ArtifactEntry } from '../state/chatTypes';
 
-const artifact = (pinnedAt?: number): ContextEntry => ({
+const artifact = (pinnedAt?: number): ArtifactEntry => ({
   id: 'a1',
   name: 'brief',
-  filePath: '.contexts/brief.md',
+  filePath: '.artifacts/brief.md',
   source: 'user',
   createdAt: 1,
   updatedAt: 1,

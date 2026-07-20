@@ -1,9 +1,9 @@
 import React from 'react';
-import type { ContextEntry } from '../../../state/chatTypes';
+import type { ArtifactEntry } from '../../../state/chatTypes';
 import { manageFileType, MANAGE_COLORS } from './tokens';
 
 interface Props {
-  contexts: ContextEntry[];
+  artifacts: ArtifactEntry[];
   filter: string;
   selectedContextId: string | null;
   onSelect: (id: string) => void;
@@ -21,7 +21,7 @@ const TYPE_GROUPS: Array<{ key: 'doc' | 'file' | 'image' | 'link'; title: string
   { key: 'link', title: 'Links' },
 ];
 
-function artifactType(c: ContextEntry): 'doc' | 'file' | 'image' | 'link' {
+function artifactType(c: ArtifactEntry): 'doc' | 'file' | 'image' | 'link' {
   if (c.type) return c.type;
   return c.url ? 'link' : 'doc';
 }
@@ -34,7 +34,7 @@ function fmtBytes(n: number | undefined): string {
 }
 
 export default function ContextList({
-  contexts,
+  artifacts,
   filter,
   selectedContextId,
   onSelect,
@@ -45,19 +45,19 @@ export default function ContextList({
 }: Props) {
   const norm = filter.trim().toLowerCase();
   const filtered = norm
-    ? contexts.filter(
+    ? artifacts.filter(
         (c) =>
           c.name.toLowerCase().includes(norm) ||
           c.filePath.toLowerCase().includes(norm) ||
           (c.url ?? '').toLowerCase().includes(norm),
       )
-    : contexts;
+    : artifacts;
 
   const totalBytes = filtered.reduce((acc, c) => acc + (c.size ?? 0), 0);
   const favoriteCount = filtered.filter((c) => c.pinnedAt).length;
 
   // Group by artifact type; within a group favorites sort first, then newest first.
-  const byType = new Map<string, ContextEntry[]>();
+  const byType = new Map<string, ArtifactEntry[]>();
   for (const c of filtered) {
     const t = artifactType(c);
     const arr = byType.get(t) ?? [];
@@ -153,7 +153,7 @@ function Section({
 }: {
   title: string;
   count: number;
-  rows: ContextEntry[];
+  rows: ArtifactEntry[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPin: (id: string) => void;

@@ -49,12 +49,12 @@ const sampleEvents: ChatStreamEvent[] = [
     },
   },
   {
-    event: CHAT_STREAM_EVENTS.contextSaved,
-    data: { name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 42 },
+    event: CHAT_STREAM_EVENTS.artifactSaved,
+    data: { name: 'repo_notes', filePath: '.artifacts/repo_notes.md', size: 42 },
   },
   {
-    event: CHAT_STREAM_EVENTS.contextUpdated,
-    data: { name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 84 },
+    event: CHAT_STREAM_EVENTS.artifactUpdated,
+    data: { name: 'repo_notes', filePath: '.artifacts/repo_notes.md', size: 84 },
   },
   {
     event: CHAT_STREAM_EVENTS.image,
@@ -162,24 +162,24 @@ describe('parseChatStreamEvent', () => {
   });
 
   it('dispatches typed events to matching handlers', () => {
-    const onContextSaved = vi.fn();
-    const onContextUpdated = vi.fn();
+    const onArtifactSaved = vi.fn();
+    const onArtifactUpdated = vi.fn();
     const onBranchOverview = vi.fn();
 
     dispatchChatStreamEvent(
       {
-        event: CHAT_STREAM_EVENTS.contextSaved,
-        data: { contextId: 'ctx-durable', name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 42 },
+        event: CHAT_STREAM_EVENTS.artifactSaved,
+        data: { contextId: 'ctx-durable', name: 'repo_notes', filePath: '.artifacts/repo_notes.md', size: 42 },
       },
-      { onContextSaved },
+      { onArtifactSaved },
     );
 
     dispatchChatStreamEvent(
       {
-        event: CHAT_STREAM_EVENTS.contextUpdated,
-        data: { contextId: 'ctx-durable', name: 'repo_notes', filePath: '.contexts/repo_notes.md', size: 84 },
+        event: CHAT_STREAM_EVENTS.artifactUpdated,
+        data: { contextId: 'ctx-durable', name: 'repo_notes', filePath: '.artifacts/repo_notes.md', size: 84 },
       },
-      { onContextUpdated },
+      { onArtifactUpdated },
     );
 
     dispatchChatStreamEvent(
@@ -195,15 +195,15 @@ describe('parseChatStreamEvent', () => {
       { onBranchOverview },
     );
 
-    expect(onContextSaved).toHaveBeenCalledWith(
+    expect(onArtifactSaved).toHaveBeenCalledWith(
       'repo_notes',
-      '.contexts/repo_notes.md',
+      '.artifacts/repo_notes.md',
       42,
       'ctx-durable',
     );
-    expect(onContextUpdated).toHaveBeenCalledWith(
+    expect(onArtifactUpdated).toHaveBeenCalledWith(
       'repo_notes',
-      '.contexts/repo_notes.md',
+      '.artifacts/repo_notes.md',
       84,
       'ctx-durable',
     );

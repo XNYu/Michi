@@ -4,7 +4,7 @@
  * Strategy "B" (read-default-allow, write/exec-default-ask):
  *   - read / ls / grep / find: allow by default — they cannot mutate state.
  *   - list_threads / search_messages / read_node: allow — read-only db scans.
- *   - spawn_branches / save_context / update_context: allow — they mutate the chat graph but
+ *   - spawn_branches / save_artifact / update_artifact: allow — they mutate the chat graph but
  *     are intentional first-class agent moves the user is asking for.
  *   - write / edit / bash: ask by default — destructive or arbitrary.
  *

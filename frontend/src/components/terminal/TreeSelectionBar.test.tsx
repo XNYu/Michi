@@ -33,7 +33,7 @@ function makeStore(overrides: Record<string, unknown> = {}) {
         { id: 't-2', rootNodeId: 'n-2', name: 'Thread 2', lastActiveAt: 0 },
       ],
       activeTreeId: 't-1',
-      contexts: [],
+      artifacts: [],
     },
     ...overrides,
   };
