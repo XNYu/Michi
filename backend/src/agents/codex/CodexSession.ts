@@ -17,6 +17,7 @@ import {
   resolveFollowUpsExperimentMode,
   type FollowUpsExperimentMode,
 } from '../followUpsExperiment';
+import { fallbackCodexTitle, generateCodexTitle } from './codexTitleGenerator';
 
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
 
@@ -76,6 +77,7 @@ export interface CodexSessionDeps {
   firstTurnPrefix?: string;
   effort?: string | null;
   model?: string | null;
+  generateTitleOnFirstTurn?: boolean;
   followUpsHookPocEnabled?: boolean;
   followUpsExperimentMode?: FollowUpsExperimentMode;
 }
@@ -96,6 +98,7 @@ export class CodexSession implements AgentSession {
   private readonly bridge: AgentToolBridge;
   private readonly mcpPort: number;
   private readonly ownerUserId: string | null;
+  private readonly generateTitleOnFirstTurn: boolean;
   private readonly followUpsHookPocEnabled: boolean;
   private readonly followUpsExperimentMode: FollowUpsExperimentMode;
 
@@ -109,6 +112,9 @@ export class CodexSession implements AgentSession {
 
   private firstTurnPrefix: string;
   private firstTurnPrefixConsumed = false;
+  private titleGenerationAttempted = false;
+  private readonly activeTurnThreadIds = new Set<string>();
+  private cancelRequested = false;
 
   private followUpsValidationActive = false;
   private followUpsSetThisTurn = false;
@@ -155,6 +161,7 @@ export class CodexSession implements AgentSession {
     this.bridge = deps.bridge;
     this.mcpPort = deps.mcpPort;
     this.ownerUserId = deps.ownerUserId ?? null;
+    this.generateTitleOnFirstTurn = deps.generateTitleOnFirstTurn ?? false;
     this.followUpsHookPocEnabled = deps.followUpsHookPocEnabled ?? false;
     this.followUpsExperimentMode =
       deps.followUpsExperimentMode ?? resolveFollowUpsExperimentMode();
@@ -190,7 +197,9 @@ export class CodexSession implements AgentSession {
     }
 
     await this.acquireTurnLock();
+    const turnEventGate = { acceptTitle: true };
     try {
+      this.cancelRequested = false;
       const outgoingText =
         this.firstTurnPrefixConsumed || !this.firstTurnPrefix
           ? text
@@ -211,6 +220,38 @@ export class CodexSession implements AgentSession {
           : '');
 
       this.state = 'in_turn';
+      const shouldGenerateTitle =
+        this.generateTitleOnFirstTurn
+        && !this.titleGenerationAttempted
+        && this.history.every((message) => message.role !== 'user');
+      let titlePromise: Promise<string> | null = null;
+      if (shouldGenerateTitle) {
+        this.titleGenerationAttempted = true;
+        let titleThreadId: string | null = null;
+        titlePromise = generateCodexTitle({
+          client: this.client,
+          cwd: this.cwd,
+          model: this.currentModelId,
+          userText: text,
+          onThreadStarted: (threadId) => {
+            titleThreadId = threadId;
+            this.activeTurnThreadIds.add(threadId);
+            if (this.cancelRequested) void this.interruptThread(threadId);
+          },
+        }).catch((err) => {
+          if (!this.cancelRequested) {
+            log.warn('chat', 'codex pre-turn title generation failed; using fallback', {
+              nodeId: this.id,
+              threadId: this.threadId,
+              error: (err as Error).message,
+            });
+          }
+          return fallbackCodexTitle(text);
+        }).finally(() => {
+          if (titleThreadId) this.activeTurnThreadIds.delete(titleThreadId);
+        });
+      }
+
       this.armFollowUpsHookPoc(userTurnCount);
       this.history.push({ role: 'user', content: outgoingText });
       this.markTranslatorTurnStart?.();
@@ -220,18 +261,76 @@ export class CodexSession implements AgentSession {
         ...localImagePaths(input).map((imagePath) => ({ type: 'localImage', path: imagePath })),
       ];
 
-      await this.client.request('turn/start', {
+      // Start the real turn immediately. Title and response events share the
+      // queue and are delivered in whichever order they actually complete.
+      this.activeTurnThreadIds.add(this.threadId);
+      const mainTurnStart = this.client.request('turn/start', {
         threadId: this.threadId,
         input: turnInput,
         ...(this.effort ? { effort: this.effort } : {}),
         summary: 'detailed',
-      });
+      }).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+
+      const mainStartResult = await mainTurnStart;
+      if (this.cancelRequested) {
+        turnEventGate.acceptTitle = false;
+        if (mainStartResult.ok) {
+          for await (const _ev of this.queue.drainUntilTurnEnd()) { /* discard cancelled turn */ }
+        }
+        yield { kind: 'turn_end', stopReason: 'interrupted' };
+        return;
+      }
+      if (!mainStartResult.ok) {
+        turnEventGate.acceptTitle = false;
+        await Promise.all(
+          [...this.activeTurnThreadIds]
+            .filter((threadId) => threadId !== this.threadId)
+            .map((threadId) => this.interruptThread(threadId)),
+        );
+        throw mainStartResult.error;
+      }
+
+      if (titlePromise) {
+        void titlePromise.then((title) => {
+          if (!turnEventGate.acceptTitle) return;
+          if (!this.cancelRequested) {
+            void this.client.request('thread/setName', { threadId: this.threadId, name: title }).catch((err) => {
+              log.debug('chat', 'codex thread/setName failed after pre-turn title generation', {
+                nodeId: this.id,
+                threadId: this.threadId,
+                error: (err as Error).message,
+              });
+            });
+          }
+          this.queue.push({ kind: 'title', title });
+        });
+      }
 
       const assistantChunks: string[] = [];
-      for await (const ev of this.queue.drainUntilTurnEnd()) {
+      let titleDelivered = titlePromise === null;
+      let pendingTurnEnd: Extract<NormalizedEvent, { kind: 'turn_end' }> | null = null;
+      while (true) {
+        const ev = await this.queue.pull();
+        if (ev === null) break;
+        if (ev.kind === 'turn_end') {
+          pendingTurnEnd = ev;
+          const stateAtTurnEnd = this.state as SessionState;
+          if (this.cancelRequested || stateAtTurnEnd === 'crashed' || stateAtTurnEnd === 'disposed') {
+            turnEventGate.acceptTitle = false;
+            titleDelivered = true;
+          }
+          if (titleDelivered) break;
+          continue;
+        }
+        if (ev.kind === 'title') titleDelivered = true;
         if (ev.kind === 'chunk') assistantChunks.push(ev.text);
-        yield ev;
+        if (!(this.cancelRequested && ev.kind === 'title')) yield ev;
+        if (pendingTurnEnd && titleDelivered) break;
       }
+      if (pendingTurnEnd) yield pendingTurnEnd;
       if (assistantChunks.length > 0) {
         this.history.push({ role: 'assistant', content: assistantChunks.join('') });
       }
@@ -240,18 +339,29 @@ export class CodexSession implements AgentSession {
         this.state = 'idle';
       }
     } finally {
+      turnEventGate.acceptTitle = false;
+      this.activeTurnThreadIds.clear();
+      this.cancelRequested = false;
+      if (this.state === 'in_turn') this.state = 'idle';
       this.finishFollowUpsHookPocTurn();
       this.releaseTurnLock();
     }
   }
 
   async cancel(): Promise<void> {
-    if (this.state !== 'in_turn') return;
+    if (this.state !== 'in_turn' && this.activeTurnThreadIds.size === 0) return;
+    this.cancelRequested = true;
+    const threadIds = this.activeTurnThreadIds.size > 0
+      ? [...this.activeTurnThreadIds]
+      : [this.threadId];
+    await Promise.all(threadIds.map((threadId) => this.interruptThread(threadId)));
+  }
+
+  private async interruptThread(threadId: string): Promise<void> {
     try {
-      await this.client.request('turn/interrupt', { threadId: this.threadId });
+      await this.client.request('turn/interrupt', { threadId });
     } catch {
-      // Best-effort; the queue drain will end on its own via the turn_end the
-      // server pushes after interrupt, or the session will be disposed.
+      // Best-effort; the turn_end notification or session disposal owns cleanup.
     }
   }
 

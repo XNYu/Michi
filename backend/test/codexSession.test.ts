@@ -185,6 +185,239 @@ test('send includes existing image attachments as native localImage inputs', asy
   }
 });
 
+test('first Codex request streams reasoning immediately and delivers title whenever it finishes', async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let client!: ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };
+  client = makeStubClient({
+    request: async (method: string, rawParams: unknown) => {
+      const params = rawParams as Record<string, unknown>;
+      requests.push({ method, params });
+      if (method === 'thread/start') return { threadId: 'thread-title-ephemeral' };
+      if (method === 'turn/start' && params.threadId === 'thread-title-ephemeral') {
+        setImmediate(() => {
+          client._emit('thread-title-ephemeral', 'item/agentMessage/delta', {
+            threadId: 'thread-title-ephemeral',
+            delta: '{"title":"刷新令牌机制"}',
+          });
+          client._emit('thread-title-ephemeral', 'turn/completed', {
+            threadId: 'thread-title-ephemeral',
+            turn: { status: 'completed' },
+          });
+        });
+        return {};
+      }
+      if (method === 'turn/start' && params.threadId === 'thread-main') {
+        setImmediate(() => {
+          client._emit('thread-main', 'item/reasoning/summaryTextDelta', {
+            threadId: 'thread-main',
+            itemId: 'reasoning-1',
+            summaryIndex: 0,
+            delta: 'Thinking',
+          });
+          client._emit('thread-main', 'item/agentMessage/delta', {
+            threadId: 'thread-main',
+            delta: 'Body',
+          });
+          client._emit('thread-main', 'turn/completed', {
+            threadId: 'thread-main',
+            turn: { status: 'completed' },
+          });
+        });
+      }
+      return {};
+    },
+  }) as ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };
+
+  const session = new CodexSession({
+    nodeId: 'node-title-first',
+    threadId: 'thread-main',
+    cwd: '/tmp/test',
+    workspaceId: null,
+    client,
+    mcpRegistry: makeStubMcpRegistry(),
+    bridge: makeStubBridge(),
+    mcpPort: 3001,
+    model: 'gpt-test',
+    generateTitleOnFirstTurn: true,
+  });
+  session.createMcpSlot();
+  session.wireNotifications();
+
+  const events: Array<Record<string, unknown>> = [];
+  for await (const event of session.send('请解释刷新令牌机制')) {
+    events.push(event as unknown as Record<string, unknown>);
+  }
+
+  assert.equal(
+    requests.some(({ method, params }) => method === 'turn/start' && params.threadId === 'thread-main'),
+    true,
+    'the real turn should already be running while title generation completes',
+  );
+
+  const titleThreadStart = requests.find(({ method }) => method === 'thread/start');
+  assert.equal(titleThreadStart?.params.ephemeral, true);
+  assert.equal(titleThreadStart?.params.model, 'gpt-test');
+  const titleTurnStart = requests.find(
+    ({ method, params }) => method === 'turn/start' && params.threadId === 'thread-title-ephemeral',
+  );
+  assert.equal(titleTurnStart?.params.effort, 'low');
+  assert.equal(titleTurnStart?.params.summary, 'none');
+  assert.deepEqual(titleTurnStart?.params.outputSchema, {
+    type: 'object',
+    properties: { title: { type: 'string' } },
+    required: ['title'],
+    additionalProperties: false,
+  });
+  assert.ok(requests.some(
+    ({ method, params }) => method === 'thread/setName'
+      && params.threadId === 'thread-main'
+      && params.name === '刷新令牌机制',
+  ));
+  const kinds = events.map((event) => event.kind);
+  assert.equal(kinds[0], 'thought');
+  assert.ok(kinds.indexOf('chunk') < kinds.indexOf('title'), 'body must display without waiting for title');
+  assert.ok(kinds.indexOf('title') < kinds.indexOf('turn_end'), 'title must arrive before SSE closes');
+  assert.equal(events.find((event) => event.kind === 'title')?.title, '刷新令牌机制');
+  assert.deepEqual(session.getHistory(), [
+    { role: 'user', content: '请解释刷新令牌机制' },
+    { role: 'assistant', content: 'Body' },
+  ]);
+});
+
+test('Codex title generation failure yields a local fallback before the real turn', async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let client!: ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };
+  client = makeStubClient({
+    request: async (method: string, rawParams: unknown) => {
+      const params = rawParams as Record<string, unknown>;
+      requests.push({ method, params });
+      if (method === 'thread/start') throw new Error('title model unavailable');
+      if (method === 'turn/start' && params.threadId === 'thread-fallback-main') {
+        setImmediate(() => {
+          client._emit('thread-fallback-main', 'turn/completed', {
+            threadId: 'thread-fallback-main',
+            turn: { status: 'completed' },
+          });
+        });
+      }
+      return {};
+    },
+  }) as ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };
+
+  const session = new CodexSession({
+    nodeId: 'node-title-fallback',
+    threadId: 'thread-fallback-main',
+    cwd: '/tmp/test',
+    workspaceId: null,
+    client,
+    mcpRegistry: makeStubMcpRegistry(),
+    bridge: makeStubBridge(),
+    mcpPort: 3001,
+    generateTitleOnFirstTurn: true,
+  });
+  session.createMcpSlot();
+  session.wireNotifications();
+
+  const events: Array<Record<string, unknown>> = [];
+  for await (const event of session.send('/branch Diagnose the startup timeout. Include likely causes.')) {
+    events.push(event as unknown as Record<string, unknown>);
+  }
+  assert.equal(events.find((event) => event.kind === 'title')?.title, 'Diagnose the startup timeout');
+  assert.equal(
+    requests.some(({ method, params }) => method === 'turn/start' && params.threadId === 'thread-fallback-main'),
+    true,
+    'fallback title generation must not delay the real turn',
+  );
+});
+
+test('cancelling parallel Codex title and reasoning turns interrupts both', async () => {
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let titleTurnStarted!: () => void;
+  const titleTurnStartedPromise = new Promise<void>((resolve) => { titleTurnStarted = resolve; });
+  let mainTurnStarted!: () => void;
+  const mainTurnStartedPromise = new Promise<void>((resolve) => { mainTurnStarted = resolve; });
+  let mainTurnCount = 0;
+  let client!: ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };
+  client = makeStubClient({
+    request: async (method: string, rawParams: unknown) => {
+      const params = rawParams as Record<string, unknown>;
+      requests.push({ method, params });
+      if (method === 'thread/start') return { threadId: 'thread-title-cancel' };
+      if (method === 'turn/start' && params.threadId === 'thread-title-cancel') {
+        titleTurnStarted();
+        return {};
+      }
+      if (method === 'turn/start' && params.threadId === 'thread-main-cancel') {
+        mainTurnCount += 1;
+        if (mainTurnCount === 1) {
+          mainTurnStarted();
+        } else {
+          setImmediate(() => {
+            client._emit('thread-main-cancel', 'item/agentMessage/delta', {
+              threadId: 'thread-main-cancel',
+              delta: 'clean',
+            });
+            client._emit('thread-main-cancel', 'turn/completed', {
+              threadId: 'thread-main-cancel',
+              turn: { status: 'completed' },
+            });
+          });
+        }
+        return {};
+      }
+      if (method === 'turn/interrupt') {
+        setImmediate(() => {
+          client._emit(String(params.threadId), 'turn/completed', {
+            threadId: params.threadId,
+            turn: { status: 'interrupted' },
+          });
+        });
+      }
+      return {};
+    },
+  }) as ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };
+
+  const session = new CodexSession({
+    nodeId: 'node-title-cancel',
+    threadId: 'thread-main-cancel',
+    cwd: '/tmp/test',
+    workspaceId: null,
+    client,
+    mcpRegistry: makeStubMcpRegistry(),
+    bridge: makeStubBridge(),
+    mcpPort: 3001,
+    generateTitleOnFirstTurn: true,
+  });
+  session.createMcpSlot();
+  session.wireNotifications();
+
+  const iterator = session.send('cancel this request');
+  const eventsPromise = (async () => {
+    const events: Array<Record<string, unknown>> = [];
+    for await (const event of iterator) events.push(event as unknown as Record<string, unknown>);
+    return events;
+  })();
+  await Promise.all([titleTurnStartedPromise, mainTurnStartedPromise]);
+  await session.cancel();
+  const events = await eventsPromise;
+
+  assert.equal(events.some((event) => event.kind === 'title'), false);
+  assert.equal(events.at(-1)?.kind, 'turn_end');
+  assert.equal(events.at(-1)?.stopReason, 'interrupted');
+  assert.deepEqual(
+    requests
+      .filter(({ method }) => method === 'turn/interrupt')
+      .map(({ params }) => params.threadId)
+      .sort(),
+    ['thread-main-cancel', 'thread-title-cancel'],
+  );
+  const resumedChunks: string[] = [];
+  for await (const event of session.send('resume cleanly')) {
+    if (event.kind === 'chunk') resumedChunks.push(event.text);
+  }
+  assert.deepEqual(resumedChunks, ['clean'], 'cancelled events must not leak into the next turn');
+});
+
 test('internal Michi metadata tool calls never enter the visible event stream', async () => {
   const { session, client } = makeSession();
   const events: Array<{ kind: string; title?: string }> = [];

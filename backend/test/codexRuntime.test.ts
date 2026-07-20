@@ -24,6 +24,9 @@ function makeStubClient(overrides: Partial<Record<string, unknown>> = {}): Codex
     onExit: (_cb: () => void) => () => {},
     shutdown: async () => {},
     isRunning: () => true,
+    _emit: (threadId: string, method: string, params: Record<string, unknown>) => {
+      for (const handler of notifHandlers.get(threadId) ?? []) handler(method, params);
+    },
     ...overrides,
   };
   return client as CodexAppServerClient;
@@ -306,17 +309,35 @@ test('daemon exit marks sessions crashed and terminates in-flight drain', async 
   let capturedOnExit: (() => void) | null = null;
 
   // Build a client that captures the onExit callback so we can trigger it.
-  const stubClient = makeStubClient({
+  let stubClient!: CodexAppServerClient & { _emit: (threadId: string, method: string, params: Record<string, unknown>) => void };
+  stubClient = makeStubClient({
     onExit: (cb: () => void) => {
       capturedOnExit = cb;
       return () => {};
     },
-    request: async (method: string, _params: unknown): Promise<unknown> => {
+    request: async (method: string, rawParams: unknown): Promise<unknown> => {
+      const params = rawParams as Record<string, unknown>;
       if (method === 'model/list') return { data: [{ id: 'm1', displayName: 'M1', description: '', hidden: false, isDefault: true, supportedReasoningEfforts: [], defaultReasoningEffort: 'low' }] };
-      if (method === 'thread/start') return { threadId: 'thread-crash-test' };
+      if (method === 'thread/start') {
+        return params.ephemeral === true
+          ? { threadId: 'thread-crash-title' }
+          : { threadId: 'thread-crash-test' };
+      }
+      if (method === 'turn/start' && params.threadId === 'thread-crash-title') {
+        setImmediate(() => {
+          stubClient._emit('thread-crash-title', 'item/agentMessage/delta', {
+            threadId: 'thread-crash-title',
+            delta: '{"title":"Crash test"}',
+          });
+          stubClient._emit('thread-crash-title', 'turn/completed', {
+            threadId: 'thread-crash-title',
+            turn: { status: 'completed' },
+          });
+        });
+      }
       return {};
     },
-  });
+  }) as CodexAppServerClient & { _emit: (threadId: string, method: string, params: Record<string, unknown>) => void };
 
   const runtime = new CodexRuntime(
     makeStubBridge(),

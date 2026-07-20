@@ -248,6 +248,7 @@ export class CodexRuntime implements AgentRuntime {
       firstTurnPrefix,
       effort: effort ? String(effort) : null,
       model: modelId || null,
+      generateTitleOnFirstTurn: true,
       followUpsHookPocEnabled: this.followUpsHookPocEnabled,
       followUpsExperimentMode: this.followUpsExperimentMode,
     });
