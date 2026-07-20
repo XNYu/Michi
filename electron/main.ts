@@ -254,6 +254,18 @@ async function waitForBackend(port: number, timeoutMs = 15_000): Promise<void> {
   });
 }
 
+function isExecutable(cand: string): boolean {
+  if (!fs.existsSync(cand)) return false;
+  try { fs.accessSync(cand, fs.constants.X_OK); return true; } catch { return false; }
+}
+
+function probePath(binName: string): boolean {
+  for (const p of (process.env.PATH || '').split(':')) {
+    if (p && isExecutable(path.join(p, binName))) return true;
+  }
+  return false;
+}
+
 /**
  * Mirror of backend/src/services/acpClient.ts findKiroCli() for the
  * packaged-default decision. Kept in sync by hand — both probes look in
@@ -264,35 +276,67 @@ function probeKiroCli(): boolean {
   if (env && fs.existsSync(env)) return true;
   const home = os.homedir();
 
-  const local = path.join(home, '.local', 'bin', 'kiro-cli');
-  if (fs.existsSync(local)) {
-    try { fs.accessSync(local, fs.constants.X_OK); return true; } catch { /* fall through */ }
-  }
+  if (isExecutable(path.join(home, '.local', 'bin', 'kiro-cli'))) return true;
 
   const toolsDir = path.join(home, '.toolbox', 'tools', 'kiro-cli');
   try {
     for (const v of fs.readdirSync(toolsDir)) {
       const cand = path.join(toolsDir, v, 'Kiro CLI.app', 'Contents', 'MacOS', 'kiro-cli');
-      if (fs.existsSync(cand)) {
-        try { fs.accessSync(cand, fs.constants.X_OK); return true; } catch { /* fall through */ }
-      }
+      if (isExecutable(cand)) return true;
     }
   } catch { /* toolsDir may not exist */ }
 
-  for (const p of (process.env.PATH || '').split(':')) {
-    if (!p) continue;
-    const cand = path.join(p, 'kiro-cli');
-    if (fs.existsSync(cand)) {
-      try { fs.accessSync(cand, fs.constants.X_OK); return true; } catch { /* fall through */ }
-    }
-  }
+  if (probePath('kiro-cli')) return true;
 
-  const toolboxBin = path.join(home, '.toolbox', 'bin', 'kiro-cli');
-  if (fs.existsSync(toolboxBin)) {
-    try { fs.accessSync(toolboxBin, fs.constants.X_OK); return true; } catch { /* fall through */ }
-  }
+  return isExecutable(path.join(home, '.toolbox', 'bin', 'kiro-cli'));
+}
 
-  return false;
+/**
+ * Mirror of backend/src/agents/codex/codexBinary.ts findCodexBinary() for
+ * the packaged-default decision. Kept in sync by hand.
+ */
+function probeCodexCli(): boolean {
+  const env = process.env.CODEX_CLI_BIN;
+  if (env && fs.existsSync(env)) return true;
+  if (probePath('codex')) return true;
+  const home = os.homedir();
+  return [
+    path.join(home, '.npm-global', 'bin', 'codex'),
+    path.join(home, '.local', 'bin', 'codex'),
+    '/usr/local/bin/codex',
+    '/opt/homebrew/bin/codex',
+    '/Applications/ChatGPT.app/Contents/Resources/codex',
+    '/Applications/Codex.app/Contents/Resources/codex',
+  ].some((cand) => fs.existsSync(cand));
+}
+
+/**
+ * Mirror of backend/src/agents/claude/claudeBinary.ts findClaudeBinary()
+ * for the packaged-default decision. Kept in sync by hand.
+ */
+function probeClaudeCli(): boolean {
+  const env = process.env.CLAUDE_CLI_BIN;
+  if (env && fs.existsSync(env)) return true;
+  if (probePath('claude')) return true;
+  const home = os.homedir();
+  return [
+    path.join(home, '.npm-global', 'bin', 'claude'),
+    path.join(home, '.local', 'bin', 'claude'),
+    path.join(home, '.toolbox', 'bin', 'claude'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+  ].some((cand) => fs.existsSync(cand));
+}
+
+/**
+ * Pick the packaged-app default runtime: first CLI detected in preference
+ * order codex → claude → kiro, falling back to the CLI-less `pi` runtime.
+ */
+function detectDefaultRuntime(): string {
+  if (probeCodexCli()) return 'codex';
+  if (probeClaudeCli()) return 'claude';
+  if (probeKiroCli()) return 'kiro';
+  return 'pi';
 }
 
 /**
@@ -371,9 +415,10 @@ async function startBackend(): Promise<number | null> {
     env.MICHI_STARTUP_TRACE = '1';
     env.MICHI_STARTUP_RUN_ID = startupRunId();
   }
-  if (app.isPackaged && env.MICHI_DEFAULT_RUNTIME == null && !probeKiroCli()) {
-    env.MICHI_DEFAULT_RUNTIME = 'pi';
-    elog('INFO', 'boot', 'kiro-cli not detected, defaulting runtime to pi');
+  if (app.isPackaged && env.MICHI_DEFAULT_RUNTIME == null) {
+    const detected = detectDefaultRuntime();
+    env.MICHI_DEFAULT_RUNTIME = detected;
+    elog('INFO', 'boot', 'default runtime detected', { runtime: detected });
   }
 
   elog('INFO', 'boot', 'forking backend', { entry, port });
