@@ -28,8 +28,8 @@ import {
 function makeCallbacks() {
     return {
         onSpawnBranches: async () => [],
-        onSaveContext: () => null,
-        onUpdateContext: () => null,
+        onSaveArtifact: () => null,
+        onUpdateArtifact: () => null,
         onShowImage: () => ({ error: 'unsupported in test' }),
         onApprove: undefined as McpSlotRegistry extends infer _ ? undefined : never,
     };
@@ -94,8 +94,8 @@ describe('McpSlotRegistry', () => {
         assert.equal(slot.cwd, '/home/user/project');
         assert.equal(slot.workspaceId, null);
         assert.equal(typeof slot.onSpawnBranches, 'function');
-        assert.equal(typeof slot.onSaveContext, 'function');
-        assert.equal(typeof slot.onUpdateContext, 'function');
+        assert.equal(typeof slot.onSaveArtifact, 'function');
+        assert.equal(typeof slot.onUpdateArtifact, 'function');
     });
 
     // ── Case 2: get returns the same slot; unknown slotId returns undefined ────
@@ -177,7 +177,7 @@ describe('McpSlotRegistry', () => {
         const registered = (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools;
 
         assert.ok(registered['approve'], 'approve tool must be registered');
-        assert.ok(registered['save_context'], 'save_context tool must be registered');
+        assert.ok(registered['save_artifact'], 'save_artifact tool must be registered');
         assert.ok(registered['spawn_branches'], 'spawn_branches tool must be registered');
         assert.equal(registered['set_follow_ups'], undefined, 'POC tool stays hidden without callback');
         assert.equal(registered['set_branch_overview'], undefined, 'overview tool stays hidden without callback');
@@ -373,8 +373,8 @@ describe('approve MCP tool', () => {
         let capturedParams: unknown = null;
         const slot = registry.create('chat-capture', '/tmp', null, {
             onSpawnBranches: async () => [],
-            onSaveContext: () => null,
-            onUpdateContext: () => null,
+            onSaveArtifact: () => null,
+            onUpdateArtifact: () => null,
             onShowImage: () => ({ error: 'unsupported in test' }),
             onApprove: async (params) => {
                 capturedParams = params;
@@ -397,8 +397,8 @@ describe('approve MCP tool', () => {
     test('stringifies the onApprove return value as JSON into content[0].text', async () => {
         const slot = registry.create('chat-stringify', '/tmp', null, {
             onSpawnBranches: async () => [],
-            onSaveContext: () => null,
-            onUpdateContext: () => null,
+            onSaveArtifact: () => null,
+            onUpdateArtifact: () => null,
             onShowImage: () => ({ error: 'unsupported in test' }),
             onApprove: async () => ({ behavior: 'allow' as const, updatedInput: { x: 1 } }),
         });
@@ -420,8 +420,8 @@ describe('approve MCP tool', () => {
         const updatedInput = { command: 'ls', args: ['-la'] };
         const slot = registry.create('chat-allow', '/tmp', null, {
             onSpawnBranches: async () => [],
-            onSaveContext: () => null,
-            onUpdateContext: () => null,
+            onSaveArtifact: () => null,
+            onUpdateArtifact: () => null,
             onShowImage: () => ({ error: 'unsupported in test' }),
             onApprove: async () => ({ behavior: 'allow' as const, updatedInput }),
         });
@@ -439,8 +439,8 @@ describe('approve MCP tool', () => {
     test('behavior deny with message round-trips through the handler response', async () => {
         const slot = registry.create('chat-deny', '/tmp', null, {
             onSpawnBranches: async () => [],
-            onSaveContext: () => null,
-            onUpdateContext: () => null,
+            onSaveArtifact: () => null,
+            onUpdateArtifact: () => null,
             onShowImage: () => ({ error: 'unsupported in test' }),
             onApprove: async () => ({ behavior: 'deny' as const, message: 'not allowed in production' }),
         });

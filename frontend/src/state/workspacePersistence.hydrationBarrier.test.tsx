@@ -61,7 +61,7 @@ const backendWorkspaceRow = {
   trees: [],
   edges: [],
   messages: [],
-  contexts: [],
+  artifacts: [],
 };
 
 /**

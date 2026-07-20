@@ -5,7 +5,7 @@ import {
   serializedEdgeId,
   type WorkspaceDirtyDelta,
 } from './workspacePersistence';
-import type { ChatMessage, ChatNodeState, Project, ProjectEdge, Tree, ContextEntry } from './chatTypes';
+import type { ChatMessage, ChatNodeState, Project, ProjectEdge, Tree, ArtifactEntry } from './chatTypes';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -37,7 +37,7 @@ function makeProject(id: string, nodeIds: string[], extras: Partial<Project> = {
     createdAt: 1_716_800_000_000,
     trees: [{ id: 't1', rootNodeId: nodeIds[0] ?? 'n1', createdAt: 1, lastActiveAt: 1 }],
     activeTreeId: 't1',
-    contexts: [],
+    artifacts: [],
     ...extras,
   } as Project;
 }
@@ -50,7 +50,7 @@ function tree(id: string): Tree {
   return { id, rootNodeId: 'n1', createdAt: 1, lastActiveAt: 1 };
 }
 
-function ctx(id: string): ContextEntry {
+function ctx(id: string): ArtifactEntry {
   return { id, name: id, filePath: `/${id}`, source: 'user', createdAt: 1, updatedAt: 1 };
 }
 
@@ -91,8 +91,8 @@ function accumulate2(
 
 describe('accumulateWorkspaceDirtyDelta — invariant', () => {
   it('no id ever appears in both upsert and delete sets (single tick)', () => {
-    const prev = makeProject('ws1', [], { edges: [edge('a', 'b')], trees: [tree('t1')], contexts: [ctx('c1')] });
-    const cur  = makeProject('ws1', [], { edges: [edge('c', 'd')], trees: [tree('t2')], contexts: [ctx('c2')] });
+    const prev = makeProject('ws1', [], { edges: [edge('a', 'b')], trees: [tree('t1')], artifacts: [ctx('c1')] });
+    const cur  = makeProject('ws1', [], { edges: [edge('c', 'd')], trees: [tree('t2')], artifacts: [ctx('c2')] });
     const d = accumulateWorkspaceDirtyDelta(prev, cur, {}, {}, emptyWorkspaceDirtyDelta());
     assertNoOverlap(d);
   });
@@ -222,10 +222,10 @@ describe('accumulateWorkspaceDirtyDelta — trees', () => {
 // Contexts — same delete-then-re-add / add-then-delete logic
 // ---------------------------------------------------------------------------
 
-describe('accumulateWorkspaceDirtyDelta — contexts', () => {
+describe('accumulateWorkspaceDirtyDelta — artifacts', () => {
   it('add-then-delete: ends in deletes only', () => {
-    const base  = makeProject('ws1', [], { contexts: [] });
-    const after = makeProject('ws1', [], { contexts: [ctx('c2')] });
+    const base  = makeProject('ws1', [], { artifacts: [] });
+    const after = makeProject('ws1', [], { artifacts: [ctx('c2')] });
     const d = accumulate2(
       { prev: base, cur: after },
       { prev: after, cur: base },
@@ -236,8 +236,8 @@ describe('accumulateWorkspaceDirtyDelta — contexts', () => {
   });
 
   it('delete-then-re-add: ends in upserts only', () => {
-    const base  = makeProject('ws1', [], { contexts: [ctx('c2')] });
-    const after = makeProject('ws1', [], { contexts: [] });
+    const base  = makeProject('ws1', [], { artifacts: [ctx('c2')] });
+    const after = makeProject('ws1', [], { artifacts: [] });
     const d = accumulate2(
       { prev: base, cur: after },
       { prev: after, cur: base },

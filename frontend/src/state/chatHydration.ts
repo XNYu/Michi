@@ -3,7 +3,7 @@ import type {
   ChatMessage,
   ChatNodeState,
   ComposerDraft,
-  ContextEntry,
+  ArtifactEntry,
   NodeKind,
   Project,
   ToolCallState,
@@ -40,7 +40,7 @@ interface BackendFullWorkspace {
   nodes?: Array<Record<string, unknown>>;
   edges?: Array<Record<string, unknown>>;
   messages?: Array<Record<string, unknown>>;
-  contexts?: Array<Record<string, unknown>>;
+  artifacts?: Array<Record<string, unknown>>;
 }
 
 function asString(v: unknown): string | undefined {
@@ -272,24 +272,24 @@ export function mapTreeRow(row: Record<string, unknown>): Tree | null {
   };
 }
 
-/** Map one `contexts` row → ContextEntry (artifact), or null when required
+/** Map one `artifacts` row → ArtifactEntry (artifact), or null when required
  *  fields missing. A `link` artifact has a `url` and no file_path; every other
  *  type has a file_path. Require at least one so links survive reload. */
-export function mapContextRow(row: Record<string, unknown>): ContextEntry | null {
+export function mapContextRow(row: Record<string, unknown>): ArtifactEntry | null {
   const id = asString(row.id);
   const name = asString(row.name);
   const filePath = asString(row.file_path) ?? '';
   const url = asString(row.url);
   if (!id || !name || (!filePath && !url)) return null;
   const rawType = asString(row.type);
-  const type: ContextEntry['type'] =
+  const type: ArtifactEntry['type'] =
     rawType === 'file' || rawType === 'image' || rawType === 'link' || rawType === 'doc'
       ? rawType
       : url
         ? 'link'
         : 'doc';
   const rawKind = asString(row.kind);
-  const kind: ContextEntry['kind'] =
+  const kind: ArtifactEntry['kind'] =
     rawKind === 'embedded' || rawKind === 'reference' ? rawKind : undefined;
   const originNodeId = asString(row.origin_node_id);
   const originMessageId = asString(row.origin_message_id);
@@ -526,7 +526,7 @@ export function hydrateBackendWorkspaces(
       ? requestedActiveTreeId
       : [...trees].filter((t) => !t.archivedAt).sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]?.id ?? null;
 
-    const contexts: ContextEntry[] = (Array.isArray(full.contexts) ? full.contexts : []).flatMap((row) => {
+    const artifacts: ArtifactEntry[] = (Array.isArray(full.artifacts) ? full.artifacts : []).flatMap((row) => {
       const ctx = mapContextRow(row);
       return ctx ? [ctx] : [];
     });
@@ -555,7 +555,7 @@ export function hydrateBackendWorkspaces(
       createdAt: asNumber(workspace.created_at, Date.now()),
       trees,
       activeTreeId,
-      contexts,
+      artifacts,
       deletedAt: asOptionalNumber(workspace.deleted_at),
       archivedAt: asOptionalNumber(workspace.archived_at),
       pinnedAt: asOptionalNumber(workspace.pinned_at),
@@ -757,12 +757,12 @@ export function hydrateSavedState(saved: unknown): HydratedState {
     return [{ ...proj, trees: [tree], activeTreeId: tree.id }];
   });
 
-  // v2->v3: add contexts array to projects that lack it.
-  // v3->v4: old text-body contexts were replaced by file-based contexts. Drop
-  // only entries that do not have a filePath; preserve valid v4 file contexts.
+  // v2->v3: add artifacts array to projects that lack it.
+  // v3->v4: old text-body artifacts were replaced by file-based artifacts. Drop
+  // only entries that do not have a filePath; preserve valid v4 file artifacts.
   for (const p of projects) {
-    const rawContexts = Array.isArray((p as any).contexts) ? (p as any).contexts : [];
-    p.contexts = rawContexts
+    const rawContexts = Array.isArray((p as any).artifacts) ? (p as any).artifacts : [];
+    p.artifacts = rawContexts
       // Keep any artifact with a name plus at least one payload: a filePath
       // (doc/file/image) OR a url (link). Pre-artifact rows always had filePath.
       .filter(
@@ -773,13 +773,13 @@ export function hydrateSavedState(saved: unknown): HydratedState {
       .map((c: any) => {
         const url = typeof c.url === 'string' ? c.url : undefined;
         const filePath = typeof c.filePath === 'string' ? c.filePath : '';
-        const type: ContextEntry['type'] =
+        const type: ArtifactEntry['type'] =
           c.type === 'file' || c.type === 'image' || c.type === 'link' || c.type === 'doc'
             ? c.type
             : url
               ? 'link'
               : 'doc';
-        const kind: ContextEntry['kind'] =
+        const kind: ArtifactEntry['kind'] =
           c.kind === 'embedded' || c.kind === 'reference' ? c.kind : undefined;
         const originNodeId =
           c.origin && typeof c.origin.nodeId === 'string' ? c.origin.nodeId : undefined;

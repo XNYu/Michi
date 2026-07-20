@@ -1,5 +1,5 @@
 import { hydrateBackendWorkspaces } from './chatHydration';
-import type { ChatMessage, ChatNodeState, ContextEntry, Project, ProjectEdge, Tree } from './chatTypes';
+import type { ChatMessage, ChatNodeState, ArtifactEntry, Project, ProjectEdge, Tree } from './chatTypes';
 
 export interface BackgroundReplayGap {
   chatId: string;
@@ -36,7 +36,7 @@ function mergeById<T extends { id: string }>(server: T[], local: T[]): T[] {
   return result;
 }
 
-function mergeContexts(server: ContextEntry[] = [], local: ContextEntry[] = []): ContextEntry[] {
+function mergeContexts(server: ArtifactEntry[] = [], local: ArtifactEntry[] = []): ArtifactEntry[] {
   const result = server.slice();
   const indexById = new Map(result.map((context, index) => [context.id, index] as const));
   const indexByName = new Map(result.map((context, index) => [context.name.toLocaleLowerCase(), index] as const));
@@ -74,7 +74,7 @@ function mergeProject(server: Project, local: Project): Project {
     chatIds,
     edges,
     trees,
-    contexts: mergeContexts(server.contexts, local.contexts),
+    artifacts: mergeContexts(server.artifacts, local.artifacts),
     activeTreeId: localActiveStillExists ? local.activeTreeId : server.activeTreeId,
   };
 }

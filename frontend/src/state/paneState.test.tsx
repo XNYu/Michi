@@ -136,7 +136,7 @@ describe('pane state', () => {
 
   it('appends a background pane without stealing the existing focus', () => {
     const project = {
-      id: 'p1', name: 'WS', chatIds: ['parent', 'child'], edges: [], contexts: [],
+      id: 'p1', name: 'WS', chatIds: ['parent', 'child'], edges: [], artifacts: [],
       trees: [{ id: 't1', rootNodeId: 'parent', createdAt: 1, lastActiveAt: 1 }],
       activeTreeId: 't1', createdAt: 1,
     };

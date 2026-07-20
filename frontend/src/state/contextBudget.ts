@@ -1,22 +1,22 @@
-import type { ChatNodeState, ContextEntry } from './chatTypes';
+import type { ChatNodeState, ArtifactEntry } from './chatTypes';
 import { visibleMessageText } from './assistantBlocks';
 
 /**
- * Extract @mentions from text and resolve them against project contexts.
- * Returns deduped ContextEntry[] (by id). Unresolved mentions are ignored.
+ * Extract @mentions from text and resolve them against project artifacts.
+ * Returns deduped ArtifactEntry[] (by id). Unresolved mentions are ignored.
  */
 export function resolveAtMentions(
     text: string,
-    contexts: ContextEntry[],
-): ContextEntry[] {
+    artifacts: ArtifactEntry[],
+): ArtifactEntry[] {
     // Allow `.` so filenames like `report.md` are resolvable as `@report.md`.
     const re = /(?:^|\s)@([\p{L}\p{N}_.-]+)/gu;
     const seen = new Set<string>();
-    const result: ContextEntry[] = [];
+    const result: ArtifactEntry[] = [];
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
         const name = m[1].toLowerCase();
-        const entry = contexts.find(c => c.name.toLowerCase() === name);
+        const entry = artifacts.find(c => c.name.toLowerCase() === name);
         if (entry && !seen.has(entry.id)) {
             seen.add(entry.id);
             result.push(entry);

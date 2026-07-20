@@ -85,7 +85,7 @@ vi.mock('../../state/chatStore', async () => {
       agentStatus: null,
       refreshAgentStatus: vi.fn(),
       activeProject: {
-        id: 'p1', name: 'P', contexts: [], edges: [], chatIds: ['node1'],
+        id: 'p1', name: 'P', artifacts: [], edges: [], chatIds: ['node1'],
         trees: [{ id: 't1', rootNodeId: 'node1' }], activeTreeId: 't1',
       },
     }),

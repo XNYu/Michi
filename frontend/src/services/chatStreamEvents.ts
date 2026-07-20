@@ -43,8 +43,8 @@ export interface StreamHandlers {
   onFollowUps?: (followUps: string[]) => void;
   onFollowUpsStatus?: (status: 'in_progress' | 'completed' | 'failed') => void;
   onCommands?: (commands: AgentCommand[]) => void;
-  onContextSaved?: (name: string, filePath: string, size?: number, contextId?: string) => void;
-  onContextUpdated?: (name: string, filePath: string, size?: number, contextId?: string) => void;
+  onArtifactSaved?: (name: string, filePath: string, size?: number, contextId?: string) => void;
+  onArtifactUpdated?: (name: string, filePath: string, size?: number, contextId?: string) => void;
   onImage?: (data: ChatStreamPayloads['image']) => void;
   onPermissionRequest?: (data: ChatStreamPayloads['permission_request']) => void;
   onUserInputRequest?: (data: ChatStreamPayloads['user_input_request']) => void;
@@ -113,16 +113,16 @@ export function dispatchChatStreamEvent(
     case CHAT_STREAM_EVENTS.commands:
       handlers.onCommands?.(streamEvent.data.commands);
       return;
-    case CHAT_STREAM_EVENTS.contextSaved:
-      handlers.onContextSaved?.(
+    case CHAT_STREAM_EVENTS.artifactSaved:
+      handlers.onArtifactSaved?.(
         streamEvent.data.name,
         streamEvent.data.filePath,
         streamEvent.data.size,
         streamEvent.data.contextId,
       );
       return;
-    case CHAT_STREAM_EVENTS.contextUpdated:
-      handlers.onContextUpdated?.(
+    case CHAT_STREAM_EVENTS.artifactUpdated:
+      handlers.onArtifactUpdated?.(
         streamEvent.data.name,
         streamEvent.data.filePath,
         streamEvent.data.size,

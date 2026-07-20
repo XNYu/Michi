@@ -81,8 +81,8 @@ export interface McpSlot {
     onSpawnBranches: (
         topics: Array<{ title: string; prompt: string }>,
     ) => Promise<Array<{ title: string; prompt: string; chatId: string }>>;
-    onSaveContext: (name: string, body: string) => BridgeContextResult | null;
-    onUpdateContext: (name: string, body: string) => BridgeContextResult | null;
+    onSaveArtifact: (name: string, body: string) => BridgeContextResult | null;
+    onUpdateArtifact: (name: string, body: string) => BridgeContextResult | null;
     onShowImage: (inputPath: string, caption?: string) => { relPath: string; mimeType: string; size: number } | { error: string };
     /** Structured turn metadata callbacks. Optional so runtimes expose only
      * the metadata tools they can route back into their own event stream. */
@@ -111,8 +111,8 @@ export interface McpSlot {
 
 export interface McpSlotCallbacks {
     onSpawnBranches: McpSlot["onSpawnBranches"];
-    onSaveContext: McpSlot["onSaveContext"];
-    onUpdateContext: McpSlot["onUpdateContext"];
+    onSaveArtifact: McpSlot["onSaveArtifact"];
+    onUpdateArtifact: McpSlot["onUpdateArtifact"];
     onShowImage: McpSlot["onShowImage"];
     onSetFollowUps?: McpSlot["onSetFollowUps"];
     onSetBranchOverview?: McpSlot["onSetBranchOverview"];
@@ -206,7 +206,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     // globalContext tools (list_threads / search_messages / read_node) are
     // registered separately below because they don't go through the slot
     // callback indirection.
-    const SIDE_EFFECT_TOOL_NAMES = new Set(["spawn_branches", "save_context", "update_context", "show_image"]);
+    const SIDE_EFFECT_TOOL_NAMES = new Set(["spawn_branches", "save_artifact", "update_artifact", "show_image"]);
     for (const tool of BUILTIN_TOOLS) {
         if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name)) continue;
         server.registerTool(
@@ -226,23 +226,23 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
                             }],
                         };
                     }
-                    case "save_context": {
+                    case "save_artifact": {
                         const name = typeof args?.name === "string" ? args.name.trim() : "";
                         if (!name || typeof args?.body !== "string") {
-                            throw new Error("save_context requires name and body");
+                            throw new Error("save_artifact requires name and body");
                         }
-                        const result = slot.onSaveContext(name, args.body);
-                        if (!result) throw new Error(`Could not save context: @${name}`);
-                        return { content: [{ type: "text", text: `Saved context: @${result.name}` }] };
+                        const result = slot.onSaveArtifact(name, args.body);
+                        if (!result) throw new Error(`Could not save artifact: @${name}`);
+                        return { content: [{ type: "text", text: `Saved artifact: @${result.name}` }] };
                     }
-                    case "update_context": {
+                    case "update_artifact": {
                         const name = typeof args?.name === "string" ? args.name.trim() : "";
                         if (!name || typeof args?.body !== "string") {
-                            throw new Error("update_context requires name and body");
+                            throw new Error("update_artifact requires name and body");
                         }
-                        const result = slot.onUpdateContext(name, args.body);
-                        if (!result) throw new Error(`Context does not exist or could not be updated: @${name}`);
-                        return { content: [{ type: "text", text: `Updated context: @${result.name}` }] };
+                        const result = slot.onUpdateArtifact(name, args.body);
+                        if (!result) throw new Error(`Artifact does not exist or could not be updated: @${name}`);
+                        return { content: [{ type: "text", text: `Updated artifact: @${result.name}` }] };
                     }
                     case "show_image": {
                         const p = typeof args?.path === "string" ? args.path : "";

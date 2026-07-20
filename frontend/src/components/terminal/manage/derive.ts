@@ -2,7 +2,7 @@ import type { ChatNodeState, Project } from '../../../state/chatTypes';
 
 export interface HeaderCounts {
   chats: number;
-  contexts: number;
+  artifacts: number;
   branches: number;
   lastActiveAt: number;
 }
@@ -35,10 +35,10 @@ export function deriveHeaderCounts(
     const node = nodes[id];
     return acc + (isLiveChatNode(node) ? 1 : 0);
   }, 0);
-  const contexts = project.contexts?.length ?? 0;
+  const artifacts = project.artifacts?.length ?? 0;
   const branches = project.edges.filter((e) => (e.kind ?? 'branch') === 'branch').length;
   const lastActiveAt = project.trees.reduce((acc, t) => Math.max(acc, t.lastActiveAt), 0);
-  return { chats, contexts, branches, lastActiveAt };
+  return { chats, artifacts, branches, lastActiveAt };
 }
 
 export function deriveTreeRows(

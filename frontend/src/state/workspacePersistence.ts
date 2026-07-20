@@ -411,9 +411,9 @@ export function serializeMessageRowsForNode(
   });
 }
 
-/** Build one `contexts` row. `auto_inject` is retired (always 0); the artifact
+/** Build one `artifacts` row. `auto_inject` is retired (always 0); the artifact
  *  fields (type/url/origin/kind/pinned_at) round-trip via migration 0008. */
-export function serializeContextRow(project: Project, c: NonNullable<Project['contexts']>[number]) {
+export function serializeContextRow(project: Project, c: NonNullable<Project['artifacts']>[number]) {
   return {
     id: c.id,
     workspace_id: project.id,
@@ -445,7 +445,7 @@ export function serializeWorkspaceForSync(
       .filter(Boolean),
     edges: (project.edges || []).map((e) => serializeEdgeRow(project, e)),
     messages: project.chatIds.flatMap((nid) => serializeMessageRowsForNode(nodes, nid)),
-    contexts: (project.contexts || []).map((c) => serializeContextRow(project, c)),
+    artifacts: (project.artifacts || []).map((c) => serializeContextRow(project, c)),
   };
 }
 
@@ -513,7 +513,7 @@ export function buildExplicitWorkspaceCommands(
     if (edge) commands.push({ type: 'edge.upsert', payload: serializeEdgeRow(project, edge) });
   }
   const contextById = delta.contextUpsertIds.size > 0
-    ? new Map((project.contexts ?? []).map((context) => [context.id, context] as const))
+    ? new Map((project.artifacts ?? []).map((context) => [context.id, context] as const))
     : null;
   for (const contextId of delta.contextUpsertIds) {
     const context = contextById?.get(contextId);
@@ -642,7 +642,7 @@ export function accumulateWorkspaceDirtyDelta(
       d.treeUpsertIds.add(t.id);
       d.treeDeleteIds.delete(t.id);
     }
-    for (const c of cur.contexts || []) {
+    for (const c of cur.artifacts || []) {
       d.contextUpsertIds.add(c.id);
       d.contextDeleteIds.delete(c.id);
     }
@@ -707,9 +707,9 @@ export function accumulateWorkspaceDirtyDelta(
   }
 
   // Contexts: diff by id.
-  if (prev.contexts !== cur.contexts) {
-    const prevCtx = new Map((prev.contexts || []).map((c) => [c.id, c] as const));
-    const curCtx = new Map((cur.contexts || []).map((c) => [c.id, c] as const));
+  if (prev.artifacts !== cur.artifacts) {
+    const prevCtx = new Map((prev.artifacts || []).map((c) => [c.id, c] as const));
+    const curCtx = new Map((cur.artifacts || []).map((c) => [c.id, c] as const));
     for (const [id, c] of curCtx) {
       const pc = prevCtx.get(id);
       if (!pc || pc !== c) {

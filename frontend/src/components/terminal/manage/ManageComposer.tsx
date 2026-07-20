@@ -400,7 +400,7 @@ export default function ManageComposer({
     }));
     // Attachments stay scoped to the thread we're about to create (the agent
     // reads them via the [Attached files: …] sentinel). We intentionally do
-    // NOT promote them to workspace contexts: that registered each upload as a
+    // NOT promote them to workspace artifacts: that registered each upload as a
     // workspace-level context row which the first-turn manifest then advertised
     // to every other conversation, so sibling threads kept reading unrelated
     // screenshots.
@@ -446,8 +446,8 @@ export default function ManageComposer({
     (!draft.value.trim() && pendingAttachments.length === 0) || !workspaceId;
 
   // Same-tree mentions don't apply on the manage page (no active thread).
-  // Pass the project's contexts so @<contextName> still works.
-  const contexts = useMemo(() => project?.contexts ?? [], [project?.contexts]);
+  // Pass the project's artifacts so @<contextName> still works.
+  const artifacts = useMemo(() => project?.artifacts ?? [], [project?.artifacts]);
 
   return (
     <div style={{ marginBottom: 18 }}>
@@ -494,7 +494,7 @@ export default function ManageComposer({
             mentions={draft.mentions}
             onChange={setDraft}
             className="hide-sb"
-            contexts={contexts}
+            artifacts={artifacts}
             sameTreeNodes={[]}
             currentNodeId="__manage__"
             enableSlash={false}

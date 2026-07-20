@@ -2,6 +2,8 @@
   "name": "michi-app",
   "version": "1.0.0",
   "private": true,
+  "author": "Nan Yu",
+  "license": "ISC",
   "main": "electron/dist/main.js",
   "workspaces": [
     "frontend",

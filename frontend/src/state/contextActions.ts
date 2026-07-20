@@ -59,7 +59,7 @@ export function useContextActions({
     ) => {
       const p = projects.find((p) => p.id === activeProjectId);
       if (!p) return;
-      const existing = p.contexts?.find((c) => c.id === contextId);
+      const existing = p.artifacts?.find((c) => c.id === contextId);
       if (!existing) return;
       setProjects((prev) =>
         prev.map((proj) =>
@@ -104,7 +104,7 @@ export function useContextActions({
     (contextId: string) => {
       const p = projects.find((p) => p.id === activeProjectId);
       if (!p) return;
-      const existing = p.contexts?.find((c) => c.id === contextId);
+      const existing = p.artifacts?.find((c) => c.id === contextId);
       const now = Date.now();
       // Toggle: pinned → unpin, unpinned → pin.
       const action: ProjectAction = existing?.pinnedAt

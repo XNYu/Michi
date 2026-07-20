@@ -33,6 +33,50 @@ describe('MarkdownContent links', () => {
     expect(anchors(container)).toHaveLength(3);
   });
 
+  it('prevents default on relative link clicks to avoid SPA white screen', () => {
+    const { container } = render(
+      <MarkdownContent text="[readme](readme.md)" />,
+    );
+    const a = byHref(container, 'readme.md')!;
+    expect(a).toBeTruthy();
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    a.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('dispatches michi:internal-link custom event on relative link click', () => {
+    const { container } = render(
+      <MarkdownContent text="[doc](notes/design.md)" />,
+    );
+    const a = byHref(container, 'notes/design.md')!;
+    const received: string[] = [];
+    container.addEventListener('michi:internal-link', ((e: CustomEvent) => {
+      received.push(e.detail.href);
+    }) as EventListener);
+    a.click();
+    expect(received).toEqual(['notes/design.md']);
+  });
+
+  it('calls onLinkClick prop instead of custom event when provided', () => {
+    const clicked: string[] = [];
+    const { container } = render(
+      <MarkdownContent text="[file](output.txt)" onLinkClick={(href) => clicked.push(href)} />,
+    );
+    const a = byHref(container, 'output.txt')!;
+    a.click();
+    expect(clicked).toEqual(['output.txt']);
+  });
+
+  it('does not prevent default on hash-only links', () => {
+    const { container } = render(
+      <MarkdownContent text="[section](#heading)" />,
+    );
+    const a = byHref(container, '#heading')!;
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    a.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it('autolinks scheme-less domain.tld/path', () => {
     const { container } = render(
       <MarkdownContent text="open console.aws.amazon.com/ec2/home please" />,

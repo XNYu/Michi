@@ -60,7 +60,7 @@ function sameTreeProject() {
     createdAt: 0,
     trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 0, lastActiveAt: 0 }],
     activeTreeId: 't1',
-    contexts: [],
+    artifacts: [],
   };
 }
 

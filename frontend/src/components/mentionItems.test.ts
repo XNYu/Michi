@@ -1,7 +1,7 @@
 import { buildAtMentionItems } from './mentionItems';
-import type { ContextEntry, ChatNodeState } from '../state/chatTypes';
+import type { ArtifactEntry, ChatNodeState } from '../state/chatTypes';
 
-const mkCtx = (id: string, name: string): ContextEntry => ({
+const mkCtx = (id: string, name: string): ArtifactEntry => ({
   id, name, filePath: `docs/${name}.md`, source: 'user', createdAt: 1000, updatedAt: 1000,
 });
 

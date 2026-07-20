@@ -12,7 +12,7 @@ const projects = [{
   createdAt: 0,
   trees: [],
   activeTreeId: null,
-  contexts: [],
+  artifacts: [],
 }];
 
 vi.mock('../../../state/chatStore', async () => {

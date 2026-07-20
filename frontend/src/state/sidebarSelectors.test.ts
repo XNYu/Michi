@@ -91,7 +91,7 @@ const proj = (
   createdAt,
   trees: [],
   activeTreeId: null,
-  contexts: [],
+  artifacts: [],
   deletedAt: opts.deletedAt,
   archivedAt: opts.archivedAt,
 });
@@ -186,7 +186,7 @@ describe('mergeReferences', () => {
     createdAt: 1,
     trees: [],
     activeTreeId: null,
-    contexts: [],
+    artifacts: [],
   });
 
   const mkNodes = (entries: Record<string, string[] | undefined>): Record<string, ChatNodeState> =>

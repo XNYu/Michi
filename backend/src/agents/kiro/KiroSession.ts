@@ -221,20 +221,20 @@ export class KiroSession implements AgentSession {
                     kind: "spawn_branches",
                     topics: Array.isArray(update.topics) ? update.topics : [],
                 };
-            } else if (kind === "context_saved") {
+            } else if (kind === "artifact_saved") {
                 if (typeof update.name === "string" && typeof update.filePath === "string") {
                     yield {
-                        kind: "context_saved",
+                        kind: "artifact_saved",
                         contextId: typeof update.contextId === "string" ? update.contextId : undefined,
                         name: update.name,
                         filePath: update.filePath,
                         size: typeof update.size === "number" ? update.size : undefined,
                     };
                 }
-            } else if (kind === "context_updated") {
+            } else if (kind === "artifact_updated") {
                 if (typeof update.name === "string" && typeof update.filePath === "string") {
                     yield {
-                        kind: "context_updated",
+                        kind: "artifact_updated",
                         contextId: typeof update.contextId === "string" ? update.contextId : undefined,
                         name: update.name,
                         filePath: update.filePath,

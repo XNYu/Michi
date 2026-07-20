@@ -23,8 +23,8 @@ export type NormalizedEvent =
     | { kind: "follow_ups"; followUps: string[] }
     | { kind: "follow_ups_status"; status: "in_progress" | "completed" | "failed" }
     | { kind: "commands"; commands: AgentCommand[] }
-    | { kind: "context_saved"; contextId?: string; name: string; filePath: string; size?: number }
-    | { kind: "context_updated"; contextId?: string; name: string; filePath: string; size?: number }
+    | { kind: "artifact_saved"; contextId?: string; name: string; filePath: string; size?: number }
+    | { kind: "artifact_updated"; contextId?: string; name: string; filePath: string; size?: number }
     | { kind: "image"; path: string; caption?: string; mimeType: string; size: number }
     | { kind: "permission_request"; requestId: number; toolCallId?: string; title: string; detail?: string; options: PermissionOption[] }
     | { kind: "user_input_request"; requestId: number; questions: UserInputQuestion[] }

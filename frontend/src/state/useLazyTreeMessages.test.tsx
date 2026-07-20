@@ -21,7 +21,7 @@ function deferred<T>() {
 
 function project(lastActiveAt: number): Project {
   return {
-    id: 'ws-1', name: 'Workspace', chatIds: ['n1'], edges: [], contexts: [], createdAt: 1,
+    id: 'ws-1', name: 'Workspace', chatIds: ['n1'], edges: [], artifacts: [], createdAt: 1,
     trees: [{ id: 'tree-1', rootNodeId: 'n1', createdAt: 1, lastActiveAt }],
     activeTreeId: 'tree-1',
   };

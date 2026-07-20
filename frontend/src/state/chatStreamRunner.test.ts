@@ -498,14 +498,14 @@ describe('chatStreamRunner — onImage targets the retargeted assistant id', () 
     const handlers = mockStream.mock.calls[0][2];
     // Backend reports the real assistant id for this turn.
     handlers.onTurnStart({ assistantId: 'FRESH', turnId: 't1', nodeId: 'n1', userText: '' });
-    handlers.onImage({ path: '.contexts/x.png', mimeType: 'image/png', size: 10 });
+    handlers.onImage({ path: '.artifacts/x.png', mimeType: 'image/png', size: 10 });
 
     const img = dispatched.find((a) => a.type === 'image-block') as
       | Extract<ChatAction, { type: 'image-block' }>
       | undefined;
     expect(img).toBeTruthy();
     expect(img!.assistantId).toBe('FRESH'); // NOT 'STALE'
-    expect(img!.path).toBe('.contexts/x.png');
+    expect(img!.path).toBe('.artifacts/x.png');
     expect(img!.size).toBe(10);
   });
 });

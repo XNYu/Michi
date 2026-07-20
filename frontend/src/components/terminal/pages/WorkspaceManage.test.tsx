@@ -76,7 +76,7 @@ function seedWorkspace() {
     createdAt: 0,
     trees: [{ id: 't1', rootNodeId: 'a', createdAt: 0, lastActiveAt: Date.now() }],
     activeTreeId: 't1',
-    contexts: [
+    artifacts: [
       { id: 'ctx', name: 'a.md', filePath: 'a.md', source: 'user', createdAt: 0, updatedAt: 0 },
     ],
   }];

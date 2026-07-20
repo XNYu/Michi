@@ -56,14 +56,14 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
             return { event: CHAT_STREAM_EVENTS.followUpsStatus, data: { status: ev.status } };
         case "commands":
             return { event: CHAT_STREAM_EVENTS.commands, data: { commands: ev.commands } };
-        case "context_saved":
+        case "artifact_saved":
             return {
-                event: CHAT_STREAM_EVENTS.contextSaved,
+                event: CHAT_STREAM_EVENTS.artifactSaved,
                 data: { contextId: ev.contextId, name: ev.name, filePath: ev.filePath, size: ev.size },
             };
-        case "context_updated":
+        case "artifact_updated":
             return {
-                event: CHAT_STREAM_EVENTS.contextUpdated,
+                event: CHAT_STREAM_EVENTS.artifactUpdated,
                 data: { contextId: ev.contextId, name: ev.name, filePath: ev.filePath, size: ev.size },
             };
         case "image":

@@ -5,7 +5,7 @@
  * typebox for pi-ai) and for executing the matching handler.
  *
  * Coverage by runtime:
- *   - spawn_branches / save_context / update_context: BOTH (Kiro via mcpServer slot
+ *   - spawn_branches / save_artifact / update_artifact: BOTH (Kiro via mcpServer slot
  *     callbacks, Pi via piTools).
  *   - list_threads / search_messages / read_node: BOTH (services/globalContext
  *     functions; Kiro's MCP server registers them separately, Pi calls
@@ -36,8 +36,8 @@ export interface ParamField {
 
 export type BuiltinToolName =
     | "spawn_branches"
-    | "save_context"
-    | "update_context"
+    | "save_artifact"
+    | "update_artifact"
     | "show_image"
     | "list_threads"
     | "search_messages"
@@ -75,15 +75,15 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
         },
     },
     {
-        name: "save_context",
+        name: "save_artifact",
         description:
-            "Save a named context block referenceable as @name. Use when user asks, or when you produced a reusable artifact (spec/summary/API).",
+            "Save a named artifact referenceable as @name. Use when user asks, or when you produced a reusable artifact (spec/summary/API/code/links). Artifacts are project-level files that persist across conversations.",
         parameters: { object: { name: f("string"), body: f("string") } },
     },
     {
-        name: "update_context",
+        name: "update_artifact",
         description:
-            "Update an existing named context block @name with a full replacement body. Use only when revising a context that already exists; use save_context for new contexts.",
+            "Update an existing named artifact @name with a full replacement body. Use only when revising an artifact that already exists; use save_artifact for new artifacts.",
         parameters: { object: { name: f("string"), body: f("string") } },
     },
     {

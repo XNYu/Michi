@@ -1,4 +1,4 @@
-import type { ContextEntry } from '../state/chatStore';
+import type { ArtifactEntry } from '../state/chatStore';
 
 export interface ContextRowMenuItem {
     label: string;
@@ -9,7 +9,7 @@ export interface ContextRowMenuItem {
 }
 
 export function buildContextRowMenu(opts: {
-    context: ContextEntry;
+    context: ArtifactEntry;
     onPin: () => void;
     onRename: () => void;
     onDelete: () => void;

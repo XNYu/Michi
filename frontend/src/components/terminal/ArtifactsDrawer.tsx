@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../../state/chatStore';
-import type { ContextEntry } from '../../state/chatTypes';
+import type { ArtifactEntry } from '../../state/chatTypes';
 import { sanitizeContextName } from '../../lib/sanitizeContextName';
 import { getElectron } from '../../lib/electronBridge';
 import { importWorkspaceFile } from '../../services/api';
@@ -39,7 +39,7 @@ const TYPE_GROUPS: Array<{ key: ArtifactType; title: string }> = [
   { key: 'link', title: 'Links' },
 ];
 
-function artifactType(c: ContextEntry): ArtifactType {
+function artifactType(c: ArtifactEntry): ArtifactType {
   if (c.type) return c.type;
   return c.url ? 'link' : 'doc';
 }
@@ -84,12 +84,12 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; ctx: ContextEntry } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; ctx: ArtifactEntry } | null>(null);
 
-  const contexts = useMemo(() => activeProject?.contexts ?? [], [activeProject]);
+  const artifacts = useMemo(() => activeProject?.artifacts ?? [], [activeProject]);
   const cwd = activeProject?.cwd;
 
-  const openInFolder = useCallback((c: ContextEntry) => {
+  const openInFolder = useCallback((c: ArtifactEntry) => {
     const electron = getElectron();
     if (!electron?.openPath) return;
     // Resolve to absolute, then open the parent directory.
@@ -119,14 +119,14 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   const filtered = useMemo(() => {
     const norm = filter.trim().toLowerCase();
     const rows = norm
-      ? contexts.filter(
+      ? artifacts.filter(
           (c) =>
             c.name.toLowerCase().includes(norm) ||
             c.filePath.toLowerCase().includes(norm) ||
             (c.url ?? '').toLowerCase().includes(norm),
         )
-      : contexts;
-    const byType = new Map<ArtifactType, ContextEntry[]>();
+      : artifacts;
+    const byType = new Map<ArtifactType, ArtifactEntry[]>();
     for (const c of rows) {
       const t = artifactType(c);
       const arr = byType.get(t) ?? [];
@@ -140,10 +140,10 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
       });
     }
     return byType;
-  }, [contexts, filter]);
+  }, [artifacts, filter]);
 
   const openArtifact = useCallback(
-    async (c: ContextEntry) => {
+    async (c: ArtifactEntry) => {
       const t = artifactType(c);
       if (t === 'link') {
         if (c.url) window.open(c.url, '_blank', 'noopener,noreferrer');
@@ -202,7 +202,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   // resolveAtMentions injects the artifact on send. See TPane's
   // `michi:cite-artifact` listener.
   const cite = useCallback(
-    (c: ContextEntry) => {
+    (c: ArtifactEntry) => {
       if (!focusedNodeId) return;
       window.dispatchEvent(
         new CustomEvent('michi:cite-artifact', {
@@ -218,7 +218,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     const raw = pasteVal.trim();
     if (!raw) return;
     setPasteErr(null);
-    const existing = contexts.map((c) => c.name);
+    const existing = artifacts.map((c) => c.name);
     const isUrl = /^https?:\/\//i.test(raw);
     if (isUrl) {
       // Link artifact — pure metadata, no cwd needed.
@@ -234,7 +234,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
       setAdding(false);
       return;
     }
-    // Non-URL paste → save as a doc under .contexts/ (requires a cwd).
+    // Non-URL paste → save as a doc under .artifacts/ (requires a cwd).
     if (!activeProject?.id || !cwd) {
       setPasteErr('Pasting text as a doc needs a workspace folder. Paste a URL to save a link.');
       return;
@@ -249,7 +249,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     } catch (err) {
       setPasteErr((err as Error).message);
     }
-  }, [pasteVal, contexts, activeProject?.id, cwd, createContext]);
+  }, [pasteVal, artifacts, activeProject?.id, cwd, createContext]);
 
   // Pick file(s) from disk → file/image reference artifacts (Electron only).
   // Mirrors the old Contexts "+" behavior; on web there's no native picker so
@@ -264,7 +264,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     try {
       const r = await electron.chooseFiles();
       if (r.canceled || !r.paths) return;
-      const existing = contexts.map((c) => c.name);
+      const existing = artifacts.map((c) => c.name);
       for (const p of r.paths) {
         const base = p.split('/').pop() ?? p;
         const name = sanitizeContextName(base, existing);
@@ -274,11 +274,11 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     } catch (err) {
       setPasteErr((err as Error).message);
     }
-  }, [contexts, createContext]);
+  }, [artifacts, createContext]);
 
   if (!open) return null;
 
-  const total = contexts.length;
+  const total = artifacts.length;
 
   return (
     <DrawerShell
@@ -497,7 +497,7 @@ function ArtifactRow({
   onDelete,
   onContextMenu,
 }: {
-  c: ContextEntry;
+  c: ArtifactEntry;
   expanded: boolean;
   renaming: boolean;
   renameDraft: string;

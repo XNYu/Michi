@@ -90,7 +90,7 @@ function openRawDump(sessionId: string): {
  * onto an internal queue, and yield from the queue inside send().
  *
      * The "MCP" tools (set_title / set_follow_ups / spawn_branches /
-     * save_context / update_context) are wired through the AgentToolBridge by buildPiTools —
+     * save_artifact / update_artifact) are wired through the AgentToolBridge by buildPiTools —
  * same business effects as the Kiro path.
  */
 export class PiSession implements AgentSession {

@@ -12,7 +12,7 @@ function project(overrides: Partial<Project> = {}): Project {
     createdAt: atNoon('2026-01-01'),
     trees: [{ id: 't1', rootNodeId: 'root', createdAt: atNoon('2026-01-01'), lastActiveAt: atNoon('2026-05-25') }],
     activeTreeId: 't1',
-    contexts: [],
+    artifacts: [],
     ...overrides,
   };
 }

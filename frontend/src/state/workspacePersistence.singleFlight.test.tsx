@@ -30,7 +30,7 @@ const project: Project = {
   edges: [],
   trees: [{ id: 't-1', rootNodeId: 'n-1', createdAt: 1, lastActiveAt: 1 }],
   activeTreeId: 't-1',
-  contexts: [],
+  artifacts: [],
   createdAt: 1,
 };
 

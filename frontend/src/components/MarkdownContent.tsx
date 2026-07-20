@@ -36,6 +36,14 @@ export interface MarkdownContentProps {
   trimLastChild?: boolean;
   /** Insert the live Smooth tail into the final semantic Markdown element. */
   appendStreamingTail?: boolean;
+  /**
+   * Callback fired when a non-external link is clicked (relative paths, hash,
+   * file-like URLs). The handler receives the href and should call
+   * e.preventDefault() itself if it consumes the click. When provided, ALL
+   * non-external, non-mailto clicks are intercepted and delegated here instead
+   * of letting the browser navigate (which would white-screen the SPA).
+   */
+  onLinkClick?: (href: string, e: React.MouseEvent<HTMLAnchorElement>) => void;
 }
 
 /** Returns true when the text contains math delimiters that remark-math recognises. */
@@ -310,6 +318,7 @@ function MarkdownContentInner({
   trimFirstChild,
   trimLastChild,
   appendStreamingTail = false,
+  onLinkClick,
 }: MarkdownContentProps) {
   countRender('MarkdownContent', `${text.length}:${text.slice(0, 24)}`, {
     textChars: text.length,
@@ -386,18 +395,41 @@ function MarkdownContentInner({
     return function MarkdownAnchor({ href, children, node: _node, ...props }: any) {
       const url = typeof href === 'string' ? href : '';
       const external = /^https?:\/\//i.test(url);
+      const mailto = /^mailto:/i.test(url);
       const content = ht ? highlightChildren(children, ht) : children;
+
+      // Non-external, non-mailto links (relative paths, hash anchors, bare
+      // filenames like "readme.md") would navigate the SPA to an invalid
+      // route, causing a white screen. Intercept and delegate to the host.
+      const handleClick = !external && !mailto
+        ? (e: React.MouseEvent<HTMLAnchorElement>) => {
+            // Hash-only links (#section) are harmless scroll targets.
+            if (url.startsWith('#')) return;
+            e.preventDefault();
+            if (onLinkClick) {
+              onLinkClick(url, e);
+            } else {
+              // Dispatch a bubbling custom event so ancestor components can
+              // handle it without prop drilling (e.g. TPane → openArtifactPane).
+              e.currentTarget.dispatchEvent(
+                new CustomEvent('michi:internal-link', { bubbles: true, detail: { href: url } }),
+              );
+            }
+          }
+        : undefined;
+
       return (
         <a
           {...props}
           href={href}
+          onClick={handleClick}
           {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         >
           {content}
         </a>
       );
     };
-  }, [ht]);
+  }, [ht, onLinkClick]);
   const hlComponents = useMemo(() => {
     if (!ht) return {};
     const wrap = (Tag: string) =>

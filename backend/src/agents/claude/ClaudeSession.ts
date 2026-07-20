@@ -644,17 +644,17 @@ export class ClaudeSession implements AgentSession {
         this.queue.push({ kind: 'spawn_branches', topics: result });
         return result;
       },
-      onSaveContext: (name, body) => {
+      onSaveArtifact: (name, body) => {
         const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (saved) {
-          this.queue.push({ kind: 'context_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
+          this.queue.push({ kind: 'artifact_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
         }
         return saved;
       },
-      onUpdateContext: (name, body) => {
+      onUpdateArtifact: (name, body) => {
         const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (updated) {
-          this.queue.push({ kind: 'context_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
+          this.queue.push({ kind: 'artifact_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
         }
         return updated;
       },
@@ -704,17 +704,17 @@ export class ClaudeSession implements AgentSession {
         this.queue.push({ kind: 'spawn_branches', topics: result });
         return result;
       },
-      onSaveContext: (name, body) => {
+      onSaveArtifact: (name, body) => {
         const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (saved) {
-          this.queue.push({ kind: 'context_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
+          this.queue.push({ kind: 'artifact_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
         }
         return saved;
       },
-      onUpdateContext: (name, body) => {
+      onUpdateArtifact: (name, body) => {
         const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (updated) {
-          this.queue.push({ kind: 'context_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
+          this.queue.push({ kind: 'artifact_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
         }
         return updated;
       },

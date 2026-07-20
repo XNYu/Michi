@@ -1,4 +1,4 @@
-import type { ChatAction, ChatNodeState, ComposerDraft, ContextEntry, Project, ProjectAction, Tree } from './chatTypes';
+import type { ChatAction, ChatNodeState, ComposerDraft, ArtifactEntry, Project, ProjectAction, Tree } from './chatTypes';
 import { applyTreeMessages } from './chatHydration';
 import { computeTranscriptFingerprint } from './transcriptFingerprint';
 import {
@@ -90,14 +90,14 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
       return { ...p, trees };
     }
     case 'upsert-context': {
-      const contexts = p.contexts ?? [];
+      const artifacts = p.artifacts ?? [];
       const now = Date.now();
       if (a.context.id) {
-        const idx = contexts.findIndex((c) =>
+        const idx = artifacts.findIndex((c) =>
           c.id === a.context.id || c.name.toLowerCase() === a.context.name.toLowerCase(),
         );
         if (idx >= 0) {
-          const updated = contexts.map((c, i) =>
+          const updated = artifacts.map((c, i) =>
             i === idx
               ? {
                   ...c,
@@ -113,17 +113,17 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
                 }
               : c,
           );
-          return { ...p, contexts: updated };
+          return { ...p, artifacts: updated };
         }
       }
       let name = a.context.name;
-      const names = new Set(contexts.map((c) => c.name.toLowerCase()));
+      const names = new Set(artifacts.map((c) => c.name.toLowerCase()));
       if (names.has(name.toLowerCase())) {
         let suffix = 2;
         while (names.has(`${a.context.name}-${suffix}`.toLowerCase())) suffix++;
         name = `${a.context.name}-${suffix}`;
       }
-      const entry: ContextEntry = {
+      const entry: ArtifactEntry = {
         id: a.context.id ?? `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
         name,
         filePath: a.context.filePath,
@@ -136,16 +136,16 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
         createdAt: now,
         updatedAt: now,
       };
-      return { ...p, contexts: [...contexts, entry] };
+      return { ...p, artifacts: [...artifacts, entry] };
     }
     case 'update-context-by-name': {
-      const contexts = p.contexts ?? [];
+      const artifacts = p.artifacts ?? [];
       const now = Date.now();
-      const idx = contexts.findIndex((c) => c.name.toLowerCase() === a.context.name.toLowerCase());
+      const idx = artifacts.findIndex((c) => c.name.toLowerCase() === a.context.name.toLowerCase());
       if (idx >= 0) {
         return {
           ...p,
-          contexts: contexts.map((c, i) =>
+          artifacts: artifacts.map((c, i) =>
             i === idx
               ? {
                   ...c,
@@ -163,7 +163,7 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
           ),
         };
       }
-      const entry: ContextEntry = {
+      const entry: ArtifactEntry = {
         id: a.context.id ?? `ctx-${now}-${Math.random().toString(36).slice(2, 6)}`,
         name: a.context.name,
         filePath: a.context.filePath,
@@ -176,35 +176,35 @@ export function reduceProject(p: Project, a: ProjectAction): Project {
         createdAt: now,
         updatedAt: now,
       };
-      return { ...p, contexts: [...contexts, entry] };
+      return { ...p, artifacts: [...artifacts, entry] };
     }
     case 'delete-context': {
-      return { ...p, contexts: (p.contexts ?? []).filter((c) => c.id !== a.contextId) };
+      return { ...p, artifacts: (p.artifacts ?? []).filter((c) => c.id !== a.contextId) };
     }
     case 'pin-context': {
-      const contexts = (p.contexts ?? []).map((c) =>
+      const artifacts = (p.artifacts ?? []).map((c) =>
         c.id === a.contextId ? { ...c, pinnedAt: a.now, updatedAt: a.now } : c,
       );
-      return { ...p, contexts };
+      return { ...p, artifacts };
     }
     case 'unpin-context': {
-      const contexts = (p.contexts ?? []).map((c) => {
+      const artifacts = (p.artifacts ?? []).map((c) => {
         if (c.id !== a.contextId) return c;
         const { pinnedAt, ...rest } = c;
-        return { ...rest, updatedAt: Date.now() } as ContextEntry;
+        return { ...rest, updatedAt: Date.now() } as ArtifactEntry;
       });
-      return { ...p, contexts };
+      return { ...p, artifacts };
     }
     case 'rename-context': {
       if (!/^[\p{L}\p{N}_-]+$/u.test(a.newName)) return p;
-      const contexts = p.contexts ?? [];
-      const collision = contexts.some(
+      const artifacts = p.artifacts ?? [];
+      const collision = artifacts.some(
         (c) => c.id !== a.contextId && c.name.toLowerCase() === a.newName.toLowerCase(),
       );
       if (collision) return p;
       return {
         ...p,
-        contexts: contexts.map((c) =>
+        artifacts: artifacts.map((c) =>
           c.id === a.contextId ? { ...c, name: a.newName, updatedAt: Date.now() } : c,
         ),
       };

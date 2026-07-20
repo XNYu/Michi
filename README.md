@@ -44,6 +44,48 @@ Michi needs at least one agent runtime or provider. You can configure providers
 from Settings after the app starts. CLI-based runtimes, such as Kiro or Claude
 CLI, must be installed and available on your `PATH`.
 
+## Built with Codex & GPT-5.6
+
+### How Codex Was Used
+
+Michi's core challenge is orchestrating branching conversations across multiple
+AI runtimes while keeping context coherent across branches. Codex built key
+parts of this infrastructure:
+
+- **Multi-agent session management** — Codex implemented the streaming
+  infrastructure and SSE event routing that lets Michi coordinate responses from
+  different providers (GPT-5.6, Claude, Kiro) within the same workspace without
+  losing thread state.
+- **Branch-aware context threading** — The system that propagates context across
+  branches (so a child branch inherits parent context but can diverge) was built
+  in a single Codex session from an architecture description.
+- **Playwright E2E test suite** — Codex generated end-to-end tests covering the
+  branching workflow, multi-pane layout, and synthesis features by analyzing the
+  running application.
+- **Desktop app packaging** — The Electron build pipeline, including the macOS
+  installer script and DMG generation, was scaffolded by Codex and refined
+  iteratively.
+
+What I designed vs. what Codex built: I made the architectural decisions —
+append-only conversation logs, the branching mental model, provider-agnostic
+adapter pattern — and Codex turned those specs into working implementations at
+roughly 5-10x the speed of manual coding.
+
+### GPT-5.6 Integration
+
+GPT-5.6 is available as a first-class provider in Michi. Users select it from
+Settings and can use it in any thread — including branching the same question to
+GPT-5.6 and another model side-by-side for comparison.
+
+### Try It (for judges)
+
+1. Install: `curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash`
+2. Launch Michi and open Settings
+3. Add your `OPENAI_API_KEY` and select GPT-5.6 as the provider
+4. Create a workspace, start a thread, and ask a question
+5. Branch the thread (`Cmd+Option+T`) to compare GPT-5.6's answer with another
+   provider side-by-side
+
 ## Basic Workflow
 
 1. Create a workspace for the project or topic you want to explore.

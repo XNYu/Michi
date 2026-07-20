@@ -29,7 +29,7 @@ function makeProject(id: string, nodeIds: string[], extras: Partial<Project> = {
     createdAt: 1_716_800_000_000,
     trees: [{ id: 't1', rootNodeId: nodeIds[0] ?? 'n1', createdAt: 1_716_800_000_000, lastActiveAt: 1_716_800_000_000 }],
     activeTreeId: 't1',
-    contexts: [],
+    artifacts: [],
     ...extras,
   } as Project;
 }
@@ -114,7 +114,7 @@ function makeBackendWorkspace(overrides: {
     nodes: overrides.nodeRows ?? [{ id: 'n1', created_at: 1_716_800_000_000, kind: 'chat' }],
     edges: overrides.edgeRows ?? [],
     messages: [],
-    contexts: [],
+    artifacts: [],
   };
 }
 
@@ -223,7 +223,7 @@ describe('full round-trip (serialize wire shape → hydrate)', () => {
         created_at: e.created_at,
       })),
       messages: [],
-      contexts: [],
+      artifacts: [],
     };
 
     const state = hydrateBackendWorkspaces([backendWs]);
@@ -250,7 +250,7 @@ describe('full round-trip (serialize wire shape → hydrate)', () => {
       }],
       edges: [],
       messages: [],
-      contexts: [],
+      artifacts: [],
     };
 
     const state = hydrateBackendWorkspaces([backendWs]);
@@ -276,7 +276,7 @@ describe('full round-trip (serialize wire shape → hydrate)', () => {
         created_at: e.created_at,
       })),
       messages: [],
-      contexts: [],
+      artifacts: [],
     };
 
     const state = hydrateBackendWorkspaces([backendWs]);

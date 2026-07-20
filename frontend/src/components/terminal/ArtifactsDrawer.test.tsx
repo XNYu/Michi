@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ArtifactsDrawer from './ArtifactsDrawer';
-import type { ContextEntry } from '../../state/chatTypes';
+import type { ArtifactEntry } from '../../state/chatTypes';
 
 const { mockImportWorkspaceFile } = vi.hoisted(() => ({
   mockImportWorkspaceFile: vi.fn(),
@@ -18,12 +18,12 @@ const mockActions = {
   pinContext: vi.fn(),
 };
 
-const mockContexts: ContextEntry[] = [];
-let mockProject: { id: string; name: string; cwd?: string; contexts: ContextEntry[] } | null = {
+const mockContexts: ArtifactEntry[] = [];
+let mockProject: { id: string; name: string; cwd?: string; artifacts: ArtifactEntry[] } | null = {
   id: 'p1',
   name: 'P1',
   cwd: '/tmp/p1',
-  contexts: mockContexts,
+  artifacts: mockContexts,
 };
 
 vi.mock('../../state/chatStore', async () => {
@@ -36,10 +36,10 @@ vi.mock('../../state/chatStore', async () => {
 
 beforeEach(() => {
   mockContexts.length = 0;
-  mockProject = { id: 'p1', name: 'P1', cwd: '/tmp/p1', contexts: mockContexts };
+  mockProject = { id: 'p1', name: 'P1', cwd: '/tmp/p1', artifacts: mockContexts };
   Object.values(mockActions).forEach((fn) => fn.mockReset());
   mockImportWorkspaceFile.mockReset();
-  mockImportWorkspaceFile.mockResolvedValue({ name: 'note', filePath: '.contexts/note.md', size: 5 });
+  mockImportWorkspaceFile.mockResolvedValue({ name: 'note', filePath: '.artifacts/note.md', size: 5 });
 });
 
 describe('ArtifactsDrawer + button', () => {
@@ -82,7 +82,7 @@ describe('ArtifactsDrawer + button', () => {
     mockContexts.push({
       id: 'c1',
       name: 'brief.md',
-      filePath: '.contexts/brief.md',
+      filePath: '.artifacts/brief.md',
       type: 'doc',
       source: 'user',
       pinnedAt: Date.now(),
