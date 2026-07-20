@@ -848,6 +848,9 @@ interface MessageBlockProps {
   errorMessage?: string;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
+  editing?: boolean;
+  onEditSave?: (newText: string) => void;
+  onEditCancel?: () => void;
   /**
    * Child branch anchors whose quotedText was found inside this message.
    * v1: reserved for future quote-underline rendering; not consumed yet.
@@ -893,9 +896,24 @@ function MessageBlockInner({
   contextNames,
   onMentionClick,
   onVisibleSmoothingChange,
+  editing,
+  onEditSave,
+  onEditCancel,
 }: MessageBlockProps) {
   const [hover, setHover] = useState(false);
+  const [editText, setEditText] = useState(m.text);
+  const editAreaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = m.role === 'user';
+
+  useEffect(() => {
+    if (editing) {
+      setEditText(m.text);
+      requestAnimationFrame(() => {
+        const ta = editAreaRef.current;
+        if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+      });
+    }
+  }, [editing, m.text]);
   const dMarginBottom = density === 'dense' ? 6 : density === 'compact' ? 10 : 16;
   const dLabelFontSize = density === 'dense' ? 9 : density === 'compact' ? 10 : 10.5;
   const dLabelMarginBottom = density === 'dense' ? 2 : density === 'compact' ? 3 : 4;
@@ -931,6 +949,44 @@ function MessageBlockInner({
         </div>
       )}
       {isUser ? (
+        editing ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <div className="terminal-message-user-editing">
+              <textarea
+                ref={editAreaRef}
+                className="user-edit-area"
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { e.preventDefault(); onEditCancel?.(); }
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    const trimmed = editText.trim();
+                    if (trimmed && trimmed !== m.text) onEditSave?.(trimmed);
+                    else onEditCancel?.();
+                  }
+                }}
+                spellCheck={false}
+              />
+              <div className="user-edit-footer">
+                <button className="user-edit-action" onClick={() => onEditCancel?.()}>
+                  Cancel <kbd>Esc</kbd>
+                </button>
+                <span style={{ flex: 1 }} />
+                <button
+                  className="user-edit-action"
+                  onClick={() => {
+                    const trimmed = editText.trim();
+                    if (trimmed && trimmed !== m.text) onEditSave?.(trimmed);
+                    else onEditCancel?.();
+                  }}
+                >
+                  Save <kbd>↵</kbd>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <div
             className="terminal-message terminal-message-user"
@@ -940,12 +996,7 @@ function MessageBlockInner({
               if (chip) onMentionClick((chip as HTMLElement).dataset.mention!);
             } : undefined}
             style={{
-              // The paper-card recipe (background, border-right accent, drop
-              // shadow, padding, max-width) lives in index.css. Only the
-              // typography/density/wrap inline styles stay here.
               fontFamily: 'var(--ui-font)',
-              // Font size inherits from .terminal-message (slider-driven).
-              // Density only adjusts leading + tracking.
               lineHeight: dMsgLineHeight,
               letterSpacing: dMsgLetterSpacing,
               color: 'var(--term-fg)',
@@ -954,10 +1005,7 @@ function MessageBlockInner({
           >
             <span className="bubble-overline">
               <b>you</b>
-              {(() => {
-                const t = formatMessageTime(m.createdAt);
-                return t ? ` · ${t}` : '';
-              })()}
+              {(() => { const t = formatMessageTime(m.createdAt); return t ? ` · ${t}` : ''; })()}
             </span>
             {m.comments && m.comments.length > 0 && <CommentChips comments={m.comments} />}
             {m.quotedText && <QuoteChip text={m.quotedText} />}
@@ -1000,6 +1048,7 @@ function MessageBlockInner({
             )}
           </div>
         </div>
+        )
       ) : (
         <div
           className="terminal-message terminal-message-assistant"
@@ -1203,6 +1252,7 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   prev.density === next.density &&
   !!prev.onRetry === !!next.onRetry &&
   !!prev.onEdit === !!next.onEdit &&
+  prev.editing === next.editing &&
   usageEqual(prev.usageInfo, next.usageInfo) &&
   !!prev.isErrorTail === !!next.isErrorTail &&
   prev.errorMessage === next.errorMessage &&

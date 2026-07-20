@@ -131,7 +131,7 @@ export type {
   ChatProjectsValue,
   ComposerDraft,
   ComposerMention,
-  ContextEntry,
+  ArtifactEntry,
   EdgeKind,
   NodeKind,
   Project,
@@ -1237,12 +1237,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   /** Feature side effects shared by foreground and runtime self-turn streams. */
   const createSharedStreamHandlers = useCallback((nodeId: string): Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'> => ({
-    onContextSaved: (name, filePath, size, contextId) => {
+    onArtifactSaved: (name, filePath, size, contextId) => {
       const projectId = nodesRef.current[nodeId]?.projectId;
       if (!projectId) return;
       setProjects((prev) => prev.map((project) => {
         if (project.id !== projectId) return project;
-        const existing = (project.contexts ?? []).find((context) => context.name.toLowerCase() === name.toLowerCase());
+        const existing = (project.artifacts ?? []).find((context) => context.name.toLowerCase() === name.toLowerCase());
         return reduceProject(project, {
           type: 'upsert-context',
           projectId,
@@ -1250,7 +1250,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         });
       }));
     },
-    onContextUpdated: (name, filePath, size, contextId) => {
+    onArtifactUpdated: (name, filePath, size, contextId) => {
       const projectId = nodesRef.current[nodeId]?.projectId;
       if (!projectId) return;
       setProjects((prev) => prev.map((project) => project.id === projectId
@@ -1465,14 +1465,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       // removed). `contextManifest` lists EVERY artifact on the shelf so the
       // agent knows what it can @mention / read — links carry a url and no
       // filePath, so pass both and let the backend pick per type.
-      const mentionCtxs = resolveAtMentions(text, owningProject?.contexts ?? []);
+      const mentionCtxs = resolveAtMentions(text, owningProject?.artifacts ?? []);
 
       const extraContexts = mentionCtxs.length > 0
         ? mentionCtxs.map(c => ({ name: c.name, filePath: c.filePath, url: c.url, size: c.size, kind: c.kind }))
         : undefined;
 
-      const contextManifest = (owningProject?.contexts ?? []).length > 0
-        ? (owningProject!.contexts!).map(c => ({ name: c.name, filePath: c.filePath, url: c.url, kind: c.kind }))
+      const contextManifest = (owningProject?.artifacts ?? []).length > 0
+        ? (owningProject!.artifacts!).map(c => ({ name: c.name, filePath: c.filePath, url: c.url, kind: c.kind }))
         : undefined;
 
       let chatId = n.chatId;
@@ -1878,6 +1878,25 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         comments: reComments,
         displayText: reText,
       });
+    },
+    [dispatch, setProjects, startStream],
+  );
+
+  const editAndResend = useCallback(
+    (nodeId: string, fromIndex: number, newText: string) => {
+      const n = nodesRef.current[nodeId];
+      if (!n) return;
+      cancelFns.current[nodeId]?.();
+      const survivingIds = computeSurvivingMessageIds(n.messages, fromIndex);
+      dispatch({ type: 'retry-trim', nodeId, fromIndex });
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== n.projectId) return p;
+          const edges = cleanupOrphanedAnchors(p.edges, nodeId, survivingIds);
+          return edges === p.edges ? p : { ...p, edges };
+        }),
+      );
+      void startStream(nodeId, newText);
     },
     [dispatch, setProjects, startStream],
   );
@@ -2521,6 +2540,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       selectProject,
       sendMessage,
       retryLastTurn,
+      editAndResend,
       createChildChat,
       createBlankChild,
       createMergedChat,
@@ -2633,6 +2653,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       selectProject,
       sendMessage,
       retryLastTurn,
+      editAndResend,
       createChildChat,
       createBlankChild,
       createMergedChat,
@@ -2739,6 +2760,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       deleteProject,
       sendMessage,
       retryLastTurn,
+      editAndResend,
       createChildChat,
       createBlankChild,
       createMergedChat,
@@ -2789,6 +2811,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setComposerDraft,
       createContext,
       reorderPane,
+      openArtifactPane,
       setUnreadFilterOn,
       markAllRead,
       renameNode,
@@ -2806,6 +2829,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       deleteProject,
       sendMessage,
       retryLastTurn,
+      editAndResend,
       createChildChat,
       createBlankChild,
       createMergedChat,
@@ -2856,6 +2880,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setComposerDraft,
       createContext,
       reorderPane,
+      openArtifactPane,
       setUnreadFilterOn,
       markAllRead,
       renameNode,
