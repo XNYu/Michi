@@ -31,7 +31,10 @@ export class AsyncGate {
   }
 
   async wait(): Promise<void> {
-    if (this._open) return;
-    await this.promise;
+    // Must loop: the gate may be re-closed between the resolve of the old
+    // promise and this continuation actually running (microtask ordering).
+    while (!this._open) {
+      await this.promise;
+    }
   }
 }

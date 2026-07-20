@@ -37,6 +37,18 @@ export class EventQueue {
     }
   }
 
+  /** Push an event to the FRONT of the buffer (used when a consumer must
+   *  return an already-pulled event so another consumer can pick it up). */
+  pushFront(ev: NormalizedEvent): void {
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = undefined;
+      w(ev);
+    } else {
+      this.buf.unshift(ev);
+    }
+  }
+
   async pull(): Promise<NormalizedEvent | null> {
     if (this.buf.length > 0) return this.buf.shift()!;
     return new Promise<NormalizedEvent | null>((resolve) => {

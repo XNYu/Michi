@@ -517,7 +517,7 @@ export default function TerminalTopbar({
                       'opacity var(--t-soft) var(--t-ease)',
                       'filter var(--t-soft) var(--t-ease)',
                     ].filter(Boolean).join(', '),
-                    borderRight: isLast || !prefs.paneRules ? 'none' : '1px solid var(--term-line)',
+                    borderRight: !prefs.paneRules ? 'none' : '1px solid var(--term-line)',
                     // Match TPane's dimming formula so the caption cell mirrors
                     // its pane below — unfocused panes get a dim title strip.
                     background: 'var(--term-pane-bg, var(--term-surface))',

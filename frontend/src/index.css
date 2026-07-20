@@ -222,6 +222,7 @@
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(code, pre) {
   font-family: var(--message-code-font);
+  font-variant-ligatures: none;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose pre {
   font-size: calc(var(--message-body-size) * 0.9);
@@ -329,6 +330,7 @@
   background: transparent !important;
   color: inherit;
   font-family: var(--message-code-font);
+  font-variant-ligatures: none;
   font-size: calc(var(--message-body-size, 15px) * 0.9);
   line-height: 1.55;
 }
