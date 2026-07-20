@@ -479,6 +479,7 @@ export class ClaudeSession implements AgentSession {
   async dispose(): Promise<void> {
     if (this.state === 'disposed') return;
     this.state = 'disposed';
+    this.idleGate.open(); // Unblock idle pump so it can check state and exit
     this.queue.dispose();
     this.markTranslatorTurnStart = null;
 
@@ -547,6 +548,9 @@ export class ClaudeSession implements AgentSession {
       while (this.state !== 'disposed' && this.state !== 'crashed') {
         await this.idleGate.wait();
         if ((this.state as SessionState) === 'disposed' || (this.state as SessionState) === 'crashed') break;
+        // Re-check gate: due to microtask ordering, the gate may have been
+        // re-closed between wait() resolving and this continuation running.
+        if (!this.idleGate.isOpen) continue;
 
         const ev = await this.queue.pull();
         if (ev === null) {
@@ -564,10 +568,17 @@ export class ClaudeSession implements AgentSession {
         // first frame. The flag is set synchronously before the first await so
         // a racing send() cannot interrupt the self iterator's queue waiter.
         this.idlePumpTurnClaimed = true;
-        let lockHeld = false;
         try {
           this.acquireTurnLock();
-          lockHeld = true;
+        } catch (lockErr: any) {
+          // Race: send() acquired the lock between our pull() and this point.
+          // Push the event back so send() can drain it, then loop back to
+          // gate.wait() which will block (send closes the gate).
+          this.idlePumpTurnClaimed = false;
+          this.queue.pushFront(ev);
+          continue;
+        }
+        try {
           this.state = 'in_turn';
           this.lastUsedAt = Date.now();
 
@@ -614,7 +625,7 @@ export class ClaudeSession implements AgentSession {
           }
           this.lastUsedAt = Date.now();
         } finally {
-          if (lockHeld) this.releaseTurnLock();
+          this.releaseTurnLock();
           this.idlePumpTurnClaimed = false;
         }
       }
@@ -844,7 +855,7 @@ export class ClaudeSession implements AgentSession {
       // Default: let claude auto-discover the user's own MCP servers
       // (~/.claude/settings.json, project .mcp.json, plugin MCPs). __michi_internal__
       // is still injected via --mcp-config so the agent↔Michi protocol (approve,
-      // save_context, spawn_branches) is always available. Set MICHI_CLAUDE_STRICT_MCP=1
+      // save_artifact, spawn_branches) is always available. Set MICHI_CLAUDE_STRICT_MCP=1
       // to lock the agent to ONLY __michi_internal__ — useful for multi-tenant
       // deploys where host MCP must not leak in.
       strictMcpConfig: process.env.MICHI_CLAUDE_STRICT_MCP === '1',

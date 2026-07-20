@@ -12,7 +12,7 @@
     "build": "npm --prefix .. run shared:build && npm run build:raw",
     "build:raw": "tsc --noEmit && node scripts/build.mjs",
     "test": "npm --prefix .. run shared:build && npm run test:raw --",
-    "test:raw": "node --require ts-node/register --test test/**/*.test.ts"
+    "test:raw": "node --require ts-node/register --test --test-timeout=30000 test/**/*.test.ts"
   },
   "keywords": [],
   "author": "",

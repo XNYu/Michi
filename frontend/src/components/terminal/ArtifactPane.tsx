@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useMemo } from 'react';
-import { useChatStore, useChatNode, useChatActions } from '../../state/chatStore';
+import React, { useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import { useChatStore, useChatNode, useChatActions, ChatNodeStoreContext } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import MarkdownContent from '../MarkdownContent';
+import SelectionActions from '../SelectionActions';
 import { fetchArtifactContent } from '../../services/api';
 import { getElectron } from '../../lib/electronBridge';
+import { formatQuotedMessage } from '../../lib/quoteFormat';
 
 const PROSE_CLASSES =
   'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
@@ -55,10 +57,71 @@ export default function ArtifactPane({
   nodeId: string;
   contentMaxWidth?: number | null;
 }) {
-  const { activeProject, focusPane, setFocusedNodeId } = useChatStore();
-  const { dispatch } = useChatActions();
+  const { activeProject, focusPane, setFocusedNodeId, focusedNodeId } = useChatStore();
+  const { dispatch, createChildChat, addPendingComment, setComposerDraft } = useChatActions();
+  const nodeStore = useContext(ChatNodeStoreContext)!;
   const n = useChatNode(nodeId);
   const paneShellStyle = usePaneShellStyle(nodeId);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // Track the last focused chat pane so selection actions route there even
+  // while the artifact pane itself is focused (for reading).
+  const lastFocusedChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusedNodeId && focusedNodeId !== nodeId) {
+      const target = nodeStore.getNode(focusedNodeId);
+      if (target && target.kind === 'chat') {
+        lastFocusedChatRef.current = focusedNodeId;
+      }
+    }
+  }, [focusedNodeId, nodeId, nodeStore]);
+
+  /** Resolve the target chat node for quote/comment/branch routing. */
+  const getTargetChatNodeId = useCallback((): string | null => {
+    // Prefer the currently focused node if it's a chat
+    if (focusedNodeId && focusedNodeId !== nodeId) {
+      const target = nodeStore.getNode(focusedNodeId);
+      if (target && target.kind === 'chat') return focusedNodeId;
+    }
+    // Fall back to the last known focused chat pane
+    return lastFocusedChatRef.current;
+  }, [focusedNodeId, nodeId, nodeStore]);
+
+  const handleQuote = useCallback(
+    (text: string) => {
+      const targetId = getTargetChatNodeId();
+      if (!targetId) return;
+      const target = nodeStore.getNode(targetId);
+      setComposerDraft(targetId, {
+        value: target?.composerDraft?.value ?? '',
+        mentions: target?.composerDraft?.mentions ?? [],
+        quotedText: text,
+      });
+    },
+    [getTargetChatNodeId, nodeStore, setComposerDraft],
+  );
+
+  const handleBranch = useCallback(
+    (quoted: string, prompt: string) => {
+      const targetId = getTargetChatNodeId();
+      if (!targetId) return;
+      void createChildChat(
+        targetId,
+        formatQuotedMessage(quoted, prompt),
+        { quotedText: quoted, displayText: prompt },
+      ).catch(() => {});
+    },
+    [getTargetChatNodeId, createChildChat],
+  );
+
+  const handleComment = useCallback(
+    (quoted: string, body: string) => {
+      const targetId = getTargetChatNodeId();
+      if (!targetId) return;
+      addPendingComment(targetId, quoted, body);
+    },
+    [getTargetChatNodeId, addPendingComment],
+  );
 
   const artifact = n?.artifact;
   const filePath = artifact?.filePath ?? '';
@@ -206,6 +269,7 @@ export default function ArtifactPane({
 
       {/* Content area */}
       <div
+        ref={contentScrollRef}
         className="term-scrollbar"
         style={{
           flex: 1,
@@ -214,8 +278,15 @@ export default function ArtifactPane({
           color: 'var(--term-fg)',
           fontSize: 13,
           lineHeight: 1.7,
+          position: 'relative',
         }}
       >
+        <SelectionActions
+          containerRef={contentScrollRef}
+          onQuote={handleQuote}
+          onBranch={handleBranch}
+          onComment={handleComment}
+        />
         <div style={innerWrap}>
           {artifact.status === 'loading' && (
             <div style={{ color: 'var(--term-muted)', fontSize: 12 }}>

@@ -352,11 +352,11 @@ describe('ClaudeSession', () => {
     child.stdin.on('data', (chunk: Buffer) => stdinChunks.push(chunk.toString()));
 
     // First send
-    setTimeout(() => child.emitResult('success'), 20);
+    setTimeout(() => child.emitResult('success'), 30);
     for await (const _ of session.send('hello')) { void _; }
 
     // Second send
-    setTimeout(() => child.emitResult('success'), 20);
+    setTimeout(() => child.emitResult('success'), 30);
     for await (const _ of session.send('again')) { void _; }
 
     const envelopes = stdinChunks
