@@ -22,7 +22,11 @@ sessions into summaries you can reuse or share.
 
 ## Quick Start
 
-On macOS, install the desktop app with:
+On macOS (Apple Silicon), download the signed DMG from the
+[latest release](https://github.com/XNYu/Michi/releases/latest), open it, and
+drag Michi into Applications.
+
+Alternatively, install the desktop app from source with:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
