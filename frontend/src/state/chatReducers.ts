@@ -318,6 +318,7 @@ export function reduceNodes(
               quotedText: action.quotedText,
               attachments: action.attachments,
               comments: action.comments,
+              mentions: action.mentions,
             },
             { id: action.assistantId, role: 'assistant', text: '', toolCalls: [], blocks: [], streaming: true, createdAt: Date.now() },
           ],

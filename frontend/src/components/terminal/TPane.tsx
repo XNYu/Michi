@@ -1511,6 +1511,23 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     focusPane(childNodeId);
   }, [focusPane]);
 
+  const handleMentionClick = useCallback((name: string, kind: string, mentionNodeId?: string) => {
+    if (kind === 'node' && mentionNodeId) {
+      // Open the referenced conversation node as a pane
+      focusPane(mentionNodeId);
+    } else {
+      // Context/artifact mention — find the artifact by name and open it
+      const artifact = mentionContexts.find(
+        a => a.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (artifact?.filePath) {
+        void openArtifactPane(artifact.filePath);
+      } else if (artifact?.url) {
+        window.open(artifact.url, '_blank', 'noopener');
+      }
+    }
+  }, [focusPane, mentionContexts, openArtifactPane]);
+
   const handleRetryTurn = useCallback((userIdx: number) => {
     retryLastTurn(nodeId, userIdx);
   }, [nodeId, retryLastTurn]);
@@ -1705,6 +1722,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       attachments: attachmentsForSend.length > 0 ? attachmentsForSend.map(a => ({ ...a })) : undefined,
       comments: pending.length > 0 ? pending.map(c => ({ ...c })) : undefined,
       displayText: text,
+      mentions: submitDraft.mentions.length > 0
+        ? submitDraft.mentions.map(m => ({ kind: m.kind, refId: m.refId, label: m.label }))
+        : undefined,
     };
 
     // Comment-only sends do not branch: branching semantics tie to the user's
@@ -1920,6 +1940,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           followUpsDisabled={observing}
           anchorsByMessage={anchorsByMessage}
           onOpenBranch={handleOpenBranch}
+          onMentionClick={handleMentionClick}
           onBranchFromMessage={handleBranchFromMessage}
           contextNames={contextNamesSet}
           editingMessageId={editingMessageId}

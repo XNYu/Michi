@@ -827,17 +827,15 @@ html[data-vibrancy="on"],
 [data-vibrancy="on"] .terminal-topbar > div[aria-hidden] {
   background: transparent !important;
 }
-/* Same double-tint problem on the RIGHT side: the right-cluster (thread view
-   toggles + Artifacts trigger) paints its own solid background to mask caption
-   text. Under vibrancy that solid block is visible against the translucent
-   topbar. Transparent lets the topbar's single tint layer show uniformly. */
-[data-vibrancy="on"] .terminal-topbar-right {
-  background: color-mix(in srgb, var(--term-bg) 60%, transparent) !important;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  mask-image: linear-gradient(to right, transparent, black 20px);
-  -webkit-mask-image: linear-gradient(to right, transparent, black 20px);
-}
+/* Right-cluster (thread view toggles + Artifacts trigger) must stay OPAQUE to
+   mask the pane caption text beneath. Use the panel surface color so it blends
+   with the main content zone (which is already opaque under vibrancy — only the
+   sidebar is glass). */
+/* Right cluster is always transparent now — icons inherit pane color beneath
+   them, and the cells strip mask-image fades text before it reaches them.
+   This override is kept for explicitness under vibrancy. */
+/* Right cluster stays opaque under vibrancy — same as the pane cells. The
+   inline style already sets topbarBg + dim filter; no override needed. */
 [data-vibrancy="on"] .terminal-sidebar {
   background: var(--term-vibrancy-tint) !important;
   -webkit-backdrop-filter: none !important;
@@ -2264,6 +2262,7 @@ html[data-vibrancy="on"],
   border-radius: 3px;
   padding: 0 2px;
   white-space: nowrap;
+  cursor: pointer;
 }
 /* Multi-window observer hint — shown over the (disabled, empty) composer while
    another window owns editing. Replaces the old observing placeholder; matches
@@ -2806,18 +2805,11 @@ html[data-vibrancy="on"],
 /* ── Performance gates ─────────────────────────────────────────────────────────
    Page-hidden: pause all infinite animations (pulse dots, typing indicators,
    cursor blink, spinning glyphs) so the GPU + compositor can idle when the tab
-   is backgrounded. Set via a visibilitychange listener on <html>.
-   Streaming-active + drawer: disable the expensive backdrop-filter on drawers
-   while a pane is streaming — the blur target repaints every frame, forcing
-   ~10-20 recompositions/sec. The sidebar blur is NOT touched (vibrancy). */
+   is backgrounded. Set via a visibilitychange listener on <html>. */
 html[data-page-hidden] *,
 html[data-page-hidden] .typing-dot,
 html[data-page-hidden] .t-branch-anchor-pulse {
   animation-play-state: paused !important;
-}
-.terminal-shell[data-streaming-active] .ui-drawer-panel.term-glass {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 /* GPU layer promotion for frequently-animated micro elements. */

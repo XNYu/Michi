@@ -414,11 +414,15 @@ export default function ManageComposer({
     }
     if (!nodeId) return;
     const finalText = appendAttachmentsSentinel(raw, attachmentsForSend);
+    const mentionsForMeta = draft.mentions.length > 0
+      ? draft.mentions.map(m => ({ kind: m.kind, refId: m.refId, label: m.label }))
+      : undefined;
     const meta =
-      attachmentsForSend.length > 0
+      attachmentsForSend.length > 0 || mentionsForMeta
         ? {
-            attachments: attachmentsForSend.map((a) => ({ ...a })),
+            ...(attachmentsForSend.length > 0 ? { attachments: attachmentsForSend.map((a) => ({ ...a })) } : {}),
             displayText: raw,
+            mentions: mentionsForMeta,
           }
         : undefined;
     sendMessage(nodeId, finalText, meta);

@@ -44,7 +44,7 @@ interface PaneMessageListProps {
   /** Lowercased context names for highlighting @mentions in user messages. */
   contextNames?: ReadonlySet<string>;
   /** Called when user clicks a mention chip. */
-  onMentionClick?: (name: string) => void;
+  onMentionClick?: (name: string, kind: string, nodeId?: string) => void;
 }
 
 function PaneMessageListInner({

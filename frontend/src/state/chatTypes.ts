@@ -96,6 +96,8 @@ export interface UserSendMeta {
    * prefix or attachment sentinel that should not appear in the bubble.
    */
   displayText?: string;
+  /** Structured mention records from the composer. Persisted on the ChatMessage for click navigation. */
+  mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
 }
 
 export interface ChatMessage {
@@ -134,6 +136,14 @@ export interface ChatMessage {
    * `text` via `## My Comments on Previous Reply` markdown.
    */
   comments?: PendingComment[];
+  /**
+   * Structured mention records for this user message. Each entry preserves
+   * the kind (context or node), the refId (contextId or nodeId), and the
+   * display label. Used by highlightMentions to render clickable chips that
+   * can navigate to the referenced artifact or conversation node.
+   * Optional — historical messages rely on text-based matching as fallback.
+   */
+  mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
 }
 
 export interface PermissionRequest {
@@ -583,6 +593,7 @@ export type ChatAction =
       quotedText?: string;
       attachments?: MessageAttachment[];
       comments?: PendingComment[];
+      mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
     }
   | { type: 'chunk'; nodeId: string; assistantId: string; text: string }
   | { type: 'thought'; nodeId: string; assistantId: string; text: string }

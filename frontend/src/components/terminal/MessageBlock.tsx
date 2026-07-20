@@ -382,24 +382,48 @@ function ThinkingIndicator() {
 }
 
 /**
- * Wrap @contextName tokens in the user message with `<span class="mention-chip">`
+ * Wrap `@name` tokens inside `text` in `<span class="mention-chip">` tags
  * so they render as styled clickable chips. Matches known context names greedily
  * (longest first) so names with spaces resolve correctly.
+ *
+ * When `nodeMentions` are provided, also wraps `@title` tokens for node mentions
+ * with an additional `data-node-id` attribute for click navigation.
  */
-export function highlightMentions(text: string, contextNames: ReadonlySet<string>): string {
-  if (contextNames.size === 0) return text;
-  // Sort names longest-first so "foo bar" matches before "foo".
-  const sorted = [...contextNames].sort((a, b) => b.length - a.length);
+export function highlightMentions(
+  text: string,
+  contextNames: ReadonlySet<string>,
+  nodeMentions?: ReadonlyArray<{ label: string; nodeId: string }>,
+): string {
+  if (contextNames.size === 0 && (!nodeMentions || nodeMentions.length === 0)) return text;
   let result = text;
-  for (const name of sorted) {
-    // Build a case-insensitive pattern for this specific name after @
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(?:^|(?<=\\s))@(${escaped})(?=\\s|[,;:!?）)}\\]"]|$)`, 'giu');
-    result = result.replace(re, (full, matched: string) => {
-      const htmlEsc = matched.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      return `<span class="mention-chip" data-mention="${htmlEsc}">@${htmlEsc}</span>`;
-    });
+
+  // Handle node mentions first (they carry unique nodeId for navigation)
+  if (nodeMentions && nodeMentions.length > 0) {
+    const sorted = [...nodeMentions].sort((a, b) => b.label.length - a.label.length);
+    for (const { label, nodeId } of sorted) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?:^|(?<=\\s))@(${escaped})(?=\\s|[,;:!?）)}\\]"]|$)`, 'giu');
+      result = result.replace(re, (_full, matched: string) => {
+        const htmlEsc = matched.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const nodeIdEsc = nodeId.replace(/"/g, '&quot;');
+        return `<span class="mention-chip" data-mention="${htmlEsc}" data-mention-kind="node" data-node-id="${nodeIdEsc}">@${htmlEsc}</span>`;
+      });
+    }
   }
+
+  // Handle context mentions
+  if (contextNames.size > 0) {
+    const sorted = [...contextNames].sort((a, b) => b.length - a.length);
+    for (const name of sorted) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?:^|(?<=\\s))@(${escaped})(?=\\s|[,;:!?）)}\\]"]|$)`, 'giu');
+      result = result.replace(re, (_full, matched: string) => {
+        const htmlEsc = matched.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return `<span class="mention-chip" data-mention="${htmlEsc}" data-mention-kind="context">@${htmlEsc}</span>`;
+      });
+    }
+  }
+
   return result;
 }
 
@@ -870,7 +894,7 @@ interface MessageBlockProps {
   /** Lowercased context names for highlighting @mentions in user messages. */
   contextNames?: ReadonlySet<string>;
   /** Called when user clicks a mention chip in a user message. */
-  onMentionClick?: (name: string) => void;
+  onMentionClick?: (name: string, kind: string, nodeId?: string) => void;
   /** Reports whether the visible typewriter is still catching up to raw text. */
   onVisibleSmoothingChange?: (isSmoothing: boolean) => void;
 }
@@ -993,7 +1017,13 @@ function MessageBlockInner({
             data-density={density}
             onClick={onMentionClick ? (e) => {
               const chip = (e.target as HTMLElement).closest('[data-mention]');
-              if (chip) onMentionClick((chip as HTMLElement).dataset.mention!);
+              if (chip) {
+                const el = chip as HTMLElement;
+                const name = el.dataset.mention!;
+                const kind = el.dataset.mentionKind ?? 'context';
+                const nodeId = el.dataset.nodeId;
+                onMentionClick(name, kind, nodeId);
+              }
             } : undefined}
             style={{
               fontFamily: 'var(--ui-font)',
@@ -1015,7 +1045,11 @@ function MessageBlockInner({
             {m.streaming ? (
               <MarkdownContent
                 text={userTextToMarkdown(
-                  contextNames && contextNames.size > 0 ? highlightMentions(m.text, contextNames) : m.text,
+                  highlightMentions(
+                    m.text,
+                    contextNames ?? new Set(),
+                    m.mentions?.filter(x => x.kind === 'node').map(x => ({ label: x.label, nodeId: x.refId })),
+                  ),
                 )}
                 size="sm"
                 className={isDark ? 'prose-invert' : ''}
@@ -1025,7 +1059,11 @@ function MessageBlockInner({
               <CollapsibleUserText contentKey={m.text}>
                 <MarkdownContent
                   text={userTextToMarkdown(
-                    contextNames && contextNames.size > 0 ? highlightMentions(m.text, contextNames) : m.text,
+                    highlightMentions(
+                      m.text,
+                      contextNames ?? new Set(),
+                      m.mentions?.filter(x => x.kind === 'node').map(x => ({ label: x.label, nodeId: x.refId })),
+                    ),
                   )}
                   size="sm"
                   className={isDark ? 'prose-invert' : ''}

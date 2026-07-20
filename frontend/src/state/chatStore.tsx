@@ -1418,6 +1418,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         quotedText: meta?.quotedText,
         attachments: meta?.attachments,
         comments: meta?.comments,
+        mentions: meta?.mentions,
       });
       assistantTextBufs.current[assistantId] = '';
 
