@@ -93,6 +93,34 @@ function extractPathFromDetail(tool: ToolCallState): string | null {
 }
 
 /**
+ * Extract path from the `output` field. Tool outputs often contain the path:
+ * - "File created successfully at: /path/to/file (...)"
+ * - "The file /path/to/file has been updated successfully."
+ * - "Successfully replaced 1 occurrence(s) in /path/to/file."
+ * - Kiro: {"items":[{"Text":"Successfully replaced ... in /path"}]}
+ */
+function extractPathFromOutput(tool: ToolCallState): string | null {
+  const o = tool.output;
+  if (!o) return null;
+  // Try plain text patterns first
+  const plain = o.startsWith('{') ? tryKiroOutputText(o) : o;
+  if (!plain) return null;
+  const m1 = /(?:File created successfully at|The file)\s*:?\s*([^\s(]+)/i.exec(plain);
+  if (m1) return m1[1].trim();
+  const m2 = /(?:replaced \d+ occurrence\(s\)|updated successfully).*?\bin\s+(\S+)/i.exec(plain);
+  if (m2) return m2[1].replace(/[.)]+$/, '').trim();
+  return null;
+}
+
+function tryKiroOutputText(json: string): string | null {
+  try {
+    const parsed = JSON.parse(json);
+    if (parsed?.items?.[0]?.Text) return parsed.items[0].Text;
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
  * Extract file path from a descriptive title like "Editing Topbar.tsx" or
  * "Writing quicksort.py". Only used as last resort when inputJson and detail
  * both lack a path.
@@ -129,9 +157,10 @@ export function deriveDiffReceipt(message: ChatMessage): DiffReceipt | null {
     if (!kind) continue;
     const input = parseInput(tool);
 
-    // Resolve path from multiple sources (inputJson > detail > title).
+    // Resolve path from multiple sources (inputJson > detail > output > title).
     const path = (input ? extractPath(input) : null)
       ?? extractPathFromDetail(tool)
+      ?? extractPathFromOutput(tool)
       ?? extractPathFromTitle(tool);
 
     if (!path && input) {

@@ -199,9 +199,48 @@ describe('deriveDiffReceipt', () => {
     expect(r!.files[0].added).toBe(2);
   });
 
-  it('prefers inputJson path over detail or title fallbacks', () => {
+  it('extracts path from output field (Claude "File created" format)', () => {
     const m = msg([
-      tool('Editing foo.ts', { path: 'real/path.ts', old_string: 'a', new_string: 'b' }, { detail: 'Edit: /wrong/path.ts' }),
+      tool('Write', {}, {
+        inputJson: undefined,
+        output: 'File created successfully at: /Users/x/rabbitholes/src/new.ts (file state is current in your context)',
+      }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r).not.toBeNull();
+    expect(r!.files[0].path).toBe('/Users/x/rabbitholes/src/new.ts');
+  });
+
+  it('extracts path from output field (Kiro JSON items format)', () => {
+    const m = msg([
+      tool('Editing foo.ts', {}, {
+        inputJson: undefined,
+        output: '{"items":[{"Text":"Successfully replaced 1 occurrence(s) in /Users/x/rabbitholes/frontend/src/foo.ts."}]}',
+      }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r).not.toBeNull();
+    expect(r!.files[0].path).toBe('/Users/x/rabbitholes/frontend/src/foo.ts');
+  });
+
+  it('extracts path from output "The file X has been updated" format', () => {
+    const m = msg([
+      tool('Edit', {}, {
+        inputJson: undefined,
+        output: 'The file /Users/x/rabbitholes/state/chatTypes.ts has been updated successfully. (file state is current)',
+      }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r).not.toBeNull();
+    expect(r!.files[0].path).toBe('/Users/x/rabbitholes/state/chatTypes.ts');
+  });
+
+  it('prefers inputJson path over detail, output, or title fallbacks', () => {
+    const m = msg([
+      tool('Editing foo.ts', { path: 'real/path.ts', old_string: 'a', new_string: 'b' }, {
+        detail: 'Edit: /wrong/path.ts',
+        output: 'Successfully replaced 1 occurrence(s) in /another/wrong.ts.',
+      }),
     ]);
     const r = deriveDiffReceipt(m);
     expect(r!.files[0].path).toBe('real/path.ts');
