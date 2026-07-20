@@ -294,13 +294,14 @@ export function runChatStream({
         return;
       }
       // Reducer extracts metadata from assistant answer blocks.
-      dispatch({ type: 'done', nodeId, assistantId: currentAssistantId, completedAt });
+      const aborted = stopReason === 'cancel' || stopReason === 'cancelled' || undefined;
+      dispatch({ type: 'done', nodeId, assistantId: currentAssistantId, completedAt, aborted });
       cleanup();
       onTurnEnd?.('done', nodeId);
       onStreamComplete?.();
     },
     onAborted: () => {
-      dispatch({ type: 'done', nodeId, assistantId: currentAssistantId });
+      dispatch({ type: 'done', nodeId, assistantId: currentAssistantId, aborted: true });
       cleanup();
       onTurnEnd?.('cancel', nodeId);
       // Note: intentionally NOT calling onStreamComplete for aborted streams

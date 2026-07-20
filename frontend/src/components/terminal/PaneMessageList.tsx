@@ -5,6 +5,7 @@ import { visibleMessageText } from '../../state/assistantBlocks';
 import { FollowUpRow } from '../FollowUpRow';
 import { DARK_PALETTES } from './tokens';
 import { MessageBlock, NodeUserInputContext } from './MessageBlock';
+import { DiffReceipt } from './DiffReceipt';
 import { StreamActivityIndicator } from './StreamActivityIndicator';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
@@ -213,6 +214,11 @@ function PaneMessageListInner({
                   !isUser && m.id === tailAssistantId ? handleTailSmoothingChange : undefined
                 }
               />
+              {!isUser &&
+                node.status !== 'streaming' &&
+                i === node.messages.length - 1 && (
+                  <DiffReceipt message={m} workspaceId={node.projectId} />
+                )}
             </div>
           </React.Fragment>
         );

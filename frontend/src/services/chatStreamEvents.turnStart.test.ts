@@ -58,6 +58,6 @@ describe('dispatchChatStreamEvent turn_start/envelope', () => {
       { onDone },
     );
 
-    expect(onDone).toHaveBeenCalledWith('end_turn', 'a-n1-T1', 'T1');
+    expect(onDone).toHaveBeenCalledWith('end_turn', 'a-n1-T1', 'T1', undefined, undefined);
   });
 });

@@ -993,7 +993,8 @@ describe('ClaudeSession', () => {
     process.env.MICHI_CLAUDE_FOLLOW_UPS_HOOK_POC = '1';
     process.env.MICHI_FOLLOW_UPS_EXPERIMENT_MODE = 'hook-tool';
     const { log } = require('../src/services/logger') as typeof import('../src/services/logger');
-    const infoSpy = mock.method(log, 'info', () => {});
+    // Per-event POC logs were downgraded to debug (a491c789).
+    const infoSpy = mock.method(log, 'debug', () => {});
     const child = new MockClaudeChild();
     stubSpawnClaude(() => child);
     const registry = makeMcpRegistry();

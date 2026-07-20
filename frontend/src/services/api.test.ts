@@ -83,10 +83,14 @@ describe('streamMessage terminal-state safety net', () => {
   });
 
   it('finalizes via onError when the stream closes without a terminal event', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'partial' } }),
-      // connection then closes with NO done/error frame
-    ])));
+    // First fetch: the message POST stream, which closes with NO done/error
+    // frame. Subsequent fetches: the foreground resume replay subscribe —
+    // answer 410 (non-retryable) so the safety net must surface onError.
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'partial' } }),
+      ]))
+      .mockResolvedValue(new Response(null, { status: 410 })));
 
     const onChunk = vi.fn<(t: string) => void>();
     const onDone = vi.fn<(s?: string) => void>();
@@ -133,14 +137,37 @@ describe('streamMessage terminal-state safety net', () => {
       displayText: 'visible text',
       userMetadata: { quotedText: 'quote' },
     });
-    expect(onDone).toHaveBeenCalledWith('end_turn', undefined, undefined, true);
+    expect(onDone).toHaveBeenCalledWith('end_turn', undefined, undefined, true, undefined);
   });
 
   it('finalizes via onError when the stream goes silent past the watchdog timeout', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'partial' } }),
-    ], { close: false }))); // stays open, no further bytes ever arrive
+    // First fetch: the message POST stream that stays open with no further
+    // bytes. The watchdog abort must reject the in-flight read (like real
+    // fetch does), after which the foreground resume replay subscribe gets a
+    // 410 (non-retryable) so onError must fire.
+    const enc = new TextEncoder();
+    let streamCtrl!: ReadableStreamDefaultController<Uint8Array>;
+    const stalled = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamCtrl = controller;
+        controller.enqueue(enc.encode(
+          encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'partial' } }),
+        ));
+        // stays open, no further bytes ever arrive
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn()
+      .mockImplementationOnce((_url: string, init?: RequestInit) => {
+        init?.signal?.addEventListener('abort', () => {
+          streamCtrl.error(new DOMException('aborted', 'AbortError'));
+        });
+        return Promise.resolve(new Response(stalled, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }));
+      })
+      .mockResolvedValue(new Response(null, { status: 410 })));
 
     const onDone = vi.fn<(s?: string) => void>();
     const onError = vi.fn<(m: string) => void>();

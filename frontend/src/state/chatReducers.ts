@@ -552,7 +552,7 @@ export function reduceNodes(
         extractedFollowUps = meta.followUps;
         return projectAssistantStreamEvent(m, n.projectId, {
           event: CHAT_STREAM_EVENTS.done,
-          data: { stopReason: 'end_turn', persisted: true },
+          data: { stopReason: action.aborted ? 'cancelled' : 'end_turn', persisted: true },
         });
       });
       // A new user turn may start while the previous turn drains its hidden

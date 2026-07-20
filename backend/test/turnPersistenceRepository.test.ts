@@ -122,7 +122,10 @@ describe('turn persistence repository', () => {
       'SELECT title, branch_overview, follow_ups, status, last_applied_turn_id, last_applied_seq, resume_fingerprint FROM nodes WHERE id = ?',
     ).get('node-1') as Record<string, unknown>;
     assert.equal(node.title, 'Durable title');
-    assert.equal(node.branch_overview, 'Persisted overview.');
+    // branch_overview is an append-only journal: a JSON entry array.
+    const overviewEntries = JSON.parse(String(node.branch_overview)) as Array<{ text: string }>;
+    assert.equal(overviewEntries.length, 1);
+    assert.equal(overviewEntries[0]?.text, 'Persisted overview.');
     assert.deepEqual(JSON.parse(String(node.follow_ups)), ['Next?']);
     assert.equal(node.status, 'idle');
     assert.equal(node.last_applied_turn_id, 'turn-1');

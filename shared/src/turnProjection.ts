@@ -347,7 +347,13 @@ function applyTool(snapshot: DurableTurnSnapshot, update: ToolCallStreamPayload)
   return { ...message, toolCalls, blocks };
 }
 
-function finalizeMessage(message: DurableMessage): DurableMessage {
+function finalizeMessage(message: DurableMessage, interrupted = false): DurableMessage {
+  // A turn that ended via cancel/error must not stamp its still-active tools
+  // as 'completed' — they may never have executed (a tool_call is emitted
+  // when the tool_use block appears, before execution). 'interrupted' is a
+  // terminal, non-success status so consumers (e.g. diff receipts) can tell
+  // "finished" apart from "was cut off mid-flight".
+  const finalStatus = interrupted ? 'interrupted' : 'completed';
   return {
     ...message,
     blocks: message.blocks.map((block) =>
@@ -357,7 +363,7 @@ function finalizeMessage(message: DurableMessage): DurableMessage {
     ),
     toolCalls: message.toolCalls.map((tool) => {
       const active = isActiveToolStatus(tool.status);
-      return active ? { ...tool, status: 'completed' } : tool;
+      return active ? { ...tool, status: finalStatus } : tool;
     }),
   };
 }
@@ -462,7 +468,7 @@ export function applyTurnEvent(
         : stopReason === 'error'
           ? 'error'
           : 'completed';
-      const assistantMessage = finalizeMessage(next.assistantMessage);
+      const assistantMessage = finalizeMessage(next.assistantMessage, status !== 'completed');
       const rawAnswer = rawAnswerContent(assistantMessage.blocks);
       next = {
         ...next,
@@ -475,7 +481,7 @@ export function applyTurnEvent(
       break;
     }
     case 'error': {
-      const assistantMessage = finalizeMessage(next.assistantMessage);
+      const assistantMessage = finalizeMessage(next.assistantMessage, true);
       const rawAnswer = rawAnswerContent(assistantMessage.blocks);
       next = {
         ...next,

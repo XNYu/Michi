@@ -14,7 +14,7 @@ function wrap(ui: React.ReactElement) {
 }
 
 describe('TerminalSidebar BottomNav', () => {
-  it('renders Artifacts / Workspaces / Home / Settings as labelled rows', () => {
+  it('renders Workspaces / Home / Settings as labelled rows', () => {
     render(
       wrap(
         <TerminalSidebar
@@ -26,33 +26,15 @@ describe('TerminalSidebar BottomNav', () => {
       ),
     );
     // getByText throws if missing — finding the element is the assertion.
-    expect(screen.getByText('Artifacts')).toBeTruthy();
     expect(screen.getByText('Workspaces')).toBeTruthy();
     expect(screen.getByText('Home')).toBeTruthy();
     expect(screen.getByText('Settings')).toBeTruthy();
-    // Branches / Map / Digest are thread-scoped views — their entries moved
-    // to the Topbar right cluster.
+    // Branches / Map / Digest / Artifacts are thread-scoped views — their
+    // entries moved to the Topbar right cluster (Artifacts removed 1a1348d0).
     expect(screen.queryByText('Branches')).toBeNull();
     expect(screen.queryByText('Map')).toBeNull();
     expect(screen.queryByText('Digest')).toBeNull();
-  });
-
-  it('dispatches michi:toggle-artifacts when the Artifacts row is clicked', () => {
-    const spy = vi.fn();
-    window.addEventListener('michi:toggle-artifacts', spy);
-    render(
-      wrap(
-        <TerminalSidebar
-          activePage="dashboard"
-          onNav={() => {}}
-          onOpenPalette={() => {}}
-          onNewThread={() => {}}
-        />,
-      ),
-    );
-    fireEvent.click(screen.getByText('Artifacts'));
-    expect(spy).toHaveBeenCalledTimes(1);
-    window.removeEventListener('michi:toggle-artifacts', spy);
+    expect(screen.queryByText('Artifacts')).toBeNull();
   });
 
   it('navigates to the home page when the Home row is clicked', () => {

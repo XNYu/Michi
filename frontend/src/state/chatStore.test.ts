@@ -499,7 +499,9 @@ describe('hydrateBackendWorkspaces', () => {
         }]);
 
         expect(result.nodes['n-spawn']).toMatchObject({
-            chatId: 'runtime-child',
+            // Node ids are the public chat identity (e8e7cf88): a runtime
+            // binding maps chatId to the node id, not the acp session id.
+            chatId: 'n-spawn',
             title: 'Durable child',
             spawnedByAgent: true,
             pendingSpawnPrompt: 'Resume this child after a missed event',

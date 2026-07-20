@@ -176,7 +176,8 @@ export function createBackgroundTurnBinding({
           onTerminal?.();
           return;
         }
-        dispatch({ type: 'done', nodeId, assistantId, completedAt });
+        const aborted = stopReason === 'cancel' || stopReason === 'cancelled' || undefined;
+        dispatch({ type: 'done', nodeId, assistantId, completedAt, aborted });
         onTurnEnd?.('done', nodeId);
         onStreamComplete?.();
         onTerminal?.();

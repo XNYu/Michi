@@ -606,6 +606,9 @@ export type ChatAction =
       nodeId: string;
       assistantId: string;
       completedAt?: number;
+      /** The turn was cancelled (Stop / abort). Still-active tool calls are
+       *  finalized as 'interrupted' instead of 'completed'. */
+      aborted?: boolean;
     }
   | { type: 'error'; nodeId: string; assistantId: string; message: string }
   | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
