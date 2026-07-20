@@ -500,6 +500,63 @@
   font-weight: 500;
 }
 
+/* In-place edit state */
+.terminal-message-user-editing {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  width: 72%;
+  max-width: 72%;
+  border: 1px solid var(--term-line, #333);
+  border-radius: 6px;
+  background: var(--term-surface);
+  overflow: hidden;
+}
+.user-edit-area {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--term-fg);
+  font-family: var(--message-latin-font), var(--message-cjk-font);
+  font-size: var(--message-body-size, 14.5px);
+  line-height: var(--message-body-leading, 1.6);
+  padding: 12px 14px;
+  margin: 0;
+  min-height: 4em;
+  field-sizing: content;
+}
+.user-edit-footer {
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-top: 1px solid var(--term-line, #333);
+}
+.user-edit-footer .user-edit-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--ui-font, system-ui);
+  font-size: 12px;
+  color: var(--term-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.user-edit-footer .user-edit-action:hover {
+  color: var(--term-fg);
+}
+.user-edit-footer .user-edit-action kbd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  border: 1px solid var(--term-line, #333);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--term-muted);
+}
+
 /* Legacy --app-* / --surface* / --fg* / --line* / --accent* / --danger / --ok
  * are now thin aliases of the active terminal palette (--term-*). The few
  * remaining consumers (LandingPage, ApiKeyGate, Profile) don't need changes —
@@ -773,7 +830,11 @@ html[data-vibrancy="on"],
    text. Under vibrancy that solid block is visible against the translucent
    topbar. Transparent lets the topbar's single tint layer show uniformly. */
 [data-vibrancy="on"] .terminal-topbar-right {
-  background: transparent !important;
+  background: color-mix(in srgb, var(--term-bg) 60%, transparent) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  mask-image: linear-gradient(to right, transparent, black 20px);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 20px);
 }
 [data-vibrancy="on"] .terminal-sidebar {
   background: var(--term-vibrancy-tint) !important;

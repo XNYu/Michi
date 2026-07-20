@@ -22,6 +22,10 @@ interface PaneMessageListProps {
   onContinueFollowUp: (question: string) => void;
   onBranchFollowUp: (question: string) => void;
   followUpsDisabled?: boolean;
+  editingMessageId?: string | null;
+  onEditStart?: (messageId: string) => void;
+  onEditSave?: (messageIndex: number, newText: string) => void;
+  onEditCancel?: () => void;
   /**
    * Map from assistant message id → child branch anchors forked from that
    * message. Built by buildAnchorMap() in TPane and passed down so this
@@ -58,6 +62,10 @@ function PaneMessageListInner({
   anchorsByMessage,
   onOpenBranch,
   onBranchFromMessage,
+  editingMessageId,
+  onEditStart,
+  onEditSave,
+  onEditCancel,
   contextNames,
   onMentionClick,
 }: PaneMessageListProps) {
@@ -131,17 +139,26 @@ function PaneMessageListInner({
         // content than the action chrome.
         const anchorsForMsg = anchorsByMessage?.get(m.id) ?? [];
 
+        const editingIdx = editingMessageId
+          ? node.messages.findIndex((msg) => msg.id === editingMessageId)
+          : -1;
+        const isDownstream = editingIdx >= 0 && i > editingIdx;
+
         return (
           <React.Fragment key={m.id}>
             <div
               data-msg-id={m.id}
               data-streaming-tail={isStreamingTail ? 'true' : undefined}
               className="terminal-message-frame"
+              style={isDownstream ? { opacity: 0.38, filter: 'saturate(0.5)', transition: 'opacity 0.2s' } : undefined}
             >
               <MessageBlock
                 m={m}
                 index={i}
                 isDark={isDark}
+                editing={m.id === editingMessageId}
+                onEditSave={m.id === editingMessageId ? (newText) => onEditSave?.(i, newText) : undefined}
+                onEditCancel={m.id === editingMessageId ? onEditCancel : undefined}
                 onCopy={() => {
                   if (typeof navigator !== 'undefined' && navigator.clipboard) {
                     const copyText = visibleMessageText(m);
@@ -160,8 +177,8 @@ function PaneMessageListInner({
                       }
                 }
                 onEdit={
-                  isUser && !streaming
-                    ? () => onEditUserMessage(m.text)
+                  isUser && !streaming && !editingMessageId
+                    ? () => onEditStart?.(m.id)
                     : undefined
                 }
                 onBranch={
@@ -234,7 +251,11 @@ export const PaneMessageList = React.memo(PaneMessageListInner, (prev, next) =>
   prev.onOpenBranch === next.onOpenBranch &&
   prev.onBranchFromMessage === next.onBranchFromMessage &&
   prev.contextNames === next.contextNames &&
-  prev.onMentionClick === next.onMentionClick,
+  prev.onMentionClick === next.onMentionClick &&
+  prev.editingMessageId === next.editingMessageId &&
+  prev.onEditStart === next.onEditStart &&
+  prev.onEditSave === next.onEditSave &&
+  prev.onEditCancel === next.onEditCancel,
 );
 
 PaneMessageList.displayName = 'PaneMessageList';

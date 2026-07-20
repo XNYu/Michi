@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatActions, useChatNode, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
-import type { ChatNodeState, ContextEntry, ProjectEdge } from '../../state/chatStore';
+import type { ChatNodeState, ArtifactEntry, ProjectEdge } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { stripBranchPrefix, parseFanoutCommand, shouldBranchOnSubmit } from '../nodes/chatNodeUtils';
@@ -171,7 +171,7 @@ const paneScrollCache = (() => {
   };
 })();
 const PANE_PERF_SLOW_COMMIT_MS = 16;
-const EMPTY_CONTEXTS: ContextEntry[] = [];
+const EMPTY_CONTEXTS: ArtifactEntry[] = [];
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 const EMPTY_SAME_TREE_NODES: ChatNodeState[] = [];
 const EMPTY_MERGE_SOURCE_LABELS: string[] = [];
@@ -312,6 +312,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     closePane,
     sendMessage,
     retryLastTurn,
+    editAndResend,
     cancelStream,
     isObserver,
     createChildChat,
@@ -331,6 +332,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     dequeueMessage,
     setComposerDraft,
     reorderPane,
+    openArtifactPane,
   } = useChatActions();
   const {
     focusedPane,
@@ -1020,6 +1022,21 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     return () => window.removeEventListener('michi:attach-paths', onAttach as EventListener);
   }, [focusedPane, nodeId, addPendingPaths]);
 
+  // Intercept internal-link clicks from MarkdownContent anchors and open them
+  // as artifact panes (prevents white-screen navigation for relative URLs).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onInternalLink = (e: Event) => {
+      const href = (e as CustomEvent).detail?.href;
+      if (typeof href === 'string' && href.trim()) {
+        void openArtifactPane(href);
+      }
+    };
+    el.addEventListener('michi:internal-link', onInternalLink);
+    return () => el.removeEventListener('michi:internal-link', onInternalLink);
+  }, [openArtifactPane]);
+
   // Scroll a specific message into view + brief flash, dispatched by GlobalSearch
   // and PaneFind navigation.
   useEffect(() => {
@@ -1175,7 +1192,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   }, [n?.pendingPermission]);
 
   const activeProjectEdges = activeProject?.edges ?? EMPTY_EDGES;
-  const mentionContexts = activeProject?.contexts ?? EMPTY_CONTEXTS;
+  const mentionContexts = activeProject?.artifacts ?? EMPTY_CONTEXTS;
 
   const contextNamesSet = useMemo(() => {
     if (mentionContexts.length === 0) return EMPTY_CONTEXT_NAMES;
@@ -1505,6 +1522,22 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [setDraft]);
 
+  // --- In-place edit state ---
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+
+  const handleEditStart = useCallback((messageId: string) => {
+    setEditingMessageId(messageId);
+  }, []);
+
+  const handleEditCancel = useCallback(() => {
+    setEditingMessageId(null);
+  }, []);
+
+  const handleEditSave = useCallback((messageIndex: number, newText: string) => {
+    setEditingMessageId(null);
+    editAndResend(nodeId, messageIndex, newText);
+  }, [nodeId, editAndResend]);
+
   const handleContinueFollowUp = useCallback((question: string) => {
     void sendMessage(nodeId, question);
   }, [nodeId, sendMessage]);
@@ -1588,7 +1621,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     const submitDraft = latestDraftRef.current;
     const submitQuotedText = latestQuotedTextRef.current;
     // Expand mention chips back to wire-format tokens (`@node:<id>` for nodes,
-    // `@<name>` for contexts) before any downstream parsing — fanout, branch
+    // `@<name>` for artifacts) before any downstream parsing — fanout, branch
     // prefix stripping, etc. all see the wire string, not the chip-display.
     const raw = expandMentions(submitDraft.value, submitDraft.mentions).trim();
     const pending = n.pendingComments ?? [];
@@ -1600,7 +1633,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     const attachmentsForSend = pendingAttachments.map(p => ({ name: p.name, absPath: p.absPath }));
     // Attachments stay scoped to this turn — the agent reads them via the
     // [Attached files: …] sentinel appended below. We deliberately do NOT
-    // promote them to workspace contexts: that registered every uploaded image
+    // promote them to workspace artifacts: that registered every uploaded image
     // as a workspace-level context row, which the first-turn manifest then
     // advertised to *every other* conversation in the workspace, so sibling
     // threads kept reading unrelated screenshots.
@@ -1889,6 +1922,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           onOpenBranch={handleOpenBranch}
           onBranchFromMessage={handleBranchFromMessage}
           contextNames={contextNamesSet}
+          editingMessageId={editingMessageId}
+          onEditStart={handleEditStart}
+          onEditSave={handleEditSave}
+          onEditCancel={handleEditCancel}
         />
       </div>
       {!n.pendingPermission && !(n.pendingUserInput && !n.pendingUserInput.resolved) && (
@@ -1993,7 +2030,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               onChange={setDraft}
               disabled={observing}
               className="hide-sb"
-              contexts={mentionContexts}
+              artifacts={mentionContexts}
               sameTreeNodes={sameTreeNodes}
               currentNodeId={nodeId}
               agentCommands={n.agentCommands}

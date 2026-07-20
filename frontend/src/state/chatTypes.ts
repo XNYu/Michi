@@ -488,7 +488,7 @@ export interface Tree {
  *
  * Exactly one of `filePath` (doc/file/image) or `url` (link) is the payload.
  */
-export interface ContextEntry {
+export interface ArtifactEntry {
   id: string;
   /** Unique per project, [\p{L}\p{N}_-]+. */
   name: string;
@@ -547,7 +547,7 @@ export interface Project {
   trees: Tree[];
   /** id of the currently-active tree. null only when every tree is archived or deleted. */
   activeTreeId: string | null;
-  contexts?: ContextEntry[];
+  artifacts?: ArtifactEntry[];
   deletedAt?: number;
   /** Presence means archived. Hidden from main sidebar list, lives under a collapsed section. */
   archivedAt?: number;
@@ -765,6 +765,8 @@ export interface ChatContextValue {
   ) => void;
   /** Trim from a given message index (or the last turn) and resend the user text for a fresh reply. */
   retryLastTurn: (nodeId: string, fromIndex?: number) => void;
+  /** Trim from a given user message index and resend with new (edited) text. */
+  editAndResend: (nodeId: string, fromIndex: number, newText: string) => void;
   createChildChat: (
     parentNodeId: string,
     firstMessage: string,
@@ -1032,6 +1034,7 @@ export type ChatActionsValue = Pick<
   | 'deleteProject'
   | 'sendMessage'
   | 'retryLastTurn'
+  | 'editAndResend'
   | 'createChildChat'
   | 'createBlankChild'
   | 'createMergedChat'
@@ -1082,6 +1085,7 @@ export type ChatActionsValue = Pick<
   | 'setComposerDraft'
   | 'createContext'
   | 'reorderPane'
+  | 'openArtifactPane'
   | 'navBack'
   | 'navForward'
   | 'setUnreadFilterOn'
