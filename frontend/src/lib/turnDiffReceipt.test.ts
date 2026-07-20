@@ -161,4 +161,49 @@ describe('deriveDiffReceipt', () => {
     const m = { id: 'a', role: 'assistant', text: '' } as unknown as ChatMessage;
     expect(deriveDiffReceipt(m)).toBeNull();
   });
+
+  it('extracts path from detail field when inputJson is absent (Claude runtime)', () => {
+    const m = msg([
+      tool('Write', {}, { inputJson: undefined, detail: 'Write: /Users/x/rabbitholes/src/a.ts' }),
+      tool('Edit', {}, { inputJson: undefined, detail: 'Edit: /Users/x/rabbitholes/src/b.ts' }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r).not.toBeNull();
+    expect(r!.files.map(f => f.path).sort()).toEqual([
+      '/Users/x/rabbitholes/src/a.ts',
+      '/Users/x/rabbitholes/src/b.ts',
+    ]);
+    // Without inputJson, line counts default to 0
+    expect(r!.totalAdded).toBe(0);
+    expect(r!.totalRemoved).toBe(0);
+  });
+
+  it('extracts path from "Editing <filename>" title (Kiro runtime)', () => {
+    const m = msg([
+      tool('Editing Topbar.tsx', { old_string: 'a\nb', new_string: 'c' }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r).not.toBeNull();
+    expect(r!.files[0].path).toBe('Topbar.tsx');
+    expect(r!.files[0].added).toBe(1);
+    expect(r!.files[0].removed).toBe(2);
+  });
+
+  it('extracts path from "Writing <filename>" title (Kiro runtime)', () => {
+    const m = msg([
+      tool('Writing quicksort.py', { content: 'def qs(arr):\n    pass\n' }, { inputJson: JSON.stringify({ content: 'def qs(arr):\n    pass\n' }) }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r).not.toBeNull();
+    expect(r!.files[0].path).toBe('quicksort.py');
+    expect(r!.files[0].added).toBe(2);
+  });
+
+  it('prefers inputJson path over detail or title fallbacks', () => {
+    const m = msg([
+      tool('Editing foo.ts', { path: 'real/path.ts', old_string: 'a', new_string: 'b' }, { detail: 'Edit: /wrong/path.ts' }),
+    ]);
+    const r = deriveDiffReceipt(m);
+    expect(r!.files[0].path).toBe('real/path.ts');
+  });
 });

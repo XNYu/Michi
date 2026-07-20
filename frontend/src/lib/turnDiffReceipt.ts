@@ -57,10 +57,8 @@ function countLines(text: string): number {
 /** Normalize a tool title to its mutation kind, or null if not file-mutating. */
 function mutationKind(title: string): 'write' | 'edit' | null {
   const t = title.trim().toLowerCase();
-  if (t === 'write') return 'write';
-  // Bare 'edit' (builtin tools) plus Codex fileChange titles:
-  // 'Edit <basename>' / 'Edit N files' / 'Edit files'.
-  if (t === 'edit' || t.startsWith('edit ')) return 'edit';
+  if (t === 'write' || t.startsWith('write ') || t.startsWith('writing ')) return 'write';
+  if (t === 'edit' || t.startsWith('edit ') || t.startsWith('editing ')) return 'edit';
   return null;
 }
 
@@ -81,6 +79,28 @@ function extractCodexChangePaths(input: Record<string, unknown>): string[] {
 function extractPath(input: Record<string, unknown>): string | null {
   const p = input.path ?? input.file_path;
   return typeof p === 'string' && p.trim() !== '' ? p : null;
+}
+
+/**
+ * Extract path from the `detail` field when inputJson is absent.
+ * Claude runtime sets detail to "Write: /path/to/file" or "Edit: /path/to/file".
+ */
+function extractPathFromDetail(tool: ToolCallState): string | null {
+  const d = tool.detail;
+  if (!d) return null;
+  const match = /^(?:Write|Edit|write|edit):\s*(.+)$/i.exec(d);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extract file path from a descriptive title like "Editing Topbar.tsx" or
+ * "Writing quicksort.py". Only used as last resort when inputJson and detail
+ * both lack a path.
+ */
+function extractPathFromTitle(tool: ToolCallState): string | null {
+  const t = (tool.title ?? '').trim();
+  const match = /^(?:Editing|Writing)\s+(.+)$/i.exec(t);
+  return match ? match[1].trim() : null;
 }
 
 function parseInput(tool: ToolCallState): Record<string, unknown> | null {
@@ -108,12 +128,14 @@ export function deriveDiffReceipt(message: ChatMessage): DiffReceipt | null {
     const kind = mutationKind(tool.title ?? '');
     if (!kind) continue;
     const input = parseInput(tool);
-    if (!input) continue;
-    const path = extractPath(input);
-    if (!path) {
+
+    // Resolve path from multiple sources (inputJson > detail > title).
+    const path = (input ? extractPath(input) : null)
+      ?? extractPathFromDetail(tool)
+      ?? extractPathFromTitle(tool);
+
+    if (!path && input) {
       // Codex fileChange shape: no path/file_path, but a `changes` array.
-      // Codex carries no old/new strings, so counts stay 0 per file; the
-      // click-through diff modal shows the real delta.
       for (const changePath of extractCodexChangePaths(input)) {
         const prev = byPath.get(changePath);
         if (!prev) {
@@ -122,15 +144,16 @@ export function deriveDiffReceipt(message: ChatMessage): DiffReceipt | null {
       }
       continue;
     }
+    if (!path) continue;
 
     if (kind === 'write') {
-      const content = typeof input.content === 'string' ? input.content : '';
+      const content = input && typeof input.content === 'string' ? input.content : '';
       // Latest write wins: a write is a full overwrite of the file, so it
       // supersedes any counts accumulated for this path so far.
       byPath.set(path, { path, added: countLines(content), removed: 0, kind: 'write' });
     } else {
-      const oldStr = typeof input.old_string === 'string' ? input.old_string : '';
-      const newStr = typeof input.new_string === 'string' ? input.new_string : '';
+      const oldStr = input && typeof input.old_string === 'string' ? input.old_string : '';
+      const newStr = input && typeof input.new_string === 'string' ? input.new_string : '';
       const prev = byPath.get(path);
       if (prev) {
         byPath.set(path, {
