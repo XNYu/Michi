@@ -704,8 +704,8 @@ export default function TerminalTopbar({
               <TopbarIconToggle
                 onClick={() => _onNav('branches')}
                 active={page === 'branches'}
-                label="Branches"
-                title="Branches"
+                label="Overview"
+                tooltip="Overview"
               >
                 <BranchesIcon size={14} />
               </TopbarIconToggle>
@@ -713,7 +713,8 @@ export default function TerminalTopbar({
                 onClick={() => _onNav('map')}
                 active={page === 'map'}
                 label="Map"
-                title={`Map (${kbd('mod', 'M')})`}
+                tooltip="Map"
+                tooltipKbd={kbd('mod', 'M')}
               >
                 <MapIcon size={14} />
               </TopbarIconToggle>
@@ -721,19 +722,19 @@ export default function TerminalTopbar({
                 onClick={() => _onNav('digest')}
                 active={page === 'digest'}
                 label="Digest"
-                title={`Digest (${kbd('mod', 'D')})`}
+                tooltip="Digest"
+                tooltipKbd={kbd('mod', 'D')}
                 dot={hasUnreadDigest}
               >
                 <DigestIcon size={14} />
               </TopbarIconToggle>
-              <div aria-hidden style={{ width: 1, height: 16, background: 'var(--term-line)', flexShrink: 0 }} />
             </>
           )}
           <TopbarIconToggle
             onClick={toggleArtifacts}
             active={artifactsOpen}
             label="Artifacts"
-            title={`Artifacts (${kbd('shift', 'mod', 'A')})`}
+            tooltip="Artifacts"
           >
             <ArtifactsIcon size={14} />
           </TopbarIconToggle>
@@ -891,64 +892,72 @@ function TopbarIconToggle({
   onClick,
   active,
   label,
-  title,
+  tooltip,
+  tooltipKbd,
   dot,
   children,
 }: {
   onClick: () => void;
   active?: boolean;
   label: string;
-  title: string;
+  tooltip: string;
+  tooltipKbd?: string;
   dot?: boolean;
   children: React.ReactNode;
 }) {
   const [hover, setHover] = React.useState(false);
+  const btnRef = React.useRef<HTMLButtonElement>(null);
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={title}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        position: 'relative',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: ZONE1_BUTTON_W,
-        height: ZONE1_BUTTON_W,
-        padding: '0 6px',
-        background: active
-          ? 'color-mix(in srgb, var(--term-fg) 8%, transparent)'
-          : hover
-          ? 'color-mix(in srgb, var(--term-fg) 5%, transparent)'
-          : 'transparent',
-        border: 'none',
-        borderRadius: 4,
-        color: active ? 'var(--term-fg)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
-        cursor: 'pointer',
-        transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
-        flexShrink: 0,
-        WebkitAppRegion: 'no-drag',
-      } as React.CSSProperties}
-    >
-      {children}
-      {dot && (
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute',
-            top: 3,
-            right: 3,
-            width: 5,
-            height: 5,
-            borderRadius: 99,
-            background: 'var(--term-accent)',
-          }}
-        />
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          position: 'relative',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: ZONE1_BUTTON_W,
+          height: ZONE1_BUTTON_W,
+          padding: '0 6px',
+          background: active
+            ? 'color-mix(in srgb, var(--term-fg) 8%, transparent)'
+            : hover
+            ? 'color-mix(in srgb, var(--term-fg) 5%, transparent)'
+            : 'transparent',
+          border: 'none',
+          borderRadius: 4,
+          color: active ? 'var(--term-fg)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
+          cursor: 'pointer',
+          transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
+          flexShrink: 0,
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties}
+      >
+        {children}
+        {dot && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              top: 3,
+              right: 3,
+              width: 5,
+              height: 5,
+              borderRadius: 99,
+              background: 'var(--term-accent)',
+            }}
+          />
+        )}
+      </button>
+      {hover && (
+        <HeaderTooltip anchorRef={btnRef} label={tooltip} kbd={tooltipKbd} />
       )}
-    </button>
+    </>
   );
 }
 

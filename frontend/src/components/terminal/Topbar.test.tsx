@@ -101,7 +101,7 @@ describe('TerminalTopbar', () => {
         <TerminalTopbar {...baseProps} />
       </Wrap>,
     );
-    expect(screen.getByTitle(/Artifacts/)).toBeTruthy();
+    expect(screen.getByLabelText(/Artifacts/)).toBeTruthy();
   });
 
   it('dispatches michi:toggle-artifacts when the Artifacts button is clicked', () => {
@@ -112,7 +112,7 @@ describe('TerminalTopbar', () => {
         <TerminalTopbar {...baseProps} />
       </Wrap>,
     );
-    fireEvent.click(screen.getByTitle(/Artifacts/));
+    fireEvent.click(screen.getByLabelText(/Artifacts/));
     expect(spy).toHaveBeenCalledTimes(1);
     window.removeEventListener('michi:toggle-artifacts', spy);
   });

@@ -100,7 +100,7 @@ const baseProps = {
 };
 
 describe('Topbar thread-view toggles', () => {
-  it('renders Branches / Map / Digest toggles when a workspace is active and navigates on click', async () => {
+  it('renders Overview / Map / Digest toggles when a workspace is active and navigates on click', async () => {
     seed({ n1: makeChatNode('n1') });
     const onNav = vi.fn();
     render(
@@ -109,7 +109,7 @@ describe('Topbar thread-view toggles', () => {
       </Wrap>,
     );
     await act(async () => {});
-    expect(await screen.findByLabelText('Branches')).toBeTruthy();
+    expect(await screen.findByLabelText('Overview')).toBeTruthy();
     expect(screen.getByLabelText('Digest')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Map'));
     expect(onNav).toHaveBeenCalledWith('map');
