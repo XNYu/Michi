@@ -105,8 +105,13 @@ function PaneMessageListInner({
   // Show a subtle loading indicator instead of bare follow-ups.
   const isPlaceholder = node.messagesLoaded === false && (node.messageCount ?? 0) > 0;
 
+  const userInputCtx = React.useMemo(
+    () => ({ userInput: node.pendingUserInput, nodeId: node.nodeId }),
+    [node.pendingUserInput, node.nodeId],
+  );
+
   return (
-    <NodeUserInputContext.Provider value={node.pendingUserInput}>
+    <NodeUserInputContext.Provider value={userInputCtx}>
     <div style={contentStyle}>
       <MergeSourcesNotice node={node} sourceLabels={mergeSourceLabels} />
 

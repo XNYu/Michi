@@ -24,7 +24,8 @@ import type { ChildAnchor } from '../../state/branchAnchors';
 import { BranchAnchorRow } from './BranchAnchorRow';
 import { ImageBlockView } from './ImageBlockView';
 import { streamingMarkdownBlocksEnabled } from './streamingMarkdownBlocksFlag';
-import { ResolvedUserInput } from './UserInputBanner';
+import UserInputBanner, { ResolvedUserInput } from './UserInputBanner';
+import { useChatActions } from '../../state/chatStore';
 import { BranchIcon, CheckIcon, CopyIcon, EditIcon, RetryIcon } from './icons';
 
 const StreamingMarkdownContent = React.lazy(() => import('./StreamingMarkdownContent'));
@@ -33,16 +34,33 @@ const StreamingMarkdownContent = React.lazy(() => import('./StreamingMarkdownCon
  * Context providing the current node's pendingUserInput so that inline
  * user-input segments can render without prop-drilling through memoized layers.
  */
-export const NodeUserInputContext = createContext<UserInputRequest | null | undefined>(undefined);
+export interface NodeUserInputContextValue {
+  userInput: UserInputRequest | null | undefined;
+  nodeId: string;
+}
+
+export const NodeUserInputContext = createContext<NodeUserInputContextValue | null>(null);
 
 /** Renders a user-input segment inline within the weave pipeline. */
 function InlineUserInputSegment({ requestId }: { requestId: number }) {
-  const ui = useContext(NodeUserInputContext);
-  if (ui && ui.requestId === requestId && ui.resolved) {
+  const ctx = useContext(NodeUserInputContext);
+  const { resolveUserInputRequest, skipUserInputRequest, isObserver } = useChatActions();
+  const ui = ctx?.userInput;
+  if (!ui || ui.requestId !== requestId) return null;
+  if (ui.resolved) {
     return <ResolvedUserInput userInput={ui} />;
   }
-  // Not resolved yet — the interactive banner is rendered as a TPane overlay.
-  return null;
+  // Pending: render the interactive card INLINE in the message flow (not as a
+  // docked overlay). It scrolls with the transcript, never steals layout space
+  // (no page jump), and — once resolved — swaps in place to ResolvedUserInput.
+  return (
+    <UserInputBanner
+      userInput={ui}
+      onSubmit={(answers) => resolveUserInputRequest(ctx.nodeId, answers)}
+      onSkip={() => skipUserInputRequest(ctx.nodeId)}
+      readOnly={isObserver(ctx.nodeId)}
+    />
+  );
 }
 
 function formatMessageTime(ms: number | undefined): string {

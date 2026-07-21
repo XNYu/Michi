@@ -20,7 +20,6 @@ import { saveAgentOptions } from '../../services/api';
 import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
-import UserInputBanner from './UserInputBanner';
 import MergeBanner from './MergeBanner';
 import PaneFind from './PaneFind';
 import { ComposerShell, type ComposerShellHandle } from './ComposerShell';
@@ -322,8 +321,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     switchAgent,
     resolvePermission,
     denyPermission,
-    resolveUserInputRequest,
-    skipUserInputRequest,
     addPendingComment,
     editPendingComment,
     removePendingComment,
@@ -1910,7 +1907,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             prefs.terminalDensity === 'dense' ? 22 : prefs.terminalDensity === 'compact' ? 24 : 32,
           // Reserve clearance equal to the measured composer height + 12px top
           // gutter + 12px breathing buffer so the last message scrolls clear.
-          paddingBottom: (n.pendingPermission || (n.pendingUserInput && !n.pendingUserInput.resolved)) ? 12 : composerHeight + 24,
+          paddingBottom: n.pendingPermission ? 12 : composerHeight + 24,
           fontSize:
             prefs.terminalDensity === 'dense'
               ? 11
@@ -1949,7 +1946,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           onEditCancel={handleEditCancel}
         />
       </div>
-      {!n.pendingPermission && !(n.pendingUserInput && !n.pendingUserInput.resolved) && (
+      {!n.pendingPermission && (
       <div
         aria-hidden
         style={{
@@ -1965,7 +1962,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       />
       )}
       <MergeBanner nodeId={nodeId} />
-      {!n.pendingPermission && !(n.pendingUserInput && !n.pendingUserInput.resolved) && (
+      {!n.pendingPermission && (
       <ComposerShell
         ref={composerHandle}
         position="absolute"
@@ -2127,25 +2124,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           readOnly={observing}
         />
       )}
-      {n.pendingUserInput && !n.pendingUserInput.resolved && (
-        <div style={{
-          position: 'absolute',
-          left: prefs.terminalDensity === 'dense' ? 18 : prefs.terminalDensity === 'compact' ? 20 : 26,
-          right: prefs.terminalDensity === 'dense' ? 18 : prefs.terminalDensity === 'compact' ? 20 : 26,
-          bottom: 12,
-          zIndex: 1,
-          ...(contentMaxWidth != null
-            ? { maxWidth: contentMaxWidth, marginLeft: 'auto', marginRight: 'auto' }
-            : {}),
-        }}>
-          <UserInputBanner
-            userInput={n.pendingUserInput}
-            onSubmit={(answers) => resolveUserInputRequest(nodeId, answers)}
-            onSkip={() => skipUserInputRequest(nodeId)}
-            readOnly={observing}
-          />
-        </div>
-      )}
+      {/* The ask_user card renders inline in the message flow (see
+          InlineUserInputSegment in MessageBlock), not as a docked overlay, so
+          it scrolls with the transcript and never shifts the page or hides
+          behind the composer. */}
       <PaneAgentMenus
         agentMenu={agentMenu}
         modelMenu={modelMenu}
