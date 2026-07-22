@@ -30,12 +30,17 @@ export function useLazyTreeMessages({
   projects,
   nodesRef,
   dispatch,
+  reconnectStreamingRef,
 }: {
   hydrated: boolean;
   activeProjectId: string | null;
   projects: Project[];
   nodesRef: MutableRefObject<Record<string, ChatNodeState>>;
   dispatch: (action: ChatAction) => void;
+  // Called with each streaming node whose checkpoint body was just installed,
+  // so the foreground-replay path can reattach its live SSE stream. Stable ref
+  // so this hook's effect deps stay quiet.
+  reconnectStreamingRef?: MutableRefObject<(nodeId: string) => void>;
 }): void {
   // Keys (project::tree) already loaded or in-flight this mount.
   const loadedKeysRef = useRef<Set<string>>(new Set());
@@ -77,7 +82,16 @@ export function useLazyTreeMessages({
         loadedKeysRef.current.add(key);
         return;
       }
-      const treeNodeIds = placeholderNodeIds.filter((nid) => nodes[nid]?.status !== 'streaming');
+      // A streaming node with content is a live foreground turn — never install
+      // a stale DB snapshot over its in-flight text. But a streaming node with
+      // NO messages is a hydrated reconnect target (backend marked it streaming
+      // at turn-start; meta mode left the body unloaded): load its checkpoint so
+      // the pane shows progress and recover() can reattach. Empty ⇒ nothing to
+      // clobber, so it is safe.
+      const treeNodeIds = placeholderNodeIds.filter((nid) => {
+        const n = nodes[nid];
+        return !(n?.status === 'streaming' && n.messages.length > 0);
+      });
       if (treeNodeIds.length === 0) return;
       const startNodes = new Map(treeNodeIds.map((nid) => [nid, nodes[nid]] as const));
 
@@ -93,7 +107,12 @@ export function useLazyTreeMessages({
             if (
               current !== startNodes.get(nid)
               || current?.messagesLoaded !== false
-              || current.status === 'streaming'
+              // A node that gained content while the fetch was in flight became
+              // a live turn — drop the stale snapshot. A still-empty streaming
+              // node is our reconnect target; keep it. (Object identity above
+              // already catches the user-send transition, which mints a new
+              // node object; this guards the same-object edge case.)
+              || (current.status === 'streaming' && current.messages.length > 0)
             ) {
               delete byNode[nid];
               skippedChangedNode = true;
@@ -104,6 +123,14 @@ export function useLazyTreeMessages({
           const nodeIds = Object.keys(byNode);
           if (nodeIds.length > 0) {
             dispatch({ type: 'messages-loaded', nodeIds, messagesByNode: byNode });
+            // Now that a reconnect target's assistant message exists, ask the
+            // foreground-replay path to reattach its live stream. dispatch
+            // updates nodesRef synchronously, so status is already fresh here.
+            if (reconnectStreamingRef) {
+              for (const nid of nodeIds) {
+                if (nodesRef.current[nid]?.status === 'streaming') reconnectStreamingRef.current(nid);
+              }
+            }
           }
           if (skippedChangedNode) loadedKeysRef.current.delete(key);
         } catch {
@@ -138,5 +165,5 @@ export function useLazyTreeMessages({
       clearTimeout(retryTimer);
       loadedKeysRef.current.delete(key);
     };
-  }, [hydrated, activeProject, activeTreeId, nodesRef, dispatch]);
+  }, [hydrated, activeProject, activeTreeId, nodesRef, dispatch, reconnectStreamingRef]);
 }

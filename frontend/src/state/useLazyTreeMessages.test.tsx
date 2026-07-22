@@ -58,7 +58,12 @@ describe('useLazyTreeMessages live-turn races', () => {
     );
     await vi.waitFor(() => expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(1));
 
-    nodesRef.current = { n1: node({ status: 'streaming' }) };
+    // A real live foreground turn carries its user + assistant messages (from
+    // user-send), so it must be protected from a stale snapshot. An empty
+    // streaming node, by contrast, is a reconnect target that SHOULD load.
+    nodesRef.current = { n1: node({ status: 'streaming', messages: [
+      { id: 'live', role: 'assistant', text: 'live', toolCalls: [], createdAt: 1 },
+    ] }) };
     rerender({ activeProject: project(2) });
     first.resolve([{ id: 'old', node_id: 'n1', role: 'assistant', content: 'stale', seq: 0, created_at: 1 }]);
     await first.promise;
@@ -73,5 +78,38 @@ describe('useLazyTreeMessages live-turn races', () => {
     await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: 'messages-loaded', nodeIds: ['n1'],
     })));
+  });
+
+  it('loads the checkpoint body for a streaming placeholder reconnect target and asks to reattach', async () => {
+    // A node hydrated as `streaming` with EMPTY messages is not a live turn —
+    // it's a reconnect target the backend marked streaming at turn-start. Its
+    // checkpoint body must load so the pane shows progress and recover() can
+    // reattach the SSE. (The prior behavior skipped all streaming nodes, so a
+    // non-active-tree streaming node stayed a skeleton forever.)
+    apiMocks.fetchTreeMessages.mockReset();
+    apiMocks.fetchTreeMessages.mockResolvedValue([
+      { id: 'u', node_id: 'n1', role: 'user', content: 'q', seq: 0, created_at: 1 },
+      { id: 'a', node_id: 'n1', role: 'assistant', content: 'partial', seq: 1, created_at: 2 },
+    ]);
+    const nodesRef = {
+      current: { n1: node({ status: 'streaming', messages: [] }) },
+    } as MutableRefObject<Record<string, ChatNodeState>>;
+    const dispatch = vi.fn<(action: ChatAction) => void>();
+    const reconnectStreamingRef = { current: vi.fn<(nodeId: string) => void>() };
+
+    renderHook(() => useLazyTreeMessages({
+      hydrated: true,
+      activeProjectId: 'ws-1',
+      projects: [project(1)],
+      nodesRef,
+      dispatch,
+      reconnectStreamingRef,
+    }));
+
+    await vi.waitFor(() => expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'messages-loaded', nodeIds: ['n1'],
+    })));
+    await vi.waitFor(() => expect(reconnectStreamingRef.current).toHaveBeenCalledWith('n1'));
   });
 });

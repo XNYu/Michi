@@ -579,6 +579,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // from normal prompt cancel fns so re-rendering cannot open duplicate SSE
   // consumers for the same hydrated foreground turn.
   const recoveredForegroundReplayRef = useRef<Map<string, { cancel: () => void; retry?: ReturnType<typeof setTimeout> }>>(new Map());
+  // Stable handle to the current recover() closure so the lazy-loader can ask a
+  // just-loaded streaming placeholder to reattach without re-running (and thus
+  // tearing down) the whole foreground-replay effect.
+  const reconnectStreamingNodeRef = useRef<(nodeId: string) => void>(() => {});
   const backgroundGapReconciliationsRef = useRef<Map<string, Promise<void>>>(new Map());
   const sharedStreamHandlersRef = useRef<(nodeId: string) => Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'>>(() => ({}));
   const turnEndHandlerRef = useRef<(reason: TurnEndReason, nodeId: string) => void>(() => {});
@@ -858,7 +862,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // Lazy-load: fetch the active tree's message bodies on demand when it's a
   // placeholder (hydration only eager-loads the initially-active tree).
   // Mounted after `dispatch` is defined so it can dispatch `messages-loaded`.
-  useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch });
+  useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch, reconnectStreamingRef: reconnectStreamingNodeRef });
 
   const dispatchOwner = useCallback((ev: OwnerEvent) => {
     const next = ownerStateReducer(ownerStateRef.current, ev);
@@ -1066,6 +1070,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       recoveredForegroundReplayRef.current.set(nodeId, { cancel });
       cancelFns.current[nodeId] = stop;
     };
+    // Expose the live closure so the lazy-loader can reattach a streaming
+    // placeholder the moment its checkpoint body lands (recover() dedupes and
+    // no-ops until the node has an assistant message, so re-calls are safe).
+    reconnectStreamingNodeRef.current = recover;
     for (const node of Object.values(nodesRef.current)) recover(node.nodeId);
     return () => {
       for (const entry of recoveredForegroundReplayRef.current.values()) {

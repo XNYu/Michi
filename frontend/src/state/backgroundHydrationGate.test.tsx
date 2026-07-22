@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiMocks = vi.hoisted(() => ({
   fetchAllWorkspacesMeta: vi.fn(),
-  fetchTreeMessages: vi.fn<() => Promise<unknown[]>>(async () => []),
+  fetchTreeMessages: vi.fn<(workspaceId: string, treeId: string) => Promise<unknown[]>>(async () => []),
   fetchWorkspace: vi.fn<() => Promise<unknown>>(async () => null),
   subscribeBackground: vi.fn(() => () => {}),
   subscribeChat: vi.fn(() => () => {}),
@@ -298,5 +298,82 @@ describe('background feed hydration gate', () => {
     expect(result.current.store.projects[0].artifacts).toEqual([
       expect.objectContaining({ id: 'ctx-gap', name: 'durable-context' }),
     ]);
+  });
+
+  it('reattaches a streaming placeholder in a NON-active tree once it is activated', async () => {
+    localStorage.clear();
+    apiMocks.subscribeChat.mockClear();
+    apiMocks.fetchTreeMessages.mockReset();
+    // Only the background tree has a persisted checkpoint body; the active tree
+    // (eager-loaded at boot) is empty. Keyed by treeId so both call sites agree.
+    apiMocks.fetchTreeMessages.mockImplementation(async (_ws: string, treeId: string) =>
+      treeId === 'tree-bg'
+        ? [
+            { id: 'user-bg', node_id: 'node-bg', role: 'user', content: 'q', seq: 0, created_at: 1 },
+            { id: 'assistant-bg', node_id: 'node-bg', role: 'assistant', content: 'partial', seq: 1, created_at: 2 },
+          ]
+        : [],
+    );
+    apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([{
+      workspace: { id: 'ws', name: 'Two trees', active_tree_id: 'tree-active', created_at: 1 },
+      trees: [
+        { id: 'tree-active', workspace_id: 'ws', root_node_id: 'node-a', created_at: 1, last_active_at: 2 },
+        { id: 'tree-bg', workspace_id: 'ws', root_node_id: 'node-bg', created_at: 1, last_active_at: 1 },
+      ],
+      nodes: [
+        {
+          id: 'node-a', workspace_id: 'ws', tree_id: 'tree-active', kind: 'chat',
+          acp_session_id: 'chat-a', status: 'idle', created_at: 1,
+        },
+        {
+          id: 'node-bg', workspace_id: 'ws', tree_id: 'tree-bg', kind: 'chat',
+          acp_session_id: 'chat-bg', status: 'streaming', last_applied_turn_id: 'turn-bg',
+          last_applied_seq: 4, message_count: 2, created_at: 2,
+        },
+      ],
+      edges: [], messages: [], artifacts: [],
+    }]);
+
+    const { result } = renderHook(
+      () => ({ store: useChatStore(), actions: useChatActions(), nodes: useChatNodesSnapshot() }),
+      { wrapper },
+    );
+    await vi.waitFor(() => expect(result.current.store.hydrated).toBe(true));
+
+    // The streaming node is a placeholder in a non-active tree: its body was
+    // never eager-loaded, so recover() has no assistant message to reattach to
+    // and nothing subscribes yet.
+    expect(apiMocks.subscribeChat).not.toHaveBeenCalled();
+    expect(result.current.nodes['node-bg']?.messagesLoaded).toBe(false);
+
+    // Activating the tree lazy-loads its checkpoint body, then reattaches the
+    // live replay stream from the persisted watermark.
+    await act(async () => { result.current.actions.activateTree('tree-bg', 'ws'); });
+    await vi.waitFor(() => expect(apiMocks.fetchTreeMessages).toHaveBeenCalledWith('ws', 'tree-bg'));
+    await vi.waitFor(() => expect(apiMocks.subscribeChat).toHaveBeenCalledTimes(1));
+
+    const [chatId, handlers, from] = apiMocks.subscribeChat.mock.calls[0] as unknown as [
+      string,
+      { onEnvelope: (data: { assistantId: string; turnId: string; seq: number }) => boolean },
+      { turnId: string; seq: number },
+    ];
+    expect(chatId).toBe('node-bg');
+    expect(from).toEqual({ turnId: 'turn-bg', seq: 4 });
+    // recover() only subscribes when the reattach target has an assistant
+    // message, so the reconnect above is itself proof the checkpoint body was
+    // loaded (i.e. the pane now shows the backend's latest progress). We assert
+    // via subscribeChat rather than the RAF-coalesced nodes snapshot, which does
+    // not flush under jsdom's requestAnimationFrame.
+
+    // Live frames past the watermark are accepted (streaming continues); a
+    // replayed duplicate is rejected by the exactly-once gate.
+    let accepted = false;
+    let duplicate = true;
+    act(() => {
+      accepted = handlers.onEnvelope({ assistantId: 'assistant-bg', turnId: 'turn-bg', seq: 5 });
+      duplicate = handlers.onEnvelope({ assistantId: 'assistant-bg', turnId: 'turn-bg', seq: 5 });
+    });
+    expect(accepted).toBe(true);
+    expect(duplicate).toBe(false);
   });
 });
