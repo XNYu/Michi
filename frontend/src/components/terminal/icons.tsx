@@ -28,27 +28,39 @@ export function HomeIcon({ size = 14, className }: IconProps) {
 }
 
 export function MapIcon({ size = 14, className }: IconProps) {
+  // Top-down node graph — a root branching to two children: the dagre topology at a glance.
   return (
     <svg {...base(size)} className={className}>
-      <circle cx="8" cy="8" r="6" />
-      <path d="M8 2v12M2 8h12" />
+      <circle cx="8" cy="3.4" r="1.5" />
+      <circle cx="4" cy="12.6" r="1.5" />
+      <circle cx="12" cy="12.6" r="1.5" />
+      <path d="M8 4.9V7.4" />
+      <path d="M8 7.4H4V11.1" />
+      <path d="M8 7.4H12V11.1" />
     </svg>
   );
 }
 
 export function BranchesIcon({ size = 14, className }: IconProps) {
+  // Vertical timeline — a spine with filled beads and body lines: read the branch log top to bottom.
   return (
     <svg {...base(size)} className={className}>
-      <path d="M3 2.5h8M5 6.5h8M7 10.5h6M7 14h4" />
-      <path d="M3 2.5v4h2M5 6.5v4h2M7 10.5V14" />
+      <path d="M4 3.5V12.5" />
+      <path d="M7 4h5M7 8h4M7 12h5" />
+      <circle cx="4" cy="4" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="8" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   );
 }
 
 export function DigestIcon({ size = 14, className }: IconProps) {
+  // Dog-eared note — a sheet with a folded corner: one written brief, not a menu.
   return (
     <svg {...base(size)} className={className}>
-      <path d="M3 3h10M3 7h10M3 11h6" />
+      <path d="M4 2.5h5.4l2.6 2.6v8.4H4z" />
+      <path d="M9.4 2.5v2.6h2.6" />
+      <path d="M6 8.2h4M6 10.4h2.6" />
     </svg>
   );
 }
