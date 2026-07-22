@@ -87,7 +87,7 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
-    const branchButton = screen.getByRole('button', { name: /^↳ branch/i });
+    const branchButton = screen.getByRole('button', { name: /Branch/i });
     fireEvent.mouseDown(branchButton);
     fireEvent.click(branchButton);
 
@@ -135,7 +135,7 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
-    const commentButton = screen.getByRole('button', { name: /comment/i });
+    const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
 
@@ -235,7 +235,7 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
-    const commentButton = screen.getByRole('button', { name: /comment/i });
+    const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
 
@@ -287,7 +287,7 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
-    const commentButton = screen.getByRole('button', { name: /comment/i });
+    const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
 
@@ -340,7 +340,7 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
-    const branchOpenButton = screen.getByRole('button', { name: /^↳ branch/i });
+    const branchOpenButton = screen.getByRole('button', { name: /Branch/i });
     fireEvent.mouseDown(branchOpenButton);
     fireEvent.click(branchOpenButton);
 
@@ -404,7 +404,7 @@ describe('SelectionActions', () => {
 
     // The bar is now rendered. Instrument the popup's getBoundingClientRect so
     // we can count remeasures triggered purely by scroll.
-    const bar = document.body.querySelector('.sel-actions-spring-in') as HTMLElement;
+    const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
     expect(bar).toBeTruthy();
     bar.getBoundingClientRect = () => {
       popupMeasures += 1;
@@ -460,7 +460,7 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
-    const commentButton = screen.getByRole('button', { name: /comment/i });
+    const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
 

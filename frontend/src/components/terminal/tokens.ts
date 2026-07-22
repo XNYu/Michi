@@ -155,6 +155,15 @@ export function cssVarsFor(
     '--term-composer-shadow-muted': isLight
       ? '0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 28px rgba(0, 0, 0, 0.035)'
       : 'none',
+    // Elevation for FLOATING overlays (selection bar, its morph composer) that
+    // sit *above* content — always an OUTER drop, never inset. Distinct from
+    // --term-composer-shadow, whose dark variant is intentionally `inset`
+    // (a recessed input well) because the Pane Composer is embedded in the pane,
+    // not floating. Reusing the composer token here made the popup read as
+    // carved-inward in dark. Light matches the composer's approved soft drop.
+    '--term-float-shadow': isLight
+      ? '0 1px 2px rgba(0, 0, 0, 0.08), 0 12px 34px rgba(0, 0, 0, 0.08)'
+      : '0 2px 8px rgba(0, 0, 0, 0.55), 0 16px 40px rgba(0, 0, 0, 0.4)',
     '--term-line': p.line,
     '--term-line-s': p.lineS,
     '--term-fg': p.fg,

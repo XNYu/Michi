@@ -284,6 +284,9 @@ export default function SelectionActions({
     composerMode === 'branch'
       ? 'ask something about this selection…'
       : 'your reply to this passage…';
+
+  const originY = placement.above ? 'top' : 'bottom';
+
   return createPortal(
     <>
       {composerOpen && anchor.highlightRects.length > 0 && (
@@ -305,17 +308,14 @@ export default function SelectionActions({
       <div
         ref={popupRef}
         key={composerOpen ? `composer-${composerMode}` : 'bar'}
-        className={`${composerOpen ? styles.composerWrap : styles.barWrap} sel-actions-spring-in`}
+        className={`${composerOpen ? styles.composerWrap : styles.barWrap} sel-actions-enter`}
         style={{
           position: 'fixed',
           left: placement.left,
           top: placement.top,
           width: composerOpen ? COMPOSER_WIDTH : undefined,
           zIndex: 9999,
-          // Opt out of Electron's window drag region: when the popup is
-          // clamped near the top, it overlays the topbar (which sets
-          // `-webkit-app-region: drag`). Without this, the OS treats hovers
-          // and clicks on the pill as a window drag and swallows them.
+          transformOrigin: `left ${originY}`,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}
         onMouseDown={(e) => e.stopPropagation()}
@@ -377,29 +377,40 @@ export default function SelectionActions({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => openComposer('branch')}
               className={styles.barBtn}
+              aria-label="Branch"
             >
-              <span className={styles.barIcon}>↳</span>
-              branch
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 3h5v5" />
+                <path d="M8 3H3v5" />
+                <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3" />
+                <path d="m15 9 6-6" />
+              </svg>
+              Branch
             </button>
-            <span className={styles.barSep} />
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => openComposer('comment')}
               className={styles.barBtn}
+              aria-label="Comment"
             >
-              <span className={styles.barIcon}>💬</span>
-              comment
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              Comment
             </button>
-            <span className={styles.barSep} />
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={fireQuote}
               className={styles.barBtn}
+              aria-label="Quote"
             >
-              <span className={styles.barIcon}>⊕</span>
-              quote reply
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" />
+                <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z" />
+              </svg>
+              Quote
             </button>
           </>
         )}
@@ -512,7 +523,7 @@ export function placePopup(
   bottomBoundary: number,
   width: number,
   height: number,
-): { left: number; top: number } {
+): { left: number; top: number; above: boolean } {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
@@ -535,7 +546,7 @@ export function placePopup(
   left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - width - VIEWPORT_MARGIN));
   top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - height - VIEWPORT_MARGIN));
 
-  return { left, top };
+  return { left, top, above: !useBelow };
 }
 
 /**
@@ -565,8 +576,6 @@ interface Styles {
   highlightMark: string;
   barWrap: string;
   barBtn: string;
-  barSep: string;
-  barIcon: string;
   composerWrap: string;
   composerHeader: string;
   closeBtn: string;
@@ -582,8 +591,6 @@ function getStyles(): Styles {
     highlightMark: 'sel-actions-term-highlight-mark',
     barWrap: 'sel-actions-term-bar',
     barBtn: 'sel-actions-term-btn',
-    barSep: 'sel-actions-term-sep',
-    barIcon: 'sel-actions-term-icon',
     composerWrap: 'sel-actions-term-composer',
     composerHeader: 'sel-actions-term-composer-hdr',
     closeBtn: 'sel-actions-term-close',
@@ -597,12 +604,12 @@ function getStyles(): Styles {
 // ---------- Terminal stylesheet (injected once) ----------
 
 const TERMINAL_CSS = `
-@keyframes sel-spring-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+@keyframes sel-enter {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
 }
-.sel-actions-spring-in {
-  animation: sel-spring-in 150ms ease-out both;
+.sel-actions-enter {
+  animation: sel-enter 220ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 .sel-actions-term-highlight-layer {
   position: fixed;
@@ -613,44 +620,74 @@ const TERMINAL_CSS = `
 .sel-actions-term-highlight-mark {
   position: absolute;
   border-radius: 2px;
-  background: Highlight;
-  opacity: 0.4;
+  background: color-mix(in srgb, var(--term-accent) 30%, transparent);
 }
+/* Bar + composer share ONE opaque-glass slab: a fully opaque --term-surface
+   fill with the shared --term-glass-wash tint layered on top (the SAME accent
+   wash every .term-glass overlay uses), plus a FLOATING elevation shadow
+   (--term-float-shadow: soft downward outer cast) so the slab reads as an object
+   hovering above content — but NO backdrop blur, so it never sees through to
+   content behind it. That's glass texture without translucency: the wash
+   gradients fade to transparent, so layering them over the opaque surface keeps
+   the result 100% opaque while giving it the light-catching sheen. No
+   glass-highlight lip line. NOTE: we deliberately do NOT reuse
+   --term-composer-shadow here — its dark variant is inset (a recessed input
+   well, right for the embedded Pane Composer, wrong for a floating popup, which
+   made the bar read as carved-inward in dark). --term-float-shadow is always an
+   outer drop. All colour is themed (switches per palette + light/dark); never
+   hardcode rgba(...) here — always drive off --term-* tokens. */
 .sel-actions-term-bar {
   display: inline-flex;
-  align-items: stretch;
-  background: var(--term-surface);
-  color: var(--term-fg);
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  background: var(--term-glass-wash), var(--term-surface);
+  color: var(--term-mid);
   font-family: var(--ui-font);
   font-size: 11px;
-  border: 1px solid var(--term-line-s);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  font-weight: 450;
+  letter-spacing: 0.015em;
+  border: 1px solid var(--term-line);
+  border-radius: 0;
+  box-shadow: var(--term-float-shadow);
 }
 .sel-actions-term-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 10px; background: transparent; border: 0;
+  position: relative;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; background: transparent; border: 0;
+  border-radius: 0;
   color: inherit; font: inherit; cursor: pointer;
-  transition: background 120ms ease-out;
+  transition: background 60ms ease, color 60ms ease;
 }
-.sel-actions-term-btn:hover { background: var(--term-hover-bg, var(--term-alt)); }
-.sel-actions-term-sep { width: 1px; background: var(--term-line); margin: 4px 0; }
-.sel-actions-term-icon { font-family: var(--ui-font); }
+/* Hairline separator between adjacent buttons, inset from top/bottom. */
+.sel-actions-term-btn + .sel-actions-term-btn::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 1px;
+  background: var(--term-line);
+}
+.sel-actions-term-btn:hover { background: var(--term-hover-bg); color: var(--term-fg); }
+.sel-actions-term-btn:active { background: color-mix(in srgb, var(--term-fg) 12%, transparent); }
+.sel-actions-term-btn svg { flex-shrink: 0; }
 .sel-actions-term-composer {
-  background: var(--term-surface);
-  border: 1px solid var(--term-line-s);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  background: var(--term-glass-wash), var(--term-surface);
+  border: 1px solid var(--term-line);
+  border-radius: 0;
+  box-shadow: var(--term-float-shadow);
   font-family: var(--ui-font);
+  overflow: hidden;
 }
 .sel-actions-term-composer-hdr {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px; background: var(--term-alt);
+  padding: 7px 12px;
   border-bottom: 1px solid var(--term-line);
-  font-size: 9.5px; letter-spacing: .14em;
+  font-size: 9.5px; letter-spacing: .1em; font-weight: 500;
   color: var(--term-muted); text-transform: uppercase;
 }
 .sel-actions-term-close {
   cursor: pointer; padding: 0 4px;
-  color: var(--term-faint);
+  color: var(--term-muted);
 }
 .sel-actions-term-close:hover { color: var(--term-fg); }
 .sel-actions-term-textarea {
@@ -660,35 +697,38 @@ const TERMINAL_CSS = `
   background: transparent;
   border: 0;
   outline: none; resize: none;
-  font-family: var(--ui-font); font-size: 13px;
+  font-family: var(--ui-font); font-size: 12.5px;
   color: var(--term-fg);
-  line-height: 1.55;
+  line-height: 1.5;
 }
-.sel-actions-term-textarea::placeholder { color: var(--term-faint); }
+.sel-actions-term-textarea::placeholder { color: var(--term-muted); }
 .sel-actions-term-footer {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 8px; border-top: 1px solid var(--term-line);
-  color: var(--term-faint);
+  padding: 5px 8px;
+  border-top: 1px solid var(--term-line);
 }
 .sel-actions-term-footer-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 8px; background: transparent; border: 0;
-  color: inherit; cursor: pointer;
-  font-family: var(--ui-font); font-size: 9.5px;
-  transition: background 120ms ease-out, color 120ms ease-out;
+  border-radius: 0;
+  color: var(--term-mid); cursor: pointer;
+  font-family: var(--ui-font); font-size: 10px; font-weight: 450;
+  letter-spacing: 0.02em;
+  transition: background 60ms ease, color 60ms ease;
 }
 .sel-actions-term-footer-btn:hover:not(:disabled) {
-  background: var(--term-hover-bg, var(--term-alt)); color: var(--term-fg);
+  background: var(--term-hover-bg); color: var(--term-fg);
 }
 .sel-actions-term-footer-btn:disabled {
-  cursor: not-allowed; opacity: 0.5;
+  cursor: not-allowed; opacity: 0.4;
 }
 .sel-actions-term-footer-kbd {
   font-family: var(--ui-font); font-size: 9px;
   padding: 1px 4px;
   border: 1px solid var(--term-line);
-  color: var(--term-mid);
-  background: var(--term-surface);
+  border-radius: 0;
+  color: var(--term-muted);
+  background: transparent;
 }
 `;
 
