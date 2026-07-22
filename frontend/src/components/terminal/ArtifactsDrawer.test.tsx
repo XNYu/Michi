@@ -4,11 +4,18 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import ArtifactsDrawer from './ArtifactsDrawer';
 import type { ArtifactEntry } from '../../state/chatTypes';
 
-const { mockImportWorkspaceFile } = vi.hoisted(() => ({
+const { mockImportWorkspaceFile, mockLinkWorkspaceFile, mockOpenPath, mockGetElectron } = vi.hoisted(() => ({
   mockImportWorkspaceFile: vi.fn(),
+  mockLinkWorkspaceFile: vi.fn(),
+  mockOpenPath: vi.fn(),
+  mockGetElectron: vi.fn(),
 }));
 vi.mock('../../services/api', () => ({
   importWorkspaceFile: mockImportWorkspaceFile,
+  linkWorkspaceFile: mockLinkWorkspaceFile,
+}));
+vi.mock('../../lib/electronBridge', () => ({
+  getElectron: mockGetElectron,
 }));
 
 const mockActions = {
@@ -16,6 +23,7 @@ const mockActions = {
   updateContext: vi.fn(),
   deleteContext: vi.fn(),
   pinContext: vi.fn(),
+  openArtifactPane: vi.fn(),
 };
 
 const mockContexts: ArtifactEntry[] = [];
@@ -38,8 +46,15 @@ beforeEach(() => {
   mockContexts.length = 0;
   mockProject = { id: 'p1', name: 'P1', cwd: '/tmp/p1', artifacts: mockContexts };
   Object.values(mockActions).forEach((fn) => fn.mockReset());
+  mockActions.openArtifactPane.mockResolvedValue('node-1');
   mockImportWorkspaceFile.mockReset();
   mockImportWorkspaceFile.mockResolvedValue({ name: 'note', filePath: '.artifacts/note.md', size: 5 });
+  mockLinkWorkspaceFile.mockReset();
+  mockLinkWorkspaceFile.mockResolvedValue({ name: 'design-notes', filePath: '.artifacts/design-notes.md', size: 10 });
+  mockOpenPath.mockReset();
+  mockOpenPath.mockResolvedValue({ ok: true });
+  mockGetElectron.mockReset();
+  mockGetElectron.mockReturnValue({ openPath: mockOpenPath });
 });
 
 describe('ArtifactsDrawer + button', () => {
@@ -95,5 +110,130 @@ describe('ArtifactsDrawer + button', () => {
     expect(screen.getByTitle('favorite')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Remove from favorites' }));
     expect(mockActions.pinContext).toHaveBeenCalledWith('c1');
+  });
+});
+
+describe('ArtifactsDrawer open routing', () => {
+  const now = 1_700_000_000_000;
+
+  it('opens a reference doc via the OS opener, not the in-app pane', () => {
+    // A disk-picked .md is a doc *reference* (absolute path outside the
+    // workspace sandbox). The pane endpoint would 404, so it must go to the OS.
+    mockContexts.push({
+      id: 'ref-doc',
+      name: 'design-notes',
+      filePath: '/Users/me/Desktop/design-notes.md',
+      type: 'doc',
+      kind: 'reference',
+      source: 'user',
+      createdAt: now,
+      updatedAt: now,
+    });
+    render(<ArtifactsDrawer open onClose={() => {}} />);
+    fireEvent.click(screen.getByText('design-notes'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(mockOpenPath).toHaveBeenCalledWith('/Users/me/Desktop/design-notes.md');
+    expect(mockActions.openArtifactPane).not.toHaveBeenCalled();
+  });
+
+  it('opens a reference image via the OS opener, not the lightbox', () => {
+    mockContexts.push({
+      id: 'ref-img',
+      name: 'diagram',
+      filePath: '/Users/me/Pictures/diagram.png',
+      type: 'image',
+      kind: 'reference',
+      source: 'user',
+      createdAt: now,
+      updatedAt: now,
+    });
+    render(<ArtifactsDrawer open onClose={() => {}} />);
+    fireEvent.click(screen.getByText('diagram'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(mockOpenPath).toHaveBeenCalledWith('/Users/me/Pictures/diagram.png');
+    // No lightbox <img> rendered for a reference image.
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
+  it('opens an embedded doc in the in-app ArtifactPane', () => {
+    mockContexts.push({
+      id: 'emb-doc',
+      name: 'brief.md',
+      filePath: '.artifacts/brief.md',
+      type: 'doc',
+      kind: 'embedded',
+      source: 'user',
+      createdAt: now,
+      updatedAt: now,
+    });
+    render(<ArtifactsDrawer open onClose={() => {}} />);
+    fireEvent.click(screen.getByText('brief.md'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(mockActions.openArtifactPane).toHaveBeenCalledWith('.artifacts/brief.md');
+    expect(mockOpenPath).not.toHaveBeenCalled();
+  });
+
+  it('opens a symlink artifact via the OS opener, not the in-app pane', () => {
+    // A symlinked file has a cwd-relative filePath (under .artifacts/) but points
+    // outside the sandbox; the pane/lightbox realpath guard 404s it, so it must
+    // resolve to <cwd>/filePath and hand off to the OS opener.
+    mockContexts.push({
+      id: 'sym-doc',
+      name: 'design-notes',
+      filePath: '.artifacts/design-notes.md',
+      type: 'doc',
+      kind: 'symlink',
+      source: 'user',
+      createdAt: now,
+      updatedAt: now,
+    });
+    render(<ArtifactsDrawer open onClose={() => {}} />);
+    fireEvent.click(screen.getByText('design-notes'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(mockOpenPath).toHaveBeenCalledWith('/tmp/p1/.artifacts/design-notes.md');
+    expect(mockActions.openArtifactPane).not.toHaveBeenCalled();
+  });
+});
+
+describe('ArtifactsDrawer disk picker → symlink import', () => {
+  it('symlinks a picked file into the workspace when a cwd exists', async () => {
+    mockGetElectron.mockReturnValue({
+      openPath: mockOpenPath,
+      chooseFiles: vi.fn().mockResolvedValue({
+        canceled: false,
+        paths: ['/Users/me/Desktop/design-notes.md'],
+      }),
+    });
+    render(<ArtifactsDrawer open onClose={() => {}} />);
+    fireEvent.click(screen.getByTitle(/Add file from disk/i));
+    // chooseFiles + linkWorkspaceFile are async; flush microtasks.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockLinkWorkspaceFile).toHaveBeenCalledWith('p1', '/tmp/p1', '/Users/me/Desktop/design-notes.md');
+    expect(mockActions.createContext).toHaveBeenCalledTimes(1);
+    const [, filePath, opts] = mockActions.createContext.mock.calls[0];
+    expect(filePath).toBe('.artifacts/design-notes.md');
+    expect(opts).toMatchObject({ kind: 'symlink', type: 'doc', source: 'user' });
+  });
+
+  it('falls back to a reference when the workspace has no cwd', async () => {
+    mockProject = { id: 'p1', name: 'P1', cwd: undefined, artifacts: mockContexts };
+    mockGetElectron.mockReturnValue({
+      openPath: mockOpenPath,
+      chooseFiles: vi.fn().mockResolvedValue({
+        canceled: false,
+        paths: ['/Users/me/Desktop/design-notes.md'],
+      }),
+    });
+    render(<ArtifactsDrawer open onClose={() => {}} />);
+    fireEvent.click(screen.getByTitle(/Add file from disk/i));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockLinkWorkspaceFile).not.toHaveBeenCalled();
+    expect(mockActions.createContext).toHaveBeenCalledTimes(1);
+    const [, filePath, opts] = mockActions.createContext.mock.calls[0];
+    expect(filePath).toBe('/Users/me/Desktop/design-notes.md');
+    expect(opts).toMatchObject({ kind: 'reference', type: 'doc' });
   });
 });

@@ -360,6 +360,94 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         });
     });
 
+    // Creates a symlink inside <cwd>/.artifacts/ pointing at an externally-picked
+    // file, WITHOUT copying bytes. Because the link lives under cwd, the linked
+    // file resolves as a cwd-relative path, so the agent's filesystem tools
+    // (read/write/edit) follow the symlink and read/write the external original
+    // live — bidirectional sync. The in-app viewers (ArtifactPane → /artifacts/read,
+    // Lightbox → /api/files) intentionally 404 symlinks that escape cwd (realpath
+    // guard), so the Artifacts drawer opens symlink artifacts via the OS default app.
+    //
+    // Desktop-only: in cloud mode the per-user sandbox must never point at arbitrary
+    // host paths, so linking is refused there (upload/copy is the only import path).
+    router.post("/workspaces/link-file", requireWorkspaceOwner, (req, res) => {
+        if (process.env.MICHI_CLOUD === "1") {
+            return res
+                .status(400)
+                .json({ error: "linking external files is not supported in cloud mode" });
+        }
+        const cwdRaw: unknown = req.body?.cwd;
+        if (typeof cwdRaw !== "string" || !path.isAbsolute(cwdRaw)) {
+            return res.status(400).json({ error: "cwd must be an absolute path" });
+        }
+        const cwd = cwdRaw;
+
+        const sourcePathRaw: unknown = req.body?.sourcePath;
+        if (typeof sourcePathRaw !== "string" || !path.isAbsolute(sourcePathRaw)) {
+            return res.status(400).json({ error: "sourcePath must be an absolute path" });
+        }
+        const sourcePath = sourcePathRaw;
+
+        try {
+            const s = fs.statSync(cwd);
+            if (!s.isDirectory()) return res.status(400).json({ error: "cwd is not a directory" });
+        } catch {
+            return res.status(400).json({ error: "cwd does not exist" });
+        }
+
+        // statSync follows symlinks, so a link-to-a-file source is accepted and
+        // its real size reported. Directories are rejected (symlink-to-dir would
+        // let the agent tree-walk outside cwd).
+        let srcSize = 0;
+        try {
+            const s = fs.statSync(sourcePath);
+            if (!s.isFile()) return res.status(400).json({ error: "sourcePath is not a file" });
+            srcSize = s.size;
+        } catch {
+            return res.status(400).json({ error: "sourcePath does not exist" });
+        }
+
+        const base = path.basename(sourcePath);
+        const ext = path.extname(base);
+        const stem =
+            base.slice(0, base.length - ext.length).replace(/[^a-zA-Z0-9_-]/g, "_") || "file";
+        const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, "");
+
+        const subdir = ".artifacts";
+        const dir = path.join(cwd, subdir);
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+        } catch (err) {
+            return res.status(500).json({ error: `mkdir ${subdir} failed: ${(err as Error).message}` });
+        }
+
+        let name = stem;
+        let filename = `${stem}${safeExt}`;
+        let attempt = 0;
+        while (fs.existsSync(path.join(dir, filename))) {
+            attempt += 1;
+            name = `${stem}-${attempt}`;
+            filename = `${name}${safeExt}`;
+            if (attempt > 9999) return res.status(500).json({ error: "could not allocate unique filename" });
+        }
+
+        const target = path.join(dir, filename);
+        if (!target.startsWith(dir + path.sep)) {
+            return res.status(400).json({ error: `resolved path escapes ${subdir}` });
+        }
+        try {
+            fs.symlinkSync(sourcePath, target);
+        } catch (err) {
+            return res.status(500).json({ error: `symlink failed: ${(err as Error).message}` });
+        }
+        res.json({
+            name,
+            displayName: base,
+            filePath: `${subdir}/${filename}`,
+            size: srcSize,
+        });
+    });
+
     /**
      * Pre-warm a cwd's ACP client + warmed session pool.
      *
@@ -520,8 +608,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     if ('size' in item && (typeof item.size !== 'number' || !Number.isFinite(item.size) || item.size < 0)) {
                         return res.status(400).json({ error: 'extraContext.size must be a non-negative number when provided' });
                     }
-                    if ('kind' in item && item.kind !== undefined && item.kind !== 'embedded' && item.kind !== 'reference') {
-                        return res.status(400).json({ error: "extraContexts kind must be 'embedded' or 'reference' if present" });
+                    if ('kind' in item && item.kind !== undefined && item.kind !== 'embedded' && item.kind !== 'reference' && item.kind !== 'symlink') {
+                        return res.status(400).json({ error: "extraContexts kind must be 'embedded', 'reference', or 'symlink' if present" });
                     }
                 }
                 validatedExtraContexts = extraContexts as ExtraContext[];
@@ -550,8 +638,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     if ('size' in item && (typeof item.size !== 'number' || !Number.isFinite(item.size) || item.size < 0)) {
                         return res.status(400).json({ error: 'contextManifest.size must be a non-negative number when provided' });
                     }
-                    if ('kind' in item && item.kind !== undefined && item.kind !== 'embedded' && item.kind !== 'reference') {
-                        return res.status(400).json({ error: "contextManifest kind must be 'embedded' or 'reference' if present" });
+                    if ('kind' in item && item.kind !== undefined && item.kind !== 'embedded' && item.kind !== 'reference' && item.kind !== 'symlink') {
+                        return res.status(400).json({ error: "contextManifest kind must be 'embedded', 'reference', or 'symlink' if present" });
                     }
                 }
                 validatedContextManifest = contextManifest as ExtraContext[];
@@ -837,8 +925,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 if ("size" in ctx && ctx.size !== undefined && (typeof ctx.size !== "number" || !Number.isFinite(ctx.size) || ctx.size < 0)) {
                     throw new Error(`${label}.size must be a non-negative number when provided`);
                 }
-                if ("kind" in ctx && ctx.kind !== undefined && ctx.kind !== "embedded" && ctx.kind !== "reference") {
-                    throw new Error(`${label}.kind must be 'embedded' or 'reference' if present`);
+                if ("kind" in ctx && ctx.kind !== undefined && ctx.kind !== "embedded" && ctx.kind !== "reference" && ctx.kind !== "symlink") {
+                    throw new Error(`${label}.kind must be 'embedded', 'reference', or 'symlink' if present`);
                 }
             }
             return raw as ExtraContext[];

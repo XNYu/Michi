@@ -522,8 +522,12 @@ export interface ArtifactEntry {
    * `reference`: filePath is an absolute path on the user's disk; nothing
    * was copied. `@`-mention emits a path-only line; the agent reads via
    * its filesystem tools.
+   * `symlink`: filePath is a cwd-relative path under `.artifacts/` that is a
+   * symlink to an external file (no bytes copied). The agent's fs tools follow
+   * it → live bidirectional read/write; the in-app viewers 404 it (realpath
+   * guard), so it opens via the OS default app.
    */
-  kind?: 'embedded' | 'reference';
+  kind?: 'embedded' | 'reference' | 'symlink';
   createdAt: number;
   updatedAt: number;
 }
@@ -716,7 +720,7 @@ export type ProjectAction =
         size?: number;
         source?: 'user' | 'agent';
         origin?: { nodeId: string; messageId?: string };
-        kind?: 'embedded' | 'reference';
+        kind?: 'embedded' | 'reference' | 'symlink';
       };
     }
   | {
@@ -731,7 +735,7 @@ export type ProjectAction =
         size?: number;
         source?: 'user' | 'agent';
         origin?: { nodeId: string; messageId?: string };
-        kind?: 'embedded' | 'reference';
+        kind?: 'embedded' | 'reference' | 'symlink';
       };
     }
   | { type: 'delete-context'; projectId: string; contextId: string }
@@ -945,7 +949,7 @@ export interface ChatContextValue {
       type?: 'doc' | 'file' | 'image' | 'link';
       source?: 'user' | 'agent';
       size?: number;
-      kind?: 'embedded' | 'reference';
+      kind?: 'embedded' | 'reference' | 'symlink';
       origin?: { nodeId: string; messageId?: string };
     },
   ) => void;

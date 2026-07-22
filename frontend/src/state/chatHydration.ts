@@ -290,7 +290,9 @@ export function mapContextRow(row: Record<string, unknown>): ArtifactEntry | nul
         : 'doc';
   const rawKind = asString(row.kind);
   const kind: ArtifactEntry['kind'] =
-    rawKind === 'embedded' || rawKind === 'reference' ? rawKind : undefined;
+    rawKind === 'embedded' || rawKind === 'reference' || rawKind === 'symlink'
+      ? rawKind
+      : undefined;
   const originNodeId = asString(row.origin_node_id);
   const originMessageId = asString(row.origin_message_id);
   return {
@@ -780,7 +782,9 @@ export function hydrateSavedState(saved: unknown): HydratedState {
               ? 'link'
               : 'doc';
         const kind: ArtifactEntry['kind'] =
-          c.kind === 'embedded' || c.kind === 'reference' ? c.kind : undefined;
+          c.kind === 'embedded' || c.kind === 'reference' || c.kind === 'symlink'
+            ? c.kind
+            : undefined;
         const originNodeId =
           c.origin && typeof c.origin.nodeId === 'string' ? c.origin.nodeId : undefined;
         return {

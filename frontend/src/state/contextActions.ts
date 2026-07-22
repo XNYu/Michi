@@ -22,7 +22,7 @@ export function useContextActions({
         type?: 'doc' | 'file' | 'image' | 'link';
         source?: 'user' | 'agent';
         size?: number;
-        kind?: 'embedded' | 'reference';
+        kind?: 'embedded' | 'reference' | 'symlink';
         origin?: { nodeId: string; messageId?: string };
       },
     ) => {

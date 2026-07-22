@@ -265,7 +265,11 @@ function renderExtraContexts(ctxs: ExtraContext[], cwd: string): string {
         if (ctx.url) {
             return `### @${ctx.name}\n\n[Link: ${ctx.url}]`;
         }
-        if (ctx.kind === "reference") {
+        if (ctx.kind === "reference" || ctx.kind === "symlink") {
+            // reference = absolute external path; symlink = a cwd-relative path
+            // under .artifacts/ that resolves through a symlink to an external
+            // file. Both are read live by the agent's own filesystem tools
+            // (which follow symlinks) rather than embedded as a stale snapshot.
             return `### @${ctx.name}\n\n[Referenced file at: ${ctx.filePath}]`;
         }
         let content: string;

@@ -247,9 +247,9 @@ export interface EnsureSessionOptions {
   parentChatId?: string;
   mergeContexts?: string[];
   model?: string;
-  extraContexts?: Array<{ name: string; filePath: string; url?: string; size?: number; kind?: 'embedded' | 'reference' }>;
+  extraContexts?: Array<{ name: string; filePath: string; url?: string; size?: number; kind?: 'embedded' | 'reference' | 'symlink' }>;
   enableFollowUps?: boolean;
-  contextManifest?: Array<{ name: string; filePath: string; url?: string; kind?: 'embedded' | 'reference' }>;
+  contextManifest?: Array<{ name: string; filePath: string; url?: string; kind?: 'embedded' | 'reference' | 'symlink' }>;
   priorMessages?: Array<{ role: 'user' | 'assistant'; text: string }>;
   runtimeId?: RuntimeId;
   providerId?: string | null;
@@ -437,6 +437,30 @@ export async function importWorkspaceFileUpload(
     onProgress: uploadProgress,
     subdir: options?.subdir,
   });
+}
+
+/**
+ * Link (not copy) an externally-picked file into <cwd>/.artifacts/ via a symlink.
+ * Zero bytes copied; the linked path resolves through the symlink so the agent's
+ * fs tools read/write the external original live. Desktop/Electron only — the
+ * backend refuses in cloud mode (per-user sandbox must not point at host paths).
+ * `sourcePath` is the absolute disk path from the Electron file picker.
+ */
+export async function linkWorkspaceFile(
+  workspaceId: string,
+  cwd: string,
+  sourcePath: string,
+): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
+  const res = await fetch(`${API_BASE_URL}/workspaces/link-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceId, cwd, sourcePath }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(err.error || `linkWorkspaceFile failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function setChatMode(chatId: string, modeId: string): Promise<string> {

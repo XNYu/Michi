@@ -2222,6 +2222,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       if (existing) {
         // Just focus the existing pane
         openPane(existing.nodeId);
+        // Panes only render on the Dashboard page. If the caller is on Home
+        // (or Map/etc.), route there so the pane is actually visible.
+        window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
         return existing.nodeId;
       }
 
@@ -2237,8 +2240,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         ),
       );
 
-      // Open it as a pane
+      // Open it as a pane and route to the Dashboard so it's visible even when
+      // the artifact was opened from Home (where no pane strip is rendered).
       openPane(nodeId);
+      window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
       return nodeId;
     },
     [activeProjectId, dispatch, newNodeId, nodesRef, openPane, projects, setProjects],

@@ -3,7 +3,7 @@ import { useChatStore } from '../../state/chatStore';
 import type { ArtifactEntry } from '../../state/chatTypes';
 import { sanitizeContextName } from '../../lib/sanitizeContextName';
 import { getElectron } from '../../lib/electronBridge';
-import { importWorkspaceFile } from '../../services/api';
+import { importWorkspaceFile, linkWorkspaceFile } from '../../services/api';
 import { relativeTime } from '../../lib/relativeTime';
 import { Lightbox } from './Lightbox';
 import { manageFileType, MANAGE_COLORS } from './manage/tokens';
@@ -89,20 +89,40 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   const artifacts = useMemo(() => activeProject?.artifacts ?? [], [activeProject]);
   const cwd = activeProject?.cwd;
 
-  const openInFolder = useCallback((c: ArtifactEntry) => {
-    const electron = getElectron();
-    if (!electron?.openPath) return;
-    // Resolve to absolute, then open the parent directory.
-    const abs =
+  /** Absolute path for a file/doc/image artifact (null if unresolvable). */
+  const absPath = useCallback(
+    (c: ArtifactEntry): string | null =>
       c.kind === 'reference' || c.filePath.startsWith('/')
         ? c.filePath
         : cwd
           ? `${cwd.replace(/\/$/, '')}/${c.filePath}`
-          : null;
+          : null,
+    [cwd],
+  );
+
+  /** Hand a file off to the OS default app (Electron only). */
+  const openViaOS = useCallback(
+    (c: ArtifactEntry) => {
+      const electron = getElectron();
+      if (!electron?.openPath) return;
+      const abs = absPath(c);
+      if (!abs) return;
+      void electron.openPath(abs).then((r) => {
+        if (!r.ok && r.error) console.warn(`openPath(${abs}) failed:`, r.error);
+      });
+    },
+    [absPath],
+  );
+
+  const openInFolder = useCallback((c: ArtifactEntry) => {
+    const electron = getElectron();
+    if (!electron?.openPath) return;
+    // Resolve to absolute, then open the parent directory.
+    const abs = absPath(c);
     if (!abs) return;
     const dir = abs.replace(/\/[^/]+$/, '') || '/';
     void electron.openPath(dir);
-  }, [cwd]);
+  }, [absPath]);
 
   const handleRename = useCallback((id: string, newName: string) => {
     const trimmed = newName.trim();
@@ -149,52 +169,41 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
         if (c.url) window.open(c.url, '_blank', 'noopener,noreferrer');
         return;
       }
+      // Reference artifacts are absolute disk paths *outside* the workspace;
+      // symlink artifacts are cwd-relative paths that resolve (through a symlink)
+      // to a file outside the workspace. The in-app viewers (ArtifactPane →
+      // /artifacts/read, Lightbox → /api/files) are sandboxed to cwd and 404 on
+      // both (realpath guard defeats symlink escape), so hand them straight to the
+      // OS opener. Both are Electron-only to create, so openPath is available here.
+      if (c.kind === 'reference' || c.kind === 'symlink') {
+        openViaOS(c);
+        return;
+      }
       if (t === 'image') {
-        // Serve via the workspace image route. filePath may be workspace-rel
-        // (.attachments/...) or absolute; the route resolves within cwd.
+        // Embedded image (e.g. .attachments/...) — serve via the workspace
+        // image route, which resolves within cwd.
         if (activeProject?.id) {
           const rel = c.filePath.replace(/^\/+/, '');
           setLightbox({ src: `/api/files/${activeProject.id}/${rel}`, name: c.name });
         }
         return;
       }
-      // doc → open in ArtifactPane (markdown viewer) if available
+      // Embedded doc → open in ArtifactPane (markdown viewer) if available.
       if (t === 'doc') {
-        const relPath = c.kind === 'reference' || c.filePath.startsWith('/')
-          ? c.filePath
-          : c.filePath;
         try {
-          await openArtifactPane(relPath);
+          await openArtifactPane(c.filePath);
           onClose();
         } catch (err) {
           // Fallback: open via OS if pane creation fails (e.g. no workspace cwd)
           console.warn('[ArtifactsDrawer] openArtifactPane failed, falling back to OS opener:', err);
-          const electron = getElectron();
-          if (!electron?.openPath) return;
-          const abs = c.filePath.startsWith('/')
-            ? c.filePath
-            : cwd
-              ? `${cwd.replace(/\/$/, '')}/${c.filePath}`
-              : null;
-          if (abs) void electron.openPath(abs);
+          openViaOS(c);
         }
         return;
       }
-      // file → hand off to the OS default app.
-      const electron = getElectron();
-      if (!electron?.openPath) return;
-      const abs =
-        c.kind === 'reference' || c.filePath.startsWith('/')
-          ? c.filePath
-          : cwd
-            ? `${cwd.replace(/\/$/, '')}/${c.filePath}`
-            : null;
-      if (!abs) return;
-      void electron.openPath(abs).then((r) => {
-        if (!r.ok && r.error) console.warn(`openPath(${abs}) failed:`, r.error);
-      });
+      // Embedded file → hand off to the OS default app.
+      openViaOS(c);
     },
-    [activeProject?.id, cwd, openArtifactPane, onClose],
+    [activeProject?.id, openArtifactPane, onClose, openViaOS],
   );
 
   // "Cite" — ask the focused pane to append @name to its composer. The pane
@@ -267,14 +276,37 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
       const existing = artifacts.map((c) => c.name);
       for (const p of r.paths) {
         const base = p.split('/').pop() ?? p;
+        const type = typeForPath(p);
+        // With a workspace folder, symlink the file into <cwd>/.artifacts/ (no
+        // bytes copied) so the agent can read/write it live — bidirectional sync
+        // — and it persists with the workspace. Without a cwd there's nowhere to
+        // put the link, so fall back to a bare reference (OS-open only; the agent
+        // can't see it).
+        if (activeProject?.id && cwd) {
+          try {
+            const result = await linkWorkspaceFile(activeProject.id, cwd, p);
+            existing.push(result.name);
+            createContext(result.name, result.filePath, {
+              kind: 'symlink',
+              type,
+              size: result.size,
+              source: 'user',
+            });
+            continue;
+          } catch (err) {
+            // Fall through to a reference on link failure (e.g. cross-device or
+            // permission) so the file is at least added and OS-openable.
+            console.warn('[ArtifactsDrawer] linkWorkspaceFile failed, adding as reference:', err);
+          }
+        }
         const name = sanitizeContextName(base, existing);
         existing.push(name);
-        createContext(name, p, { kind: 'reference', type: typeForPath(p), source: 'user' });
+        createContext(name, p, { kind: 'reference', type, source: 'user' });
       }
     } catch (err) {
       setPasteErr((err as Error).message);
     }
-  }, [artifacts, createContext]);
+  }, [artifacts, createContext, activeProject?.id, cwd]);
 
   if (!open) return null;
 
@@ -573,7 +605,7 @@ function ArtifactRow({
       {expanded && !renaming && (
         <div style={{ padding: '2px 12px 10px 38px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontSize: 11, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)', wordBreak: 'break-all' }}>
-            {isLink ? linkLabel(c.url ?? '') : `${c.kind === 'reference' ? '↗ ' : ''}${c.filePath}`}
+            {isLink ? linkLabel(c.url ?? '') : `${c.kind === 'reference' ? '↗ ' : c.kind === 'symlink' ? '⇄ ' : ''}${c.filePath}`}
           </div>
           {c.origin?.nodeId && (
             <div style={{ fontSize: 10.5, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)' }}>

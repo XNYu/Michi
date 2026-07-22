@@ -22,7 +22,7 @@ export type ExtraContext = {
   /** External URL for `link` artifacts. Mutually exclusive with a real filePath. */
   url?: string;
   size?: number;
-  kind?: "embedded" | "reference";
+  kind?: "embedded" | "reference" | "symlink";
 };
 
 export interface AgentCapabilities {
