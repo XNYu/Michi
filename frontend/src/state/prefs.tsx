@@ -134,6 +134,11 @@ export interface Prefs {
    *  render after, in array order. Stale IDs (deleted/archived projects)
    *  are ignored at sort time, not pruned eagerly. */
   workspaceOrder: string[];
+  /** Epoch ms when the user finished (or was migrated past) the first-run
+   *  runtime/model setup. null = never completed → FirstRunSetup shows on a
+   *  fresh install with no workspaces. Existing users (any workspace) are
+   *  auto-migrated to "done" so upgrades don't pop the wizard. */
+  onboardingCompletedAt: number | null;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -171,6 +176,7 @@ export const DEFAULT_PREFS: Prefs = {
   bypassPermissions: false,
   sidebarExpanded: { workspaces: {}, threads: {}, branches: {} },
   workspaceOrder: [],
+  onboardingCompletedAt: null,
 };
 
 const PREFS_KEY = 'michi:v1:prefs';
@@ -293,6 +299,12 @@ function readInitial(): Prefs {
       !merged.workspaceOrder.every((id: unknown) => typeof id === 'string')
     ) {
       merged.workspaceOrder = [];
+    }
+    if (
+      merged.onboardingCompletedAt !== null &&
+      typeof merged.onboardingCompletedAt !== 'number'
+    ) {
+      merged.onboardingCompletedAt = DEFAULT_PREFS.onboardingCompletedAt;
     }
     return merged;
   } catch {

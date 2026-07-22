@@ -54,7 +54,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilities = {
 
 export class ClaudeRuntime implements AgentRuntime {
   public readonly id: RuntimeId = 'claude';
-  public readonly label = 'Claude (CLI)';
+  public readonly label = 'Claude';
   public readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly manager: ClaudeSessionManager;

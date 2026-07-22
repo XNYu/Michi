@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import TerminalShell from './components/terminal/TerminalShell';
 import ApiKeyGate from './components/ApiKeyGate';
+import FirstRunSetup from './components/FirstRunSetup';
 import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
 import { LandingPage } from './components/LandingPage';
 import { authClient, fetchAuthConfig } from './services/auth';
@@ -280,6 +281,7 @@ function App() {
       <AppToaster />
       <AuthGate>
         <ShellSwitcher />
+        <FirstRunSetup />
         <ApiKeyGate />
         <DigestPromptListener />
         <ExportPanelManager />

@@ -211,10 +211,10 @@ describe('ClaudeRuntime', () => {
 
   // ── Case 1: id, label, capabilities ─────────────────────────────────────────
 
-  test('id is "claude", label is "Claude (CLI)", capabilities match spec', () => {
+  test('id is "claude", label is "Claude", capabilities match spec', () => {
     const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
     assert.equal(rt.id, 'claude');
-    assert.equal(rt.label, 'Claude (CLI)');
+    assert.equal(rt.label, 'Claude');
     assert.equal(rt.capabilities.modes, false);
     assert.equal(rt.capabilities.permissions, true);
     assert.equal(rt.capabilities.providerModels, false);

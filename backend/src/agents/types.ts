@@ -68,6 +68,13 @@ export interface AgentRuntimeOption {
   id: RuntimeId;
   label: string;
   available: boolean;
+  /**
+   * True iff this runtime needs a user-supplied API key before it can run
+   * (mirrors `capabilities.apiKeys`). Lets the first-run setup card label each
+   * runtime "ready" vs. "needs API key" without switching the active runtime
+   * just to read its capabilities.
+   */
+  requiresApiKey?: boolean;
 }
 
 export interface ModelInfo {

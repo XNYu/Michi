@@ -75,6 +75,7 @@ export default function TerminalShell() {
     focusedPane,
     treeSelection,
     projects, hydrated,
+    agentStatus,
     canNavBack, canNavForward,
   } = useChatProjects();
   const {
@@ -376,14 +377,19 @@ export default function TerminalShell() {
     return () => window.removeEventListener('michi:open-workspace-manage', onOpenManage as EventListener);
   }, [handleNav]);
 
-  // Auto-open new workspace dialog on first mount when there are no workspaces
+  // Auto-open new workspace dialog on first mount when there are no workspaces.
+  // Held back until first-run setup is done AND the chosen runtime is usable
+  // (no required key still missing) so the folder picker never stacks over the
+  // FirstRunSetup card or the ApiKeyGate key window.
   const autoOpenedRef = React.useRef(false);
   useEffect(() => {
-    if (!autoOpenedRef.current && hydrated && projects.length === 0) {
-      autoOpenedRef.current = true;
-      setNewWsOpen(true);
-    }
-  }, [hydrated, projects.length]);
+    if (autoOpenedRef.current) return;
+    if (!hydrated || projects.length !== 0) return;
+    if (prefs.onboardingCompletedAt == null) return;
+    if (agentStatus && agentStatus.capabilities.apiKeys && !agentStatus.hasRequiredKey) return;
+    autoOpenedRef.current = true;
+    setNewWsOpen(true);
+  }, [hydrated, projects.length, prefs.onboardingCompletedAt, agentStatus]);
 
   const narrowMode = width < NARROW_THRESHOLD;
   const [narrowOverlayOpen, setNarrowOverlayOpen] = useState(false);

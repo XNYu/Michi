@@ -1311,6 +1311,8 @@ export interface AgentRuntimeOption {
   id: RuntimeId;
   label: string;
   available: boolean;
+  /** True iff this runtime needs a user-supplied API key before it can run. */
+  requiresApiKey?: boolean;
 }
 
 export interface AgentStatus {

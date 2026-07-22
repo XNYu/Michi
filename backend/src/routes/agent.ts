@@ -37,6 +37,7 @@ export function setupAgentRoutes(): Router {
       id: r.id,
       label: r.label,
       available: true,
+      requiresApiKey: r.capabilities.apiKeys === true,
     }));
 
     if (!active) {

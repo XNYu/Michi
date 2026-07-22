@@ -66,7 +66,7 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
     },
     {
         id: "claude",
-        label: "Claude (CLI)",
+        label: "Claude",
         create: (deps) => new ClaudeRuntime(
             deps.bridge,
             deps.mcpRegistry!,

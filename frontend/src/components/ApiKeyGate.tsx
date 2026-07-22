@@ -2,25 +2,34 @@ import React, { useEffect, useState } from 'react';
 import { fetchAgentStatus, saveAgentOptions, saveProviderKey, verifyProviderKey } from '../services/api';
 import type { AgentStatus, VerifyProviderKeyResult } from '../services/api';
 import { providerOptionSuffix, providerRequiresUserKey } from '../lib/providerCapabilities';
+import { ModalShell } from './ui/ModalShell';
+import { Button } from './ui/controls';
+import { usePrefs } from '../state/prefs';
 
 /**
- * Capability-driven welcome/key gate.
+ * Capability-driven key gate — the unified Pi (or any BYOK runtime) key window.
  *
- * Renders a modal only when the active runtime advertises `capabilities.apiKeys`
- * AND `hasRequiredKey` is false. For runtimes that don't need an API key (kiro,
- * etc.) this is always invisible.
+ * Renders a {@link ModalShell} only when the active runtime advertises
+ * `capabilities.apiKeys` AND `hasRequiredKey` is false. Runtimes that don't
+ * need a key (Kiro, Claude, …) never surface this. It shares the same shell,
+ * `.term-glass` material, `--term-*` tokens, and `.ui-input`/`.ui-select`/
+ * `.ui-btn` primitives as every other dialog — it used to be a one-off on the
+ * legacy `--fg`/`--accent` token family with hand-rolled scrim + inline styles.
+ *
+ * First-run ordering: while onboarding is incomplete, {@link FirstRunSetup}
+ * owns the experience, so the key modal stays suppressed until onboarding is
+ * marked complete (its "Set up … key" action flips that flag, then this takes
+ * over). The backend-unreachable notice is NOT gated — it's useful cold-start
+ * feedback regardless of onboarding state.
  *
  * Behavior on submit:
  * - If the user picked a provider different from `status.provider`, persist
  *   that via `saveAgentOptions({ provider })` first.
  * - Persist the typed key via `saveProviderKey(provider, key)`.
- * - Dispatch `michi:reload-agent-status` so the chatStore (and any other
- *   listeners) re-fetch. Once `hasRequiredKey` flips true, we render null.
- *
- * Backend-unreachable handling: a small backoff loop on mount, with a manual
- * "retry" affordance once the loop gives up.
+ * - Re-fetch status; once `hasRequiredKey` flips true, we render null.
  */
 export default function ApiKeyGate() {
+  const { prefs } = usePrefs();
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [backendUnreachable, setBackendUnreachable] = useState(false);
@@ -56,11 +65,10 @@ export default function ApiKeyGate() {
   useEffect(() => {
     void load();
     // Allow other parts of the app (chatStreamRunner on auth errors, the
-    // Settings "Change API Key" button) to force the gate to re-show.
-    // Callers can pass `detail.silent: true` to refresh status without
-    // re-opening the modal — used by the in-Settings provider picker so
-    // switching to a key-less provider just surfaces the inline reminder
-    // instead of slamming the user with the welcome dialog.
+    // Settings "Change API Key" button, FirstRunSetup's "Set up key" action)
+    // to force the gate to re-show. `detail.silent: true` refreshes status
+    // without re-opening the modal — used by the in-Settings provider picker
+    // so switching to a key-less provider just surfaces the inline reminder.
     const handler = (e: Event) => {
       const silent = (e as CustomEvent).detail?.silent === true;
       if (silent) setDismissed(true);
@@ -70,24 +78,6 @@ export default function ApiKeyGate() {
     window.addEventListener('michi:reload-agent-status', handler);
     return () => window.removeEventListener('michi:reload-agent-status', handler);
   }, []);
-
-  // Esc closes the modal — only attached while the gate is actually visible
-  // so we don't swallow Esc elsewhere in the app.
-  const modalVisible =
-    !backendUnreachable &&
-    !loading &&
-    !!status &&
-    !!status.capabilities.apiKeys &&
-    !status.hasRequiredKey &&
-    !dismissed;
-  useEffect(() => {
-    if (!modalVisible) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDismissed(true);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [modalVisible]);
 
   // Sync the local provider picker with whatever the backend currently has
   // selected. If providers exist and we don't have one yet, default to the
@@ -101,53 +91,35 @@ export default function ApiKeyGate() {
     }
   }, [status, selectedProvider]);
 
-  // Backend persistently unreachable — show a tiny status banner so the user
-  // doesn't sit looking at a blank screen.
+  // Backend persistently unreachable — a hard-blocking notice with a retry.
+  // Not gated on onboarding: it's useful cold-start feedback either way.
   if (backendUnreachable) {
     return (
-      <div
-        className="ui-scrim ui-scrim--modal"
-        style={{ zIndex: 'var(--z-modal-scrim)' } as React.CSSProperties}
-      >
-        <div
-          className="ui-modal-panel term-glass"
-          style={{
-            padding: '24px 32px',
-            color: 'var(--term-fg)',
-            fontFamily: 'var(--ui-font)',
-            fontSize: 14,
-            maxWidth: 420,
-            lineHeight: 1.6,
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Backend not reachable</div>
-          <div style={{ color: 'var(--fg-muted)' }}>
-            The Michi backend isn't responding. If you launched the app from
-            Finder, try quitting and re-opening it.
+      <ModalShell open onClose={() => {}} title="Michi" titleGlyph="◆" width={420} dismissible={false}>
+        <div style={{ padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <div style={{ fontFamily: 'var(--ui-font)', fontSize: 16, fontWeight: 700, color: 'var(--term-fg)' }}>
+              Backend not reachable
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
+              The Michi backend isn't responding. If you launched the app from Finder, try quitting and
+              re-opening it.
+            </div>
           </div>
-          <button
-            onClick={() => void load()}
-            style={{
-              marginTop: 16,
-              padding: '6px 16px',
-              fontSize: 13,
-              background: 'var(--accent)',
-              color: 'var(--accent-fg)',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            Retry
-          </button>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button variant="primary" onClick={() => void load()}>
+              Retry
+            </Button>
+          </div>
         </div>
-      </div>
+      </ModalShell>
     );
   }
 
-  // Not ready yet, runtime doesn't need an API key, or key already present —
-  // render nothing.
-  if (loading) return null;
-  if (!status) return null;
+  // Not ready yet, runtime doesn't need an API key, key already present,
+  // dismissed, or onboarding still owns the flow — render nothing.
+  if (loading || !status) return null;
+  if (prefs.onboardingCompletedAt == null) return null;
   if (!status.capabilities.apiKeys) return null;
   if (status.hasRequiredKey) return null;
   if (dismissed) return null;
@@ -160,6 +132,7 @@ export default function ApiKeyGate() {
   const selectedHasKey = !!selectedProviderInfo?.hasKey;
   const canSubmit = selectedHasKey || !!key.trim();
   const canVerify = selectedHasKey || !!key.trim();
+  const defaultModel = selectedProviderInfo?.defaultModel || status.model || '';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,9 +168,7 @@ export default function ApiKeyGate() {
       const result = await verifyProviderKey(selectedProviderInfo.id, {
         key: key.trim() || undefined,
         model:
-          selectedProviderInfo.id === status.provider
-            ? status.model
-            : selectedProviderInfo.defaultModel,
+          selectedProviderInfo.id === status.provider ? status.model : selectedProviderInfo.defaultModel,
       });
       setVerifyResult(result);
     } catch (err: any) {
@@ -208,116 +179,71 @@ export default function ApiKeyGate() {
   };
 
   return (
-    <div
-      className="ui-scrim ui-scrim--modal"
-      style={{ zIndex: 'var(--z-modal-scrim)' } as React.CSSProperties}
+    <ModalShell
+      open
+      onClose={() => setDismissed(true)}
+      title={`Set up ${status.label}`}
+      titleGlyph="◆"
+      width={480}
     >
-      <div
-        className="ui-modal-panel term-glass"
-        style={{
-          width: 480,
-          maxWidth: '92vw',
-          padding: '32px 36px',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Title */}
+      <form onSubmit={handleSubmit}>
         <div
-          style={{
-            fontSize: 22,
-            fontWeight: 700,
-            color: 'var(--fg)',
-            fontFamily: 'var(--font-sans, ui-sans-serif)',
-            marginBottom: 12,
-          }}
+          className="term-scrollbar"
+          style={{ padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}
         >
-          Welcome to Michi
-        </div>
-
-        {/* Body copy */}
-        <p
-          style={{
-            fontSize: 14,
-            color: 'var(--fg-muted)',
-            fontFamily: 'var(--font-sans, ui-sans-serif)',
-            lineHeight: 1.6,
-            margin: '0 0 8px',
-          }}
-        >
-          Choose your AI provider and add an API key to get started. It will be
-          saved locally.
-        </p>
-        {selectedProviderInfo && (
-          <p
-            style={{
-              fontSize: 13,
-              color: 'var(--fg-muted)',
-              fontFamily: 'var(--font-sans, ui-sans-serif)',
-              lineHeight: 1.5,
-              margin: '0 0 20px',
-            }}
-          >
-            Default: <strong style={{ color: 'var(--fg)' }}>{selectedProviderInfo.label}</strong>
-            {' / '}
-            <strong style={{ color: 'var(--fg)' }}>{selectedProviderInfo.defaultModel ?? status.model}</strong>
-            . You can change provider, model, and reasoning in Settings later.
-          </p>
-        )}
-
-        {providers.length > 0 && (
-          <div style={{ marginBottom: 12 }}>
-            <select
-              value={selectedProviderInfo?.id ?? ''}
-              onChange={(e) => {
-                setSelectedProvider(e.target.value);
-                setKey('');
-                setError(null);
-                setVerifyResult(null);
-              }}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '8px 10px',
-                fontSize: 13,
-                fontFamily: 'var(--font-mono, ui-monospace)',
-                background: 'var(--app-bg)',
-                color: 'var(--fg)',
-                border: '1px solid var(--line-strong)',
-                outline: 'none',
-                borderRadius: 0,
-              }}
-            >
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}{providerOptionSuffix(p)}
-                </option>
-              ))}
-            </select>
+          <div>
+            <div style={{ fontFamily: 'var(--ui-font)', fontSize: 18, fontWeight: 700, color: 'var(--term-fg)' }}>
+              Add a provider key
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
+              {status.label} runs on your own AI provider. Pick one and paste a key — it's saved locally and
+              never leaves this device.
+            </div>
           </div>
-        )}
 
-        {selectedProviderInfo?.keyUrl && (
-          <div style={{ marginBottom: 20 }}>
+          {providers.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              <label style={FIELD_LABEL}>Provider</label>
+              <select
+                className="ui-select"
+                value={selectedProviderInfo?.id ?? ''}
+                onChange={(e) => {
+                  setSelectedProvider(e.target.value);
+                  setKey('');
+                  setError(null);
+                  setVerifyResult(null);
+                }}
+              >
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                    {providerOptionSuffix(p)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {selectedProviderInfo?.keyUrl && (
             <a
               href={selectedProviderInfo.keyUrl}
               target="_blank"
               rel="noopener noreferrer"
               style={{
-                fontSize: 13,
-                color: 'var(--accent)',
-                fontFamily: 'var(--font-sans, ui-sans-serif)',
-                textDecoration: 'underline',
+                fontSize: 12.5,
+                color: 'var(--term-accent)',
+                textDecoration: 'none',
+                width: 'fit-content',
               }}
             >
-              Open {selectedProviderInfo.label} key console
+              Open {selectedProviderInfo.label} key console ↗
             </a>
-          </div>
-        )}
+          )}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            <label style={FIELD_LABEL}>API key</label>
             <input
+              className="ui-input"
               type="password"
               value={key}
               onChange={(e) => {
@@ -326,114 +252,68 @@ export default function ApiKeyGate() {
                 setVerifyResult(null);
               }}
               placeholder={
-                selectedHasKey
-                  ? 'Saved key present (paste to replace)'
-                  : selectedProviderInfo?.keyLabel ?? 'API key'
+                selectedHasKey ? 'Saved key present (paste to replace)' : selectedProviderInfo?.keyLabel ?? 'API key'
               }
               autoFocus
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '9px 12px',
-                fontSize: 14,
-                fontFamily: 'var(--font-mono, ui-monospace)',
-                background: 'var(--app-bg)',
-                color: 'var(--fg)',
-                border: '1px solid var(--line-strong)',
-                outline: 'none',
-                borderRadius: 0,
-              }}
             />
           </div>
 
-          {error && (
-            <div
-              style={{
-                fontSize: 13,
-                color: 'var(--danger)',
-                fontFamily: 'var(--font-sans, ui-sans-serif)',
-                marginBottom: 12,
-              }}
-            >
-              {error}
-            </div>
-          )}
+          {error && <div style={{ fontSize: 12.5, color: 'var(--term-danger)' }}>{error}</div>}
 
           {verifyResult && (
             <div
               style={{
-                fontSize: 13,
-                color: verifyResult.ok ? 'var(--accent)' : 'var(--danger)',
-                fontFamily: 'var(--font-sans, ui-sans-serif)',
-                marginBottom: 12,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11.5,
+                color: verifyResult.ok ? 'var(--term-digest)' : 'var(--term-danger)',
               }}
             >
               {verifyResult.ok
-                ? `Verified ${selectedProviderInfo?.label ?? selectedProviderInfo?.id ?? ''}${verifyResult.model ? ` / ${verifyResult.model}` : ''}${verifyResult.latencyMs ? ` in ${verifyResult.latencyMs}ms` : ''}.`
+                ? `✓ Verified · ${selectedProviderInfo?.label ?? selectedProviderInfo?.id ?? ''}${verifyResult.model ? ` · ${verifyResult.model}` : ''}${verifyResult.latencyMs ? ` · ${verifyResult.latencyMs}ms` : ''}`
                 : verifyResult.error ?? 'Verification failed.'}
             </div>
           )}
+        </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-            <button
-              type="button"
-              onClick={() => setDismissed(true)}
-              disabled={saving || verifying}
-              style={{
-                padding: '8px 16px',
-                fontSize: 14,
-                fontWeight: 700,
-                fontFamily: 'var(--font-sans, ui-sans-serif)',
-                background: 'transparent',
-                color: saving || verifying ? 'var(--fg-muted)' : 'var(--fg-muted)',
-                border: '1px solid var(--line-strong)',
-                cursor: saving || verifying ? 'not-allowed' : 'pointer',
-                borderRadius: 0,
-                transition: 'background 120ms',
-              }}
-            >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: '12px 18px',
+            borderTop: '1px solid var(--term-line)',
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 11.5, color: 'var(--term-muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {defaultModel && (
+              <>
+                Default model: <b style={{ color: 'var(--term-mid)', fontWeight: 600 }}>{defaultModel}</b>
+              </>
+            )}
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+            <Button variant="ghost" onClick={() => setDismissed(true)} disabled={saving || verifying}>
               Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleVerify()}
-              disabled={!canVerify || verifying || saving}
-              style={{
-                padding: '8px 16px',
-                fontSize: 14,
-                fontWeight: 700,
-                fontFamily: 'var(--font-sans, ui-sans-serif)',
-                background: 'transparent',
-                color: !canVerify || verifying || saving ? 'var(--fg-muted)' : 'var(--fg)',
-                border: '1px solid var(--line-strong)',
-                cursor: !canVerify || verifying || saving ? 'not-allowed' : 'pointer',
-                borderRadius: 0,
-                transition: 'background 120ms',
-              }}
-            >
-              {verifying ? 'Verifying...' : 'Verify'}
-            </button>
-            <button
-              type="submit"
-              disabled={!canSubmit || saving || verifying}
-              style={{
-                padding: '8px 20px',
-                fontSize: 14,
-                fontWeight: 700,
-                fontFamily: 'var(--font-sans, ui-sans-serif)',
-                background: !canSubmit || saving || verifying ? 'var(--line-strong)' : 'var(--accent)',
-                color: !canSubmit || saving || verifying ? 'var(--fg-muted)' : 'var(--accent-fg)',
-                border: 'none',
-                cursor: !canSubmit || saving || verifying ? 'not-allowed' : 'pointer',
-                borderRadius: 0,
-                transition: 'background 120ms',
-              }}
-            >
-              {saving ? 'Saving...' : selectedHasKey && !key.trim() ? 'Use Provider' : 'Get Started'}
-            </button>
+            </Button>
+            <Button onClick={() => void handleVerify()} disabled={!canVerify || verifying || saving}>
+              {verifying ? 'Verifying…' : 'Verify'}
+            </Button>
+            <Button type="submit" variant="primary" disabled={!canSubmit || saving || verifying}>
+              {saving ? 'Saving…' : selectedHasKey && !key.trim() ? 'Use provider' : 'Get Started'}
+            </Button>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </ModalShell>
   );
 }
+
+const FIELD_LABEL: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  letterSpacing: '.08em',
+  textTransform: 'uppercase',
+  color: 'var(--term-muted)',
+};
