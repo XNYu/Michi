@@ -27,6 +27,11 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
 
   const { files, totalAdded, totalRemoved } = receipt;
   const fileWord = files.length === 1 ? 'file' : 'files';
+  // Subagent-relayed / Codex edits recover the path but not the line deltas,
+  // so their counts are 0 and would render a misleading "+0 −0". Only show
+  // the totals when every file's counts are locally derivable; otherwise the
+  // click-through diff (live `git diff`) is the source of truth.
+  const showTotals = files.every((f) => f.countsKnown);
 
   return (
     <div
@@ -62,9 +67,14 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
       >
         <span style={{ opacity: 0.7, flexShrink: 0 }}>±</span>
         <span style={{ flex: 1, minWidth: 0 }}>
-          {files.length} {fileWord} changed{' '}
-          <span style={{ color: 'var(--term-digest)' }}>+{totalAdded}</span>{' '}
-          <span style={{ color: 'var(--term-danger)' }}>−{totalRemoved}</span>
+          {files.length} {fileWord} changed
+          {showTotals && (
+            <>
+              {' '}
+              <span style={{ color: 'var(--term-digest)' }}>+{totalAdded}</span>{' '}
+              <span style={{ color: 'var(--term-danger)' }}>−{totalRemoved}</span>
+            </>
+          )}
         </span>
         <span style={{ color: 'var(--term-muted)', flexShrink: 0, marginLeft: 8 }}>
           {expanded ? '⌃' : '›'}
@@ -99,10 +109,12 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
               <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-all' }}>
                 {f.path}
               </span>
-              <span style={{ flexShrink: 0, marginLeft: 8 }}>
-                <span style={{ color: 'var(--term-digest)' }}>+{f.added}</span>{' '}
-                <span style={{ color: 'var(--term-danger)' }}>−{f.removed}</span>
-              </span>
+              {f.countsKnown && (
+                <span style={{ flexShrink: 0, marginLeft: 8 }}>
+                  <span style={{ color: 'var(--term-digest)' }}>+{f.added}</span>{' '}
+                  <span style={{ color: 'var(--term-danger)' }}>−{f.removed}</span>
+                </span>
+              )}
             </button>
           ))}
         </div>

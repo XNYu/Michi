@@ -38,7 +38,7 @@ describe('deriveDiffReceipt', () => {
     const m = msg([tool('write', { path: 'src/a.ts', content: 'one\ntwo\nthree' })]);
     const r = deriveDiffReceipt(m);
     expect(r).not.toBeNull();
-    expect(r!.files).toEqual([{ path: 'src/a.ts', added: 3, removed: 0, kind: 'write' }]);
+    expect(r!.files).toEqual([{ path: 'src/a.ts', added: 3, removed: 0, kind: 'write', countsKnown: true }]);
     expect(r!.totalAdded).toBe(3);
     expect(r!.totalRemoved).toBe(0);
   });
@@ -56,7 +56,7 @@ describe('deriveDiffReceipt', () => {
       tool('edit', { path: 'c.ts', old_string: 'a\nb\nc\nd', new_string: 'a\nz' }),
     ]);
     const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'c.ts', added: 2, removed: 4, kind: 'edit' }]);
+    expect(r!.files).toEqual([{ path: 'c.ts', added: 2, removed: 4, kind: 'edit', countsKnown: true }]);
   });
 
   it('edits to the same path accumulate', () => {
@@ -65,7 +65,7 @@ describe('deriveDiffReceipt', () => {
       tool('edit', { path: 'c.ts', old_string: 'x\ny', new_string: 'z' }),
     ]);
     const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'c.ts', added: 3, removed: 3, kind: 'edit' }]);
+    expect(r!.files).toEqual([{ path: 'c.ts', added: 3, removed: 3, kind: 'edit', countsKnown: true }]);
   });
 
   it('a later write to the same path supersedes earlier counts (latest write wins)', () => {
@@ -74,7 +74,7 @@ describe('deriveDiffReceipt', () => {
       tool('write', { path: 'd.ts', content: 'full\nnew\nfile' }),
     ]);
     const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'd.ts', added: 3, removed: 0, kind: 'write' }]);
+    expect(r!.files).toEqual([{ path: 'd.ts', added: 3, removed: 0, kind: 'write', countsKnown: true }]);
   });
 
   it('an edit after a write on the same path accumulates but keeps write kind', () => {
@@ -83,7 +83,7 @@ describe('deriveDiffReceipt', () => {
       tool('edit', { path: 'e.ts', old_string: 'a', new_string: 'a\nc' }),
     ]);
     const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'e.ts', added: 4, removed: 1, kind: 'write' }]);
+    expect(r!.files).toEqual([{ path: 'e.ts', added: 4, removed: 1, kind: 'write', countsKnown: true }]);
   });
 
   it('aggregates totals across multiple files', () => {
@@ -140,6 +140,8 @@ describe('deriveDiffReceipt', () => {
     // Codex carries no old/new strings — deltas stay 0; the modal shows the real diff.
     expect(r!.totalAdded).toBe(0);
     expect(r!.totalRemoved).toBe(0);
+    // Counts are not locally derivable — the receipt hides the misleading +0 −0.
+    expect(r!.files.every((f) => f.countsKnown)).toBe(false);
   });
 
   it('skips tools with missing or malformed inputJson', () => {
@@ -154,7 +156,7 @@ describe('deriveDiffReceipt', () => {
   it('empty content write counts as 0 added', () => {
     const m = msg([tool('write', { path: 'empty.txt', content: '' })]);
     const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'empty.txt', added: 0, removed: 0, kind: 'write' }]);
+    expect(r!.files).toEqual([{ path: 'empty.txt', added: 0, removed: 0, kind: 'write', countsKnown: true }]);
   });
 
   it('handles messages without a toolCalls array', () => {
@@ -173,9 +175,11 @@ describe('deriveDiffReceipt', () => {
       '/Users/x/rabbitholes/src/a.ts',
       '/Users/x/rabbitholes/src/b.ts',
     ]);
-    // Without inputJson, line counts default to 0
+    // Without inputJson, line counts default to 0 and are flagged unknown so
+    // the receipt hides the misleading +0 −0 (the diff modal shows the real delta).
     expect(r!.totalAdded).toBe(0);
     expect(r!.totalRemoved).toBe(0);
+    expect(r!.files.every((f) => f.countsKnown)).toBe(false);
   });
 
   it('extracts path from "Editing <filename>" title (Kiro runtime)', () => {

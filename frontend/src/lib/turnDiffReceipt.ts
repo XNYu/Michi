@@ -32,6 +32,16 @@ export interface DiffFileEntry {
   added: number;
   removed: number;
   kind: 'write' | 'edit' | 'bash';
+  /**
+   * True when `added`/`removed` were computed from real tool input (a write's
+   * `content`, or an edit's `old_string`/`new_string`). False when we could
+   * recover the touched path but NOT the line deltas — subagent-relayed
+   * write/edit calls (forwarded for visibility, no inputJson) and Codex
+   * `fileChange` items carry no old/new text, so their counts default to 0.
+   * The receipt UI hides the misleading `+0 −0` for these and leans on the
+   * click-through diff (which does a live `git diff`) for the real numbers.
+   */
+  countsKnown: boolean;
 }
 
 export interface DiffReceipt {
@@ -165,10 +175,11 @@ export function deriveDiffReceipt(message: ChatMessage): DiffReceipt | null {
 
     if (!path && input) {
       // Codex fileChange shape: no path/file_path, but a `changes` array.
+      // No old/new text on these items — counts are unknown (0).
       for (const changePath of extractCodexChangePaths(input)) {
         const prev = byPath.get(changePath);
         if (!prev) {
-          byPath.set(changePath, { path: changePath, added: 0, removed: 0, kind: 'edit' });
+          byPath.set(changePath, { path: changePath, added: 0, removed: 0, kind: 'edit', countsKnown: false });
         }
       }
       continue;
@@ -176,11 +187,18 @@ export function deriveDiffReceipt(message: ChatMessage): DiffReceipt | null {
     if (!path) continue;
 
     if (kind === 'write') {
-      const content = input && typeof input.content === 'string' ? input.content : '';
+      // Counts are only real when the write carried its `content`. A
+      // subagent-relayed write recovers the path (detail/output/title) but
+      // has no inputJson, so content is empty and the delta is unknown.
+      const hasContent = !!input && typeof input.content === 'string';
+      const content = hasContent ? (input!.content as string) : '';
       // Latest write wins: a write is a full overwrite of the file, so it
       // supersedes any counts accumulated for this path so far.
-      byPath.set(path, { path, added: countLines(content), removed: 0, kind: 'write' });
+      byPath.set(path, { path, added: countLines(content), removed: 0, kind: 'write', countsKnown: hasContent });
     } else {
+      // An edit's delta is only real when old/new strings were present.
+      const hasStrings =
+        !!input && (typeof input.old_string === 'string' || typeof input.new_string === 'string');
       const oldStr = input && typeof input.old_string === 'string' ? input.old_string : '';
       const newStr = input && typeof input.new_string === 'string' ? input.new_string : '';
       const prev = byPath.get(path);
@@ -190,9 +208,12 @@ export function deriveDiffReceipt(message: ChatMessage): DiffReceipt | null {
           added: prev.added + countLines(newStr),
           removed: prev.removed + countLines(oldStr),
           kind: prev.kind === 'write' ? 'write' : 'edit',
+          // Accumulated counts are only trustworthy if every contributing
+          // tool call had derivable deltas.
+          countsKnown: prev.countsKnown && hasStrings,
         });
       } else {
-        byPath.set(path, { path, added: countLines(newStr), removed: countLines(oldStr), kind: 'edit' });
+        byPath.set(path, { path, added: countLines(newStr), removed: countLines(oldStr), kind: 'edit', countsKnown: hasStrings });
       }
     }
   }

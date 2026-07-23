@@ -224,13 +224,17 @@ function PaneMessageListInner({
                 i === node.messages.length - 1 && (
                   <DiffReceipt message={m} workspaceId={node.projectId} />
                 )}
+              {/* The subagent roster is node-level transient state cleared at
+                  every turn start, so it always belongs to the tail assistant
+                  message that spawned the agents. Render it inline within that
+                  turn's frame (not detached at the bottom of the conversation). */}
+              {!isUser && m.id === tailAssistantId && <SubagentStatus node={node} />}
             </div>
           </React.Fragment>
         );
       })}
 
       <StreamActivityIndicator node={node} />
-      <SubagentStatus node={node} />
       <TailSpacer node={node} viewportHeight={viewportHeight} />
       <McpServerError node={node} />
       <FollowUpsSection

@@ -50,6 +50,29 @@ describe('DiffReceipt', () => {
     expect(screen.queryAllByTestId('diff-receipt-file')).toHaveLength(0);
   });
 
+  it('hides +/- counts when they are not locally derivable (subagent-relayed edits)', () => {
+    // Subagent-relayed write/edit calls recover the path (detail/output) but
+    // carry no inputJson, so line deltas can't be computed. The receipt must
+    // NOT render a misleading "+0 −0" — just the file count. The click-through
+    // diff still shows the real delta.
+    const m = msg([
+      tool('Write', {}, { inputJson: undefined, detail: 'Write: /repo/src/a.ts' }),
+      tool('Edit', {}, { inputJson: undefined, detail: 'Edit: /repo/src/b.ts' }),
+    ]);
+    render(<DiffReceipt message={m} workspaceId="ws1" />);
+    const header = screen.getByTestId('diff-receipt-header');
+    expect(header.textContent).toContain('2 files changed');
+    expect(header.textContent).not.toContain('+0');
+    expect(header.textContent).not.toContain('−0');
+
+    // Expanded rows list paths but no count spans.
+    fireEvent.click(header);
+    const rows = screen.getAllByTestId('diff-receipt-file');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain('/repo/src/a.ts');
+    expect(rows.every((r) => !r.textContent?.includes('+0') && !r.textContent?.includes('−0'))).toBe(true);
+  });
+
   it('uses singular "file" for a single file', () => {
     const m = msg([tool('write', { path: 'only.ts', content: 'x' })]);
     render(<DiffReceipt message={m} workspaceId="ws1" />);
