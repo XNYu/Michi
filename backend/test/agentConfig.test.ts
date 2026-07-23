@@ -63,3 +63,57 @@ describe('agentConfig events', () => {
         }
     });
 });
+
+describe('agentConfig claudeConfigDir', () => {
+    beforeEach(stubFsWrite);
+    afterEach(() => {
+        // Reset the singleton so other suites see the default (unset) state.
+        const { updateAgentConfig } = require('../src/services/agentConfig');
+        updateAgentConfig({ claudeConfigDir: undefined });
+        restoreFsWrite();
+    });
+
+    test('unset by default — resolveClaudeConfigDir returns undefined', () => {
+        const { resolveClaudeConfigDir } = require('../src/services/agentConfig');
+        assert.equal(resolveClaudeConfigDir(), undefined);
+    });
+
+    test('expands a leading ~ against the home directory', () => {
+        const os = require('node:os');
+        const path = require('node:path');
+        const { updateAgentConfig, resolveClaudeConfigDir } =
+            require('../src/services/agentConfig');
+
+        updateAgentConfig({ claudeConfigDir: '~/.claude-custom' });
+        assert.equal(
+            resolveClaudeConfigDir(),
+            path.join(os.homedir(), '.claude-custom'),
+        );
+    });
+
+    test('passes an absolute path through unchanged', () => {
+        const { updateAgentConfig, resolveClaudeConfigDir } =
+            require('../src/services/agentConfig');
+
+        updateAgentConfig({ claudeConfigDir: '/opt/claude-profile' });
+        assert.equal(resolveClaudeConfigDir(), '/opt/claude-profile');
+    });
+
+    test('loadAgentConfig reads agent.claudeConfigDir from disk and ignores blanks', () => {
+        const fsCjs = require('fs');
+        const origReadFileSync = fsCjs.readFileSync;
+        const { loadAgentConfig, getAgentConfig } = require('../src/services/agentConfig');
+        try {
+            fsCjs.readFileSync = () =>
+                JSON.stringify({ agent: { claudeConfigDir: '  ~/.claude-custom  ' } });
+            loadAgentConfig();
+            assert.equal(getAgentConfig().claudeConfigDir, '~/.claude-custom');
+
+            fsCjs.readFileSync = () => JSON.stringify({ agent: { claudeConfigDir: '   ' } });
+            loadAgentConfig();
+            assert.equal(getAgentConfig().claudeConfigDir, undefined);
+        } finally {
+            fsCjs.readFileSync = origReadFileSync;
+        }
+    });
+});

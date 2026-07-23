@@ -16,7 +16,7 @@ import { buildClaudeMcpConfig } from './claudeMcpConfig';
 import { resolveShowImage } from './showImage';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission, setNodeExternalSessionId } from '../../services/dbRepository';
-import { getAgentConfig, resolveReasoning } from '../../services/agentConfig';
+import { getAgentConfig, resolveReasoning, resolveClaudeConfigDir } from '../../services/agentConfig';
 import * as perf from '../../services/perf';
 import type { AgentReasoning } from '../types';
 import { EventQueue } from '../eventQueue';
@@ -932,6 +932,11 @@ export class ClaudeSession implements AgentSession {
         ? buildClaudeFollowUpsHookPocSettings()
         : undefined,
       includeHookEvents: this.followUpsHookPocEnabled,
+      // Surface in-session Task subagents as a live roster (subagent_list_update /
+      // subagent_tool_activity) instead of an opaque "Used N tools" chip. Default
+      // on; set MICHI_CLAUDE_SUBAGENT_TEXT=0 to disable (e.g. older binary that
+      // rejects the flag, or to keep the parent stream lean).
+      forwardSubagentText: process.env.MICHI_CLAUDE_SUBAGENT_TEXT !== '0',
       // Default: let claude auto-discover the user's own MCP servers
       // (~/.claude/settings.json, project .mcp.json, plugin MCPs). __michi_internal__
       // is still injected via --mcp-config so the agent↔Michi protocol (approve,
@@ -946,6 +951,10 @@ export class ClaudeSession implements AgentSession {
       bare: this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1',
       model: this.model,
       effort: reasoningToClaudeEffort(resolveReasoning(getAgentConfig().runtime)),
+      // Opt-in override for multi-profile setups (agent.claudeConfigDir in
+      // ~/.michi/config.json). Undefined for everyone else — claude keeps
+      // its ~/.claude default.
+      configDir: resolveClaudeConfigDir(),
       systemPromptAppend,
     });
     this.child = child;

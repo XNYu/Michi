@@ -11,6 +11,15 @@ export interface AgentConfig {
   provider: string;
   modelByRuntime: Record<string, string>;
   reasoningByRuntime: Record<string, AgentReasoning>;
+  /**
+   * Claude config dir override (CLAUDE_CONFIG_DIR for spawned claude
+   * processes). Unset = claude's own default (~/.claude). Desktop-only,
+   * hand-edited in ~/.michi/config.json — no UI surface, never prompted.
+   * Changing it moves claude's whole identity (OAuth creds, settings,
+   * plugins, session JSONLs), so resume of sessions created under the old
+   * dir will break. Supports a leading "~".
+   */
+  claudeConfigDir?: string;
 }
 
 const CONFIG_DIR = path.join(os.homedir(), ".michi");
@@ -125,6 +134,9 @@ export function loadAgentConfig(): AgentConfig {
         if (a.runtime === "gemini") migratedFromLegacy = true;
       }
       if (typeof a.provider === "string" && a.provider) next.provider = a.provider;
+      if (typeof a.claudeConfigDir === "string" && a.claudeConfigDir.trim()) {
+        next.claudeConfigDir = a.claudeConfigDir.trim();
+      }
       if (a.modelByRuntime && typeof a.modelByRuntime === "object" && !Array.isArray(a.modelByRuntime)) {
         for (const [k, v] of Object.entries(a.modelByRuntime)) {
           if (typeof v === "string" && v.length > 0) next.modelByRuntime[k] = v;
@@ -333,6 +345,21 @@ export function resolveReasoning(runtimeId: string, userId?: string): AgentReaso
   const userOverride = cfg.reasoningByRuntime[runtimeId];
   if (userOverride) return userOverride;
   return BUILTIN_DEFAULT_REASONING_BY_RUNTIME[runtimeId];
+}
+
+/**
+ * Resolve the effective Claude config dir, with "~" expanded to the home
+ * directory. Returns undefined when unconfigured — callers must then leave
+ * CLAUDE_CONFIG_DIR untouched so claude falls back to its own default
+ * (~/.claude, or an env var the launch shell exported). Cloud-mode configs
+ * never carry this field (the backend can't reach the user's filesystem).
+ */
+export function resolveClaudeConfigDir(userId?: string): string | undefined {
+  const dir = getAgentConfig(userId).claudeConfigDir;
+  if (!dir) return undefined;
+  if (dir === "~") return os.homedir();
+  if (dir.startsWith("~/")) return path.join(os.homedir(), dir.slice(2));
+  return dir;
 }
 
 export function getBuiltinDefaultModel(runtimeId: string): string {

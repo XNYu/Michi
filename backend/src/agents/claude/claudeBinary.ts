@@ -40,6 +40,15 @@ export interface SpawnClaudeArgs {
   settingsInline?: string;
   /** Include hook_started/progress/response envelopes in stream-json output. */
   includeHookEvents?: boolean;
+  /**
+   * Forward each in-session subagent's text and thinking blocks as top-level
+   * assistant/user envelopes tagged with `parent_tool_use_id` = the parent
+   * `Task` tool_use id. Lets the translator reconstruct a live subagent roster
+   * (who is running, on what, still working vs. done) instead of an opaque
+   * final Task result. Requires a recent claude binary (2.1.x+). Widens the
+   * main stream — every subagent token flows through the parent stream.
+   */
+  forwardSubagentText?: boolean;
   systemPromptAppend?: string;
   addDirs?: string[];
   /**
@@ -50,6 +59,14 @@ export interface SpawnClaudeArgs {
    * are slow enough to blow past the session init timeout.
    */
   bare?: boolean;
+  /**
+   * Claude config dir override — injected as CLAUDE_CONFIG_DIR into the child
+   * env and used by the auth preflight. Unset = leave the env untouched so
+   * claude uses its own default (~/.claude, or whatever the launch shell
+   * exported). This moves claude's whole identity (OAuth, settings, plugins,
+   * session storage), not just one setting.
+   */
+  configDir?: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
 }
@@ -116,7 +133,7 @@ export function findClaudeBinary(): string {
  * that detection — we just look for a credible signal that SOMETHING is set
  * and let claude make the final call.
  */
-export function preflightClaudeAuth(): void {
+export function preflightClaudeAuth(configDir?: string): void {
   // Direct Anthropic API key — non-empty.
   if (process.env.ANTHROPIC_API_KEY) return;
 
@@ -148,10 +165,13 @@ export function preflightClaudeAuth(): void {
   // GCP equivalent (some Vertex-internal distros auto-detect).
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GCP_PROJECT) return;
 
-  // OAuth path — claude stores creds under ~/.claude/ after `claude /login`.
+  // OAuth path — claude stores creds under its config dir after `claude /login`.
   // Different versions use different filenames; presence of the directory
-  // plus a settings.json or session-env is a reasonable proxy.
-  const claudeDir = path.join(os.homedir(), '.claude');
+  // plus a settings.json or session-env is a reasonable proxy. Must check the
+  // SAME dir the spawned process will use: an explicit override first, then an
+  // inherited CLAUDE_CONFIG_DIR, then claude's default ~/.claude.
+  const claudeDir =
+    configDir || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   if (fs.existsSync(claudeDir)) {
     const candidates = ['auth.json', 'settings.json', 'session-env'];
     for (const f of candidates) {
@@ -176,6 +196,10 @@ export function buildClaudeArgv(args: SpawnClaudeArgs): string[] {
 
   if (args.includeHookEvents) {
     argv.push('--include-hook-events');
+  }
+
+  if (args.forwardSubagentText) {
+    argv.push('--forward-subagent-text');
   }
 
   if (args.bare) {
@@ -233,12 +257,16 @@ export function buildClaudeArgv(args: SpawnClaudeArgs): string[] {
 }
 
 export function spawnClaude(args: SpawnClaudeArgs): ChildProcessWithoutNullStreams {
-  preflightClaudeAuth();
+  preflightClaudeAuth(args.configDir);
   const binary = findClaudeBinary();
   const argv = buildClaudeArgv(args);
   const child = spawn(binary, argv, {
     cwd: args.cwd,
-    env: { ...process.env, ...args.env },
+    env: {
+      ...process.env,
+      ...(args.configDir ? { CLAUDE_CONFIG_DIR: args.configDir } : {}),
+      ...args.env,
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
     signal: args.signal,
   });

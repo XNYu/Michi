@@ -527,4 +527,160 @@ describe('claudeEventTranslator', () => {
 
     void emitted; // suppress unused warning
   });
+
+  // ── Subagents: --forward-subagent-text (parent_tool_use_id) ──────────────
+  //
+  // A parent-level `Task` tool_use spawns an in-session subagent. The CLI then
+  // forwards that subagent's messages as top-level envelopes stamped with
+  // parent_tool_use_id = the Task id. The translator rebuilds a live roster
+  // (subagent_list_update) + activity (subagent_tool_activity) and must NOT
+  // fold subagent output into the parent transcript / chip list.
+
+  type AnyEv = Record<string, unknown> & { kind: string };
+  const byKind = (evs: NormalizedEvent[], kind: string): AnyEv[] =>
+    (evs as unknown as AnyEv[]).filter((e) => e.kind === kind);
+
+  function spawnTask(feed: (env: Record<string, unknown>) => void, id = 'toolu_task1'): void {
+    feed({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id,
+            name: 'Task',
+            input: { subagent_type: 'explore', description: 'Find the auth code', prompt: 'search the repo\nmore' },
+          },
+        ],
+      },
+    });
+  }
+
+  test('parent Task tool_use seeds the subagent roster AND still emits the inline Task chip', () => {
+    const { emitted, feed } = makeTranslator();
+    spawnTask(feed);
+
+    const rosters = byKind(emitted, 'subagent_list_update');
+    assert.equal(rosters.length, 1, 'exactly one roster update on spawn');
+    const subs = rosters[0].subagents as Array<Record<string, unknown>>;
+    assert.equal(subs.length, 1);
+    assert.equal(subs[0].sessionId, 'toolu_task1');
+    assert.equal(subs[0].agentName, 'explore');
+    assert.equal(subs[0].initialQuery, 'Find the auth code');
+    assert.equal(subs[0].status, 'working');
+
+    // The parent transcript still gets the Task chip marking the spawn point.
+    const chips = byKind(emitted, 'tool_call');
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].title, 'Task');
+    assert.equal(chips[0].toolCallId, 'toolu_task1');
+  });
+
+  test('subagent inner tool_use becomes subagent_tool_activity, not a parent tool_call', () => {
+    const { emitted, feed } = makeTranslator();
+    spawnTask(feed);
+    const before = emitted.length;
+
+    feed({
+      type: 'assistant',
+      parent_tool_use_id: 'toolu_task1',
+      message: {
+        content: [{ type: 'tool_use', id: 'toolu_inner', name: 'read_file', input: { file_path: '/x.ts' } }],
+      },
+    });
+
+    const fresh = emitted.slice(before);
+    const activity = byKind(fresh, 'subagent_tool_activity');
+    assert.equal(activity.length, 1);
+    assert.equal(activity[0].subagentSessionId, 'toolu_task1');
+    assert.ok(String(activity[0].title).includes('x.ts'));
+    // Crucially: no parent tool_call chip for the subagent's inner tool.
+    assert.equal(byKind(fresh, 'tool_call').length, 0);
+    assert.equal(
+      (fresh as unknown as AnyEv[]).some((e) => e.toolCallId === 'toolu_inner'),
+      false,
+    );
+  });
+
+  test('subagent inner text updates statusMessage and never leaks a parent chunk', () => {
+    const { emitted, feed } = makeTranslator();
+    spawnTask(feed);
+    const before = emitted.length;
+
+    feed({
+      type: 'assistant',
+      parent_tool_use_id: 'toolu_task1',
+      message: { content: [{ type: 'text', text: 'Looking at auth middleware...' }] },
+    });
+
+    const fresh = emitted.slice(before);
+    assert.equal(byKind(fresh, 'chunk').length, 0, 'subagent text must not become a parent chunk');
+    const rosters = byKind(fresh, 'subagent_list_update');
+    assert.equal(rosters.length, 1);
+    const subs = rosters[0].subagents as Array<Record<string, unknown>>;
+    assert.equal(subs[0].statusMessage, 'Looking at auth middleware...');
+  });
+
+  test('subagent stream_event partials with parent_tool_use_id are dropped', () => {
+    const { emitted, feed } = makeTranslator();
+    spawnTask(feed);
+    const before = emitted.length;
+
+    feed({
+      type: 'stream_event',
+      parent_tool_use_id: 'toolu_task1',
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'inner partial' } },
+    });
+
+    assert.equal(emitted.slice(before).length, 0, 'subagent partial deltas emit nothing on the parent stream');
+  });
+
+  test('parent tool_result for a Task id terminates the subagent', () => {
+    const { emitted, feed } = makeTranslator();
+    spawnTask(feed);
+    const before = emitted.length;
+
+    feed({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_task1', content: 'done' }] },
+    });
+
+    const fresh = emitted.slice(before);
+    // The Task chip still completes...
+    assert.equal(byKind(fresh, 'tool_call_update').length, 1);
+    // ...and the roster flips to terminated.
+    const rosters = byKind(fresh, 'subagent_list_update');
+    assert.equal(rosters.length, 1);
+    const subs = rosters[0].subagents as Array<Record<string, unknown>>;
+    assert.equal(subs[0].status, 'terminated');
+  });
+
+  test('turn-end result terminates any subagent still marked working', () => {
+    const { emitted, feed } = makeTranslator();
+    spawnTask(feed);
+    const before = emitted.length;
+
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 1, output_tokens: 1 } });
+
+    const fresh = emitted.slice(before);
+    const rosters = byKind(fresh, 'subagent_list_update');
+    assert.equal(rosters.length, 1, 'safety roster update on turn end');
+    const subs = rosters[0].subagents as Array<Record<string, unknown>>;
+    assert.equal(subs[0].status, 'terminated');
+    // Ordering: termination roster must precede turn_end.
+    const rosterIdx = (fresh as unknown as AnyEv[]).findIndex((e) => e.kind === 'subagent_list_update');
+    const turnEndIdx = (fresh as unknown as AnyEv[]).findIndex((e) => e.kind === 'turn_end');
+    assert.ok(rosterIdx >= 0 && turnEndIdx >= 0 && rosterIdx < turnEndIdx);
+  });
+
+  test('startTurn resets the roster between turns', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+    spawnTask(feed);
+    startTurn();
+    const before = emitted.length;
+
+    // No lingering agent → a bare result must not emit a termination roster.
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 1, output_tokens: 1 } });
+    assert.equal(byKind(emitted.slice(before), 'subagent_list_update').length, 0);
+  });
 });

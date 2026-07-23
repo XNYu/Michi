@@ -1,4 +1,4 @@
-import { NormalizedEvent } from '../../services/chatEvents';
+import { NormalizedEvent, SubagentInfo } from '../../services/chatEvents';
 import { ClaudeEnvelope } from './claudeEnvelopeParser';
 import { getClaudeModelEntry } from './claudeModelCatalog';
 import { DEFAULT_MODELS } from '../agentConfig';
@@ -89,6 +89,104 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
   // the late copy, causing chips to pool at the bottom of the transcript.
   const streamedToolUseIds = new Set<string>();
 
+  // In-session subagent (Task) tracking. With --forward-subagent-text the CLI
+  // forwards each subagent's assistant/user messages as top-level envelopes
+  // carrying `parent_tool_use_id` = the parent `Task` tool_use id. We rebuild a
+  // live roster (subagent_list_update) + per-agent tool activity
+  // (subagent_tool_activity) — mirroring the Kiro runtime, whose downstream
+  // (SSE → reducer → SubagentStatus panel) already consumes these — instead of
+  // folding subagent output into the parent transcript. Keyed by Task id.
+  const subagents = new Map<string, SubagentInfo>();
+
+  function emitRoster(): void {
+    emit({ kind: 'subagent_list_update', subagents: [...subagents.values()] });
+  }
+
+  function snippet(text: string, max = 140): string {
+    const t = text.replace(/\s+/g, ' ').trim();
+    return t.length > max ? t.slice(0, max) : t;
+  }
+
+  /**
+   * Get-or-create a roster entry. Emits subagent_list_update on first sight (so
+   * a later subagent_tool_activity has a roster to attach to — the reducer
+   * drops activity for unknown sessions) and when late metadata backfills a
+   * lazily-created entry.
+   */
+  function ensureSubagent(id: string, seed?: Partial<SubagentInfo>): SubagentInfo {
+    const existing = subagents.get(id);
+    if (!existing) {
+      const entry: SubagentInfo = {
+        sessionId: id,
+        sessionName: seed?.sessionName ?? seed?.agentName ?? 'subagent',
+        agentName: seed?.agentName ?? 'subagent',
+        initialQuery: seed?.initialQuery ?? '',
+        status: 'working',
+        group: '',
+        dependsOn: [],
+      };
+      subagents.set(id, entry);
+      emitRoster();
+      return entry;
+    }
+    if (seed) {
+      let changed = false;
+      if (seed.agentName && existing.agentName === 'subagent') {
+        existing.agentName = seed.agentName;
+        changed = true;
+      }
+      if (seed.sessionName && existing.sessionName === 'subagent') {
+        existing.sessionName = seed.sessionName;
+        changed = true;
+      }
+      if (seed.initialQuery && !existing.initialQuery) {
+        existing.initialQuery = seed.initialQuery;
+        changed = true;
+      }
+      if (changed) emitRoster();
+    }
+    return existing;
+  }
+
+  /**
+   * Route a subagent's forwarded envelope (parent_tool_use_id set) to the
+   * roster/activity surfaces instead of the parent transcript. Tool_use blocks
+   * become activity; text blocks update the agent's status line. Inner
+   * tool_result (`user`) and partial stream_event frames are intentionally
+   * dropped — currentTool already reflects the in-flight tool.
+   */
+  function handleSubagentEnvelope(type: string | undefined, env: ClaudeEnvelope, parentId: string): void {
+    const entry = ensureSubagent(parentId);
+    if (entry.status === 'terminated') return; // late frames after Task completed
+
+    if (type !== 'assistant') return;
+    const message = env['message'] as Record<string, unknown> | undefined;
+    const content = message?.['content'];
+    if (!Array.isArray(content)) return;
+
+    for (const block of content) {
+      const b = block as Record<string, unknown>;
+      const btype = b['type'] as string | undefined;
+      if (btype === 'tool_use') {
+        const name = (b['name'] as string | undefined) ?? '';
+        const input = (b['input'] ?? {}) as Record<string, unknown>;
+        const title = extractPurpose(name, input) ?? name;
+        emit({
+          kind: 'subagent_tool_activity',
+          subagentSessionId: parentId,
+          title,
+          status: 'in_progress',
+        });
+      } else if (btype === 'text') {
+        const s = snippet((b['text'] as string | undefined) ?? '');
+        if (s && entry.statusMessage !== s) {
+          entry.statusMessage = s;
+          emitRoster();
+        }
+      }
+    }
+  }
+
   let accumulatedUsage: UsageShape = {
     input_tokens: 0,
     output_tokens: 0,
@@ -130,10 +228,27 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
 
   function startTurn(): void {
     turnStartMs = Date.now();
+    // Reset the subagent roster so a new turn doesn't inherit the previous
+    // turn's (terminated) agents. The first subagent_list_update of this turn
+    // repopulates it; if there are no subagents, the frontend clears on its
+    // own turn boundary.
+    subagents.clear();
   }
 
   function feed(env: ClaudeEnvelope): void {
     const type = env['type'] as string | undefined;
+
+    // Subagent inner turns: the CLI stamps every forwarded subagent message
+    // (and its partial stream_event frames) with parent_tool_use_id = the
+    // parent Task tool_use id. Route these to the roster/activity surfaces so
+    // subagent text/thinking/tool calls never leak into the parent transcript
+    // or the parent's tool-call chip list. Must run before the assistant/user/
+    // stream_event handlers below.
+    const parentToolUseId = (env['parent_tool_use_id'] as string | null | undefined) ?? null;
+    if (parentToolUseId) {
+      handleSubagentEnvelope(type, env, parentToolUseId);
+      return;
+    }
 
     // system envelope
     if (type === 'system') {
@@ -182,6 +297,25 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
           const detail = extractPurpose(name, input)
             ?? Array.from(JSON.stringify(input)).slice(0, 200).join('');
           const inputJson = truncatePayload(input);
+
+          // A parent-level `Task` tool_use spawns an in-session subagent. Seed
+          // the roster from its input (subagent_type / description / prompt) so
+          // forwarded subagent frames — which arrive next — have somewhere to
+          // land. The Task chip itself still renders inline (below) marking the
+          // spawn point in the parent transcript.
+          if (id && name === 'Task') {
+            const subagentType =
+              typeof input['subagent_type'] === 'string' ? (input['subagent_type'] as string) : undefined;
+            const description =
+              typeof input['description'] === 'string' ? (input['description'] as string) : undefined;
+            const prompt = typeof input['prompt'] === 'string' ? (input['prompt'] as string) : '';
+            const initialQuery = description || (prompt ? snippet(prompt.split('\n')[0], 200) : '');
+            ensureSubagent(id, {
+              agentName: subagentType,
+              sessionName: subagentType,
+              initialQuery,
+            });
+          }
           if (streamedToolUseIds.has(id)) {
             emit({
               kind: 'tool_call_update',
@@ -323,6 +457,13 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
             kindType: 'tool',
             output: truncatePayload(resultContent),
           });
+
+          // Parent-level tool_result for a Task = its subagent has finished.
+          const entry = subagents.get(toolUseId);
+          if (entry && entry.status !== 'terminated') {
+            entry.status = 'terminated';
+            emitRoster();
+          }
         }
       }
 
@@ -334,6 +475,17 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
       const subtype = (env['subtype'] as string | undefined) ?? '';
       const usage = (env['usage'] as UsageShape | undefined) ?? emptyUsage();
       if (usage) mergeUsage(usage);
+
+      // Safety: never leave the subagent panel pinned on "working" past the
+      // turn (e.g. a missed Task tool_result). Emit before turn_end.
+      let terminatedAny = false;
+      for (const entry of subagents.values()) {
+        if (entry.status === 'working') {
+          entry.status = 'terminated';
+          terminatedAny = true;
+        }
+      }
+      if (terminatedAny) emitRoster();
 
       if (subtype === 'success') {
         const turnDurationMs = Date.now() - turnStartMs;

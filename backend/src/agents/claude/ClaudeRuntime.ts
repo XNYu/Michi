@@ -17,7 +17,7 @@ import * as sessionRegistry from '../sessionRegistry';
 import { preflightClaudeAuth } from './claudeBinary';
 import { buildFirstTurnPrefix } from '../preamble';
 import { getWorkspaceInstructions } from '../../services/dbRepository';
-import { agentConfigEvents, resolveModel } from '../../services/agentConfig';
+import { agentConfigEvents, resolveModel, resolveClaudeConfigDir } from '../../services/agentConfig';
 import type { ModelChangedEvent } from '../../services/agentConfig';
 import { ClaudeSessionManager, ClaudeConcurrencyError } from './ClaudeSessionManager';
 import { chatHub } from '../chatHub';
@@ -72,7 +72,7 @@ export class ClaudeRuntime implements AgentRuntime {
     // Pre-flight auth check at construction — fail fast if credentials are absent
     // rather than letting the first spawn hang on a stdin auth prompt.
     try {
-      preflightClaudeAuth();
+      preflightClaudeAuth(resolveClaudeConfigDir());
     } catch (err) {
       console.warn('[ClaudeRuntime] Auth pre-flight warning:', (err as Error).message);
     }

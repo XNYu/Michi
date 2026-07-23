@@ -23,6 +23,7 @@ const AUTH_ENV_KEYS = [
   'GOOGLE_APPLICATION_CREDENTIALS',
   'GCP_PROJECT',
   'CLAUDE_CLI_BIN',
+  'CLAUDE_CONFIG_DIR',
 ];
 
 let savedEnv: Record<string, string | undefined> = {};
@@ -409,5 +410,42 @@ describe('claudeBinary', () => {
       cp.spawn = originalSpawn;
       fs.existsSync = origExistsSync;
     }
+  });
+
+  // ── Config-dir override: preflight must check the SAME dir the child uses ────
+
+  test('preflightClaudeAuth accepts OAuth creds in an explicit configDir', () => {
+    const altDir = path.join(tmpDir, 'claude-alt');
+    fs.mkdirSync(altDir);
+    fs.writeFileSync(path.join(altDir, 'settings.json'), '{}');
+
+    const { preflightClaudeAuth } = freshModule();
+    assert.doesNotThrow(() => preflightClaudeAuth(altDir));
+  });
+
+  test('preflightClaudeAuth checks ONLY the explicit configDir — override, not additive', () => {
+    // Empty dir: no auth.json / settings.json / session-env. Even if the real
+    // ~/.claude on this machine has creds, the override must not fall back to it.
+    const emptyDir = path.join(tmpDir, 'claude-empty');
+    fs.mkdirSync(emptyDir);
+
+    const { preflightClaudeAuth, ClaudeAuthMissingError } = freshModule();
+    assert.throws(
+      () => preflightClaudeAuth(emptyDir),
+      (err: unknown) => {
+        assert.ok(err instanceof ClaudeAuthMissingError, `expected ClaudeAuthMissingError, got ${err}`);
+        return true;
+      },
+    );
+  });
+
+  test('preflightClaudeAuth respects an inherited CLAUDE_CONFIG_DIR when no override is passed', () => {
+    const envDir = path.join(tmpDir, 'claude-env');
+    fs.mkdirSync(envDir);
+    fs.writeFileSync(path.join(envDir, 'session-env'), '');
+
+    process.env.CLAUDE_CONFIG_DIR = envDir;
+    const { preflightClaudeAuth } = freshModule();
+    assert.doesNotThrow(() => preflightClaudeAuth());
   });
 });
