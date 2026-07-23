@@ -366,8 +366,9 @@ function MarkdownContentInner({
     [revealEnabled],
   );
   // Math via $$…$$ (block) and $…$ (inline). remarkCurrencyGuard runs after
-  // remark-math to revert currency-looking matches (e.g. "$5 to $10") back to
-  // plain text, so prices are not mis-rendered as formulas.
+  // remark-math to revert its false positives back to plain text: currency
+  // (e.g. "$5 to $10") and leaked `${…}` template/shell interpolations (e.g.
+  // "${API_BASE_URL}/x/${id}"), so neither is mis-rendered as a formula.
   const remarkPlugins = useMemo(() => [remarkMath, remarkCurrencyGuard], []);
   const mayContainRawHtml = text.includes('<');
   const rehypePlugins = useMemo(() => {
