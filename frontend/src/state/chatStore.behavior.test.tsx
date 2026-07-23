@@ -300,8 +300,12 @@ describe('auto-branch behavior (real provider)', () => {
       handlers.onDone?.();
     });
 
+    // The notification fires (intent of this test) and now carries the
+    // thread's derived title instead of the generic 'Branch complete' fallback
+    // — the first turn's title is derived from the first user message ('background
+    // work') at turn-end, so node.title is set by the time the notification builds.
     expect(mockNotify).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Branch complete',
+      title: 'background work',
       body: 'Streaming finished',
     }));
   });

@@ -3,20 +3,44 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { getClaudeProjectsDir, getClaudeJsonlPath } from '../src/agents/claude/claudeProjectsPath';
+import { updateAgentConfig } from '../src/services/agentConfig';
 
-// Save / restore HOME so tests don't pollute each other
+// claudeConfigBase() resolves an explicit config dir before falling back to
+// os.homedir(): resolveClaudeConfigDir() (the agentConfig singleton) then
+// $CLAUDE_CONFIG_DIR. These tests exercise the ~/.claude default branch, so we
+// must neutralize BOTH override sources — otherwise a leaked agentConfig
+// claudeConfigDir (set by agentConfig.test.ts) or an inherited
+// $CLAUDE_CONFIG_DIR makes the result independent of HOME and the asserts fail
+// only under the full suite (test-isolation, not a source bug).
 let savedHome: string | undefined;
+let savedConfigDirEnv: string | undefined;
+// updateAgentConfig() persists via fs.writeFileSync — stub it so resetting the
+// singleton here never churns the real ~/.michi/config.json.
+let origWriteFileSync: typeof import('node:fs').writeFileSync;
 
 describe('claudeProjectsPath', () => {
   beforeEach(() => {
+    const fsCjs = require('fs');
+    origWriteFileSync = fsCjs.writeFileSync;
+    fsCjs.writeFileSync = () => { /* noop */ };
     savedHome = process.env.HOME;
+    savedConfigDirEnv = process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.CLAUDE_CONFIG_DIR;
+    updateAgentConfig({ claudeConfigDir: undefined });
   });
 
   afterEach(() => {
+    updateAgentConfig({ claudeConfigDir: undefined });
+    require('fs').writeFileSync = origWriteFileSync;
     if (savedHome === undefined) {
       delete process.env.HOME;
     } else {
       process.env.HOME = savedHome;
+    }
+    if (savedConfigDirEnv === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = savedConfigDirEnv;
     }
   });
 
