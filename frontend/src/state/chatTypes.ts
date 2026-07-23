@@ -791,7 +791,9 @@ export interface ChatContextValue {
     parentNodeId: string,
     firstMessage: string,
     meta?: UserSendMeta,
-    opts?: { anchorMessageId?: string },
+    // focus defaults to true (open + focus the new pane). Pass focus:false for
+    // chat-pane branch gestures that should keep the user on the current pane.
+    opts?: { anchorMessageId?: string; focus?: boolean },
   ) => Promise<string>;
   /** Create an empty child chat (no streaming turn) branched from the given node. Returns the new nodeId. */
   createBlankChild: (parentNodeId: string, opts?: { anchorMessageId?: string }) => Promise<string>;

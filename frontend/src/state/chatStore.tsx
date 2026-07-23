@@ -1647,7 +1647,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       parentNodeId: string,
       firstMessage: string,
       meta?: UserSendMeta,
-      opts?: { anchorMessageId?: string },
+      opts?: { anchorMessageId?: string; focus?: boolean },
     ) => {
       const parent = nodesRef.current[parentNodeId];
       if (!parent) throw new Error('unknown parent node');
@@ -1693,9 +1693,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
             : p,
         ),
       );
-      // Auto-open in a pane so it's visible in the dashboard view immediately.
+      // Always open the pane so it's visible in the dashboard strip. Only move
+      // focus there when the caller didn't opt out (opts.focus === false).
+      // Chat-pane branch gestures pass focus:false so branching a tangent
+      // doesn't yank the user off the pane they're reading.
       setOpenPanes((prev) => (prev.includes(nodeId) ? prev : [...prev, nodeId]));
-      setFocusedPane(nodeId);
+      if (opts?.focus !== false) {
+        setFocusedPane(nodeId);
+      }
       // Pass the original digest parent through to startStream so the digest
       // content lands as a preamble even though we re-anchored the branch edge.
       void startStream(

@@ -289,9 +289,14 @@ export default function TerminalDashboard() {
       });
     }, 600 + added.length * 80);
     // Wait one frame so the new pane is laid out before we measure offsetLeft.
+    // Only auto-scroll if the new pane is also focused — spawned branches that
+    // don't steal focus shouldn't yank the viewport away from the active pane.
     const target = added[added.length - 1];
-    requestAnimationFrame(() => scrollToPane(target));
+    if (target === focusedPane) {
+      requestAnimationFrame(() => scrollToPane(target));
+    }
     return () => window.clearTimeout(clearAt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally reads focusedPane without dep; we only want this to fire on openPanes change
   }, [openPanes]);
 
   if (!activeProject) {

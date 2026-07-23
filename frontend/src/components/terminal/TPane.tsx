@@ -1559,6 +1559,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const handleBranchFollowUp = useCallback((question: string) => {
     void createChildChat(nodeId, question, undefined, {
       anchorMessageId: n?.followUpsSourceMessageId,
+      focus: false,
     }).catch(() => {});
   }, [createChildChat, n?.followUpsSourceMessageId, nodeId]);
 
@@ -1730,7 +1731,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     const shouldBranch =
       !!text && shouldBranchOnSubmit({ forceBranch, slashBranched, streaming });
     if (shouldBranch) {
-      await createChildChat(nodeId, finalText, meta);
+      // Keep the user on the current pane — the branch streams in the
+      // background and appears in the sidebar / Map (see createChildChat).
+      await createChildChat(nodeId, finalText, meta, { focus: false });
     } else {
       sendMessage(nodeId, finalText, meta);
     }
@@ -1841,7 +1844,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               nodeId,
               formatQuotedMessage(q, p),
               { quotedText: q, displayText: p },
-              { anchorMessageId },
+              { anchorMessageId, focus: false },
             ).catch(() => {});
           }}
           onComment={(q, body) => addPendingComment(nodeId, q, body)}
