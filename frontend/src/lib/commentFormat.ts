@@ -44,11 +44,27 @@ export function truncateQuotePreview(
  * The quote is truncated via truncateQuotePreview so runaway selections
  * don't bloat the prompt. Quote lines already starting with `>` are kept
  * as-is so nested blockquotes don't get double-prefixed.
+ *
+ * When the comment carries artifact source metadata, an attribution line
+ * and a "read full document" instruction are included so the agent knows
+ * which file the selection came from.
  */
 export function renderComment(c: PendingComment): string {
   const preview = truncateQuotePreview(c.quotedText.trim());
-  const quoted = formatQuoteBlock(preview);
   const body = c.body.trim();
+
+  if (c.source?.type === 'artifact') {
+    const label = c.source.name ? `artifact "${c.source.name}"` : 'an artifact document';
+    const attribution = `From ${label} at \`${c.source.filePath}\`:`;
+    const quoted = formatQuoteBlock(preview);
+    const readHint = `The full document is available at \`${c.source.filePath}\`. Read it if you need more context.`;
+    const parts = [attribution, '', quoted];
+    if (body) parts.push('', body);
+    parts.push('', readHint);
+    return parts.join('\n');
+  }
+
+  const quoted = formatQuoteBlock(preview);
   return body ? `${quoted}\n\n${body}` : quoted;
 }
 

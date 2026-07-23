@@ -84,6 +84,61 @@ describe('renderComment', () => {
   });
 });
 
+describe('renderComment with artifact source', () => {
+  it('includes attribution and read-hint when source is provided', () => {
+    const c: PendingComment = {
+      id: 'c1',
+      quotedText: 'some passage',
+      body: 'my comment',
+      createdAt: 0,
+      source: { type: 'artifact', name: 'API Spec', filePath: 'docs/api.md' },
+    };
+    const out = renderComment(c);
+    expect(out).toBe(
+      [
+        'From artifact "API Spec" at `docs/api.md`:',
+        '',
+        '> some passage',
+        '',
+        'my comment',
+        '',
+        'The full document is available at `docs/api.md`. Read it if you need more context.',
+      ].join('\n'),
+    );
+  });
+
+  it('uses generic label when source has no name', () => {
+    const c: PendingComment = {
+      id: 'c2',
+      quotedText: 'hello',
+      body: 'world',
+      createdAt: 0,
+      source: { type: 'artifact', filePath: 'notes.md' },
+    };
+    const out = renderComment(c);
+    expect(out).toContain('From an artifact document at `notes.md`:');
+    expect(out).toContain('> hello');
+    expect(out).toContain('world');
+    expect(out).toContain('The full document is available at `notes.md`.');
+  });
+
+  it('renders without body when body is empty (source present)', () => {
+    const c: PendingComment = {
+      id: 'c3',
+      quotedText: 'passage only',
+      body: '',
+      createdAt: 0,
+      source: { type: 'artifact', name: 'Doc', filePath: 'doc.md' },
+    };
+    // addPendingComment guards against empty body, but renderComment should handle it gracefully
+    const out = renderComment(c);
+    expect(out).toContain('From artifact "Doc" at `doc.md`:');
+    expect(out).toContain('> passage only');
+    expect(out).toContain('The full document is available at `doc.md`.');
+    expect(out).not.toContain('\n\n\n'); // no double blank line from missing body
+  });
+});
+
 describe('formatCommentsBlock', () => {
   it('returns empty string for an empty array', () => {
     expect(formatCommentsBlock([])).toBe('');

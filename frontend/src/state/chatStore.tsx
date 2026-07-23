@@ -2008,7 +2008,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const addPendingComment = useCallback(
-    (nodeId: string, quotedText: string, body: string) => {
+    (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string }) => {
       const trimmedQuote = quotedText.trim();
       const trimmedBody = body.trim();
       // Guard against empty entries: a comment needs at least the body text,
@@ -2025,6 +2025,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           quotedText: trimmedQuote,
           body: trimmedBody,
           createdAt: Date.now(),
+          ...(source ? { source } : {}),
         },
       });
     },

@@ -5,7 +5,7 @@ import MarkdownContent from '../MarkdownContent';
 import SelectionActions from '../SelectionActions';
 import { fetchArtifactContent } from '../../services/api';
 import { getElectron } from '../../lib/electronBridge';
-import { formatQuotedMessage } from '../../lib/quoteFormat';
+import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
 
 const PROSE_CLASSES =
   'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
@@ -105,22 +105,31 @@ export default function ArtifactPane({
     (quoted: string, prompt: string) => {
       const targetId = getTargetChatNodeId();
       if (!targetId) return;
+      const artPath = n?.artifact?.filePath;
+      const source: QuoteSource | undefined = artPath
+        ? { type: 'artifact', name: n?.title || n?.artifact?.basename, filePath: artPath }
+        : undefined;
       void createChildChat(
         targetId,
-        formatQuotedMessage(quoted, prompt),
+        formatQuotedMessage(quoted, prompt, source),
         { quotedText: quoted, displayText: prompt },
       ).catch(() => {});
     },
-    [getTargetChatNodeId, createChildChat],
+    [getTargetChatNodeId, createChildChat, n?.artifact?.filePath, n?.title, n?.artifact?.basename],
   );
 
   const handleComment = useCallback(
     (quoted: string, body: string) => {
       const targetId = getTargetChatNodeId();
       if (!targetId) return;
-      addPendingComment(targetId, quoted, body);
+      const artPath = n?.artifact?.filePath ?? '';
+      const artName = n?.title || n?.artifact?.basename || undefined;
+      const source = artPath
+        ? { type: 'artifact' as const, name: artName, filePath: artPath }
+        : undefined;
+      addPendingComment(targetId, quoted, body, source);
     },
-    [getTargetChatNodeId, addPendingComment],
+    [getTargetChatNodeId, addPendingComment, n],
   );
 
   const artifact = n?.artifact;
@@ -133,21 +142,66 @@ export default function ArtifactPane({
     // Only fetch once: skip if already loaded, currently loading, or previously errored
     if (artifact.content !== null || artifact.status === 'loading' || artifact.status === 'error') return;
     dispatch({ type: 'artifact-loading', nodeId });
-    fetchArtifactContent(workspaceId, filePath)
-      .then((result) => {
-        dispatch({
-          type: 'artifact-loaded',
-          nodeId,
-          content: result.content,
-          basename: result.basename,
-          extension: result.extension,
-          size: result.size,
-          modifiedAt: result.modifiedAt,
+
+    const isAbsolute = filePath.startsWith('/');
+    const electron = getElectron();
+
+    // For absolute paths (reference/symlink artifacts), use Electron's readFile
+    // IPC which bypasses the backend's cwd sandbox. Falls back to HTTP API for
+    // relative paths or when Electron is unavailable.
+    if (isAbsolute && electron?.readFile) {
+      // Size gate: stat first, reject files >5MB (should open externally)
+      const doRead = () => {
+        electron.readFile!(filePath)
+          .then((result) => {
+            if (!result) throw new Error('File not readable');
+            const parts = filePath.split('/');
+            const basename = parts[parts.length - 1] || filePath;
+            const dotIdx = basename.lastIndexOf('.');
+            const extension = dotIdx > 0 ? basename.slice(dotIdx + 1) : '';
+            dispatch({
+              type: 'artifact-loaded',
+              nodeId,
+              content: result.content,
+              basename,
+              extension,
+              size: result.size,
+              modifiedAt: result.modifiedAt,
+            });
+          })
+          .catch((err) => {
+            dispatch({ type: 'artifact-error', nodeId, error: (err as Error).message });
+          });
+      };
+      if (electron.statFile) {
+        electron.statFile(filePath).then((stat) => {
+          if (stat && stat.size > 5 * 1024 * 1024) {
+            const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
+            dispatch({ type: 'artifact-error', nodeId, error: `File too large (${sizeMB}MB) — open externally` });
+            return;
+          }
+          doRead();
+        }).catch(() => doRead()); // stat failed, try reading anyway
+      } else {
+        doRead();
+      }
+    } else {
+      fetchArtifactContent(workspaceId, filePath)
+        .then((result) => {
+          dispatch({
+            type: 'artifact-loaded',
+            nodeId,
+            content: result.content,
+            basename: result.basename,
+            extension: result.extension,
+            size: result.size,
+            modifiedAt: result.modifiedAt,
+          });
+        })
+        .catch((err) => {
+          dispatch({ type: 'artifact-error', nodeId, error: (err as Error).message });
         });
-      })
-      .catch((err) => {
-        dispatch({ type: 'artifact-error', nodeId, error: (err as Error).message });
-      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath, workspaceId, nodeId]);
 

@@ -438,6 +438,8 @@ export interface PendingComment {
   body: string;
   /** Unix ms when added; kept for UI ordering / potential future sorting. */
   createdAt: number;
+  /** When the comment targets an artifact file, carries source metadata. */
+  source?: { type: 'artifact'; name?: string; filePath: string };
 }
 
 /**
@@ -986,7 +988,7 @@ export interface ChatContextValue {
    * flushes on the next outgoing prompt. `quotedText` is the selected
    * passage, `body` is the user's reply.
    */
-  addPendingComment: (nodeId: string, quotedText: string, body: string) => void;
+  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string }) => void;
   /** Update the body text of a pending comment. No-op if the id is unknown. */
   editPendingComment: (nodeId: string, commentId: string, body: string) => void;
   /** Drop one pending comment by id. No-op if the id is unknown. */
