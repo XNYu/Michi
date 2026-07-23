@@ -202,7 +202,7 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
     }
   });
 
-  it('archived thread: the archived section pops open to reveal it', async () => {
+  it('archived thread: navigating to it still focuses the pane even though the sidebar no longer shows archived sections', async () => {
     mountTree();
     await act(async () => { await storeRef.createProject('ws1', undefined); });
     await waitFor(() => expect(storeRef.activeProject).toBeTruthy());
@@ -216,16 +216,17 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
     await act(async () => { await storeRef.createThread(); }); // another live thread stays active
     act(() => { storeRef.archiveTree(treeT); });
 
-    // archived section is collapsed → no row in the DOM
+    // Archived threads are not shown in sidebar (ArchivedSection removed)
     expect(row(rootT)).toBeNull();
     scrollSpy.mockClear();
 
     act(() => { navigateToNode(deps(), childT, pid); });
 
+    // Navigation still focuses the pane even for archived nodes
     await waitFor(() => expect(storeRef.focusedPane).toBe(childT));
-    await waitFor(() => expect(row(rootT)).not.toBeNull());
-    await waitFor(() => expect(row(childT)).not.toBeNull());
-    await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+    // Sidebar rows remain absent since archived section was removed
+    expect(row(rootT)).toBeNull();
+    expect(row(childT)).toBeNull();
   });
 
   it('different workspace, node in the ACTIVE tree of target workspace (regression)', async () => {
