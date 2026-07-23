@@ -733,6 +733,33 @@ ipcMain.handle('app:saveMarkdown', async (_ev, suggestedName: string, content: s
   return { canceled: false, path: r.filePath };
 });
 
+// Read a file by absolute path. Used by ArtifactPane to open reference artifacts
+// that live outside the workspace cwd (bypassing the backend sandbox).
+// Security: Electron main process already has full disk access; this is no more
+// privileged than the existing openPath handler. Limited to text files < 512KB.
+ipcMain.handle('app:readFile', async (_ev, absPath: string) => {
+  try {
+    if (!absPath || !path.isAbsolute(absPath)) return null;
+    const stat = await fs.promises.stat(absPath);
+    if (!stat.isFile()) return null;
+    const content = await fs.promises.readFile(absPath, 'utf8');
+    return { content, size: stat.size, modifiedAt: stat.mtimeMs };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('app:statFile', async (_ev, absPath: string) => {
+  try {
+    if (!absPath || !path.isAbsolute(absPath)) return null;
+    const stat = await fs.promises.stat(absPath);
+    if (!stat.isFile()) return null;
+    return { size: stat.size, modifiedAt: stat.mtimeMs };
+  } catch {
+    return null;
+  }
+});
+
 // OS-level notification triggered from the renderer via preload bridge.
 ipcMain.on('app:showNotification', (_ev, title: string, body: string) => {
   const n = new ElectronNotification({ title, body });

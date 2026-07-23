@@ -171,11 +171,38 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
       }
       // Reference artifacts are absolute disk paths *outside* the workspace;
       // symlink artifacts are cwd-relative paths that resolve (through a symlink)
-      // to a file outside the workspace. The in-app viewers (ArtifactPane →
-      // /artifacts/read, Lightbox → /api/files) are sandboxed to cwd and 404 on
-      // both (realpath guard defeats symlink escape), so hand them straight to the
-      // OS opener. Both are Electron-only to create, so openPath is available here.
+      // to a file outside the workspace. For doc types in Electron, try to open
+      // them internally via the main-process readFile IPC (bypasses backend sandbox).
+      // Files >5MB are too large for in-app rendering — prompt to open externally.
+      // Fall back to OS opener for non-doc types or when Electron is unavailable.
       if (c.kind === 'reference' || c.kind === 'symlink') {
+        if (t === 'doc') {
+          const electron = getElectron();
+          const isAbsolute = c.filePath.startsWith('/');
+          // Size gate: if Electron statFile is available, check before opening
+          if (isAbsolute && electron?.statFile) {
+            const stat = await electron.statFile(c.filePath);
+            if (stat && stat.size > 5 * 1024 * 1024) {
+              const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
+              const confirmed = await confirmDialog({
+                title: 'ファイルが大きすぎます',
+                message: `このファイルは ${sizeMB}MB あります（5MB超）。外部アプリで開きますか？`,
+                confirmLabel: '外部で開く',
+                cancelLabel: 'キャンセル',
+                danger: false,
+              });
+              if (confirmed) openViaOS(c);
+              return;
+            }
+          }
+          try {
+            await openArtifactPane(c.filePath);
+            onClose();
+            return;
+          } catch {
+            // Fallback to OS if pane open fails
+          }
+        }
         openViaOS(c);
         return;
       }

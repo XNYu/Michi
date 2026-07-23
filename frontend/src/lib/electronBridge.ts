@@ -39,6 +39,10 @@ export interface ElectronBridge {
   relaunch?(): void;
   /** Open a multi-select OS file picker, returns absolute paths. Optional — absent in older builds. */
   chooseFiles?(): Promise<{ canceled: boolean; paths?: string[] }>;
+  /** Read a file by absolute path (bypasses backend sandbox). Returns null on failure. Optional — absent in older builds. */
+  readFile?(absPath: string): Promise<{ content: string; size: number; modifiedAt: number } | null>;
+  /** Stat a file by absolute path (size check without reading). Returns null on failure. Optional — absent in older builds. */
+  statFile?(absPath: string): Promise<{ size: number; modifiedAt: number } | null>;
   /** Resolve absolute path of a File from drag-drop. Returns null if unavailable. Optional — absent in older builds. */
   getPathForFile?(file: File): string | null;
 }

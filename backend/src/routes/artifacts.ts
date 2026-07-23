@@ -17,10 +17,9 @@ import { getWorkspace } from "../services/dbRepository";
  * symlink defeat, size cap) but the MIME allowlist is replaced by a text-only
  * check: we refuse to stream binary blobs.
  *
- * Max file size: 512KB (generous for markdown/code; rejects giant binaries).
+ * Max file size: 5MB (generous for markdown/code; rejects giant binaries).
  */
 
-const MAX_TEXT_BYTES = 512 * 1024;
 const WORKSPACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const SHARED_ROOT = "/shared/michi/files";
 
@@ -126,8 +125,11 @@ export function setupArtifactRoutes(): express.Router {
       return res.status(404).end();
     }
     if (!stat.isFile()) return res.status(404).end();
-    if (stat.size > MAX_TEXT_BYTES) {
-      return res.status(413).json({ error: "File too large (>512KB)" });
+
+    // Size gate: files >5MB should be opened externally
+    if (stat.size > 5 * 1024 * 1024) {
+      const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
+      return res.status(413).json({ error: `File too large (${sizeMB}MB > 5MB) — open externally` });
     }
 
     // 5. Read as UTF-8 text

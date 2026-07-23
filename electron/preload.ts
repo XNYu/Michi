@@ -86,6 +86,12 @@ contextBridge.exposeInMainWorld('electron', {
   chooseFiles(): Promise<{ canceled: boolean; paths?: string[] }> {
     return ipcRenderer.invoke('app:chooseFiles');
   },
+  readFile(absPath: string): Promise<{ content: string; size: number; modifiedAt: number } | null> {
+    return ipcRenderer.invoke('app:readFile', absPath);
+  },
+  statFile(absPath: string): Promise<{ size: number; modifiedAt: number } | null> {
+    return ipcRenderer.invoke('app:statFile', absPath);
+  },
   getPathForFile(file: File): string | null {
     try {
       const p = webUtils.getPathForFile(file);
