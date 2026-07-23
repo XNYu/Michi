@@ -58,6 +58,18 @@ export class ACPProcessExitedError extends ACPError {}
 
 export type AcpUpdate = Record<string, any>;
 
+/**
+ * A non-text ACP prompt content block appended after the text block. kiro-cli
+ * advertises `promptCapabilities.image: true` at initialize; image blocks carry
+ * base64 data + mimeType (verified against kiro-cli 2.14.0).
+ */
+export interface AcpPromptBlock {
+    type: "image" | "resource";
+    mimeType?: string;
+    data?: string;
+    [key: string]: unknown;
+}
+
 function contentBlocks(content: unknown): unknown[] {
     if (Array.isArray(content)) return content;
     return content ? [content] : [];
@@ -749,7 +761,11 @@ export class AcpClient {
      * HEARTBEAT_INTERVAL_MS during silence so downstream SSE consumers can
      * tell "still working" from "stuck".
      */
-    async *prompt(sessionId: string, text: string): AsyncIterableIterator<AcpUpdate> {
+    async *prompt(
+        sessionId: string,
+        text: string,
+        extraBlocks: AcpPromptBlock[] = [],
+    ): AsyncIterableIterator<AcpUpdate> {
         const tPromptIn = perf.now();
         perf.mark("acp:prompt_entered", { sid: sessionId, textLen: text.length });
         const q = this.sessionQueues.get(sessionId);
@@ -791,7 +807,7 @@ export class AcpClient {
         let promptError: Error | null = null;
         const sendPromise = this.send(
             "session/prompt",
-            { sessionId, prompt: [{ type: "text", text }] },
+            { sessionId, prompt: [{ type: "text", text }, ...extraBlocks] },
             PROMPT_TIMEOUT_MS,
             sessionId,
         )

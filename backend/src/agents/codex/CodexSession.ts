@@ -80,6 +80,8 @@ export interface CodexSessionDeps {
   generateTitleOnFirstTurn?: boolean;
   followUpsHookPocEnabled?: boolean;
   followUpsExperimentMode?: FollowUpsExperimentMode;
+  /** Default true. When false, the per-turn follow-up reminder is suppressed. */
+  enableFollowUps?: boolean;
 }
 
 export class CodexSession implements AgentSession {
@@ -88,6 +90,10 @@ export class CodexSession implements AgentSession {
   public readonly parentChatId: string | undefined;
   public currentModeId: string | null = null;
   public currentModelId: string | null;
+  /** Assistant text accumulated during the in-flight turn, exposed via
+   *  getPendingAssistant() for auto-branch ancestor "in progress" stitching.
+   *  Non-null only between turn start and the finally block. */
+  private pendingAssistantBuf: string[] | null = null;
   public readonly threadId: string;
   public readonly workspaceId: string | null;
   public readonly effort: string | null;
@@ -101,6 +107,7 @@ export class CodexSession implements AgentSession {
   private readonly generateTitleOnFirstTurn: boolean;
   private readonly followUpsHookPocEnabled: boolean;
   private readonly followUpsExperimentMode: FollowUpsExperimentMode;
+  private readonly enableFollowUps: boolean;
 
   private state: SessionState = 'idle';
   private slotId: string | null = null;
@@ -162,6 +169,7 @@ export class CodexSession implements AgentSession {
     this.mcpPort = deps.mcpPort;
     this.ownerUserId = deps.ownerUserId ?? null;
     this.generateTitleOnFirstTurn = deps.generateTitleOnFirstTurn ?? false;
+    this.enableFollowUps = deps.enableFollowUps !== false;
     this.followUpsHookPocEnabled = deps.followUpsHookPocEnabled ?? false;
     this.followUpsExperimentMode =
       deps.followUpsExperimentMode ?? resolveFollowUpsExperimentMode();
@@ -183,7 +191,7 @@ export class CodexSession implements AgentSession {
   }
 
   getPendingAssistant(): string | undefined {
-    return undefined;
+    return this.pendingAssistantBuf?.join('');
   }
 
   async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
@@ -212,6 +220,7 @@ export class CodexSession implements AgentSession {
         userTurnCount,
         this.followUpsHookPocEnabled,
         this.followUpsExperimentMode,
+        this.enableFollowUps,
       );
       const textForModel = outgoingText
         + (reminder || '')
@@ -310,6 +319,7 @@ export class CodexSession implements AgentSession {
       }
 
       const assistantChunks: string[] = [];
+      this.pendingAssistantBuf = assistantChunks;
       let titleDelivered = titlePromise === null;
       let pendingTurnEnd: Extract<NormalizedEvent, { kind: 'turn_end' }> | null = null;
       while (true) {
@@ -339,6 +349,7 @@ export class CodexSession implements AgentSession {
         this.state = 'idle';
       }
     } finally {
+      this.pendingAssistantBuf = null;
       turnEventGate.acceptTitle = false;
       this.activeTurnThreadIds.clear();
       this.cancelRequested = false;

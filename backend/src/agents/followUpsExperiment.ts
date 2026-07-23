@@ -38,11 +38,15 @@ export function followUpsTurnReminder(
   userTurnCount: number,
   hookPocEnabled: boolean,
   mode: FollowUpsExperimentMode,
+  enableFollowUps: boolean = true,
 ): string {
   if (hookPocEnabled) {
+    // The sentinel reminder only carries the follow-up sentinel protocol, so
+    // dropping it when follow-ups are disabled leaves branch-overview intact.
+    if (!enableFollowUps) return '';
     return mode === 'sentinel' ? FOLLOW_UPS_SENTINEL_TURN_REMINDER : '';
   }
-  return followUpReminder(userTurnCount, true);
+  return followUpReminder(userTurnCount, enableFollowUps);
 }
 
 export function followUpsMetadataOutputMode(

@@ -15,7 +15,7 @@ import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble } from "../preamble";
 import type { AgentToolBridge, BridgeContextResult, SpawnedBranch } from "../toolBridge";
 import type { RuntimeModelCache } from "../runtimeModelCache";
-import { getNode } from "../../services/dbRepository";
+import { getNode, getWorkspaceInstructions } from "../../services/dbRepository";
 
 export interface OpenSessionResult {
     sid: string;
@@ -47,6 +47,13 @@ export type McpSlotCallbacksFactory = (getSlotId: () => string | undefined) => M
  * model spawned the first AcpClient. Do NOT change this here; it is
  * tracked separately.
  */
+export class KiroConcurrencyError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "KiroConcurrencyError";
+    }
+}
+
 export class KiroRuntime implements AgentRuntime {
     public readonly id = "kiro" as const;
     public readonly label = "Kiro";
@@ -119,6 +126,10 @@ export class KiroRuntime implements AgentRuntime {
 
     private readonly mcpBaseUrl: string;
     private readonly defaultCwd: string;
+    /** Safety valve mirroring Claude/Codex. Kiro multiplexes many ACP sessions
+     *  onto one kiro-cli per cwd, so there's no per-session process to cap —
+     *  this only guards against unbounded session-map growth. Default high. */
+    private readonly concurrencyCap: number;
 
     constructor(
         /** Bridge for spawn_branches/save_artifact/update_artifact business effects. */
@@ -133,6 +144,7 @@ export class KiroRuntime implements AgentRuntime {
         this.defaultCwd = defaultCwd;
         this.modelCacheStore = modelCache;
         this.modelCache = modelCache?.load(this.id) ?? null;
+        this.concurrencyCap = parseInt(process.env.MICHI_KIRO_MAX_CONCURRENT ?? "100", 10);
     }
 
     /** Resolves the cwd for a sessionId — used by permission forwarding. */
@@ -196,6 +208,7 @@ export class KiroRuntime implements AgentRuntime {
             onSpawnBranches: async (topics) => this.handleSpawnBranches(getSlotId()!, topics),
             onSaveArtifact: (name, body) => this.handleSaveContext(getSlotId()!, name, body),
             onUpdateArtifact: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
+            onSetFollowUps: (followUps) => this.handleSetFollowUps(getSlotId()!, followUps),
             onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
             metadataDoneSentinel: KIRO_METADATA_DONE_SENTINEL,
             // show_image is a Claude-runtime side-effect tool; the Kiro runtime
@@ -269,6 +282,19 @@ export class KiroRuntime implements AgentRuntime {
             size: result.size,
         });
         return result;
+    }
+
+    private handleSetFollowUps(slotId: string, followUps: string[]): void {
+        const slot = this.mcpRegistry?.get(slotId);
+        if (!slot) return;
+        const parentChatId = slot.parentChatId;
+        if (parentChatId === "__pending__") return;
+        const cleaned = followUps.map((f) => f.trim()).filter(Boolean).slice(0, 3);
+        if (cleaned.length === 0) return;
+        this.getClient(slot.cwd)?.injectUpdate(parentChatId, {
+            sessionUpdate: "follow_ups",
+            followUps: cleaned,
+        });
     }
 
     private handleSetBranchOverview(slotId: string, overview: string): void {
@@ -745,6 +771,15 @@ export class KiroRuntime implements AgentRuntime {
      * session in sessionRegistry so subsequent ancestor lookups find it.
      */
     async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
+        // Defensive cap (safety valve). Skip when this node already has a bound
+        // session so reconnects/double-loads are never rejected.
+        const alreadyBound = opts.sessionId ? this.sidByNodeId.has(opts.sessionId) : false;
+        if (!alreadyBound && this.sessionCwd.size >= this.concurrencyCap) {
+            throw new KiroConcurrencyError(
+                `Kiro concurrency cap (${this.concurrencyCap}) reached. Try again when an existing session finishes.`,
+            );
+        }
+
         const tTotal = perf.now();
         const c = await this.ensureClient(opts.cwd, opts.model ?? undefined);
 
@@ -812,6 +847,10 @@ export class KiroRuntime implements AgentRuntime {
             }
         }
 
+        const workspaceInstructions = opts.workspaceId
+            ? getWorkspaceInstructions(opts.workspaceId)
+            : null;
+
         const preamble = buildPreamble({
             enableFollowUps,
             cwd: opts.cwd,
@@ -819,6 +858,7 @@ export class KiroRuntime implements AgentRuntime {
             extraContexts: opts.extraContexts,
             ancestors: ancestorChain,
             mergeContexts: opts.mergeContexts,
+            workspaceInstructions,
         });
         session.primeFirstMessage(preamble);
 

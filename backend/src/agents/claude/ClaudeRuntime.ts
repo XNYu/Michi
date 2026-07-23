@@ -145,6 +145,7 @@ export class ClaudeRuntime implements AgentRuntime {
       model: opts.model ?? undefined,
       firstTurnPrefix,
       ownerUserId: opts.ownerUserId ?? null,
+      enableFollowUps: opts.enableFollowUps,
     });
   }
 

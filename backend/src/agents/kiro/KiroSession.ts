@@ -1,7 +1,41 @@
-import type { AgentSession, ChatMessage } from "../types";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
+import type { AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
+
+const KIRO_IMAGE_MEDIA_TYPES: Record<string, string> = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+};
+
+/** Read local image attachments into ACP image prompt blocks. kiro-cli
+ *  advertises promptCapabilities.image: true; non-image or unreadable files
+ *  are skipped rather than failing the turn. */
+function buildKiroImageBlocks(input?: AgentTurnInput): AcpPromptBlock[] {
+    const blocks: AcpPromptBlock[] = [];
+    const seen = new Set<string>();
+    for (const attachment of input?.attachments ?? []) {
+        const absPath = attachment.absPath;
+        if (!path.isAbsolute(absPath) || seen.has(absPath)) continue;
+        const mimeType = KIRO_IMAGE_MEDIA_TYPES[path.extname(absPath).toLowerCase()];
+        if (!mimeType) continue;
+        try {
+            if (!fs.statSync(absPath).isFile()) continue;
+            const data = fs.readFileSync(absPath).toString("base64");
+            seen.add(absPath);
+            blocks.push({ type: "image", mimeType, data });
+        } catch {
+            // Unreadable attachment — skip.
+        }
+    }
+    return blocks;
+}
 
 export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
 
@@ -119,7 +153,7 @@ export class KiroSession implements AgentSession {
 
     private firstMessagePreamble: string | null = null;
 
-    async *send(text: string): AsyncIterableIterator<NormalizedEvent> {
+    async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
         this.history.push({ role: "user", content: text });
 
         // Append follow-up reminder for the model only — history stays clean.
@@ -131,10 +165,11 @@ export class KiroSession implements AgentSession {
             ? `${this.firstMessagePreamble}\n${textForModel}`
             : textForModel;
         this.firstMessagePreamble = null;
+        const imageBlocks = buildKiroImageBlocks(input);
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
         try {
-            for await (const ev of this.streamUpdates(transportText)) {
+            for await (const ev of this.streamUpdates(transportText, imageBlocks)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 yield ev;
                 if (ev.kind === "turn_end") break;
@@ -147,11 +182,11 @@ export class KiroSession implements AgentSession {
         }
     }
 
-    private async *streamUpdates(text: string): AsyncIterableIterator<NormalizedEvent> {
+    private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
         const c = await this.runtime.ensureClient(this.cwd);
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         try {
-            for await (const update of c.prompt(this.nativeSessionId, text)) {
+            for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks)) {
                 const kind = update.sessionUpdate;
                 if (kind === "agent_message_chunk") {
                     const content = update.content;
@@ -247,6 +282,13 @@ export class KiroSession implements AgentSession {
                         kind: "branch_overview",
                         overview: update.overview.trim(),
                     };
+                }
+            } else if (kind === "follow_ups") {
+                const followUps = Array.isArray(update.followUps)
+                    ? update.followUps.map((f: unknown) => String(f).trim()).filter(Boolean).slice(0, 3)
+                    : [];
+                if (followUps.length > 0) {
+                    yield { kind: "follow_ups" as const, followUps };
                 }
             } else if (kind === "permission_request") {
                 // Incoming permission request from kiro-cli — forward to SSE

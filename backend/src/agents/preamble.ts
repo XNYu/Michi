@@ -175,16 +175,22 @@ function renderHead(
  */
 export function buildStableSystemPrompt(
     metadataOutputMode: MetadataOutputMode = 'sentinel',
+    enableFollowUps: boolean = true,
 ): string {
-    return buildMetadataSystemPrompt(metadataOutputMode) + ASK_USER_INSTRUCTION;
+    return buildMetadataSystemPrompt(metadataOutputMode, enableFollowUps) + ASK_USER_INSTRUCTION;
 }
 
 /** Stable metadata-only prompt for runtimes whose custom-agent layer cannot
- * use Michi's structured ask_user tool. */
+ * use Michi's structured ask_user tool.
+ *
+ * `enableFollowUps` defaults to true so existing warm-pool callers (Claude)
+ * keep byte-identical spawn args; runtimes without a warm pool (Codex) may
+ * pass false to honor opts.enableFollowUps in the developer instructions. */
 export function buildMetadataSystemPrompt(
     metadataOutputMode: MetadataOutputMode = 'sentinel',
+    enableFollowUps: boolean = true,
 ): string {
-    return renderHead(true, metadataOutputMode);
+    return renderHead(enableFollowUps, metadataOutputMode);
 }
 
 const ASK_USER_INSTRUCTION = `

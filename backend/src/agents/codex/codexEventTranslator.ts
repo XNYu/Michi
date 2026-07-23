@@ -218,6 +218,12 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
   let turnStartMs: number = Date.now();
   let lastRuntimeError: string | undefined;
   let lastReasoningSummaryPartKey: string | undefined;
+  // Last context-window fill % observed from tokenUsageUpdated this turn, so
+  // the turn-end usage_summary can report it instead of a hardcoded 0
+  // (matches claudeEventTranslator). Persists across turns because the
+  // context window is cumulative — a turn with no token update should still
+  // report the last known fill.
+  let lastContextUsagePercentage = 0;
   const outputBuffers = new Map<string, string>();
   const toolPresentations = new Map<string, ToolPresentation>();
 
@@ -364,6 +370,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           const totalTokens =
             typeof total['totalTokens'] === 'number' ? total['totalTokens'] : 0;
           const contextUsagePercentage = (totalTokens / modelContextWindow) * 100;
+          lastContextUsagePercentage = contextUsagePercentage;
           emit({ kind: 'context_usage', contextUsagePercentage });
         }
         break;
@@ -381,7 +388,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
         const turnDurationMs = Date.now() - turnStartMs;
         const turn = (p['turn'] ?? p) as Record<string, unknown>;
         const stopReason = typeof turn['status'] === 'string' ? turn['status'] : undefined;
-        emit({ kind: 'usage_summary', contextUsagePercentage: 0, totalCredits: 0, turnDurationMs });
+        emit({ kind: 'usage_summary', contextUsagePercentage: lastContextUsagePercentage, totalCredits: 0, turnDurationMs });
         if (stopReason === 'failed') {
           emit({
             kind: 'runtime_error',

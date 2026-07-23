@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import type { AgentSession, ChatMessage, LoadAgentSessionOptions, NewAgentSessionOptions } from '../types';
+import type { AgentSession, AgentTurnInput, ChatMessage, LoadAgentSessionOptions, NewAgentSessionOptions } from '../types';
 import type { NormalizedEvent, PermissionOption } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
@@ -97,10 +98,29 @@ export class ClaudeSession implements AgentSession {
   public readonly parentChatId: string | undefined;
   public currentModeId: string | null = null;
 
+  /** Model currently bound to this session (reflects setModel). */
+  get currentModelId(): string | null {
+    return this.model ?? null;
+  }
+
+  /** Assistant text accumulated during the in-flight turn, exposed via
+   *  getPendingAssistant() for auto-branch ancestor "in progress" stitching.
+   *  Non-null only between turn start and the finally block. */
+  private pendingAssistantBuf: string[] | null = null;
+
+  /** Whether to append the per-turn follow-up reminder. Mutable and set
+   *  per-chat (post-spawn) so it can honor opts.enableFollowUps without
+   *  perturbing the byte-identical warm-pool spawn args. The stable
+   *  --append-system-prompt is unaffected; only the per-turn reminder is. */
+  private enableFollowUps = true;
+
   private nodeId: string;
   private readonly cwd: string;
   private workspaceId: string | null;
-  private readonly model: string | undefined;
+  /** Mutable so setModel() can switch models between turns. The change takes
+   *  effect on the next spawn (respawn+resume), since the claude CLI binds the
+   *  model at process start and has no in-session model-change message. */
+  private model: string | undefined;
   private ownerUserId: string | null;
   private readonly systemPromptAppend: string | undefined;
   private readonly mcpRegistry: McpSlotRegistry;
@@ -166,6 +186,10 @@ export class ClaudeSession implements AgentSession {
   // Disposed callback
   private disposedCallback: (() => void) | undefined;
   private disposedCallbackFired = false;
+  /** When true, a process exit is treated as an intentional model-switch
+   *  retirement: the session stays registered (no disposed callback) so the
+   *  next send() resumes it via spawnResume with the new model. */
+  private retireForModelSwitch = false;
 
   // Idle pump: drains self-initiated turns when no send() is active
   private readonly idleGate = new AsyncGate();
@@ -219,10 +243,10 @@ export class ClaudeSession implements AgentSession {
   }
 
   getPendingAssistant(): string | undefined {
-    return undefined;
+    return this.pendingAssistantBuf?.join('');
   }
 
-  async *send(text: string): AsyncIterableIterator<NormalizedEvent> {
+  async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
     if (this.state === 'disposed') {
       yield { kind: 'turn_end', stopReason: 'error' };
       return;
@@ -270,6 +294,7 @@ export class ClaudeSession implements AgentSession {
         userTurnCount,
         this.followUpsHookPocEnabled,
         this.followUpsExperimentMode,
+        this.enableFollowUps,
       );
       const textForModel = reminder ? outgoingText + reminder : outgoingText;
 
@@ -281,7 +306,8 @@ export class ClaudeSession implements AgentSession {
       this.firstModelEnvelopeThisTurn = false;
       this.stdinWriteAt = perf.now();
       const tStdin = this.stdinWriteAt;
-      this.writeStdin(userEnvelope(textForModel));
+      const imageBlocks = buildClaudeImageBlocks(input);
+      this.writeStdin(userEnvelope(textForModel, imageBlocks));
       perf.measure('claude:write_stdin', tStdin, { sid: this.id });
 
       // tStdin → first event is the claude CLI + Anthropic black-box TTFT.
@@ -289,6 +315,7 @@ export class ClaudeSession implements AgentSession {
       let firstEventSeen = false;
       let firstChunkSeen = false;
       const assistantChunks: string[] = [];
+      this.pendingAssistantBuf = assistantChunks;
       for await (const ev of this.queue.drainUntilTurnEnd()) {
         if (!firstEventSeen) {
           firstEventSeen = true;
@@ -312,6 +339,7 @@ export class ClaudeSession implements AgentSession {
       }
       this.lastUsedAt = Date.now();
     } finally {
+      this.pendingAssistantBuf = null;
       this.finishFollowUpsHookPocTurn();
       this.releaseTurnLock();
       this.idleGate.open();
@@ -371,6 +399,15 @@ export class ClaudeSession implements AgentSession {
       throw new Error('setFirstTurnPrefix called after first turn already sent / consumed');
     }
     this.firstTurnPrefix = prefix;
+  }
+
+  /**
+   * Honor opts.enableFollowUps from newSession. Safe to call after warm-pool
+   * handoff (before the first send) because it only gates the per-turn
+   * follow-up reminder — never the byte-identical spawn args.
+   */
+  setEnableFollowUps(enableFollowUps: boolean): void {
+    this.enableFollowUps = enableFollowUps;
   }
 
   /**
@@ -442,6 +479,49 @@ export class ClaudeSession implements AgentSession {
     this.state = 'crashed';
     await this.disposeSlot();
     this.fireDisposedCallback();
+  }
+
+  /**
+   * Switch the session's model between turns. The claude CLI binds the model
+   * at process start and exposes no in-session model-change message, so the
+   * switch is realized by tearing down the live process; the next send()
+   * respawns with `--model <new>` and `--resume <externalSessionId>`, so the
+   * transcript is preserved. Rejected mid-turn (the caller should cancel
+   * first). No-op if the model is unchanged.
+   *
+   * Parity with Kiro's native ACP set_model (KiroSession.setModel).
+   */
+  async setModel(modelId: string): Promise<void> {
+    if (this.state === 'in_turn') {
+      throw new Error('Cannot switch model during an active turn — cancel the turn first');
+    }
+    if (this.state === 'disposed') {
+      throw new Error('Cannot switch model on a disposed session');
+    }
+    if (!modelId || modelId === this.model) {
+      this.model = modelId || this.model;
+      return;
+    }
+    this.model = modelId;
+    // If the process is alive and resumable, retire it so the next turn
+    // respawns with the new model. If it has no external id yet (never
+    // sent a turn) the fresh spawn on first send() already uses this.model.
+    if (this.state === 'idle' && this.externalSessionId && this.child) {
+      this.retireForModelSwitch = true;
+      try {
+        try { this.child.kill('SIGINT'); } catch {}
+        const exited = await this.waitForExit(DISPOSE_TERM_TIMEOUT_MS);
+        if (!exited) {
+          try { this.child.kill('SIGKILL'); } catch {}
+          await this.waitForExit(DISPOSE_KILL_TIMEOUT_MS);
+        }
+      } finally {
+        this.retireForModelSwitch = false;
+      }
+      // The exit handler set state='crashed' (and, because of the flag, kept
+      // the session registered). The next send() sees 'crashed' and calls
+      // spawnResume(externalSessionId), which respawns with the new model.
+    }
   }
 
   respondToPermission(requestId: number, optionId: string): void {
@@ -917,7 +997,12 @@ export class ClaudeSession implements AgentSession {
         this.queue.dispose();
         this.markTranslatorTurnStart = null;
         void this.disposeSlot();
-        this.fireDisposedCallback();
+        // For an intentional model-switch retirement, keep the session
+        // registered so the next send() resumes it with the new model. The
+        // slot is recreated by spawnResume.
+        if (!this.retireForModelSwitch) {
+          this.fireDisposedCallback();
+        }
       }
       exitResolve();
     });
@@ -1359,8 +1444,52 @@ export class ClaudeSession implements AgentSession {
 
 // ---- Helpers -----------------------------------------------------------------
 
-function userEnvelope(text: string): string {
-  return JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n';
+interface ClaudeImageBlock {
+  type: 'image';
+  source: { type: 'base64'; media_type: string; data: string };
+}
+
+/**
+ * When there are image attachments, send the turn as a stream-json content
+ * array (text block + image blocks) instead of a plain string. The claude CLI
+ * accepts the same content-block schema as the Messages API. With no images,
+ * the plain-string form is preserved so nothing changes for text-only turns.
+ */
+function userEnvelope(text: string, imageBlocks: ClaudeImageBlock[] = []): string {
+  const content = imageBlocks.length > 0
+    ? [{ type: 'text' as const, text }, ...imageBlocks]
+    : text;
+  return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
+}
+
+const CLAUDE_IMAGE_MEDIA_TYPES: Record<string, string> = {
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+};
+
+/** Read local image attachments into base64 stream-json image blocks. Mirrors
+ *  Codex's localImage forwarding; non-image or unreadable files are skipped. */
+function buildClaudeImageBlocks(input?: AgentTurnInput): ClaudeImageBlock[] {
+  const blocks: ClaudeImageBlock[] = [];
+  const seen = new Set<string>();
+  for (const attachment of input?.attachments ?? []) {
+    const absPath = attachment.absPath;
+    if (!path.isAbsolute(absPath) || seen.has(absPath)) continue;
+    const mediaType = CLAUDE_IMAGE_MEDIA_TYPES[path.extname(absPath).toLowerCase()];
+    if (!mediaType) continue;
+    try {
+      if (!fs.statSync(absPath).isFile()) continue;
+      const data = fs.readFileSync(absPath).toString('base64');
+      seen.add(absPath);
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+    } catch {
+      // Unreadable attachment — skip rather than fail the turn.
+    }
+  }
+  return blocks;
 }
 
 function formatPermissionDetail(toolName: string, input: unknown): string | undefined {

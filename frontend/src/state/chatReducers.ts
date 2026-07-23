@@ -1,6 +1,7 @@
 import type { ChatAction, ChatNodeState, ComposerDraft, ArtifactEntry, Project, ProjectAction, Tree } from './chatTypes';
 import { applyTreeMessages } from './chatHydration';
 import { computeTranscriptFingerprint } from './transcriptFingerprint';
+import { deriveTitleFromUserText } from './assistantParsing';
 import {
   appendToolBlock,
   appendUserInputBlock,
@@ -575,12 +576,27 @@ export function reduceNodes(
       // Lock the title once it exists — only fill it in if this is the
       // first turn (no title yet). See `set-title` for the same rule on
       // mid-stream title updates.
-      const lockedTitle =
-        n.title && n.title.trim().length > 0 ? n.title : extractedTitle ?? n.title;
+      const hasTitle = !!(n.title && n.title.trim().length > 0);
+      // Fallback for runtimes without a title generator (Claude/Kiro): if this
+      // turn produced no title and the node has none, derive one from the first
+      // user message so the node is never persisted untitled — parity with
+      // Codex's first-turn title generation. Only chat nodes; digests title
+      // themselves from regenerated content.
+      const fallbackTitle =
+        !hasTitle && !extractedTitle && n.kind === 'chat'
+          ? deriveTitleFromUserText(n.messages.find((m) => m.role === 'user')?.text)
+          : null;
+      const lockedTitle = hasTitle ? n.title : extractedTitle ?? fallbackTitle ?? n.title;
       return {
         ...nodes,
         [action.nodeId]: {
           ...n,
+          // Persist a derived fallback title so it survives reload (the
+          // sentinel/structured title is extracted backend-side; a derived one
+          // is not, so the frontend must flag it for persistence).
+          ...(fallbackTitle && lockedTitle === fallbackTitle
+            ? { titleNeedsPersistence: true }
+            : {}),
           status: 'idle',
           visibleResponseComplete: false,
           backgroundTurnAssistantId:

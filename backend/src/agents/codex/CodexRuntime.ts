@@ -231,6 +231,7 @@ export class CodexRuntime implements AgentRuntime {
     });
 
     const effort = opts.reasoning ?? resolveReasoning('codex') ?? null;
+    const enableFollowUps = opts.enableFollowUps !== false;
 
     // Create MCP slot (session pre-wires the callbacks but MCP slot created here)
     // We construct the session first so it can own the slot.
@@ -249,6 +250,7 @@ export class CodexRuntime implements AgentRuntime {
       effort: effort ? String(effort) : null,
       model: modelId || null,
       generateTitleOnFirstTurn: true,
+      enableFollowUps,
       followUpsHookPocEnabled: this.followUpsHookPocEnabled,
       followUpsExperimentMode: this.followUpsExperimentMode,
     });
@@ -265,6 +267,7 @@ export class CodexRuntime implements AgentRuntime {
           this.followUpsHookPocEnabled,
           this.followUpsExperimentMode,
         ),
+        enableFollowUps,
       ) || undefined,
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user',

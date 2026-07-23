@@ -192,6 +192,25 @@ export function parseTitle(fullText: string): { title: string | null; rest: stri
   return { title: titleText, rest: before + after };
 }
 
+/**
+ * Derive a persisted node title from the first user message when the agent
+ * never emitted a `[TITLE:]` sentinel or a structured title event. Codex
+ * generates a title on the first turn; this gives Claude/Kiro (which have no
+ * such generator) an equivalent persisted title so a node is never stored
+ * untitled. Mirrors the display-only `chatLabel` derivation (strip quoted
+ * lines, collapse whitespace, cap length).
+ */
+export function deriveTitleFromUserText(userText: string | undefined | null): string | null {
+  if (!userText) return null;
+  const txt = userText
+    .replace(/^\s*\/(?:btw|branch)\s+/i, '')
+    .replace(/^>.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!txt) return null;
+  return txt.length > 50 ? txt.slice(0, 50) + '…' : txt;
+}
+
 export function parseBranchOverview(fullText: string): string | null {
   const match = fullText.match(INLINE_BRANCH_OVERVIEW_RE);
   const overview = match?.[1]?.trim() ?? '';

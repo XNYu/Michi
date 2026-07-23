@@ -42,6 +42,8 @@ export interface CreateClaudeSessionOptions {
   model?: string | null;
   firstTurnPrefix?: string;
   ownerUserId?: string | null;
+  /** Default true. Gates only the per-turn follow-up reminder. */
+  enableFollowUps?: boolean;
 }
 
 export interface LoadClaudeSessionOptions {
@@ -162,6 +164,9 @@ export class ClaudeSessionManager {
 
       if (opts.firstTurnPrefix) {
         session.setFirstTurnPrefix(opts.firstTurnPrefix);
+      }
+      if (opts.enableFollowUps === false) {
+        session.setEnableFollowUps(false);
       }
       if (!this.registerActiveSession(opts.id, session)) {
         throw new Error('Claude session exited during creation');

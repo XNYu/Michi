@@ -186,12 +186,17 @@ function readExistingSignature(
     });
 }
 
-function isClaudeConcurrencyError(err: unknown): boolean {
-    return (err as Error | undefined)?.name === "ClaudeConcurrencyError";
+function isConcurrencyError(err: unknown): boolean {
+    // Every runtime's cap throws a `*ConcurrencyError` (ClaudeConcurrencyError,
+    // CodexConcurrencyError, KiroConcurrencyError) — treat them uniformly.
+    return /ConcurrencyError$/.test((err as Error | undefined)?.name ?? "");
 }
 
 function sendAgentRouteError(res: express.Response, err: unknown): void {
-    if (isClaudeConcurrencyError(err)) {
+    if (isConcurrencyError(err)) {
+        // Keep the historical code string — the frontend gates its
+        // "sessions busy, retry" UX on exactly CLAUDE_SESSIONS_BUSY. It now
+        // covers every runtime's concurrency cap, not just Claude.
         res.status(503).json({
             code: "CLAUDE_SESSIONS_BUSY",
             error: (err as Error).message,
