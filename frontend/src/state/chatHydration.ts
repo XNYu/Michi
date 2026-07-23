@@ -40,6 +40,10 @@ interface BackendFullWorkspace {
   nodes?: Array<Record<string, unknown>>;
   edges?: Array<Record<string, unknown>>;
   messages?: Array<Record<string, unknown>>;
+  // Backend bulk loaders (`loadFullWorkspace`/`loadWorkspaceMeta`) emit artifact
+  // rows under the wire key `contexts`. `artifacts` is accepted as a fallback in
+  // case a caller ever aligns the wire key to the domain model.
+  contexts?: Array<Record<string, unknown>>;
   artifacts?: Array<Record<string, unknown>>;
 }
 
@@ -528,7 +532,14 @@ export function hydrateBackendWorkspaces(
       ? requestedActiveTreeId
       : [...trees].filter((t) => !t.archivedAt).sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]?.id ?? null;
 
-    const artifacts: ArtifactEntry[] = (Array.isArray(full.artifacts) ? full.artifacts : []).flatMap((row) => {
+    // Backend bulk loaders return artifact rows under the `contexts` wire key;
+    // accept `artifacts` too so a later key alignment can't silently drop them.
+    const rawArtifacts = Array.isArray(full.contexts)
+      ? full.contexts
+      : Array.isArray(full.artifacts)
+        ? full.artifacts
+        : [];
+    const artifacts: ArtifactEntry[] = rawArtifacts.flatMap((row) => {
       const ctx = mapContextRow(row);
       return ctx ? [ctx] : [];
     });
