@@ -23,6 +23,7 @@ import {
 } from '../../state/sidebarSelectors';
 
 const THREAD_PREVIEW_LIMIT = 5;
+const THREAD_PAGE_SIZE = 10;
 
 interface Actions {
   toggleWorkspace: (projectId: string) => void;
@@ -146,8 +147,13 @@ export default function WorkspaceRow({
   // come back here when restoreDeletion clears the flag.
   const visibleTrees = sortedTrees.filter((t) => isNodeAlive(t.rootNodeId));
   const liveTrees = visibleTrees.filter((t) => !t.archivedAt);
-  const archivedTrees = visibleTrees.filter((t) => !!t.archivedAt);
-  const [showAllThreads, setShowAllThreads] = useState(false);
+  const [threadVisibleLimit, setThreadVisibleLimit] = useState(THREAD_PREVIEW_LIMIT);
+
+  // Reset visible limit when workspace is collapsed — re-opening starts fresh at 5
+  useEffect(() => {
+    if (!workspaceExpanded) setThreadVisibleLimit(THREAD_PREVIEW_LIMIT);
+  }, [workspaceExpanded]);
+
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(project.name);
@@ -244,24 +250,26 @@ export default function WorkspaceRow({
   // Pinned trees always visible — preview limit applies only to unpinned.
   const pinnedTrees = filteredLiveTrees.filter((t) => !!t.pinnedAt);
   const unpinnedTrees = filteredLiveTrees.filter((t) => !t.pinnedAt);
-  const previewUnpinned = unpinnedTrees.slice(0, THREAD_PREVIEW_LIMIT);
   // The active tree must stay visible even when its recency rank falls past
-  // the preview cap (opening a historical thread via search/palette does NOT
-  // bump lastActiveAt) — append it below the preview slice so the sidebar
+  // the visible limit (opening a historical thread via search/palette does NOT
+  // bump lastActiveAt) — append it below the visible slice so the sidebar
   // can reveal & scroll to it.
+  const visibleUnpinned = unpinnedTrees.slice(0, threadVisibleLimit);
   const activeBeyondCap =
     activeTreeId !== null
     && !pinnedTrees.some((t) => t.id === activeTreeId)
-    && !previewUnpinned.some((t) => t.id === activeTreeId)
+    && !visibleUnpinned.some((t) => t.id === activeTreeId)
       ? unpinnedTrees.find((t) => t.id === activeTreeId)
       : undefined;
   const displayedLiveTrees = forceExpand
     ? filteredLiveTrees
-    : showAllThreads
-      ? filteredLiveTrees
-      : activeBeyondCap
-        ? [...pinnedTrees, ...previewUnpinned, activeBeyondCap]
-        : [...pinnedTrees, ...previewUnpinned];
+    : (() => {
+        const sliced = [...pinnedTrees, ...visibleUnpinned];
+        if (activeBeyondCap && !sliced.some((t) => t.id === activeBeyondCap.id)) {
+          sliced.push(activeBeyondCap);
+        }
+        return sliced;
+      })();
 
   const getNodeOpenState = useCallback(
     (id: string): OpenState =>
@@ -545,47 +553,35 @@ export default function WorkspaceRow({
               onRenameEnd,
             }),
           )}
-          {!forceExpand && unpinnedTrees.length > THREAD_PREVIEW_LIMIT && (
+          {!forceExpand && unpinnedTrees.length > threadVisibleLimit && (
             <button
               type="button"
-              className="t-row-hover sb-flush"
-              aria-expanded={showAllThreads}
-              onClick={() => setShowAllThreads((v) => !v)}
+              className="sb-flush show-more-toggle"
+              aria-expanded={threadVisibleLimit > THREAD_PREVIEW_LIMIT}
+              onClick={() => setThreadVisibleLimit((v) => v + THREAD_PAGE_SIZE)}
               style={{
                 width: '100%',
-                display: 'block',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
                 padding: '5px 8px 5px 25px',
                 background: 'transparent',
                 border: 0,
                 textAlign: 'left',
-                color: 'var(--term-muted)',
+                color: 'var(--term-faint)',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 12.5,
+                fontSize: 11.5,
                 cursor: 'pointer',
+                textDecoration: 'underline',
+                textDecorationStyle: 'dotted',
+                textUnderlineOffset: '3px',
+                textDecorationColor: 'var(--term-faint)',
               }}
             >
-              {showAllThreads ? 'Show less' : 'Show more'}
+              Show more
             </button>
           )}
-          {archivedTrees.length > 0 && (
-            <ArchivedSection
-              archivedTrees={archivedTrees}
-              project={project}
-              activeProjectId={activeProjectId}
-              activeTreeId={activeTreeId}
-              focusedNodeId={focusedNodeId}
-              isThreadExpanded={isThreadExpanded}
-              isBranchExpanded={isBranchExpanded}
-              isBranchSelected={isBranchSelected}
-              isBranchMenuTarget={isBranchMenuTarget}
-              isNodeAlive={isNodeAlive}
-              edges={edges}
-              actions={actions}
-              getNodeOpenState={getNodeOpenState}
-              getSubtreeOpenState={getSubtreeOpenState}
-              moveTargets={moveTargets}
-            />
-          )}
+
         </div>
       )}
     </div>
@@ -705,93 +701,5 @@ function renderThread(args: {
         </div>
       )}
     </React.Fragment>
-  );
-}
-
-function ArchivedSection({
-  archivedTrees,
-  project,
-  activeProjectId,
-  activeTreeId,
-  focusedNodeId,
-  isThreadExpanded,
-  isBranchExpanded,
-  isBranchSelected,
-  isBranchMenuTarget,
-  isNodeAlive,
-  edges,
-  actions,
-  getNodeOpenState,
-  getSubtreeOpenState,
-  moveTargets,
-}: {
-  archivedTrees: Tree[];
-  project: Project;
-  activeProjectId: string | null;
-  activeTreeId: string | null;
-  focusedNodeId: string | null;
-  isThreadExpanded: (treeId: string) => boolean;
-  isBranchExpanded: (nodeId: string) => boolean;
-  isBranchSelected: (nodeId: string) => boolean;
-  /** Whether the given branch is currently the target of an open context
-   *  menu. Used to pin the hover kebab visible since branch menu state lives
-   *  upstream in WorkspaceTree. */
-  isBranchMenuTarget?: (nodeId: string) => boolean;
-  isNodeAlive: (nodeId: string) => boolean;
-  edges: readonly ProjectEdge[];
-  actions: Actions;
-  getNodeOpenState: (nodeId: string) => OpenState;
-  getSubtreeOpenState: (rootId: string) => OpenState;
-  moveTargets?: readonly { id: string; name: string }[];
-}) {
-  const [open, setOpen] = React.useState(false);
-  // Pop the section open when the active tree lives inside it (e.g. a global
-  // search result landed on an archived thread) — its row only exists in the
-  // DOM while the section is open, so the sidebar reveal can't reach it
-  // otherwise. Keyed on activeTreeId so a manual collapse afterwards sticks.
-  const activeIsArchived = activeTreeId !== null && archivedTrees.some((t) => t.id === activeTreeId);
-  React.useEffect(() => {
-    if (activeIsArchived) setOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTreeId]);
-  return (
-    <div>
-      <Row
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: '4px 8px',
-          fontSize: 10.5,
-          color: 'var(--term-muted)',
-          letterSpacing: '.06em',
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        <Chevron expanded={open} visible={true} />
-        archived ({archivedTrees.length})
-      </Row>
-      {open &&
-        archivedTrees.map((tree) =>
-          renderThread({
-            tree,
-            project,
-            activeProjectId,
-            activeTreeId,
-            focusedNodeId,
-            threadOpen: isThreadExpanded(tree.id),
-            isBranchExpanded,
-            isBranchSelected,
-            isBranchMenuTarget,
-            isNodeAlive,
-            edges,
-            actions,
-            getNodeOpenState,
-            getSubtreeOpenState,
-            moveTargets,
-          }),
-        )}
-    </div>
   );
 }

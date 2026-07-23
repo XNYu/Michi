@@ -1265,6 +1265,14 @@ html[data-vibrancy="on"],
   color: var(--term-fg) !important;
 }
 
+/* Show-more toggle: dotted underline goes solid + color becomes readable on hover. */
+.show-more-toggle:hover {
+  color: var(--color-fg) !important;
+  text-decoration-style: solid !important;
+  text-decoration-color: var(--color-fg) !important;
+  background: transparent !important;
+}
+
 /* Tab — non-focused tabs only. */
 .t-tab-hover {
   cursor: pointer;

@@ -20,6 +20,7 @@ import { Chevron } from './ThreadRow';
 import type { Project, ChatNodeState } from '../../state/chatTypes';
 
 const MERGED_PREVIEW_LIMIT = 5;
+const MERGED_PAGE_SIZE = 10;
 
 interface MergeGroup {
   mergeNodeId: string;
@@ -108,11 +109,6 @@ export default function WorkspaceTree({
     () => sortLiveProjects(projects, prefs.workspaceOrder),
     [projects, prefs.workspaceOrder],
   );
-  const archivedProjects = useMemo(
-    () => projects.filter((p) => !p.deletedAt && !!p.archivedAt),
-    [projects],
-  );
-  const [archivedOpen, setArchivedOpen] = useState(false);
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [dragSourceId, setDragSourceId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -505,10 +501,6 @@ export default function WorkspaceTree({
     const owningTree = project.trees.find((t) => t.id === owningTreeId);
     if (!owningTree) return;
 
-    // Rows of archived workspaces only render while the archived section is
-    // open — global search can land on them, so pop the section too.
-    if (project.archivedAt) setArchivedOpen(true);
-
     const parentOf = new Map<string, string>();
     for (const e of project.edges) {
       if (e.kind !== undefined && e.kind !== 'branch') continue;
@@ -848,42 +840,6 @@ export default function WorkspaceTree({
           All caught up ✓
         </div>
       )}
-      {!unreadFilterOn && archivedProjects.length > 0 && (
-        <div style={{ marginTop: 6 }}>
-          <div
-            onClick={() => setArchivedOpen((v) => !v)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '4px 8px',
-              fontSize: 10.5,
-              color: 'var(--term-muted)',
-              letterSpacing: '.06em',
-              fontFamily: 'var(--ui-font)',
-              cursor: 'pointer',
-              userSelect: 'none',
-            }}
-          >
-            <span
-              style={{
-                width: 12,
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontFamily: 'var(--ui-font)',
-                fontSize: 11,
-                transform: archivedOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-                transition: 'transform 120ms var(--t-ease, ease-out)',
-              }}
-            >
-              ›
-            </span>
-            archived workspaces
-          </div>
-          {archivedOpen && archivedProjects.map((p) => renderProject(p))}
-        </div>
-      )}
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -919,11 +875,9 @@ function MergedGroupsSection({
   onSelectMergeSource: (nodeId: string) => void;
   onContextMenu: (nodeId: string, event: React.MouseEvent) => void;
 }) {
-  const [showAllMerged, setShowAllMerged] = useState(false);
+  const [mergedVisibleLimit, setMergedVisibleLimit] = useState(MERGED_PREVIEW_LIMIT);
   const visibleGroups = mergeGroups.filter((g) => nodesSnapshot[g.mergeNodeId]);
-  const displayedGroups = showAllMerged
-    ? visibleGroups
-    : visibleGroups.slice(0, MERGED_PREVIEW_LIMIT);
+  const displayedGroups = visibleGroups.slice(0, mergedVisibleLimit);
 
   return (
     <div data-testid="merged-section" style={{ marginTop: 12 }}>
@@ -1069,29 +1023,36 @@ function MergedGroupsSection({
           </div>
         );
       })}
-      {visibleGroups.length > MERGED_PREVIEW_LIMIT && (
+      {visibleGroups.length > mergedVisibleLimit && (
         <button
           type="button"
-          className="t-row-hover sb-flush"
-          aria-label={showAllMerged ? 'Show less merged threads' : 'Show more merged threads'}
-          aria-expanded={showAllMerged}
-          onClick={() => setShowAllMerged((v) => !v)}
+          className="sb-flush show-more-toggle"
+          aria-label="Show more merged threads"
+          aria-expanded={mergedVisibleLimit > MERGED_PREVIEW_LIMIT}
+          onClick={() => setMergedVisibleLimit((v) => v + MERGED_PAGE_SIZE)}
           style={{
             width: '100%',
-            display: 'block',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
             padding: '5px 8px 5px 25px',
             background: 'transparent',
             border: 0,
             textAlign: 'left',
-            color: 'var(--term-muted)',
+            color: 'var(--term-faint)',
             fontFamily: 'var(--ui-font)',
             fontSize: 11.5,
             cursor: 'pointer',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+            textUnderlineOffset: '3px',
+            textDecorationColor: 'var(--term-faint)',
           }}
         >
-          {showAllMerged ? 'Show less' : 'Show more'}
+          Show more
         </button>
       )}
+
     </div>
   );
 }

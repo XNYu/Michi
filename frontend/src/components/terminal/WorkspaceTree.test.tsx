@@ -177,10 +177,8 @@ describe('WorkspaceTree', () => {
     expect(await screen.findByText('Thread 1')).toBeTruthy();
     expect(screen.getByText('Thread 5')).toBeTruthy();
     expect(screen.queryByText('Thread 6')).toBeNull();
-    fireEvent.click(screen.getByText('Show more'));
+    fireEvent.click(screen.getByText(/Show more/));
     expect(await screen.findByText('Thread 6')).toBeTruthy();
-    fireEvent.click(screen.getByText('Show less'));
-    expect(screen.queryByText('Thread 6')).toBeNull();
   });
 
   it('counts Merged threads separately from regular threads', async () => {
