@@ -60,7 +60,7 @@ const sanitizeSchema = {
     // (which runs afterwards) can find the math nodes to render.
     // Also allow mention-chip spans with data-mention for user message @mentions.
     div: [...(defaultSchema.attributes?.div ?? []), ['className', 'math', 'math-display']],
-    span: [...(defaultSchema.attributes?.span ?? []), ['className', 'math', 'math-inline', 'mention-chip'], 'dataMention'],
+    span: [...(defaultSchema.attributes?.span ?? []), ['className', 'math', 'math-inline', 'mention-chip'], 'dataMention', 'dataMentionKind', 'dataNodeId'],
   },
 };
 

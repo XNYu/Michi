@@ -2256,13 +2256,18 @@ html[data-vibrancy="on"],
 /* Atomic @-mention chip. box-shadow (not border) for the 1px frame so the chip
    adds zero horizontal layout — matches the old overlay's byte-perfect chips. */
 .mention-chip {
-  background: var(--term-accent-f);
-  color: var(--term-accent);
-  box-shadow: inset 0 0 0 1px var(--term-line);
-  border-radius: 3px;
-  padding: 0 2px;
+  background: color-mix(in srgb, var(--term-mauve) 12%, transparent);
+  color: var(--term-mauve);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
+  transition: box-shadow 0.2s ease, background 0.2s ease;
+}
+.mention-chip:hover {
+  background: color-mix(in srgb, var(--term-mauve) 18%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--term-mauve) 30%, transparent);
 }
 /* Multi-window observer hint — shown over the (disabled, empty) composer while
    another window owns editing. Replaces the old observing placeholder; matches

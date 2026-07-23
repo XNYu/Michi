@@ -302,8 +302,6 @@ export default function TerminalTopbar({
   const archivedCount = useNodesSelector(archivedCountSelector);
   const showBrowserBrand = getElectron() === null;
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
-  // The right cluster sits over the rightmost pane in the grid — mirror its
-  // focus dim so the Context button area matches that pane's color.
   // On dashboard, zone 2 hosts per-pane caption cells aligned to Dashboard's
   // column template. Mirrors Dashboard.tsx logic so the cell strip resizes in
   // lockstep with the pane grid below.
@@ -318,7 +316,6 @@ export default function TerminalTopbar({
         const w = paneWidths[i];
         return w !== undefined ? `minmax(0, ${w}px)` : '1fr';
       }).join(' ');
-
   return (
     <div
       className="terminal-topbar"
@@ -438,14 +435,17 @@ export default function TerminalTopbar({
       <div
         style={{
           flex: 1,
-          // No background here — cells carry their own bg (with focus dim).
-          // A bg here would bleed through wherever cell bg is transparent
-          // (e.g. under the right-cluster icons area).
+          // Zone 2 spans the whole over-body stretch of the topbar. Paint it
+          // topbarBg so this stretch always matches the content column below:
+          // under macOS vibrancy the topbar root carries the chrome frost tint
+          // (to blend with the sidebar), which must never show over the body.
+          // Caption cells paint their own (dimmable) pane bg on top of this;
+          // the overflow strip's spare right padding falls back to it. No-op
+          // without vibrancy, where the root already equals topbarBg.
+          background: topbarBg,
           display: 'flex',
           alignItems: 'stretch',
           minWidth: 0,
-          // Clip scrolling cell content so it never extends under the
-          // absolutely-positioned right cluster (icons). Without this,
           overflow: 'visible',
           paddingLeft: sidebarCollapsed ? COLLAPSED_LEFT_PAD : 0,
           transition: 'padding-left 200ms cubic-bezier(.4,0,.2,1)',
@@ -482,7 +482,6 @@ export default function TerminalTopbar({
           >
             {openPanes.map((id, i) => {
               const isFirst = i === 0;
-              const isLast = i === openPanes.length - 1;
               const status = paneStatuses[i] ?? 'idle';
               const isCellFocused = focusedPane === id;
               // First cell needs to clear the floating Zone 1 (traffic lights
@@ -647,9 +646,12 @@ export default function TerminalTopbar({
           (Branches / Map / Digest) + Artifacts drawer trigger. Absolutely
           positioned so it doesn't shrink zone-2 — that would make the caption
           grid narrower than the Dashboard grid below and dividers would no
-          longer line up. Background is transparent so icons inherit the cell
-          color beneath them (including focus dim). Title text is clipped by
-          PaneCaption's own overflow:hidden + text-overflow:ellipsis. */}
+          longer line up. On Dashboard a frosted backdrop (first child) blurs
+          scrolling caption text into an even wash while preserving the cell's
+          own color beneath the icons — including its focus-dim state, which
+          no painted color could track (the cell under the cluster changes
+          with scroll position and focus). Elsewhere the cluster stays
+          transparent over Zone 2's topbarBg. */}
       <div
         className="terminal-topbar-right"
         style={{
@@ -662,12 +664,41 @@ export default function TerminalTopbar({
           alignItems: 'center',
           gap: 6,
           padding: '0 14px 0 14px',
-          // Fully transparent — icons inherit whatever is beneath them
-          // (the pane cell background, which already handles focus dim).
-          // Title text is hidden by a mask on the cells strip instead.
           background: 'transparent',
         } as React.CSSProperties}
       >
+        {showPaneCells && (
+          <div
+            aria-hidden
+            style={{
+              // Frosted backdrop: caption cells scroll horizontally beneath the
+              // cluster; blur smears their text into an even wash so the icons
+              // stay legible, while keeping the cell's *composited* color —
+              // an opaque backdrop can't work here because the cell bg dims
+              // with pane focus (brightness filter) and which cell sits under
+              // the cluster changes with scroll, so any painted color is wrong
+              // some of the time. Requires opaque content beneath (cells +
+              // Zone 2's topbarBg — guaranteed on Dashboard even under
+              // vibrancy). No tint overlay — even a faint one shifts the
+              // blurred average away from the true cell color, creating a
+              // visible band on unfocused panes. The left mask ramps the blur
+              // in so there's no hard vertical seam where frosting starts.
+              // Negative z-index keeps it below the in-flow icons within the
+              // cluster's stacking context.
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: -16,
+              zIndex: -1,
+              WebkitBackdropFilter: 'blur(12px)',
+              backdropFilter: 'blur(12px)',
+              background: 'transparent',
+              WebkitMaskImage: 'linear-gradient(to right, transparent, black 16px)',
+              maskImage: 'linear-gradient(to right, transparent, black 16px)',
+            } as React.CSSProperties}
+          />
+        )}
         {updateAvailable && !updateDismissed && (
             <span
               style={{

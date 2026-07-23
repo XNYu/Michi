@@ -199,7 +199,7 @@ function Section({
       {rows.map((c) => {
         const isLink = artifactType(c) === 'link';
         const ft = isLink ? { label: 'url', color: MANAGE_COLORS.link } : manageFileType(c.name);
-        const metaLine = isLink ? c.url ?? '' : `${c.kind === 'reference' ? '↗ ' : ''}${c.filePath}`;
+        const metaLine = isLink ? c.url ?? '' : `${c.kind === 'reference' ? '↗ ' : c.kind === 'symlink' ? '⇄ ' : ''}${c.filePath}`;
         const selected = selectedId === c.id;
         const hovered = hoverId === c.id;
         return (
