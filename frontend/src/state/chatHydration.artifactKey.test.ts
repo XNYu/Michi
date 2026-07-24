@@ -26,31 +26,31 @@ describe('hydrateBackendWorkspaces artifact wire-key', () => {
   it('restores artifacts from the backend `contexts` key', () => {
     const { projects } = hydrateBackendWorkspaces([{ workspace, contexts: [contextRow] }]);
     expect(projects).toHaveLength(1);
-    expect(projects[0].artifacts.map((a) => a.id)).toEqual(['ctx-1']);
-    expect(projects[0].artifacts[0]).toMatchObject({ name: 'notes', filePath: '/tmp/notes.md', type: 'file' });
+    expect(projects[0].artifacts!.map((a) => a.id)).toEqual(['ctx-1']);
+    expect(projects[0].artifacts![0]).toMatchObject({ name: 'notes', filePath: '/tmp/notes.md', type: 'file' });
   });
 
   it('still accepts an `artifacts` key so a future wire-key alignment cannot re-break hydration', () => {
     const { projects } = hydrateBackendWorkspaces([{ workspace, artifacts: [contextRow] }]);
-    expect(projects[0].artifacts.map((a) => a.id)).toEqual(['ctx-1']);
+    expect(projects[0].artifacts!.map((a) => a.id)).toEqual(['ctx-1']);
   });
 
   it('restores link-type artifacts (url, no file_path) — the historical drop case', () => {
     const linkRow = { id: 'ctx-2', name: 'ref', url: 'https://example.com', type: 'link', created_at: 1, updated_at: 1 };
     const { projects } = hydrateBackendWorkspaces([{ workspace, contexts: [linkRow] }]);
-    expect(projects[0].artifacts.map((a) => a.id)).toEqual(['ctx-2']);
-    expect(projects[0].artifacts[0]).toMatchObject({ type: 'link', url: 'https://example.com' });
+    expect(projects[0].artifacts!.map((a) => a.id)).toEqual(['ctx-2']);
+    expect(projects[0].artifacts![0]).toMatchObject({ type: 'link', url: 'https://example.com' });
   });
 
   it('prefers `contexts` when both keys are present', () => {
     const { projects } = hydrateBackendWorkspaces([
       { workspace, contexts: [contextRow], artifacts: [{ ...contextRow, id: 'stale' }] },
     ]);
-    expect(projects[0].artifacts.map((a) => a.id)).toEqual(['ctx-1']);
+    expect(projects[0].artifacts!.map((a) => a.id)).toEqual(['ctx-1']);
   });
 
   it('yields an empty artifact list when neither key is present', () => {
     const { projects } = hydrateBackendWorkspaces([{ workspace }]);
-    expect(projects[0].artifacts).toEqual([]);
+    expect(projects[0].artifacts!).toEqual([]);
   });
 });

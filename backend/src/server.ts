@@ -18,6 +18,7 @@ import { setupUserKeysRoutes } from './routes/userKeys';
 import { setupUploadsRoutes } from './routes/uploads';
 import { setupFilesRoutes } from './routes/files';
 import { setupArtifactRoutes } from './routes/artifacts';
+import { closeAllArtifactWatchers } from './services/artifactWatcher';
 import { setupDiffRoutes } from './routes/diff';
 import { ChatManager } from './services/chatManager';
 import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
@@ -565,6 +566,7 @@ const gracefulShutdown = async (): Promise<void> => {
   // keep POSTing to /api/mcp/:slotId on the old port and the next backend
   // instance 404s them ("unknown mcp slot").
   await Promise.allSettled(listRuntimes().map((runtime) => runtime.shutdown()));
+  closeAllArtifactWatchers();
   closeDb();
   closeAuditDb();
   await new Promise<void>((resolve) => {

@@ -885,6 +885,9 @@ export function reduceNodes(
             size: action.size,
             modifiedAt: action.modifiedAt,
             status: 'idle',
+            // A fresh read is the current truth → clear any pending badge.
+            pendingRefresh: false,
+            removed: false,
           },
         },
       };
@@ -908,6 +911,34 @@ export function reduceNodes(
         [action.nodeId]: {
           ...n,
           artifact: { ...n.artifact, viewMode: action.viewMode },
+        },
+      };
+    }
+    case 'artifact-mark-stale': {
+      const n = nodes[action.nodeId];
+      if (!n || n.kind !== 'artifact' || !n.artifact) return nodes;
+      // Idempotent: skip the re-render if the badge is already showing and the
+      // file isn't flagged removed (the watcher fires this on every real edit).
+      if (n.artifact.pendingRefresh && !n.artifact.removed) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          // Only a hint — content is untouched until the user clicks reload.
+          // A change event also means the file exists, so clear `removed`.
+          artifact: { ...n.artifact, pendingRefresh: true, removed: false },
+        },
+      };
+    }
+    case 'artifact-mark-removed': {
+      const n = nodes[action.nodeId];
+      if (!n || n.kind !== 'artifact' || !n.artifact) return nodes;
+      if (n.artifact.removed) return nodes;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          artifact: { ...n.artifact, removed: true, pendingRefresh: false },
         },
       };
     }

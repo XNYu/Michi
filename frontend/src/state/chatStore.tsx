@@ -22,6 +22,7 @@ import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
 import { useNavHistory, type NavEntry } from './navHistory';
 import { navigateToNode } from './navigateToNode';
+import { useArtifactWatch } from '../hooks/useArtifactWatch';
 import { NODE_ACTIVITY_ACTIONS, reduceNodes, reduceProject } from './chatReducers';
 import {
   LEGACY_STATE_KEY,
@@ -2421,6 +2422,63 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     () => projects.find((p) => p.id === activeProjectId && !p.deletedAt) ?? null,
     [projects, activeProjectId],
   );
+
+  // ── Artifact live-refresh watch ────────────────────────────────────────────
+  // Subscribe to disk changes for the active workspace's artifacts so an open
+  // ArtifactPane can show a "Changed on disk · refresh" badge. The watch set is the union
+  // of (a) registry artifacts with a real filePath — pre-arms a watcher before
+  // the pane is even opened — and (b) any currently-open artifact pane's path,
+  // which covers panes opened from a markdown link (not necessarily in the
+  // registry). Link artifacts (empty filePath) and abs paths outside the cwd
+  // are dropped server-side; that's a graceful no-badge downgrade, not an error.
+  const artifactWatchPaths = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of activeProject?.artifacts ?? []) {
+      if (a.filePath && a.filePath.trim()) set.add(a.filePath);
+    }
+    for (const id in nodes) {
+      const n = nodes[id];
+      if (
+        n?.kind === 'artifact' &&
+        n.projectId === activeProjectId &&
+        !n.deletedAt &&
+        n.artifact?.filePath
+      ) {
+        set.add(n.artifact.filePath);
+      }
+    }
+    return Array.from(set);
+  }, [activeProject, nodes, activeProjectId]);
+
+  // Stable dispatcher: on a disk change/removal, flip every matching open
+  // artifact node in the active workspace. Reads refs so identity never churns
+  // the EventSource lifecycle. `artifact-mark-*` is idempotent + a no-op on
+  // non-artifact/missing nodes, so a fan-out over all nodes is safe and cheap.
+  const markArtifactNodes = useCallback(
+    (filePath: string, removed: boolean) => {
+      const pid = activeProjectIdRef.current;
+      for (const id in nodesRef.current) {
+        const n = nodesRef.current[id];
+        if (
+          n?.kind === 'artifact' &&
+          n.projectId === pid &&
+          !n.deletedAt &&
+          n.artifact?.filePath === filePath
+        ) {
+          dispatch({ type: removed ? 'artifact-mark-removed' : 'artifact-mark-stale', nodeId: id });
+        }
+      }
+    },
+    [dispatch],
+  );
+
+  useArtifactWatch({
+    workspaceId: activeProjectId ?? undefined,
+    enabled: !!activeProjectId && artifactWatchPaths.length > 0,
+    paths: artifactWatchPaths,
+    onChanged: (fp) => markArtifactNodes(fp, false),
+    onRemoved: (fp) => markArtifactNodes(fp, true),
+  });
 
   // ── Back/forward navigation ──────────────────────────────────────────────
   // A nav entry is live only if its workspace and node still exist and aren't

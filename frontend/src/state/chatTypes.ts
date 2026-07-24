@@ -31,6 +31,14 @@ export interface ArtifactState {
   /** Loading/error state. */
   status: 'idle' | 'loading' | 'error';
   error?: string;
+  /**
+   * Set by the artifact watcher when the file changed on disk since the last
+   * load. Drives the "● Changed on disk · refresh" badge; content is NOT auto-replaced —
+   * the user clicks to reload. Cleared on a successful reload.
+   */
+  pendingRefresh?: boolean;
+  /** Set when the watcher reports the file was deleted on disk. */
+  removed?: boolean;
 }
 
 export type ViewMode = 'single' | 'two' | 'three';
@@ -647,6 +655,8 @@ export type ChatAction =
   | { type: 'artifact-loaded'; nodeId: string; content: string; basename: string; extension: string; size: number; modifiedAt: number }
   | { type: 'artifact-error'; nodeId: string; error: string }
   | { type: 'artifact-set-view'; nodeId: string; viewMode: 'rendered' | 'source' }
+  | { type: 'artifact-mark-stale'; nodeId: string }
+  | { type: 'artifact-mark-removed'; nodeId: string }
   | { type: 'create-digest'; nodeId: string; projectId: string; sources: string[] }
   | { type: 'digest-started'; nodeId: string }
   | { type: 'digest-chunk'; nodeId: string; text: string }
