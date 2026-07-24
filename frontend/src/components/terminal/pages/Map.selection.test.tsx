@@ -35,6 +35,10 @@ vi.mock('../../../state/chatStore', async () => {
     useChatNodesSnapshot: () => storeState.nodes,
     useStructuralSelector: (selector: (nodes: Record<string, any>) => unknown) => selector(storeState.nodes),
     chatLabel: (node: any) => node?.title ?? '',
+    // Branches (doc view) reads these:
+    useChatProjects: () => ({ activeProject: storeState.project }),
+    useChatActions: () => ({ openPane: vi.fn() }),
+    activeTreeRootNodeId: (project: any) => project?.trees?.[0]?.rootNodeId ?? null,
   };
 });
 
@@ -181,5 +185,28 @@ describe('Map selection actions', () => {
 
     expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Digest' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('Map three-view switch', () => {
+  it('renders the three view tabs and defaults to graph', () => {
+    render(<TerminalMap />);
+    const tablist = screen.getByRole('tablist', { name: 'Map views' });
+    expect(tablist).toBeTruthy();
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['图', '时间线', '文档']);
+    // graph is the default selected tab
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('switching to timeline renders lane content and hides the selection graph zoom', () => {
+    storeState.nodes = {
+      n1: { ...node('n1'), branchOverviewEntries: [{ at: 1000, text: 'first progress step' }] },
+      n2: node('n2'),
+    };
+    render(<TerminalMap />);
+    fireEvent.click(screen.getByRole('tab', { name: '时间线' }));
+    expect(screen.getByRole('tab', { name: '时间线' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('first progress step')).toBeTruthy();
   });
 });

@@ -9,6 +9,8 @@ import { visibleMapNodeIds } from './mapVisibility';
 import { buildTreeContextMenu } from '../../../lib/treeContextMenu';
 import { requestDigest } from '../../../lib/digestPrompt';
 import { findTreeIdForNode } from '../../../state/tree';
+import { MapTimeline } from '../map/MapTimeline';
+import Branches from './Branches';
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
 
@@ -23,6 +25,11 @@ const FIT_PADDING = 48;
 
 type MapMode = 'overview' | 'thread' | 'graph';
 type ZoomMode = 'auto' | 'manual';
+/** Three top-level views inside the Map page: the dagre graph, the timeline,
+ *  and the Branches document. Not persisted — always opens on 'graph'. */
+type MapView = 'graph' | 'timeline' | 'doc';
+const MAP_VIEWS: readonly MapView[] = ['graph', 'timeline', 'doc'];
+const MAP_VIEW_LABELS: Record<MapView, string> = { graph: '图', timeline: '时间线', doc: '文档' };
 const DEFAULT_MAP_MODE: MapMode = 'thread';
 const EMPTY_TREES: readonly Tree[] = [];
 // Workspace-wide overview/graph code remains available internally, but the
@@ -158,6 +165,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   );
   const [zoom, setZoom] = useState(1);
   const [zoomMode, setZoomMode] = useState<ZoomMode>('auto');
+  // Top-level view (graph / timeline / doc). Session-only, always opens on graph.
+  const [view, setView] = useState<MapView>('graph');
   const [mode, setMode] = useState<MapMode>(DEFAULT_MAP_MODE);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: string } | null>(null);
@@ -419,6 +428,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           liveNodeCount={liveIds.length}
           mode={mode}
           setMode={setMapMode}
+          view={view}
+          setView={setView}
           zoom={effectiveZoom}
           zoomMode={zoomMode}
           onZoomIn={zoomIn}
@@ -562,14 +573,33 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       liveNodeCount={liveIds.length}
       mode={mode}
       setMode={setMapMode}
+      view={view}
+      setView={setView}
       zoom={effectiveZoom}
       zoomMode={zoomMode}
       onZoomIn={zoomIn}
       onZoomOut={zoomOut}
       onFit={fitMap}
       streamingCount={streamingCount}
-      showZoom
+      showZoom={view === 'graph'}
     >
+      {view === 'timeline' && (
+        <MapTimeline
+          nodes={liveIds.map((id) => nodesSnapshot[id]).filter(Boolean)}
+          now={Date.now()}
+          onOpenPane={(id) => {
+            openPane(id);
+            onNav?.('dashboard');
+          }}
+          onFocus={(id) => {
+            openPane(id);
+            onNav?.('dashboard');
+          }}
+        />
+      )}
+      {view === 'doc' && <Branches onNav={onNav} />}
+      {view === 'graph' && (
+      <>
       <div
         style={{
           height: 28,
@@ -885,7 +915,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           />
         )}
       </div>
-      {menu && activeProject && (
+      </>
+      )}
+      {menu && view === 'graph' && activeProject && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
@@ -1034,6 +1066,8 @@ function MapFrame({
   liveNodeCount,
   mode,
   setMode,
+  view,
+  setView,
   zoom,
   zoomMode,
   onZoomIn,
@@ -1046,6 +1080,8 @@ function MapFrame({
   liveNodeCount: number;
   mode: MapMode;
   setMode: (mode: MapMode) => void;
+  view: MapView;
+  setView: (view: MapView) => void;
   zoom: number;
   zoomMode: ZoomMode;
   onZoomIn: () => void;
@@ -1132,40 +1168,37 @@ function MapFrame({
             <div style={{ width: 1, height: 16, background: 'var(--term-line)' }} />
           </>
         )}
-        {VISIBLE_MAP_MODES.length > 1 ? (
-          <>
-            <span style={{ color: 'var(--term-mid)' }}>view</span>
-            <div
-              style={{
-                display: 'flex',
-                border: '1px solid var(--term-line)',
-                WebkitAppRegion: 'no-drag',
-              } as React.CSSProperties}
-            >
-              {VISIBLE_MAP_MODES.map((k, i) => {
-                const active = k === mode;
-                return (
-                  <span
-                    key={k}
-                    onClick={() => setMode(k)}
-                    style={{
-                      padding: '3px 8px',
-                      color: active ? 'var(--term-fg)' : 'var(--term-mid)',
-                      background: active ? 'var(--term-alt)' : 'var(--term-surface)',
-                      borderRight: i < VISIBLE_MAP_MODES.length - 1 ? '1px solid var(--term-line)' : 'none',
-                      cursor: active ? 'default' : 'pointer',
-                      fontWeight: active ? 700 : 450,
-                    }}
-                  >
-                    {k}
-                  </span>
-                );
-              })}
-            </div>
-          </>
-        ) : (
-          <Tag color="var(--term-mid)">graph</Tag>
-        )}
+        <div
+          role="tablist"
+          aria-label="Map views"
+          style={{
+            display: 'flex',
+            border: '1px solid var(--term-line)',
+            WebkitAppRegion: 'no-drag',
+          } as React.CSSProperties}
+        >
+          {MAP_VIEWS.map((v, i) => {
+            const active = v === view;
+            return (
+              <span
+                key={v}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setView(v)}
+                style={{
+                  padding: '3px 10px',
+                  color: active ? 'var(--term-fg)' : 'var(--term-mid)',
+                  background: active ? 'var(--term-alt)' : 'var(--term-surface)',
+                  borderRight: i < MAP_VIEWS.length - 1 ? '1px solid var(--term-line)' : 'none',
+                  cursor: active ? 'default' : 'pointer',
+                  fontWeight: active ? 700 : 450,
+                }}
+              >
+                {MAP_VIEW_LABELS[v]}
+              </span>
+            );
+          })}
+        </div>
       </div>
       {children}
     </div>
