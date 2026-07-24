@@ -88,8 +88,16 @@ export default function TerminalDashboard() {
       if (e.button !== 0) return; // primary button only — ignore right/middle
       const strip = stripRef.current;
       if (!strip) return;
-      const paneEl = (e.target as HTMLElement | null)?.closest?.('[data-node-id]') as HTMLElement | null;
-      if (!paneEl || !strip.contains(paneEl)) return;
+      // Resolve the strip's DIRECT child — the pane wrapper the CSS `> *` rule
+      // targets. NOT closest('[data-node-id]'): TPane's own root (TPane.tsx)
+      // and mention-chip spans (MessageBlock.tsx) also carry data-node-id, so
+      // closest matched a nested element. The real wrapper then stayed
+      // un-exempted, its inherited user-select:none cascaded through the whole
+      // pane, and selection died in every pane — the regression being fixed.
+      let n = e.target as HTMLElement | null;
+      while (n && n.parentElement !== strip) n = n.parentElement;
+      const paneEl = n && n.parentElement === strip ? n : null;
+      if (!paneEl || !paneEl.hasAttribute('data-node-id')) return;
       clearPaneSelectionIsolation(); // drop any stale source before re-marking
       strip.classList.add('selecting');
       paneEl.classList.add('sel-source');

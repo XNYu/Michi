@@ -537,12 +537,18 @@ export function placePopup(
   // both fits and stays clear of the composer.
   const useBelow = topRoom < needed && bottomRoom >= needed;
 
-  const anchorRect = useBelow ? lastVisible : firstVisible;
   let top = useBelow
     ? lastVisible.bottom + POPUP_GAP
     : firstVisible.top - POPUP_GAP - height;
 
-  let left = anchorRect.left + anchorRect.width / 2 - width / 2;
+  // Horizontally center on the union bounding box of all highlight rects
+  // so the popup sits over the visual center of the entire selection,
+  // not just the first or last line.
+  const unionLeft = Math.min(...highlightRects.map(r => r.left));
+  const unionRight = Math.max(...highlightRects.map(r => r.right));
+  const unionCenterX = (unionLeft + unionRight) / 2;
+
+  let left = unionCenterX - width / 2;
   left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - width - VIEWPORT_MARGIN));
   top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - height - VIEWPORT_MARGIN));
 

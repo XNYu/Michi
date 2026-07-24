@@ -575,10 +575,11 @@ describe('placePopup', () => {
     expect(placement.top).toBe(8);
   });
 
-  it('anchors horizontally on the visible line, not the full bounding box', () => {
+  it('anchors horizontally on the union of all highlight rects', () => {
     setViewport(1024, 800);
-    // Multi-line selection that wraps: bounding box spans full width, but
-    // the first visible line is short and lives on the right.
+    // Multi-line selection that wraps: first visible line is short and on
+    // the right, second line is on the left. The popup should center on the
+    // union bounding box of both lines.
     const firstVisible = rect(600, 400, 200, 18);
     const bounds = rect(80, 400, 800, 60);
     const placement = placePopup(
@@ -588,8 +589,7 @@ describe('placePopup', () => {
       POPUP_W,
       POPUP_H,
     );
-    // Horizontally centered on the first visible rect (above is preferred,
-    // so first line drives both axes): 600 + 100 - 140 = 560.
-    expect(placement.left).toBe(560);
+    // Union: left=80, right=800 → center=440. left = 440 - 140 = 300.
+    expect(placement.left).toBe(300);
   });
 });
