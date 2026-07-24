@@ -2860,3 +2860,24 @@ html[data-page-hidden] .t-branch-anchor-pulse {
 .t-branch-anchor-pulse {
   will-change: opacity;
 }
+
+/* Map B effects — breathing streaming cards, unread pulse dot, flowing edges.
+   All colors via theme tokens (no hardcoded hex). */
+@keyframes map-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-accent) 18%, transparent),
+        0 4px 20px -6px color-mix(in srgb, var(--term-accent) 35%, transparent); }
+}
+.map-card--breathe { animation: map-breathe 2.8s ease-in-out infinite; }
+
+@keyframes map-unread-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--term-digest) 50%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+.map-card__unread-dot {
+  position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--term-digest); animation: map-unread-pulse 2s ease-out infinite;
+}
+
+@keyframes map-edge-flow { to { stroke-dashoffset: -16; } }
+.map-edge--flow { stroke-dasharray: 6 10; animation: map-edge-flow 1s linear infinite; }
