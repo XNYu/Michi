@@ -870,6 +870,34 @@ html[data-vibrancy="on"],
   z-index: 10;
 }
 
+/* Confine a drag-selection to the pane it started in.
+   The native Selection is a document-global object: its anchor→focus range is
+   painted in DOM source order, so dragging up/sideways out of a pane sweeps the
+   neighbor pane + this pane's follow-up row into the selection for a frame
+   before it collapses back — the "flash" the user sees. There is no CSS
+   selection-containment (no `contain` value, and `user-select: contain` is
+   effectively unimplemented cross-browser), so we isolate at the "can this be
+   selected" layer instead: on mousedown inside a pane, Dashboard.tsx adds
+   `.selecting` to the strip and `.sel-source` to that pane's wrapper via
+   classList (NOT React state — this must never enter the streaming render
+   path), and clears both on mouseup. `user-select` is layout- and
+   paint-neutral, so the flip costs a single style recalc that propagates the
+   inherited value down each non-source subtree — not a reflow — and it happens
+   twice per drag, never per frame. A non-selectable subtree simply can't be a
+   selection endpoint, so the range stays clamped to the source pane. */
+.terminal-dashboard.selecting > *:not(.sel-source) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Themed text selection across the terminal shell — replaces the OS-default
+   blue with the active palette's accent so a selection reads as part of the
+   UI. Translucent wash only (no color override) so themed foreground text
+   stays legible in both light and dark. */
+.terminal-shell ::selection {
+  background: color-mix(in srgb, var(--term-accent) 26%, transparent);
+}
+
 /* Static position variant — used by Home where the composer is centered
    in normal flow rather than floating over a scroll area. */
 .terminal-composer.is-static {
