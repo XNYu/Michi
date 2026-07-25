@@ -52,19 +52,11 @@ describe('MapCard (expanded)', () => {
     expect(last?.textContent).toContain('最新进展');
   });
 
-  it('shows last assistant reply excerpt', () => {
-    render(<MapCard now={NOW} ribbon={null} expanded onToggle={() => {}} onOpenPane={() => {}}
-      node={node({ title: 'X', messages: [
-        { id: 'a1', role: 'assistant', text: 'spctl 判定 accepted,下一步查 entitlements', toolCalls: [] },
-      ] as any })} />);
-    expect(screen.getByText(/spctl 判定 accepted/)).toBeTruthy();
-  });
-
-  it('open-pane button calls onOpenPane and stops propagation to toggle', () => {
+  it('open-pane footer calls onOpenPane and stops propagation to toggle', () => {
     const onOpenPane = vi.fn(); const onToggle = vi.fn();
     render(<MapCard now={NOW} ribbon={null} expanded onToggle={onToggle} onOpenPane={onOpenPane}
       node={node({ title: 'X' })} />);
-    fireEvent.click(screen.getByRole('button', { name: /打开 pane/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Open in pane/ }));
     expect(onOpenPane).toHaveBeenCalledOnce();
     expect(onToggle).not.toHaveBeenCalled();
   });

@@ -2861,23 +2861,104 @@ html[data-page-hidden] .t-branch-anchor-pulse {
   will-change: opacity;
 }
 
-/* Map B effects — breathing streaming cards, unread pulse dot, flowing edges.
-   All colors via theme tokens (no hardcoded hex). */
-@keyframes map-breathe {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-accent) 18%, transparent),
-        0 4px 20px -6px color-mix(in srgb, var(--term-accent) 35%, transparent); }
-}
-.map-card--breathe { animation: map-breathe 2.8s ease-in-out infinite; }
+/* Map — Glass Workbench effects. All colors via theme tokens (the only literal
+   is `white` used purely as a color-mix blend target). Philosophy: only living
+   things glow — streaming / just-arrived; everything else cools by fading. */
 
+/* Card hover lift — a spring rise + deeper shadow. */
+.map-card {
+  transition: transform .22s cubic-bezier(.34, 1.4, .5, 1), box-shadow .22s, opacity .16s, border-color .16s;
+}
+.map-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--term-fg) 8%, transparent),
+    0 22px 50px -20px color-mix(in srgb, var(--term-fg) 30%, transparent);
+}
+
+/* 前沿呼吸 — the streaming card breathes an accent glow (2.8s), pulling the eye
+   to "where thinking is now". box-shadow only, so hover's transform composes. */
+@keyframes map-breathe-b {
+  0%, 100% {
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--term-fg) 5%, transparent),
+      0 16px 40px -20px color-mix(in srgb, var(--term-fg) 22%, transparent);
+  }
+  50% {
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--term-accent) 8%, transparent),
+      0 16px 44px -14px color-mix(in srgb, var(--term-accent) 40%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--term-accent) 22%, transparent);
+  }
+}
+.map-card--breathe { animation: map-breathe-b 2.8s ease-in-out infinite; }
+
+/* The `● streaming` dot blinks so a still frame still reads as "live". */
+@keyframes map-live-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.map-card__live-dot { animation: map-live-blink 1.4s ease-in-out infinite; }
+
+/* 未读微光 — reply done but not yet seen: a slow green pulse, distinct from the
+   red streaming breathe (red = running, green = done, waiting). */
 @keyframes map-unread-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--term-digest) 50%, transparent); }
   70%, 100% { box-shadow: 0 0 0 6px transparent; }
 }
 .map-card__unread-dot {
   position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--term-digest); animation: map-unread-pulse 2s ease-out infinite;
+  background: var(--term-digest); animation: map-unread-pulse 2s ease-out infinite; z-index: 2;
 }
 
+/* Expanded section grows down from the card body. The wrapper animates its
+   grid track from 0fr → 1fr, which smoothly reveals/hides the auto-height
+   inner block both ways without measuring content. The card box itself stays
+   fixed size in the dagre layout, so this overflow never reflows the graph. */
+.map-card__expand-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .24s cubic-bezier(.4, 0, .2, 1), opacity .2s ease;
+}
+.map-card__expand-wrap[data-expanded='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.map-card__expand-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+/* Collapsed: pull the inner block out of the a11y tree so the footer button
+   isn't focusable / queryable while hidden. */
+.map-card__expand-wrap[data-expanded='false'] .map-card__expand-inner {
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-card__expand-wrap { transition: none; }
+}
+
+/* Footer action — quiet until hover, then it lights accent. */
+.map-card__footer { transition: color .15s, background .15s; }
+.map-card__footer:hover {
+  color: var(--term-accent);
+  background: color-mix(in srgb, var(--term-accent-f) 30%, var(--term-surface));
+}
+
+/* 入边流光 — the edge feeding a streaming child has light running along it
+   (energy flowing from parent into the growing branch). Static edges stay quiet. */
 @keyframes map-edge-flow { to { stroke-dashoffset: -16; } }
-.map-edge--flow { stroke-dasharray: 6 10; animation: map-edge-flow 1s linear infinite; }
+.map-edge--flow { stroke-dasharray: 5 9; animation: map-edge-flow 1s linear infinite; }
+
+/* fanout 新枝长出 — a freshly-spawned card rises + scales in, and its incoming
+   edge draws itself. Both play once on mount. */
+@keyframes map-card-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+.map-card--in { animation: map-card-in 0.5s cubic-bezier(.34, 1.2, .5, 1) both; }
+
+@keyframes map-edge-draw { from { stroke-dashoffset: 620; } to { stroke-dashoffset: 0; } }
+.map-edge--draw { stroke-dasharray: 620; animation: map-edge-draw 0.7s ease-out both; }
+
+/* Hovering a card lights its whole ancestor chain (the branch's path back to
+   the root); the dimming of the rest is what makes the lit path legible. */
+.map-card--anc { border-color: var(--term-accent) !important; }
+
+/* Floating topbar back link. */
+.map-topbar__back { transition: color .15s; }
+.map-topbar__back:hover { color: var(--term-fg); }

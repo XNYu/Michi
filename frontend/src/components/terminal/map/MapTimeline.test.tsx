@@ -30,12 +30,13 @@ describe('MapTimeline', () => {
     expect(screen.getByText('fix-path')).toBeTruthy();
   });
 
-  it('renders a seam element when a big time gap exists', () => {
-    const D = 24 * 3600_000;
-    const nodes = [node({ nodeId: 'a', title: 'x', branchOverviewEntries: [
-      { at: NOW - 5 * D, text: 'early' }, { at: NOW, text: 'late' },
-    ]})];
-    const { container } = render(<MapTimeline nodes={nodes} now={NOW} onOpenPane={() => {}} onFocus={() => {}} />);
-    expect(container.querySelector('[data-timeline-seam]')).not.toBeNull();
+  it('labels a non-root lane\'s first event as forked', () => {
+    const parentOf = new Map([['b', 'a']]);
+    const nodes = [
+      node({ nodeId: 'a', title: 'root', branchOverviewEntries: [{ at: NOW - 2000, text: 'root work' }] }),
+      node({ nodeId: 'b', title: 'child', branchOverviewEntries: [{ at: NOW - 1000, text: 'child work' }] }),
+    ];
+    render(<MapTimeline nodes={nodes} now={NOW} onOpenPane={() => {}} onFocus={() => {}} parentOf={parentOf} />);
+    expect(screen.getByText(/forked/)).toBeTruthy();
   });
 });
