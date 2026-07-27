@@ -588,6 +588,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const sharedStreamHandlersRef = useRef<(nodeId: string) => Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'>>(() => ({}));
   const turnEndHandlerRef = useRef<(reason: TurnEndReason, nodeId: string) => void>(() => {});
   const streamCompleteHandlerRef = useRef<(nodeId: string) => void>(() => {});
+  // Navigates to a node's pane (switching workspace / thread when needed) and
+  // lands on the Dashboard. Assigned below, once the nav actions exist; held in
+  // a ref because the stream handlers are built earlier in this component.
+  const revealNodeRef = useRef<(nodeId: string) => void>(() => {});
   const sendMessageRef = useRef<(nodeId: string, text: string, meta?: UserSendMeta) => void>(() => {});
 
   const nodesRef = useRef(nodes);
@@ -1339,10 +1343,20 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         nodeId,
         userInput: { requestId: data.requestId, questions: data.questions, answers: [] },
       });
-      if (prefsRef.current.notifications !== 'off' && !document.hasFocus()) {
+      // Unlike stream-complete / tool-approval, this notifies even while the
+      // window is focused: the ask card renders inline in ONE pane's
+      // transcript, which is invisible when that pane is closed, lives in
+      // another thread, or is scrolled above the fold. The single quiet case
+      // is the one where the card is already in front of the user — window
+      // focused AND that pane focused. (`notify` keeps the OS-level
+      // notification unfocused-only, so a focused window only gets a toast;
+      // the AskUserAlertBar carries the reminder from then on.)
+      const alreadyInView = document.hasFocus() && focusedPaneRef.current === nodeId;
+      if (prefsRef.current.notifications !== 'off' && !alreadyInView) {
         notify({
           title: 'Agent needs your input',
           body: data.questions[0]?.question ?? 'Please answer',
+          onClick: () => revealNodeRef.current(nodeId),
         });
       }
     },
@@ -2333,6 +2347,27 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     setSidebarExpanded: setSidebarExpandedPref,
   });
 
+  /** Focus the window, open `nodeId`'s pane wherever it lives, land on the
+   *  Dashboard. Shared by every notification whose click should take the user
+   *  to the node that produced it. */
+  const revealNode = useCallback((nodeId: string) => {
+    window.focus();
+    navigateToNode(
+      {
+        projects: projectsRef.current,
+        activeProjectId: activeProjectIdRef.current,
+        selectProject,
+        openPane,
+        openPaneInTree,
+        activateTree,
+        setFocusedNodeId,
+      },
+      nodeId,
+    );
+    window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+  }, [activateTree, openPane, openPaneInTree, selectProject, setFocusedNodeId]);
+  revealNodeRef.current = revealNode;
+
   const handleStreamComplete = useCallback((nodeId: string) => {
     if (prefsRef.current.notifications !== 'all') return;
     if (focusedPaneRef.current === nodeId) return;
@@ -2340,30 +2375,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     notify({
       title: node?.title ?? 'Branch complete',
       body: 'Streaming finished',
-      onClick: () => {
-        window.focus();
-        const project = projectsRef.current.find((candidate) => candidate.chatIds.includes(nodeId));
-        if (!project) {
-          openPane(nodeId);
-          return;
-        }
-        const treeId = findTreeIdForNode(nodeId, project);
-        if (!treeId) {
-          openPane(nodeId);
-          return;
-        }
-        selectProject(project.id);
-        if (treeId !== project.activeTreeId) {
-          openPaneInTree(project.id, treeId, nodeId);
-          activateTree(treeId, project.id);
-        } else {
-          openPane(nodeId);
-        }
-        setFocusedNodeId(nodeId);
-        window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
-      },
+      onClick: () => revealNode(nodeId),
     });
-  }, [activateTree, openPane, openPaneInTree, selectProject, setFocusedNodeId]);
+  }, [revealNode]);
   streamCompleteHandlerRef.current = handleStreamComplete;
 
   const {

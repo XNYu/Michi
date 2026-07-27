@@ -4,6 +4,7 @@ import { useTerminalColors } from './useTerminalColors';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
 import WarmFailedBanner from './WarmFailedBanner';
+import AskUserAlertBar from './AskUserAlertBar';
 import TerminalDashboard from './pages/Dashboard';
 import TerminalHome from './pages/Home';
 import NewWorkspaceDialog from '../NewWorkspaceDialog';
@@ -488,6 +489,7 @@ export default function TerminalShell() {
         artifactsOpen={artifactsOpen}
       />
       <WarmFailedBanner />
+      <AskUserAlertBar onNav={handleNav} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>
         <TerminalSidebar
           activePage={page}

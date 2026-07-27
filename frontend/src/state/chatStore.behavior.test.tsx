@@ -310,6 +310,82 @@ describe('auto-branch behavior (real provider)', () => {
     }));
   });
 
+  it('notifies about an Ask User request in a background pane while the window is focused', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+
+    await act(async () => {
+      await result.current.store.createProject('test', undefined);
+    });
+    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
+    let askingId = '';
+    await act(async () => {
+      askingId = (await result.current.store.createThread()) ?? '';
+      // A second thread takes pane focus, so the asking pane is in the background.
+      await result.current.store.createThread();
+    });
+
+    await act(async () => {
+      result.current.store.sendMessage(askingId, 'background work');
+    });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    mockNotify.mockClear();
+
+    const handlers = mockStreamMessage.mock.calls[0][2] as {
+      onUserInputRequest?: (data: unknown) => void;
+    };
+    act(() => {
+      handlers.onUserInputRequest?.({
+        requestId: 3,
+        questions: [{ question: 'Which database?', options: [], multiSelect: false }],
+      });
+    });
+
+    // Pre-fix this was gated on `!document.hasFocus()`, so an ask landing in a
+    // background pane of a focused window was silent.
+    expect(mockNotify).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Agent needs your input',
+      body: 'Which database?',
+    }));
+    expect(result.current.nodes[askingId].pendingUserInput?.requestId).toBe(3);
+  });
+
+  it('stays quiet for an Ask User request on the focused pane of a focused window', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+
+    await act(async () => {
+      await result.current.store.createProject('test', undefined);
+    });
+    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
+    let rootId = '';
+    await act(async () => {
+      rootId = (await result.current.store.createThread()) ?? '';
+    });
+    await waitFor(() => expect(result.current.store.focusedPane).toBe(rootId));
+
+    await act(async () => {
+      result.current.store.sendMessage(rootId, 'hello');
+    });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    mockNotify.mockClear();
+
+    const handlers = mockStreamMessage.mock.calls[0][2] as {
+      onUserInputRequest?: (data: unknown) => void;
+    };
+    act(() => {
+      handlers.onUserInputRequest?.({
+        requestId: 1,
+        questions: [{ question: 'Which database?', options: [], multiSelect: false }],
+      });
+    });
+
+    // The inline ask card is already on screen — the pending state (and the
+    // global alert bar it drives) is reminder enough.
+    expect(mockNotify).not.toHaveBeenCalled();
+    expect(result.current.nodes[rootId].pendingUserInput?.requestId).toBe(1);
+  });
+
   it('does not let a stale RAF commit roll streaming text backward', async () => {
     const originalWindowRaf = window.requestAnimationFrame;
     const originalGlobalRaf = globalThis.requestAnimationFrame;
