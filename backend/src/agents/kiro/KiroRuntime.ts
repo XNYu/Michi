@@ -418,6 +418,82 @@ export class KiroRuntime implements AgentRuntime {
     }
 
     /**
+     * Force a fresh kiro process for a cwd, even if the current one still
+     * reports isAlive(). Used by connection-class recovery: a `dispatch
+     * failure` / stalled-stream error means the live process is holding a dead
+     * AWS-SDK connection pool, so opening a new session on it would fail too —
+     * only a new process clears it. Tears down the old client (SIGTERM→KILL),
+     * purges its sessions + MCP slots, then cold-starts via ensureClient.
+     */
+    async forceRespawn(cwd: string): Promise<AcpClient> {
+        const old = this.pool.get(cwd);
+        if (old) {
+            // Drop from the pool first so the onExit hook (which also purges)
+            // sees `pool.get(cwd) !== old` and no-ops — we purge explicitly.
+            this.pool.delete(cwd);
+            await old.shutdown().catch(() => {});
+            this.purgeSessionsForCwd(cwd);
+        }
+        return this.ensureClient(cwd);
+    }
+
+    /**
+     * Recover a single dead session after a connection-class failure: respawn
+     * the process, then `session/load` the SAME sid so kiro restores the full
+     * on-disk transcript (~/.kiro/sessions/cli/<sid>.jsonl) — the model keeps
+     * its memory of prior turns. The nativeSessionId is unchanged, so the
+     * caller's KiroSession stays valid; only the MCP slot + runtime maps are
+     * rebuilt (loadAcpSession handles both). Returns true iff the reload
+     * succeeded; on failure the caller surfaces the original error.
+     *
+     * `purgeSessionsForCwd` (inside forceRespawn) drops the slot + registry
+     * binding, so we snapshot the rebind metadata BEFORE respawning.
+     */
+    async recoverSession(sid: string, cwd: string): Promise<boolean> {
+        const nodeId = this.nodeIdBySid.get(sid) ?? sid;
+        const model = this.sessionCurrentModel.get(sid);
+        const slotId = this.slotByChatId.get(sid);
+        const slot = slotId ? this.mcpRegistry?.get(slotId) : undefined;
+        const workspaceId = slot?.workspaceId ?? null;
+        const ownerUserId = slot?.ownerUserId ?? null;
+
+        await this.forceRespawn(cwd);
+        try {
+            await this.loadAcpSession({
+                sessionId: sid,
+                cwd,
+                model: model ?? undefined,
+                workspaceId,
+                nodeId,
+                ownerUserId,
+            });
+            return true;
+        } catch (err) {
+            perf.mark("recoverSession:load_failed", { cwd, sid });
+            return false;
+        }
+    }
+
+    /**
+     * "Test Connection": force a fresh kiro process for the cwd and prove it
+     * can complete a `session/new` round-trip. A dead AWS-SDK connection pool
+     * (the `dispatch failure` cause) can't be cleared without a new process, so
+     * we always respawn first. The throw-away probe session is destroyed
+     * immediately. Returns `{ ok }` or `{ ok:false, detail }` with kiro's
+     * message so the UI can distinguish "back online" from "still broken".
+     */
+    async checkHealth(cwd: string): Promise<{ ok: boolean; detail?: string }> {
+        try {
+            const c = await this.forceRespawn(cwd);
+            const { sessionId: sid } = await c.newSession([]);
+            c.destroySession(sid);
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+        }
+    }
+
+    /**
      * Opportunistic update of the global availableModes cache from any
      * `modes` payload that came back with a session/new or session/load
      * response. First non-empty list wins; later sessions don't overwrite.

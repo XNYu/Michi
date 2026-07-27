@@ -873,6 +873,134 @@ function CollapsibleUserText({
   );
 }
 
+/**
+ * Terminal error tail below a failed assistant turn. Three variants keyed by
+ * `errorKind` (from the Kiro runtime, see backend acpErrors.ts):
+ *   - connection: the backend already auto-retried once and still failed →
+ *     friendly banner + Retry + Test Connection (force-respawn probe).
+ *   - auth: SSO/login expired → prompt to re-authenticate (mwinit / kiro login).
+ *     Retry alone won't help, so no Test Connection button.
+ *   - generic / undefined: the original compact "failed · ↻ retry" row, raw
+ *     message preserved.
+ */
+function ErrorTail({
+  errorMessage,
+  errorKind,
+  onRetry,
+  onTestConnection,
+}: {
+  errorMessage?: string;
+  errorKind?: string;
+  onRetry?: () => void;
+  onTestConnection?: () => Promise<{ ok: boolean; detail?: string }>;
+}) {
+  const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [testDetail, setTestDetail] = useState<string | undefined>();
+
+  const runTest = async () => {
+    if (!onTestConnection || testState === 'testing') return;
+    setTestState('testing');
+    setTestDetail(undefined);
+    const result = await onTestConnection();
+    setTestState(result.ok ? 'ok' : 'fail');
+    setTestDetail(result.detail);
+  };
+
+  const btnStyle: React.CSSProperties = {
+    border: '1px solid var(--term-danger)',
+    color: 'var(--term-danger)',
+    padding: '1px 8px',
+    font: '600 11px var(--ui-font)',
+    letterSpacing: '.04em',
+    background: 'transparent',
+    cursor: 'pointer',
+  };
+  const onHoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    (e.currentTarget as HTMLButtonElement).style.background = 'var(--term-danger-f, rgba(168,38,26,0.08))';
+  };
+  const onHoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+  };
+
+  const isConnection = errorKind === 'connection';
+  const isAuth = errorKind === 'auth';
+
+  // Headline scaled to the class. Connection: we already retried once, so say so.
+  const headline = isConnection
+    ? '无法连接到 Kiro · 已自动重试一次仍失败'
+    : isAuth
+      ? 'Kiro 登录已过期 · 请重新登录 (mwinit)'
+      : 'failed';
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span
+          style={{
+            fontFamily: 'var(--ui-font)',
+            fontSize: 11,
+            letterSpacing: '.04em',
+            color: 'var(--term-danger)',
+          }}
+        >
+          {headline}
+        </span>
+        <span style={{ color: 'var(--term-danger)', opacity: 0.5 }}>·</span>
+        {!isAuth && (
+          <button
+            type="button"
+            data-testid="error-tail-retry"
+            onClick={(e) => { e.stopPropagation(); onRetry?.(); }}
+            style={btnStyle}
+            onMouseEnter={onHoverIn}
+            onMouseLeave={onHoverOut}
+          >
+            ↻ retry
+          </button>
+        )}
+        {(isConnection || isAuth) && onTestConnection && (
+          <button
+            type="button"
+            data-testid="error-tail-test-connection"
+            onClick={(e) => { e.stopPropagation(); void runTest(); }}
+            disabled={testState === 'testing'}
+            style={{ ...btnStyle, cursor: testState === 'testing' ? 'default' : 'pointer', opacity: testState === 'testing' ? 0.6 : 1 }}
+            onMouseEnter={testState === 'testing' ? undefined : onHoverIn}
+            onMouseLeave={testState === 'testing' ? undefined : onHoverOut}
+          >
+            {testState === 'testing' ? '测试中…' : '⚙ 测试连接'}
+          </button>
+        )}
+      </div>
+      {testState === 'ok' && (
+        <div style={{ marginTop: 6, color: 'var(--term-success, #2e7d32)', font: '11px var(--ui-font)' }}>
+          连接已恢复，请点 retry 重试。
+        </div>
+      )}
+      {testState === 'fail' && (
+        <div style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-danger)', opacity: 0.82, font: '11px var(--ui-font)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+          Kiro 仍不可用{testDetail ? `：${testDetail}` : '。请检查网络 / 运行 mwinit 后重试。'}
+        </div>
+      )}
+      {errorMessage && testState !== 'ok' && (
+        <div
+          style={{
+            marginTop: 6,
+            maxWidth: 720,
+            color: 'var(--term-danger)',
+            opacity: 0.82,
+            font: '11px var(--ui-font)',
+            lineHeight: 1.45,
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {errorMessage}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface MessageBlockProps {
   m: ChatMessage;
   index: number;
@@ -888,6 +1016,12 @@ interface MessageBlockProps {
   usageInfo?: { durationMs: number; credits: number } | null;
   isErrorTail?: boolean;
   errorMessage?: string;
+  /** Error classification from the Kiro runtime: 'connection' | 'auth' |
+   * 'generic'. Drives the error-tail banner variant. */
+  errorKind?: string;
+  /** Probe backend connectivity ("Test Connection"). Present only when the
+   * error is connection/auth class and a cwd/workspace is resolvable. */
+  onTestConnection?: () => Promise<{ ok: boolean; detail?: string }>;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
   editing?: boolean;
@@ -931,6 +1065,8 @@ function MessageBlockInner({
   usageInfo,
   isErrorTail,
   errorMessage,
+  errorKind,
+  onTestConnection,
   subagents,
   runtimeId,
   turnAnchors,
@@ -1153,75 +1289,12 @@ function MessageBlockInner({
         </div>
       )}
       {!isUser && !m.streaming && isErrorTail && (
-        <div
-          style={{
-            marginTop: 8,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <span
-              style={{
-                fontFamily: 'var(--ui-font)',
-                fontSize: 11,
-                letterSpacing: '.04em',
-                color: 'var(--term-danger)',
-              }}
-            >
-              failed
-            </span>
-            <span
-              style={{
-                color: 'var(--term-danger)',
-                opacity: 0.5,
-              }}
-            >
-              ·
-            </span>
-            <button
-              type="button"
-              data-testid="error-tail-retry"
-              onClick={(e) => { e.stopPropagation(); onRetry?.(); }}
-              style={{
-                border: '1px solid var(--term-danger)',
-                color: 'var(--term-danger)',
-                padding: '1px 8px',
-                font: '600 11px var(--ui-font)',
-                letterSpacing: '.04em',
-                background: 'transparent',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = 'var(--term-danger-f, rgba(168,38,26,0.08))';
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-              }}
-            >
-              ↻ retry
-            </button>
-          </div>
-          {errorMessage && (
-            <div
-              style={{
-                marginTop: 6,
-                maxWidth: 720,
-                color: 'var(--term-danger)',
-                opacity: 0.82,
-                font: '11px var(--ui-font)',
-                lineHeight: 1.45,
-                overflowWrap: 'anywhere',
-              }}
-            >
-              {errorMessage}
-            </div>
-          )}
-        </div>
+        <ErrorTail
+          errorMessage={errorMessage}
+          errorKind={errorKind}
+          onRetry={onRetry}
+          onTestConnection={onTestConnection}
+        />
       )}
       {turnAnchors && turnAnchors.length > 0 && (
         <>
@@ -1312,6 +1385,8 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   usageEqual(prev.usageInfo, next.usageInfo) &&
   !!prev.isErrorTail === !!next.isErrorTail &&
   prev.errorMessage === next.errorMessage &&
+  prev.errorKind === next.errorKind &&
+  prev.onTestConnection === next.onTestConnection &&
   prev.subagents === next.subagents &&
   prev.runtimeId === next.runtimeId &&
   childAnchorsEqual(prev.quoteAnchors, next.quoteAnchors) &&

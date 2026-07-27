@@ -317,6 +317,11 @@ export interface ChatNodeState {
   /** Epoch ms when the current streaming turn began. Survives remounts. */
   streamingStartedAt?: number;
   error?: string;
+  /** Classification of the last error (Kiro runtime): 'connection' | 'auth' |
+   * 'generic'. Drives the error banner variant + Test Connection affordance.
+   * Undefined for unclassified errors / non-Kiro runtimes. Transient only —
+   * not persisted; cleared when a new turn starts. */
+  errorKind?: string;
   minimized?: boolean;
   /**
    * Transient - how long (ms) the agent has been silent during the current
@@ -624,7 +629,7 @@ export type ChatAction =
        *  finalized as 'interrupted' instead of 'completed'. */
       aborted?: boolean;
     }
-  | { type: 'error'; nodeId: string; assistantId: string; message: string }
+  | { type: 'error'; nodeId: string; assistantId: string; message: string; errorKind?: string }
   | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
   | { type: 'apply-seq'; nodeId: string; turnId: string; seq: number }
   | { type: 'apply-background-seq'; nodeId: string; turnId: string; seq: number }

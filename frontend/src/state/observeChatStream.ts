@@ -182,9 +182,9 @@ export function createBackgroundTurnBinding({
         onStreamComplete?.();
         onTerminal?.();
       },
-      onError: (message, incomingAssistantId, incomingTurnId) => {
+      onError: (message, incomingAssistantId, incomingTurnId, code) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
-        if (assistantId) dispatch({ type: 'error', nodeId, assistantId, message });
+        if (assistantId) dispatch({ type: 'error', nodeId, assistantId, message, errorKind: code });
         onTurnEnd?.('error', nodeId);
         onTerminal?.();
       },

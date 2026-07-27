@@ -708,10 +708,15 @@ export class ChatHub {
 
   private finishWithError(chatId: string, log: TurnLog, err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
+    // KiroSession tags connection/auth/generic on the thrown error so the UI
+    // can show a class-appropriate banner (retry vs. re-login vs. raw). Absent
+    // for non-Kiro runtimes / non-classified errors — the UI falls back to a
+    // plain error tail.
+    const acpErrorKind = (err as { acpErrorKind?: string })?.acpErrorKind;
     try {
       const stamped = this.stamp(log, {
         event: CHAT_STREAM_EVENTS.error,
-        data: { message, completedAt: Date.now() },
+        data: { message, completedAt: Date.now(), ...(acpErrorKind ? { code: acpErrorKind } : {}) },
       });
       const terminalSnapshot = applyTurnEvent(log.snapshot, stamped.ev);
       this.persistence.finalize(terminalSnapshot);

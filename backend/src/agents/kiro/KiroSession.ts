@@ -5,6 +5,7 @@ import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
+import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "./acpErrors";
 
 const KIRO_IMAGE_MEDIA_TYPES: Record<string, string> = {
     ".gif": "image/gif",
@@ -182,7 +183,66 @@ export class KiroSession implements AgentSession {
         }
     }
 
+    /**
+     * Prompt-turn stream with a single connection-class auto-retry.
+     *
+     * When kiro's model connection dies mid-turn (`dispatch failure`, stalled
+     * stream, dead process) or hiccups transiently (throttle, model briefly
+     * unavailable, "failed to generate a response"), a lone retry usually
+     * clears it. We retry ONCE, and ONLY when the failed attempt produced zero
+     * visible output — otherwise a resend would duplicate or garble the answer
+     * the user already saw.
+     *
+     *   - connection class → respawn the kiro process AND `session/load` the
+     *     same sid (restores on-disk transcript, so prior-turn memory survives),
+     *     then resend. If recovery itself fails, surface the original error.
+     *   - transient class  → the connection is fine; resend on the same session.
+     *   - auth / generic   → never retried; rethrown immediately.
+     *
+     * The thrown error carries `acpErrorKind` (connection | auth | generic) so
+     * ChatHub can hand the UI a class-appropriate banner.
+     */
     private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
+        let attempt = 0;
+        while (true) {
+            let firstVisibleYielded = false;
+            try {
+                for await (const ev of this.runPromptOnce(text, imageBlocks)) {
+                    if (ev.kind !== "heartbeat") firstVisibleYielded = true;
+                    yield ev;
+                }
+                return;
+            } catch (err) {
+                const cls = classifyAcpError(err);
+                const canRetry = attempt === 0 && !firstVisibleYielded && isRetryable(cls);
+                if (!canRetry) {
+                    (err as { acpErrorKind?: string }).acpErrorKind = toErrorKind(cls);
+                    throw err;
+                }
+                attempt += 1;
+                if (needsRespawn(cls)) {
+                    const recovered = await this.runtime.recoverSession(this.nativeSessionId, this.cwd);
+                    if (!recovered) {
+                        (err as { acpErrorKind?: string }).acpErrorKind = toErrorKind(cls);
+                        throw err;
+                    }
+                }
+                // Loop: resend the same transport text. For connection recovery
+                // the process is fresh + session reloaded; for transient it's
+                // the same live session.
+            }
+        }
+    }
+
+    /**
+     * Run a single prompt turn, translating raw kiro `session/update` payloads
+     * into NormalizedEvents. Wrapped by `streamUpdates`, which handles the
+     * single connection-class auto-retry. This inner generator is deliberately
+     * left as-is on its error path: it flushes any held sentinel tail as a
+     * `chunk` before rethrowing, so a turn that produced ANY visible output is
+     * observable to the wrapper (which then declines to retry).
+     */
+    private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
         const c = await this.runtime.ensureClient(this.cwd);
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         try {
