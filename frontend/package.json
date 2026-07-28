@@ -20,6 +20,7 @@
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "better-auth": "^1.6.11",
+    "elkjs": "^0.9.3",
     "katex": "^0.17.0",
     "marked": "^17.0.6",
     "michi-shared": "file:../shared",

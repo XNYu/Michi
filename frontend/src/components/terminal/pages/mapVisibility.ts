@@ -16,7 +16,7 @@ export function visibleMapNodeIds(
 
   const children = new Map<string, string[]>();
   for (const edge of project.edges) {
-    if (edge.kind !== undefined && edge.kind !== 'branch') continue;
+    if (edge.kind !== undefined && edge.kind !== 'branch' && edge.kind !== 'merge') continue;
     const next = children.get(edge.source) ?? [];
     next.push(edge.target);
     children.set(edge.source, next);

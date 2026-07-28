@@ -3026,6 +3026,13 @@ html[data-page-hidden] .t-branch-anchor-pulse {
    the root); the dimming of the rest is what makes the lit path legible. */
 .map-card--anc { border-color: var(--term-accent) !important; }
 
+/* Hovering a merge node lights its source nodes with a mauve (merge color) border. */
+.map-card--merge-source {
+  border-color: var(--term-mauve, var(--term-accent)) !important;
+  box-shadow: 0 0 0 1px var(--term-mauve, var(--term-accent)),
+              0 2px 12px -4px color-mix(in srgb, var(--term-mauve, var(--term-accent)) 40%, transparent) !important;
+}
+
 /* Floating topbar back link. */
 .map-topbar__back { transition: color .15s; }
 .map-topbar__back:hover { color: var(--term-fg); }

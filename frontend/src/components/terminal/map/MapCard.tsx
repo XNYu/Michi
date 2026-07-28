@@ -21,6 +21,8 @@ export interface MapCardProps {
   grow?: boolean;
   /** Root of its tree — show the MAIN chip. */
   isMain?: boolean;
+  /** This card is a merge source of the currently hovered merge node — accent border. */
+  mergeSource?: boolean;
 }
 
 // Darkened accent used for the small ASKED / MAIN labels (the references render
@@ -32,7 +34,7 @@ const ASKED_BG = 'color-mix(in srgb, var(--term-alt) 55%, var(--term-surface))';
 const TRAIL_LINE = 'color-mix(in srgb, var(--term-alt) 70%, var(--term-surface))';
 
 export function MapCard({
-  node, ribbon, now, expanded, onOpenPane, unread, anc, dim, grow, isMain,
+  node, ribbon, now, expanded, onOpenPane, unread, anc, dim, grow, isMain, mergeSource,
 }: MapCardProps) {
   const heat = nodeHeat(node, now);
   const body = latestOverviewFirstSentence(node);
@@ -42,6 +44,7 @@ export function MapCard({
     streaming ? 'map-card--breathe' : '',
     grow ? 'map-card--in' : '',
     anc ? 'map-card--anc' : '',
+    mergeSource ? 'map-card--merge-source' : '',
   ].filter(Boolean).join(' ');
   return (
     <div

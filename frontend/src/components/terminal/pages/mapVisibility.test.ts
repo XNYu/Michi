@@ -94,7 +94,7 @@ describe('visibleMapNodeIds', () => {
     expect(edgeIterations).toBe(1);
   });
 
-  it('ignores non-branch parents and excludes orphaned or cyclic nodes', () => {
+  it('follows branch and merge edges but ignores link edges and excludes orphaned or cyclic nodes', () => {
     expect(
       visibleMapNodeIds(
         project({
@@ -113,6 +113,6 @@ describe('visibleMapNodeIds', () => {
           root: {}, child: {}, linked: {}, merged: {}, orphan: {}, 'cycle-a': {}, 'cycle-b': {},
         },
       ),
-    ).toEqual(['root', 'child']);
+    ).toEqual(['root', 'child', 'merged']);
   });
 });

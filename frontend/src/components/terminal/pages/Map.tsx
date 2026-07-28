@@ -15,6 +15,7 @@ import { branchRibbonText } from '../../../state/mapOverviewSelectors';
 import { isNodeUnread } from '../../../state/sidebarSelectors';
 import Branches from './Branches';
 import { MAP_VIEWS, MAP_VIEW_LABELS, type MapView } from './mapView';
+import { useElkLayout, elkEdgePathD, type ElkRoutingStyle } from './useElkLayout';
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
 
@@ -184,6 +185,11 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     });
   };
 
+  // Layout engine toggle: 'dagre' (default) vs 'elk'.
+  // Stored in session state so the user can A/B compare.
+  const [layoutEngine, setLayoutEngine] = useState<'dagre' | 'elk'>('elk');
+  const [elkRouting, setElkRouting] = useState<ElkRoutingStyle>('ORTHOGONAL');
+
   // Measured DOM heights for expanded cards. After the card expands and renders,
   // a ResizeObserver reports its actual height. This feeds back into dagre so
   // the layout uses real content height instead of the fixed CARD_H_EXPANDED
@@ -305,10 +311,19 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     return set;
   }, [hoveredId, parentOf]);
 
+  // Merge-source highlight: when hovering a merge node, light up all its
+  // source nodes + the merge edges flowing into it.
+  const mergeHighlightSet = useMemo(() => {
+    if (!hoveredId) return null;
+    const node = nodesSnapshot[hoveredId];
+    if (!node?.mergeSources?.length) return null;
+    return new Set([hoveredId, ...node.mergeSources]);
+  }, [hoveredId, nodesSnapshot]);
+
   const treeSummaries = useMemo<TreeSummary[]>(() => {
     if (!activeProject) return [];
     return sortTrees(activeProject.trees ?? [], activeProject.activeTreeId)
-      .filter((tree) => !tree.archivedAt && liveSet.has(tree.rootNodeId))
+      .filter((tree) => !tree.archivedAt && tree.kind !== 'merge' && liveSet.has(tree.rootNodeId))
       .map((tree) => {
         const ids = collectReachableIds(tree.rootNodeId, branchChildren, liveSet);
         const root = nodesSnapshot[tree.rootNodeId];
@@ -336,7 +351,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     return tree && !tree.archivedAt ? tree : null;
   }, [activeTreeId, layoutTrees]);
 
-  const layout = useMemo(() => {
+  const dagreLayout = useMemo(() => {
     if (!hasActiveProject || mode === 'overview') return null;
 
     const graphTrees = mode === 'thread'
@@ -444,6 +459,24 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     // so toggling recomputes positions and neighbors slide to make room.
     // measuredHeights refines the estimate once DOM measures are available.
   }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, expandedSet, measuredHeights]);
+
+  // ELK layout (async). Only runs when layoutEngine === 'elk'.
+  const elkResult = useElkLayout({
+    enabled: layoutEngine === 'elk',
+    trees: layoutTrees,
+    activeTree,
+    edges,
+    liveSet,
+    mode,
+    expandedSet,
+    measuredHeights,
+    graphChildren,
+    routingStyle: elkRouting,
+  });
+
+  // Unified layout: pick the active engine's result.
+  // ELK is async so we fall back to dagre while it computes.
+  const layout = layoutEngine === 'elk' && elkResult ? elkResult : dagreLayout;
 
   // Detect freshly-appeared graph nodes → play grow-in once, then drop the flag.
   const layoutIds = layout?.ids;
@@ -815,15 +848,28 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                 const tx = tgt.x - CARD_W / 2;
                 const ty = tgt.y;
                 const dx = Math.max(42, (tx - sx) * 0.5);
+
+                // ELK edge routing: use computed bend points when available.
+                const elkEdgeKey = `${e.source}->${e.target}`;
+                const elkRoute = layoutEngine === 'elk' && elkResult?.edgeRoutes?.get(elkEdgeKey);
+                const pathD = elkRoute
+                  ? elkEdgePathD(elkRoute.sections, src, tgt, elkRouting)
+                  : `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`;
+
                 const streamingEdge = streamingIds.has(e.target);
                 const growEdge = isBranchEdge(e) && growIds.has(e.target);
                 // Ancestor-chain highlight: an edge lights only when BOTH its
                 // endpoints are on the hovered node's chain.
                 const ancEdge = ancestorSet != null
                   && ancestorSet.has(e.source) && ancestorSet.has(e.target);
-                const dimEdge = ancestorSet != null && !ancEdge;
+                // Merge-source highlight: a merge edge lights when hovering
+                // the merge target and its source is in the highlight set.
+                const mergeEdge = e.kind === 'merge'
+                  && mergeHighlightSet != null
+                  && mergeHighlightSet.has(e.source) && mergeHighlightSet.has(e.target);
+                const dimEdge = ancestorSet != null && !ancEdge && !mergeEdge;
                 const { stroke, dasharray, opacity } = strokeFor(e.kind);
-                const litStroke = streamingEdge || ancEdge;
+                const litStroke = streamingEdge || ancEdge || mergeEdge;
                 const edgeClass = [
                   streamingEdge ? 'map-edge--flow' : '',
                   growEdge ? 'map-edge--draw' : '',
@@ -832,14 +878,14 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                   <path
                     key={i}
                     className={edgeClass}
-                    d={`M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`}
-                    stroke={litStroke ? 'var(--term-accent)' : stroke}
+                    d={pathD}
+                    stroke={mergeEdge ? 'var(--term-mauve)' : litStroke ? 'var(--term-accent)' : stroke}
                     strokeWidth={litStroke ? 1.8 : 1.4}
                     strokeLinecap="round"
-                    strokeDasharray={streamingEdge ? undefined : growEdge ? undefined : dasharray}
+                    strokeDasharray={streamingEdge || mergeEdge ? undefined : growEdge ? undefined : dasharray}
                     fill="none"
                     opacity={dimEdge ? opacity * 0.3 : opacity}
-                    style={{ transition: 'opacity .16s' }}
+                    style={{ transition: 'opacity .16s, stroke .16s' }}
                   />
                 );
               })}
@@ -892,6 +938,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                     // card slides to its new position instead of jumping. Keep
                     // the expanded card (and the hovered one) above neighbors so
                     // any transient overlap during the slide reads cleanly.
+                    // Hover/expand raises above neighbors so content reads
+                    // cleanly during animated reflows.
                     zIndex: exp ? 10 : hoveredId === id ? 5 : undefined,
                     transition: 'top .24s cubic-bezier(.4,0,.2,1), left .24s cubic-bezier(.4,0,.2,1)',
                     outline: sel ? '2px solid var(--term-select)' : undefined,
@@ -905,9 +953,10 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                     expanded={exp}
                     unread={isNodeUnread(n, null)}
                     anc={ancestorSet != null && ancestorSet.has(id)}
-                    dim={ancestorSet != null && !ancestorSet.has(id)}
+                    dim={ancestorSet != null && !ancestorSet.has(id) && !(mergeHighlightSet != null && mergeHighlightSet.has(id))}
                     grow={growIds.has(id)}
                     isMain={id === rootNodeId}
+                    mergeSource={mergeHighlightSet != null && mergeHighlightSet.has(id) && id !== hoveredId}
                     onOpenPane={() => {
                       openPane(id);
                       if (n.kind === 'digest') {
@@ -935,6 +984,14 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
           onFit={fitMap}
+        />
+
+        {/* Layout engine toggle — bottom-left, for A/B comparison. */}
+        <LayoutEnginePill
+          engine={layoutEngine}
+          routing={elkRouting}
+          onToggleEngine={() => setLayoutEngine((e) => (e === 'dagre' ? 'elk' : 'dagre'))}
+          onSetRouting={setElkRouting}
         />
 
         {selectedMapIds.length > 0 && (
@@ -1042,6 +1099,80 @@ function ZoomPill({
           color: auto ? 'var(--term-accent)' : 'var(--term-mid)',
         }}
       >FIT</button>
+    </div>
+  );
+}
+
+function LayoutEnginePill({
+  engine,
+  routing,
+  onToggleEngine,
+  onSetRouting,
+}: {
+  engine: string;
+  routing: ElkRoutingStyle;
+  onToggleEngine: () => void;
+  onSetRouting: (r: ElkRoutingStyle) => void;
+}) {
+  const btn: React.CSSProperties = {
+    border: 'none',
+    background: 'transparent',
+    padding: '4px 10px',
+    fontFamily: 'var(--message-code-font)',
+    fontSize: 10,
+    letterSpacing: '.06em',
+    cursor: 'pointer',
+    height: 28,
+  };
+  const routingOptions: ElkRoutingStyle[] = ['SPLINES', 'POLYLINE', 'ORTHOGONAL'];
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: 18,
+        bottom: 18,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0,
+        background: GLASS_BG,
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: GLASS_BORDER,
+        boxShadow: GLASS_SHADOW,
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggleEngine}
+        title="Toggle layout engine (dagre ↔ ELK)"
+        style={{
+          ...btn,
+          color: engine === 'elk' ? 'var(--term-accent)' : 'var(--term-mid)',
+          fontWeight: engine === 'elk' ? 700 : 450,
+        }}
+      >
+        {engine === 'elk' ? 'ELK' : 'DAGRE'}
+      </button>
+      {engine === 'elk' && (
+        <>
+          <span style={{ width: 1, height: 16, background: 'var(--term-line)' }} />
+          {routingOptions.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => onSetRouting(r)}
+              style={{
+                ...btn,
+                color: routing === r ? 'var(--term-accent)' : 'var(--term-mid)',
+                fontWeight: routing === r ? 700 : 400,
+                fontSize: 9,
+              }}
+            >
+              {r === 'SPLINES' ? 'spline' : r === 'POLYLINE' ? 'poly' : 'ortho'}
+            </button>
+          ))}
+        </>
+      )}
     </div>
   );
 }
