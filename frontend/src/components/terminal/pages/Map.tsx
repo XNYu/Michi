@@ -183,6 +183,41 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       return next;
     });
   };
+
+  // Measured DOM heights for expanded cards. After the card expands and renders,
+  // a ResizeObserver reports its actual height. This feeds back into dagre so
+  // the layout uses real content height instead of the fixed CARD_H_EXPANDED
+  // estimate, guaranteeing NODE_SEP gaps between expanded cards.
+  const [measuredHeights, setMeasuredHeights] = useState<Map<string, number>>(new Map());
+  const cardRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+  const expandedSetRef = useRef(expandedSet);
+  expandedSetRef.current = expandedSet;
+  const roRef = useRef<ResizeObserver | null>(null);
+  if (!roRef.current) {
+    roRef.current = new ResizeObserver((entries) => {
+      let changed = false;
+      const updates: [string, number][] = [];
+      for (const entry of entries) {
+        const el = entry.target as HTMLDivElement;
+        const nodeId = el.getAttribute('data-map-node');
+        if (!nodeId) continue;
+        // Only care about expanded cards — collapsed ones use CARD_H.
+        if (!expandedSetRef.current.has(nodeId)) continue;
+        const h = Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight);
+        if (h > 0) updates.push([nodeId, h]);
+      }
+      if (updates.length === 0) return;
+      setMeasuredHeights((prev) => {
+        const next = new Map(prev);
+        for (const [nid, h] of updates) {
+          if (prev.get(nid) !== h) { next.set(nid, h); changed = true; }
+        }
+        return changed ? next : prev;
+      });
+    });
+  }
+  // Cleanup the ResizeObserver on unmount.
+  useEffect(() => () => { roRef.current?.disconnect(); }, []);
   const [mode, setMode] = useState<MapMode>(DEFAULT_MAP_MODE);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   // fanout grow-in: ids that appeared since the last render play the grow
@@ -335,7 +370,11 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       for (const id of ids) {
         // Expanded cards reserve a taller box so dagre pushes the cross-axis
         // neighbors down just enough to clear the expanded content.
-        const h = expandedSet.has(id) ? CARD_H_EXPANDED : CARD_H;
+        // Use the measured DOM height when available (after the first render),
+        // otherwise fall back to the CARD_H_EXPANDED estimate.
+        const h = expandedSet.has(id)
+          ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
+          : CARD_H;
         g.setNode(id, { width: CARD_W, height: h });
       }
       for (const e of edges) {
@@ -403,7 +442,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     };
     // expandedSet IS a dependency: an expanded card reserves a taller dagre box,
     // so toggling recomputes positions and neighbors slide to make room.
-  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, expandedSet]);
+    // measuredHeights refines the estimate once DOM measures are available.
+  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, expandedSet, measuredHeights]);
 
   // Detect freshly-appeared graph nodes → play grow-in once, then drop the flag.
   const layoutIds = layout?.ids;
@@ -810,16 +850,26 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               const pos = layout.positions.get(id);
               if (!pos) return null;
               const exp = expandedSet.has(id);
-              // Wrapper matches the dagre box: collapsed or expanded height so
-              // the card fills its reserved slot and stays centered on pos.y.
+              // Wrapper uses dagre's allocated height (which incorporates the
+              // measured DOM height for expanded cards, falling back to the
+              // estimate). This keeps the card centered on dagre's pos.y.
               const w = CARD_W;
-              const h = exp ? CARD_H_EXPANDED : CARD_H;
+              const h = exp
+                ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
+                : CARD_H;
               const sel = selection.has(id);
               const onMap = view === 'graph';
               return (
                 <div
                   key={id}
                   data-map-node={id}
+                  ref={(el) => {
+                    const ro = roRef.current!;
+                    const prev = cardRefsMap.current.get(id);
+                    if (prev && prev !== el) { ro.unobserve(prev); }
+                    if (el) { cardRefsMap.current.set(id, el); ro.observe(el); }
+                    else { cardRefsMap.current.delete(id); }
+                  }}
                   onMouseEnter={onMap ? () => setHoveredId(id) : undefined}
                   onMouseLeave={onMap ? () => setHoveredId((h) => (h === id ? null : h)) : undefined}
                   onClick={(e) => {
