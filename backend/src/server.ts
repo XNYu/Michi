@@ -445,6 +445,7 @@ const ACCESS_LOG_SILENT_2XX = [
   /^(?:\/api)?\/workspaces$/,                // lightweight workspace index load
   /^(?:\/api)?\/workspaces\/all$/,           // full workspace hydration
   /^(?:\/api)?\/workspaces\/[^/]+\/sync$/,   // bulk chat sync (frequent client poll)
+  /^(?:\/api)?\/chats\/[^/]+\/heartbeat$/,   // pane ownership heartbeat (every 10s per pane)
 ];
 app.use((req, res, next) => {
   const t0 = Date.now();
