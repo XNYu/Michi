@@ -2320,6 +2320,73 @@ html[data-vibrancy="on"],
   white-space: nowrap;
 }
 
+/* ── Global ask-user alert bar ────────────────────────────────────────────────
+   Shell-level reminder row (AskUserAlertBar) shown under the topbar on every
+   page while any node has an unanswered Ask User request. The inline ask card
+   below owns the actual answering UI. */
+.ask-alert-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-family: var(--ui-font);
+  font-size: 11.5px;
+  color: var(--term-fg);
+  background: color-mix(in srgb, var(--term-accent) 12%, var(--term-surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--term-accent) 40%, transparent);
+}
+.ask-alert-bar:hover {
+  background: color-mix(in srgb, var(--term-accent) 18%, var(--term-surface));
+}
+.ask-alert-badge {
+  background: var(--term-accent);
+  color: var(--term-bg);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  animation: ask-alert-pulse 1.8s ease-in-out infinite;
+}
+.ask-alert-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-alert-q {
+  color: var(--term-mid);
+}
+.ask-alert-more {
+  color: var(--term-mid);
+  flex-shrink: 0;
+}
+.ask-alert-cta {
+  flex-shrink: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--term-accent);
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.ask-alert-cta:focus-visible {
+  outline: 1px solid var(--term-accent);
+  outline-offset: 1px;
+}
+@keyframes ask-alert-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ask-alert-badge { animation: none; }
+}
+
 /* ── Ask-user input card ──────────────────────────────────────────────────── */
 .ask-card {
   background: var(--term-surface);
