@@ -885,7 +885,7 @@ export default function TerminalDigest({
                 }}
               >
                 <span style={{ fontSize: 10, color: 'var(--term-muted)' }}>tl;dr</span>
-                <span style={{ fontFamily: 'var(--ui-font)', fontWeight: 500 }}>摘要</span>
+                <span style={{ fontFamily: 'var(--ui-font)', fontWeight: 500 }}>Summary</span>
               </div>
             )}
             {/* Section items */}

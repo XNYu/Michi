@@ -909,7 +909,7 @@ function ErrorTail({
   const btnStyle: React.CSSProperties = {
     border: '1px solid var(--term-danger)',
     color: 'var(--term-danger)',
-    padding: '1px 8px',
+    padding: '3px 10px',
     font: '600 11px var(--ui-font)',
     letterSpacing: '.04em',
     background: 'transparent',
@@ -927,9 +927,9 @@ function ErrorTail({
 
   // Headline scaled to the class. Connection: we already retried once, so say so.
   const headline = isConnection
-    ? '无法连接到 Kiro · 已自动重试一次仍失败'
+    ? 'Cannot reach Kiro · auto-retry failed'
     : isAuth
-      ? 'Kiro 登录已过期 · 请重新登录 (mwinit)'
+      ? 'Kiro session expired · please re-authenticate (mwinit)'
       : 'failed';
 
   return (
@@ -968,18 +968,18 @@ function ErrorTail({
             onMouseEnter={testState === 'testing' ? undefined : onHoverIn}
             onMouseLeave={testState === 'testing' ? undefined : onHoverOut}
           >
-            {testState === 'testing' ? '测试中…' : '⚙ 测试连接'}
+            {testState === 'testing' ? 'Testing…' : '⚙ Test Connection'}
           </button>
         )}
       </div>
       {testState === 'ok' && (
         <div style={{ marginTop: 6, color: 'var(--term-success, #2e7d32)', font: '11px var(--ui-font)' }}>
-          连接已恢复，请点 retry 重试。
+          Connection restored — click retry to resend.
         </div>
       )}
       {testState === 'fail' && (
         <div style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-danger)', opacity: 0.82, font: '11px var(--ui-font)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-          Kiro 仍不可用{testDetail ? `：${testDetail}` : '。请检查网络 / 运行 mwinit 后重试。'}
+          Kiro is still unreachable{testDetail ? `: ${testDetail}` : '. Check your network or run mwinit, then retry.'}
         </div>
       )}
       {errorMessage && testState !== 'ok' && (
