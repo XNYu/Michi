@@ -14,6 +14,7 @@ import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEv
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
 import { extractBranchOverview } from "../services/messageSerialization";
 import { log as appLog } from "../services/logger";
+import { ACPError } from "../services/acpClient";
 
 export interface HubSubscriber {
   send(ev: ChatStreamEvent): void;
@@ -707,7 +708,19 @@ export class ChatHub {
   }
 
   private finishWithError(chatId: string, log: TurnLog, err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
+    let message = err instanceof Error ? err.message : String(err);
+    // Surface the rpcData detail so the user sees the real reason (e.g.
+    // "The model you've selected is temporarily unavailable") instead of the
+    // opaque JSON-RPC envelope message (e.g. "Internal error").
+    if (err instanceof ACPError && err.rpcData != null) {
+      const detail =
+        typeof err.rpcData === "string"
+          ? err.rpcData
+          : JSON.stringify(err.rpcData);
+      if (detail && !message.includes(detail.slice(0, 40))) {
+        message = detail;
+      }
+    }
     // KiroSession tags connection/auth/generic on the thrown error so the UI
     // can show a class-appropriate banner (retry vs. re-login vs. raw). Absent
     // for non-Kiro runtimes / non-classified errors — the UI falls back to a
