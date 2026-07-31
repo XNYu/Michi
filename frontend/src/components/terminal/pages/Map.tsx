@@ -956,6 +956,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                     dim={ancestorSet != null && !ancestorSet.has(id) && !(mergeHighlightSet != null && mergeHighlightSet.has(id))}
                     grow={growIds.has(id)}
                     isMain={id === rootNodeId}
+                    isMerge={!!(n.mergeSources && n.mergeSources.length > 0)}
                     mergeSource={mergeHighlightSet != null && mergeHighlightSet.has(id) && id !== hoveredId}
                     onOpenPane={() => {
                       openPane(id);

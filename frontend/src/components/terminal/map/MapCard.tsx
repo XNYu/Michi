@@ -23,6 +23,8 @@ export interface MapCardProps {
   isMain?: boolean;
   /** This card is a merge source of the currently hovered merge node — accent border. */
   mergeSource?: boolean;
+  /** This card IS a merged node (has mergeSources) — subtle mauve tint. */
+  isMerge?: boolean;
 }
 
 // Darkened accent used for the small ASKED / MAIN labels (the references render
@@ -32,12 +34,21 @@ const ACCENT_DARK = 'color-mix(in srgb, var(--term-accent) 80%, var(--term-fg))'
 const ASKED_BG = 'color-mix(in srgb, var(--term-alt) 55%, var(--term-surface))';
 // Trail container hairlines (references: #f2efe8).
 const TRAIL_LINE = 'color-mix(in srgb, var(--term-alt) 70%, var(--term-surface))';
+// A long-running branch accumulates dozens of overview entries. Rendering all of
+// them makes the expanded card thousands of pixels tall, and fit-to-view then
+// zooms the whole graph down until the text is unreadable. Show only the most
+// recent few here; the complete journal lives in the Branches document.
+const MAX_TRAIL_ENTRIES = 3;
 
 export function MapCard({
-  node, ribbon, now, expanded, onOpenPane, unread, anc, dim, grow, isMain, mergeSource,
+  node, ribbon, now, expanded, onOpenPane, unread, anc, dim, grow, isMain, mergeSource, isMerge,
 }: MapCardProps) {
   const heat = nodeHeat(node, now);
   const body = latestOverviewFirstSentence(node);
+  const trail = overviewTrail(node);
+  // Most recent MAX_TRAIL_ENTRIES, still ascending — so the last row remains the latest.
+  const shownTrail = trail.slice(-MAX_TRAIL_ENTRIES);
+  const hiddenTrailCount = trail.length - shownTrail.length;
   const streaming = node.status === 'streaming';
   const msgCount = node.messages.length || node.messageCount || 0;
   const classNames = ['map-card',
@@ -45,6 +56,7 @@ export function MapCard({
     grow ? 'map-card--in' : '',
     anc ? 'map-card--anc' : '',
     mergeSource ? 'map-card--merge-source' : '',
+    isMerge ? 'map-card--merge' : '',
   ].filter(Boolean).join(' ');
   return (
     <div
@@ -70,18 +82,22 @@ export function MapCard({
       {/* Heat bar — a 3px top strip whose warmth tracks recency. */}
       <div style={{ height: 3, width: '100%', background: heatBar(heat) }} />
 
-      {/* ASKED strip — the question this branch was opened to answer. */}
+      {/* ASKED strip — the question this branch was opened to answer.
+          Label on its own line, question text below it clamped to two lines. */}
       {ribbon && (
         <div data-map-ribbon style={{
-          display: 'flex', gap: 8, alignItems: 'baseline',
+          display: 'flex', flexDirection: 'column', gap: 3,
           padding: '6px 13px', background: ASKED_BG,
-          borderBottom: '1px solid var(--term-line)', whiteSpace: 'normal',
+          borderBottom: '1px solid var(--term-line)',
         }}>
           <span style={{
             fontFamily: 'var(--message-code-font)', fontSize: 8.5, letterSpacing: '.14em',
-            color: ACCENT_DARK, flexShrink: 0,
+            color: ACCENT_DARK,
           }}>ASKED</span>
-          <span style={{ fontSize: 10.5, lineHeight: 1.5, color: 'var(--term-mid)' }}>{ribbon}</span>
+          <span style={{
+            fontSize: 10.5, lineHeight: 1.5, color: 'var(--term-mid)',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }}>{ribbon}</span>
         </div>
       )}
 
@@ -104,6 +120,7 @@ export function MapCard({
         )}
         <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {isMain && <span style={chipStyle(ACCENT_DARK, 'var(--term-accent-f)')}>MAIN</span>}
+          {isMerge && <span style={chipStyle('var(--term-mauve)', 'var(--term-mauve-f)')}>MERGED</span>}
           {msgCount > 0 && <span style={chipStyle('var(--term-muted)', 'var(--term-alt)')}>{msgCount} msgs</span>}
           {streaming ? (
             <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 9.5, color: 'var(--term-accent)' }}>
@@ -127,12 +144,20 @@ export function MapCard({
             borderTop: `1px solid ${TRAIL_LINE}`,
             borderBottom: `1px solid ${TRAIL_LINE}`,
           }}>
-            {overviewTrail(node).map((e, i, arr) => {
+            {hiddenTrailCount > 0 && (
+              <div data-trail-elided style={{
+                marginBottom: 6, fontFamily: 'var(--message-code-font)', fontSize: 8.5,
+                letterSpacing: '.06em', color: 'var(--term-faint)',
+              }}>
+                +{hiddenTrailCount} earlier · open in pane for the full journal
+              </div>
+            )}
+            {shownTrail.map((e, i, arr) => {
               const isLast = i === arr.length - 1;
               return (
                 <div key={e.at} data-latest={isLast ? 'true' : 'false'}
                   style={{
-                    marginBottom: i === arr.length - 1 ? 0 : 6, fontSize: 11, lineHeight: 1.55,
+                    marginBottom: isLast ? 0 : 6, fontSize: 11, lineHeight: 1.55,
                     color: isLast ? 'var(--term-fg)' : 'var(--term-muted)',
                   }}>
                   <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 8.5,

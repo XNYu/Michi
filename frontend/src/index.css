@@ -3033,6 +3033,13 @@ html[data-page-hidden] .t-branch-anchor-pulse {
               0 2px 12px -4px color-mix(in srgb, var(--term-mauve, var(--term-accent)) 40%, transparent) !important;
 }
 
+/* A merge node (the synthesized result) gets a subtle mauve left stripe and
+   lightly tinted background so it reads as "woven from multiple sources." */
+.map-card--merge {
+  border-left: 3px solid var(--term-mauve, var(--term-accent)) !important;
+  background: color-mix(in srgb, var(--term-mauve) 4%, var(--term-surface)) !important;
+}
+
 /* Floating topbar back link. */
 .map-topbar__back { transition: color .15s; }
 .map-topbar__back:hover { color: var(--term-fg); }

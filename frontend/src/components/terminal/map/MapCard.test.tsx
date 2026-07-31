@@ -52,6 +52,26 @@ describe('MapCard (expanded)', () => {
     expect(last?.textContent).toContain('最新进展');
   });
 
+  it('caps the trail at the 3 most recent entries and notes how many are elided', () => {
+    const { container } = render(<MapCard now={NOW} ribbon={null} expanded onToggle={() => {}} onOpenPane={() => {}}
+      node={node({ title: 'X', branchOverviewEntries: [
+        { at: 1, text: '最老的一条' }, { at: 2, text: '第二条' }, { at: 3, text: '第三条' },
+        { at: 4, text: '第四条' }, { at: 5, text: '最新进展' },
+      ]})} />);
+    expect(screen.queryByText('最老的一条')).toBeNull();
+    expect(screen.queryByText('第二条')).toBeNull();
+    expect(screen.getByText('第三条')).toBeTruthy();
+    expect(screen.getByText('第四条')).toBeTruthy();
+    expect(container.querySelector('[data-latest="true"]')?.textContent).toContain('最新进展');
+    expect(container.querySelector('[data-trail-elided]')?.textContent).toContain('+2 earlier');
+  });
+
+  it('omits the elided note when the trail fits', () => {
+    const { container } = render(<MapCard now={NOW} ribbon={null} expanded onToggle={() => {}} onOpenPane={() => {}}
+      node={node({ title: 'X', branchOverviewEntries: [{ at: 1, text: 'a' }, { at: 2, text: 'b' }] })} />);
+    expect(container.querySelector('[data-trail-elided]')).toBeNull();
+  });
+
   it('open-pane footer calls onOpenPane and stops propagation to toggle', () => {
     const onOpenPane = vi.fn(); const onToggle = vi.fn();
     render(<MapCard now={NOW} ribbon={null} expanded onToggle={onToggle} onOpenPane={onOpenPane}
