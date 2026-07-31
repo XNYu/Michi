@@ -22,6 +22,7 @@ describe('SelectionActions', () => {
   const originalGetClientRects = Range.prototype.getClientRects;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
       configurable: true,
       value: vi.fn(() => rect(40, 50, 160, 40)),
@@ -45,6 +46,7 @@ describe('SelectionActions', () => {
       value: originalGetClientRects,
     });
     window.getSelection()?.removeAllRanges();
+    vi.useRealTimers();
   });
 
   it('keeps the source text visually highlighted while the branch composer is open', () => {
@@ -86,6 +88,9 @@ describe('SelectionActions', () => {
       selection?.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
     });
+
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
 
     const branchButton = screen.getByRole('button', { name: /Branch/i });
     fireEvent.mouseDown(branchButton);
@@ -134,6 +139,9 @@ describe('SelectionActions', () => {
       selection?.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
     });
+
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
 
     const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
@@ -190,6 +198,9 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
+
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: ';', metaKey: true }));
     });
@@ -234,6 +245,9 @@ describe('SelectionActions', () => {
       selection?.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
     });
+
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
 
     const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
@@ -287,6 +301,9 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
+
     const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
@@ -339,6 +356,9 @@ describe('SelectionActions', () => {
       selection?.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
     });
+
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
 
     const branchOpenButton = screen.getByRole('button', { name: /Branch/i });
     fireEvent.mouseDown(branchOpenButton);
@@ -402,6 +422,9 @@ describe('SelectionActions', () => {
       document.dispatchEvent(new Event('selectionchange'));
     });
 
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
+
     // The bar is now rendered. Instrument the popup's getBoundingClientRect so
     // we can count remeasures triggered purely by scroll.
     const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
@@ -420,6 +443,73 @@ describe('SelectionActions', () => {
     });
 
     expect(popupMeasures).toBe(0);
+  });
+
+  it('debounces the bar appearance until selection content stabilizes (80ms)', () => {
+    const onBranch = vi.fn();
+    const onQuote = vi.fn();
+    const onComment = vi.fn();
+
+    function Harness() {
+      const ref = React.useRef<HTMLDivElement>(null);
+      React.useEffect(() => {
+        if (ref.current) {
+          ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
+        }
+      }, []);
+      return (
+        <div ref={ref}>
+          hello world foobar
+          <SelectionActions
+            containerRef={ref}
+            onBranch={onBranch}
+            onQuote={onQuote}
+            onComment={onComment}
+          />
+        </div>
+      );
+    }
+
+    render(<Harness />);
+
+    const textNode = screen.getByText('hello world foobar').firstChild!;
+
+    // Simulate double-click: first selectionchange with partial text
+    act(() => {
+      const range = document.createRange();
+      range.setStart(textNode, 0);
+      range.setEnd(textNode, 5); // "hello"
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+
+    // Bar should NOT be visible yet
+    expect(screen.queryByRole('button', { name: /Branch/i })).toBeNull();
+
+    // 40ms later, selection expands (simulating triple-click intermediate)
+    act(() => { vi.advanceTimersByTime(40); });
+    act(() => {
+      const range = document.createRange();
+      range.setStart(textNode, 0);
+      range.setEnd(textNode, 11); // "hello world"
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+
+    // Still not visible — timer reset by new content
+    expect(screen.queryByRole('button', { name: /Branch/i })).toBeNull();
+
+    // Advance 79ms — still not enough
+    act(() => { vi.advanceTimersByTime(79); });
+    expect(screen.queryByRole('button', { name: /Branch/i })).toBeNull();
+
+    // 1 more ms → 80ms since last content change → bar appears
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(screen.getByRole('button', { name: /Branch/i })).toBeTruthy();
   });
 
   it('disables the footer Save button when the composer prompt is empty', () => {
@@ -459,6 +549,9 @@ describe('SelectionActions', () => {
       selection?.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
     });
+
+    // Advance past the 80ms content-stability debounce
+    act(() => { vi.advanceTimersByTime(80); });
 
     const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);

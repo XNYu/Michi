@@ -193,5 +193,15 @@ export function cssVarsFor(
     '--t-soft': '100ms',
     '--t-decay': '360ms',
     '--t-ease': 'cubic-bezier(.2, 0, .6, 1)',
+    // Selection bar inverted tokens — light theme gets dark popup, dark gets light popup.
+    '--sel-bar-bg': isLight ? '#26262a' : '#ffffff',
+    '--sel-bar-fg': isLight ? '#f0f0f0' : '#1a1916',
+    '--sel-bar-mid': isLight ? '#b0b0b0' : '#5a544a',
+    '--sel-bar-muted': isLight ? '#808080' : '#70695d',
+    '--sel-bar-line': isLight ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
+    '--sel-bar-hover': isLight ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+    '--sel-bar-shadow': isLight
+      ? '0 2px 8px rgba(0,0,0,0.35), 0 16px 40px rgba(0,0,0,0.25)'
+      : '0 1px 2px rgba(0,0,0,0.08), 0 12px 34px rgba(0,0,0,0.10)',
   };
 }
