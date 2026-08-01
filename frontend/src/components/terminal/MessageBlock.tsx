@@ -878,7 +878,7 @@ function CollapsibleUserText({
  * `errorKind` (from the Kiro runtime, see backend acpErrors.ts):
  *   - connection: the backend already auto-retried once and still failed →
  *     friendly banner + Retry + Test Connection (force-respawn probe).
- *   - auth: SSO/login expired → prompt to re-authenticate (mwinit / kiro login).
+ *   - auth: SSO/login expired → prompt to re-authenticate (e.g. kiro login).
  *     Retry alone won't help, so no Test Connection button.
  *   - generic / undefined: the original compact "failed · ↻ retry" row, raw
  *     message preserved.
@@ -929,7 +929,7 @@ function ErrorTail({
   const headline = isConnection
     ? 'Cannot reach Kiro · auto-retry failed'
     : isAuth
-      ? 'Kiro session expired · please re-authenticate (mwinit)'
+      ? 'Kiro session expired · please re-authenticate'
       : 'failed';
 
   return (
@@ -979,7 +979,7 @@ function ErrorTail({
       )}
       {testState === 'fail' && (
         <div style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-danger)', opacity: 0.82, font: '11px var(--ui-font)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-          Kiro is still unreachable{testDetail ? `: ${testDetail}` : '. Check your network or run mwinit, then retry.'}
+          Kiro is still unreachable{testDetail ? `: ${testDetail}` : '. Check your network or re-authenticate, then retry.'}
         </div>
       )}
       {errorMessage && testState !== 'ok' && (
