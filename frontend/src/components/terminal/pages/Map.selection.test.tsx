@@ -35,6 +35,10 @@ vi.mock('../../../state/chatStore', async () => {
     useChatNodesSnapshot: () => storeState.nodes,
     useStructuralSelector: (selector: (nodes: Record<string, any>) => unknown) => selector(storeState.nodes),
     chatLabel: (node: any) => node?.title ?? '',
+    // Branches (doc view) reads these:
+    useChatProjects: () => ({ activeProject: storeState.project }),
+    useChatActions: () => ({ openPane: vi.fn() }),
+    activeTreeRootNodeId: (project: any) => project?.trees?.[0]?.rootNodeId ?? null,
   };
 });
 
@@ -181,5 +185,53 @@ describe('Map selection actions', () => {
 
     expect((screen.getByRole('button', { name: 'Merge' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Digest' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('Map three-view switch', () => {
+  // The Graph/Timeline/Doc switcher floats top-right on the Map canvas (below
+  // the Topbar's icon row) and owns the active view internally.
+  it('renders the three view tabs and defaults to graph', () => {
+    render(<TerminalMap />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['Graph', 'Timeline', 'Doc']);
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
+    expect(document.querySelector('[data-map-node]')).not.toBeNull();
+  });
+
+  it('switching to Timeline renders lane content and drops the graph cards', () => {
+    storeState.nodes = {
+      n1: { ...node('n1'), branchOverviewEntries: [{ at: 1000, text: 'first progress step' }] },
+      n2: node('n2'),
+    };
+    render(<TerminalMap />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }));
+    expect(screen.getByRole('tab', { name: 'Timeline' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('first progress step')).toBeTruthy();
+    expect(document.querySelector('[data-map-node]')).toBeNull();
+  });
+});
+
+describe('Map card expand', () => {
+  // Regression: the wrapper AND the card each toggled on click, so the two
+  // fired back-to-back and the card never actually expanded. The wrapper is
+  // now the sole click authority.
+  it('expands a card on click (single toggle, not double)', () => {
+    storeState.nodes = {
+      n1: { ...node('n1'), branchOverviewEntries: [{ at: 1000, text: 'first progress step' }] },
+      n2: node('n2'),
+    };
+    render(<TerminalMap />);
+    // The expand section is always mounted; its data-expanded flag is the
+    // CSS-independent source of truth (the grid-rows animation reveals it).
+    const wrap = () => document.querySelector('[data-map-node="n1"] .map-card__expand-wrap');
+    // Wrapper is the sole click authority; click it (outer node div).
+    const card = document.querySelector('div[data-map-node="n1"]') as HTMLElement;
+    expect(wrap()?.getAttribute('data-expanded')).toBe('false');
+    fireEvent.click(card);
+    // A single toggle expands it (the old double-toggle bug left it collapsed).
+    expect(wrap()?.getAttribute('data-expanded')).toBe('true');
+    fireEvent.click(card);
+    expect(wrap()?.getAttribute('data-expanded')).toBe('false');
   });
 });

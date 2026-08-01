@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ChatNodeState, Project, Tree } from '../../../state/chatTypes';
 import { deriveTreeRows, deriveArchivedTreeRows, firstUserSnippet, type TreeRow } from './derive';
+import { relativeTime } from '../../../lib/relativeTime';
 import ContextMenu from '../../ContextMenu';
 import { buildThreadRowContextMenu } from '../../../lib/threadRowContextMenu';
 import type {
@@ -587,7 +588,13 @@ function ChatRow({
             fontFamily: 'var(--ui-font)',
           }}
         >
-          {node.messages.length}m
+          {(() => {
+            const msgs = node.messages;
+            const lastTs = msgs.length > 0
+              ? msgs.reduce((max, m) => Math.max(max, m.createdAt ?? 0), 0)
+              : 0;
+            return lastTs > 0 ? relativeTime(lastTs) : '—';
+          })()}
         </span>
         {branchCount > 0 && (
           <span

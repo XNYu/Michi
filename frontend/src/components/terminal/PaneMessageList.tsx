@@ -46,6 +46,8 @@ interface PaneMessageListProps {
   contextNames?: ReadonlySet<string>;
   /** Called when user clicks a mention chip. */
   onMentionClick?: (name: string, kind: string, nodeId?: string) => void;
+  /** Probe backend connectivity for the connection/auth error-tail button. */
+  onTestConnection?: () => Promise<{ ok: boolean; detail?: string }>;
 }
 
 function PaneMessageListInner({
@@ -69,6 +71,7 @@ function PaneMessageListInner({
   onEditCancel,
   contextNames,
   onMentionClick,
+  onTestConnection,
 }: PaneMessageListProps) {
   const tailAssistantId = React.useMemo(() => {
     // Backward scan (no array copy) — this recomputes on every stream chunk
@@ -194,6 +197,8 @@ function PaneMessageListInner({
                 }
                 isErrorTail={isErrorTail}
                 errorMessage={isErrorTail ? node.error : undefined}
+                errorKind={isErrorTail ? node.errorKind : undefined}
+                onTestConnection={isErrorTail ? onTestConnection : undefined}
                 showThoughts={prefs.showThoughts}
                 density={prefs.terminalDensity}
                 fontFamily={{
@@ -270,7 +275,8 @@ export const PaneMessageList = React.memo(PaneMessageListInner, (prev, next) =>
   prev.editingMessageId === next.editingMessageId &&
   prev.onEditStart === next.onEditStart &&
   prev.onEditSave === next.onEditSave &&
-  prev.onEditCancel === next.onEditCancel,
+  prev.onEditCancel === next.onEditCancel &&
+  prev.onTestConnection === next.onTestConnection,
 );
 
 PaneMessageList.displayName = 'PaneMessageList';

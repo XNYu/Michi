@@ -306,9 +306,9 @@ export function runChatStream({
       onTurnEnd?.('cancel', nodeId);
       // Note: intentionally NOT calling onStreamComplete for aborted streams
     },
-    onError: (message, _assistantId, turnId) => {
+    onError: (message, _assistantId, turnId, code) => {
       if (turnId) currentTurnId = turnId;
-      dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message });
+      dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message, errorKind: code });
       cleanup();
       onTurnEnd?.('error', nodeId);
     },

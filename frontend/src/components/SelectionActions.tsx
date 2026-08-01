@@ -79,44 +79,96 @@ export default function SelectionActions({
   composerOpenRef.current = composerMode !== 'closed';
 
   // Track native selection while the composer is closed.
+  // Uses content-stability detection: the bar only appears once the selected
+  // text stops changing for STABLE_THRESHOLD ms. This naturally debounces
+  // double/triple-click intermediate states without needing an isDragging
+  // state machine, and doesn't conflict with scroll events.
+  const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSelTextRef = useRef('');
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    const STABLE_THRESHOLD = 80; // ms — content must be unchanged this long
 
     const updateFromSelection = () => {
       if (composerOpenRef.current) { return; }
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
+        // Selection cleared → immediately hide, reset stability tracking
+        if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
+        lastSelTextRef.current = '';
         setAnchor(null);
         return;
       }
       const text = sel.toString().trim();
       if (!text || text.length < 2) {
+        if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
+        lastSelTextRef.current = '';
         setAnchor(null);
         return;
       }
       const range = sel.getRangeAt(0);
       if (!container.contains(range.commonAncestorContainer)) {
+        if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
+        lastSelTextRef.current = '';
         setAnchor(null);
         return;
       }
+
       const measured = measureRange(range, container);
       // Transient zero-size rects show up mid-drag; don't clobber a good anchor
       // with a collapsed one — the next selectionchange will bring the real box.
       if (!measured) return;
-      setAnchor({
-        bounds: measured.bounds,
-        highlightRects: measured.highlightRects,
-        text,
-        range: range.cloneRange(),
-      });
+
+      const contentChanged = text !== lastSelTextRef.current;
+      lastSelTextRef.current = text;
+
+      if (anchor) {
+        // Bar already visible → update position immediately (no delay),
+        // so it follows drag-to-extend without feeling sluggish.
+        setAnchor({
+          bounds: measured.bounds,
+          highlightRects: measured.highlightRects,
+          text,
+          range: range.cloneRange(),
+        });
+      } else {
+        // Bar not yet visible → wait for content to stabilize.
+        // Every time text changes, reset the timer.
+        if (contentChanged || !stableTimerRef.current) {
+          if (stableTimerRef.current) clearTimeout(stableTimerRef.current);
+          stableTimerRef.current = setTimeout(() => {
+            stableTimerRef.current = null;
+            // Re-read selection at the time the timer fires — it may have
+            // changed or disappeared during the wait.
+            const freshSel = window.getSelection();
+            if (!freshSel || freshSel.isCollapsed) return;
+            const freshText = freshSel.toString().trim();
+            if (!freshText || freshText.length < 2) return;
+            const freshRange = freshSel.getRangeAt(0);
+            if (!container.contains(freshRange.commonAncestorContainer)) return;
+            const freshMeasured = measureRange(freshRange, container);
+            if (!freshMeasured) return;
+            setAnchor({
+              bounds: freshMeasured.bounds,
+              highlightRects: freshMeasured.highlightRects,
+              text: freshText,
+              range: freshRange.cloneRange(),
+            });
+          }, STABLE_THRESHOLD);
+        }
+      }
     };
 
     document.addEventListener('selectionchange', updateFromSelection);
-    return () =>
+    return () => {
       document.removeEventListener('selectionchange', updateFromSelection);
+      if (stableTimerRef.current) { clearTimeout(stableTimerRef.current); stableTimerRef.current = null; }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef]);
+  }, [containerRef, anchor]);
 
   // Reposition on scroll / resize. Coalesce bursts through a single rAF: a
   // scroll generates many events per frame, and each recompute reads layout
@@ -537,12 +589,18 @@ export function placePopup(
   // both fits and stays clear of the composer.
   const useBelow = topRoom < needed && bottomRoom >= needed;
 
-  const anchorRect = useBelow ? lastVisible : firstVisible;
   let top = useBelow
     ? lastVisible.bottom + POPUP_GAP
     : firstVisible.top - POPUP_GAP - height;
 
-  let left = anchorRect.left + anchorRect.width / 2 - width / 2;
+  // Horizontally center on the union bounding box of all highlight rects
+  // so the popup sits over the visual center of the entire selection,
+  // not just the first or last line.
+  const unionLeft = Math.min(...highlightRects.map(r => r.left));
+  const unionRight = Math.max(...highlightRects.map(r => r.right));
+  const unionCenterX = (unionLeft + unionRight) / 2;
+
+  let left = unionCenterX - width / 2;
   left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - width - VIEWPORT_MARGIN));
   top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - height - VIEWPORT_MARGIN));
 
@@ -622,34 +680,26 @@ const TERMINAL_CSS = `
   border-radius: 2px;
   background: color-mix(in srgb, var(--term-accent) 30%, transparent);
 }
-/* Bar + composer share ONE opaque-glass slab: a fully opaque --term-surface
-   fill with the shared --term-glass-wash tint layered on top (the SAME accent
-   wash every .term-glass overlay uses), plus a FLOATING elevation shadow
-   (--term-float-shadow: soft downward outer cast) so the slab reads as an object
-   hovering above content — but NO backdrop blur, so it never sees through to
-   content behind it. That's glass texture without translucency: the wash
-   gradients fade to transparent, so layering them over the opaque surface keeps
-   the result 100% opaque while giving it the light-catching sheen. No
-   glass-highlight lip line. NOTE: we deliberately do NOT reuse
-   --term-composer-shadow here — its dark variant is inset (a recessed input
-   well, right for the embedded Pane Composer, wrong for a floating popup, which
-   made the bar read as carved-inward in dark). --term-float-shadow is always an
-   outer drop. All colour is themed (switches per palette + light/dark); never
-   hardcode rgba(...) here — always drive off --term-* tokens. */
+/* Bar + composer share ONE inverted-theme slab: on light themes the popup is
+   dark, on dark themes it's light — creating a high-contrast float that pops
+   against the page without needing translucency or blur. All colours are driven
+   by --sel-bar-* tokens (emitted in tokens.ts based on isLight), so palette
+   changes propagate automatically. --sel-bar-shadow provides the appropriate
+   outer drop elevation for each polarity. */
 .sel-actions-term-bar {
   display: inline-flex;
   align-items: center;
   gap: 0;
   padding: 0;
-  background: var(--term-glass-wash), var(--term-surface);
-  color: var(--term-mid);
+  background: var(--sel-bar-bg);
+  color: var(--sel-bar-mid);
   font-family: var(--ui-font);
   font-size: 11px;
   font-weight: 450;
   letter-spacing: 0.015em;
-  border: 1px solid var(--term-line);
+  border: 1px solid var(--sel-bar-line);
   border-radius: 0;
-  box-shadow: var(--term-float-shadow);
+  box-shadow: var(--sel-bar-shadow);
 }
 .sel-actions-term-btn {
   position: relative;
@@ -665,31 +715,31 @@ const TERMINAL_CSS = `
   position: absolute;
   left: 0; top: 4px; bottom: 4px;
   width: 1px;
-  background: var(--term-line);
+  background: var(--sel-bar-line);
 }
-.sel-actions-term-btn:hover { background: var(--term-hover-bg); color: var(--term-fg); }
-.sel-actions-term-btn:active { background: color-mix(in srgb, var(--term-fg) 12%, transparent); }
+.sel-actions-term-btn:hover { background: var(--sel-bar-hover); color: var(--sel-bar-fg); }
+.sel-actions-term-btn:active { background: color-mix(in srgb, var(--sel-bar-fg) 12%, transparent); }
 .sel-actions-term-btn svg { flex-shrink: 0; }
 .sel-actions-term-composer {
-  background: var(--term-glass-wash), var(--term-surface);
-  border: 1px solid var(--term-line);
+  background: var(--sel-bar-bg);
+  border: 1px solid var(--sel-bar-line);
   border-radius: 0;
-  box-shadow: var(--term-float-shadow);
+  box-shadow: var(--sel-bar-shadow);
   font-family: var(--ui-font);
   overflow: hidden;
 }
 .sel-actions-term-composer-hdr {
   display: flex; align-items: center; justify-content: space-between;
   padding: 7px 12px;
-  border-bottom: 1px solid var(--term-line);
+  border-bottom: 1px solid var(--sel-bar-line);
   font-size: 9.5px; letter-spacing: .1em; font-weight: 500;
-  color: var(--term-muted); text-transform: uppercase;
+  color: var(--sel-bar-muted); text-transform: uppercase;
 }
 .sel-actions-term-close {
   cursor: pointer; padding: 0 4px;
-  color: var(--term-muted);
+  color: var(--sel-bar-muted);
 }
-.sel-actions-term-close:hover { color: var(--term-fg); }
+.sel-actions-term-close:hover { color: var(--sel-bar-fg); }
 .sel-actions-term-textarea {
   display: block; width: calc(100% - 24px);
   margin: 10px 12px;
@@ -698,26 +748,26 @@ const TERMINAL_CSS = `
   border: 0;
   outline: none; resize: none;
   font-family: var(--ui-font); font-size: 12.5px;
-  color: var(--term-fg);
+  color: var(--sel-bar-fg);
   line-height: 1.5;
 }
-.sel-actions-term-textarea::placeholder { color: var(--term-muted); }
+.sel-actions-term-textarea::placeholder { color: var(--sel-bar-muted); }
 .sel-actions-term-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding: 5px 8px;
-  border-top: 1px solid var(--term-line);
+  border-top: 1px solid var(--sel-bar-line);
 }
 .sel-actions-term-footer-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 8px; background: transparent; border: 0;
   border-radius: 0;
-  color: var(--term-mid); cursor: pointer;
+  color: var(--sel-bar-mid); cursor: pointer;
   font-family: var(--ui-font); font-size: 10px; font-weight: 450;
   letter-spacing: 0.02em;
   transition: background 60ms ease, color 60ms ease;
 }
 .sel-actions-term-footer-btn:hover:not(:disabled) {
-  background: var(--term-hover-bg); color: var(--term-fg);
+  background: var(--sel-bar-hover); color: var(--sel-bar-fg);
 }
 .sel-actions-term-footer-btn:disabled {
   cursor: not-allowed; opacity: 0.4;
@@ -725,9 +775,9 @@ const TERMINAL_CSS = `
 .sel-actions-term-footer-kbd {
   font-family: var(--ui-font); font-size: 9px;
   padding: 1px 4px;
-  border: 1px solid var(--term-line);
+  border: 1px solid var(--sel-bar-line);
   border-radius: 0;
-  color: var(--term-muted);
+  color: var(--sel-bar-muted);
   background: transparent;
 }
 `;

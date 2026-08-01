@@ -201,12 +201,10 @@ describe('claudeEventTranslator', () => {
 
   // ── Case 8: result.success with usage → usage_summary then turn_end ──────
   //
-  // Token math verification (using opus rates: input=5, output=25, cacheCreation=6.25, cacheRead=0.5):
+  // Cost tracking is disabled (all rates are zero), so totalCredits = 0.
+  // contextUsagePercentage still works (uses contextWindow from catalog).
   //   usage = { input_tokens:100, cache_read_input_tokens:50, cache_creation_input_tokens:50, output_tokens:200 }
-  //   contextPct = (100 + 50 + 50) / 1_000_000 * 100 = 200/1000000*100 = 0.02
-  //   cost = (100/1e6)*5 + (200/1e6)*25 + (50/1e6)*6.25 + (50/1e6)*0.5
-  //        = 0.0005 + 0.005 + 0.0003125 + 0.000025
-  //        = 0.0058375
+  //   contextPct = (100 + 50 + 50) / 1_000_000 * 100 = 0.02
 
   test('result.success with usage emits usage_summary then turn_end with correct token math', () => {
     const { emitted, feed } = makeTranslator();
@@ -244,12 +242,8 @@ describe('claudeEventTranslator', () => {
       `contextUsagePercentage: expected 0.02, got ${summary.contextUsagePercentage}`,
     );
 
-    // cost = (100/1e6)*5 + (200/1e6)*25 + (50/1e6)*6.25 + (50/1e6)*0.5 = 0.0058375
-    const expectedCost = (100 / 1e6) * 5 + (200 / 1e6) * 25 + (50 / 1e6) * 6.25 + (50 / 1e6) * 0.5;
-    assert.ok(
-      Math.abs(summary.totalCredits - expectedCost) < 1e-9,
-      `totalCredits: expected ${expectedCost}, got ${summary.totalCredits}`,
-    );
+    // Cost tracking disabled — totalCredits is always 0
+    assert.equal(summary.totalCredits, 0);
 
     assert.ok(Number.isFinite(summary.turnDurationMs) && summary.turnDurationMs >= 0);
 
@@ -308,8 +302,8 @@ describe('claudeEventTranslator', () => {
       `second contextUsagePercentage: expected 6, got ${second.contextUsagePercentage}`,
     );
 
-    const firstExpectedCost = (160_000 / 1e6) * 5 + (1_000 / 1e6) * 25;
-    const secondExpectedCost = (60_000 / 1e6) * 5 + (500 / 1e6) * 25;
+    const firstExpectedCost = 0;  // cost tracking disabled
+    const secondExpectedCost = 0;
     assert.ok(Math.abs(first.totalCredits - firstExpectedCost) < 1e-9);
     assert.ok(Math.abs(second.totalCredits - secondExpectedCost) < 1e-9);
   });

@@ -1,7 +1,7 @@
 import { PROFILE_PAGE_ENABLED } from './featureFlags';
 import { kbd } from '../lib/platform';
 
-export type CommandGroup = 'nav' | 'action' | 'chat' | 'search-result';
+export type CommandGroup = 'nav' | 'action' | 'workspace' | 'chat' | 'search-result';
 
 export interface Command {
   id: string;
@@ -41,6 +41,12 @@ export interface CommandContext {
   /** Switch the active workspace. Used by cross-project chat invocation in the palette
    *  and by global search row activation. Wired to `selectProject` in chatStore. */
   switchProject: (projectId: string) => void;
+  /** Live workspaces (excludes the active one + deleted/archived) offered as
+   *  direct jump targets in the palette. */
+  workspaces: Array<{ id: string; name: string }>;
+  /** Jump straight to a workspace: switch the active project and route to the
+   *  dashboard so its active tree renders. */
+  switchWorkspace: (projectId: string) => void;
   createThread: () => void;
   activateTree: (treeId: string) => void;
   archiveTree: (treeId: string) => void;
@@ -95,6 +101,15 @@ export function buildCommands(ctx: CommandContext): Command[] {
       { id: 'action.export', group: 'action', glyph: '↓', label: `Export ${ctx.selection.size} selected`,                 run: ctx.exportSelection },
       { id: 'action.clear',  group: 'action', glyph: '×', label: 'Clear selection',                          keys: 'esc',  run: ctx.clearSelection },
     );
+  }
+  for (const w of ctx.workspaces) {
+    out.push({
+      id: `workspace.switch.${w.id}`,
+      group: 'workspace',
+      glyph: '▢',
+      label: `Switch to workspace ▸ ${w.name}`,
+      run: () => ctx.switchWorkspace(w.id),
+    });
   }
   const chatsToShow = ctx.allChats.slice(0, 50);
   for (const c of chatsToShow) {

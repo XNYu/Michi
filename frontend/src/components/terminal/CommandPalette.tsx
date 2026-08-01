@@ -177,6 +177,25 @@ export default function CommandPalette({
 
   const allChats = useMemo(() => selectAllChats({ projects, nodes: nodesSnapshot }), [projects, nodesSnapshot]);
 
+  // Live workspaces offered as direct jump targets — exclude deleted/archived
+  // and the currently-active one (jumping to where you already are is a no-op).
+  const workspaces = useMemo(
+    () =>
+      projects
+        .filter((p) => !p.deletedAt && !p.archivedAt && p.id !== activeProject?.id)
+        .map((p) => ({ id: p.id, name: p.name })),
+    [projects, activeProject],
+  );
+
+  const switchWorkspace = useCallback(
+    (projectId: string) => {
+      selectProject(projectId);
+      setPage('dashboard');
+      onClose();
+    },
+    [selectProject, setPage, onClose],
+  );
+
   const liveTrees = useMemo(
     () => (activeProject?.trees ?? []).filter((t) => !t.archivedAt).map((t) => ({ id: t.id, name: t.name || nodesSnapshot[t.rootNodeId]?.title || 'Untitled' })),
     [activeProject, nodesSnapshot],
@@ -193,6 +212,8 @@ export default function CommandPalette({
         selection,
         allChats,
         switchProject: selectProject,
+        workspaces,
+        switchWorkspace,
         hasActiveProject: !!activeProject,
         setPage: (p) => { setPage(p); onClose(); },
         fanoutFromSelection: () => {
@@ -230,13 +251,20 @@ export default function CommandPalette({
         bypassPermissions: prefs.bypassPermissions,
         toggleBypassPermissions: () => { setPref('bypassPermissions', !prefs.bypassPermissions); },
       }),
-    [activePage, selection, allChats, navDeps, selectProject, activeProject, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, prefs.bypassPermissions, setPref],
+    [activePage, selection, allChats, navDeps, selectProject, activeProject, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace, prefs.bypassPermissions, setPref],
   );
   const visible = useMemo(() => {
-    const base = query.trim() ? filterCommands(cmds, query) : cmds;
-    // Suppress "Switch to thread ▸ …" rows — they overlap visually with chat rows
-    // whose titles match the tree name. Tree navigation already lives in the sidebar.
-    return base.filter((c) => !c.id.startsWith('thread.switch.'));
+    const q = query.trim();
+    const base = q ? filterCommands(cmds, query) : cmds;
+    return base.filter((c) => {
+      // Suppress "Switch to thread ▸ …" rows — they overlap visually with chat rows
+      // whose titles match the tree name. Tree navigation already lives in the sidebar.
+      if (c.id.startsWith('thread.switch.')) return false;
+      // Workspace jumps are search-only: the empty/recents view stays focused on
+      // nav + chats; typing surfaces the WORKSPACE group (filtered by the query).
+      if (!q && c.group === 'workspace') return false;
+      return true;
+    });
   }, [cmds, query]);
   const showRecents = !query.trim();
 
@@ -295,9 +323,10 @@ export default function CommandPalette({
     }
   };
 
-  const groups: Array<['nav' | 'action' | 'chat' | 'search-result', string]> = [
+  const groups: Array<['nav' | 'action' | 'workspace' | 'chat' | 'search-result', string]> = [
     ['nav', 'NAV'],
     ['action', 'ACTION'],
+    ['workspace', 'WORKSPACE'],
     ['chat', 'CHAT'],
   ];
 

@@ -38,25 +38,40 @@ const BRANCHES_LAYOUT_CSS = `
   .branches-layout {
     width: min(1160px, calc(100% - 48px));
     margin: 0 auto;
+    /* Top pad clears the floating Graph/Timeline/Doc switcher (top:8, ~30px). */
+    padding: 52px 0 64px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(248px, 292px);
-    column-gap: 40px;
+    grid-template-columns: minmax(0, 1fr) 236px;
+    column-gap: 32px;
+    align-items: start;
   }
+  /* The document is a paper sheet floating on the soft field. */
   .branches-document {
     grid-column: 1;
     grid-row: 1;
     min-width: 0;
-    padding: 62px 0 112px;
+    background: var(--term-surface);
+    border: 1px solid color-mix(in srgb, var(--term-fg) 7%, transparent);
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--term-fg) 4%, transparent),
+      0 20px 50px -30px color-mix(in srgb, var(--term-fg) 25%, transparent);
+    padding: 48px 56px 64px;
   }
+  /* The outline is a sticky glass card beside the sheet. */
   .branches-directory {
     grid-column: 2;
     grid-row: 1;
     position: sticky;
-    top: 0;
+    /* Pin below the floating switcher so a scrolled outline never slides under it. */
+    top: 48px;
     align-self: start;
-    max-height: 100dvh;
+    max-height: calc(100dvh - 48px);
     overflow-y: auto;
-    padding: 72px 0 36px;
+    background: color-mix(in srgb, var(--term-surface) 82%, transparent);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    border: 1px solid color-mix(in srgb, var(--term-fg) 8%, transparent);
+    box-shadow: 0 12px 36px -18px color-mix(in srgb, var(--term-fg) 30%, transparent);
+    padding: 16px 0 10px;
   }
   .branches-directory__item {
     width: 100%;
@@ -64,23 +79,23 @@ const BRANCHES_LAYOUT_CSS = `
     border: 0;
     border-left: 2px solid transparent;
     background: transparent;
-    color: var(--term-muted);
+    color: var(--term-mid);
     font-family: var(--ui-font);
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.5;
     text-align: left;
     overflow-wrap: anywhere;
     white-space: normal;
     cursor: pointer;
     transition: color var(--t-quick), background var(--t-quick), border-color var(--t-quick);
   }
-  .branches-directory__item:hover { color: var(--term-fg); background: var(--term-alt); }
+  .branches-directory__item:hover { color: var(--term-fg); background: color-mix(in srgb, var(--term-accent-f) 30%, var(--term-surface)); }
   .branches-directory__item:focus-visible { outline: 1px solid var(--term-accent); outline-offset: -1px; }
-  .branches-directory__item.is-current { color: var(--term-fg); border-left-color: var(--term-accent); background: var(--term-alt); }
+  .branches-directory__item.is-current { color: var(--term-fg); border-left-color: var(--term-accent); background: color-mix(in srgb, var(--term-accent-f) 30%, var(--term-surface)); font-weight: 600; }
   @media (max-width: 860px) {
     .branches-layout { width: min(760px, calc(100% - 36px)); display: block; }
-    .branches-directory { position: static; max-height: none; overflow: visible; padding: 30px 0 0; }
-    .branches-document { padding-top: 40px; }
+    .branches-directory { position: static; max-height: none; overflow: visible; margin-top: 20px; }
+    .branches-document { padding: 32px 28px 48px; }
   }
 `;
 
@@ -223,7 +238,8 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
         flex: 1,
         minHeight: 0,
         overflowY: 'auto',
-        background: 'var(--term-pane-bg, var(--term-surface))',
+        // Soft field so the paper sheet + glass outline read as raised.
+        background: 'color-mix(in srgb, var(--term-bg) 60%, var(--term-surface))',
       }}
     >
       <style>{BRANCHES_LAYOUT_CSS}</style>
@@ -234,17 +250,18 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
           onNavigate={navigateDirectory}
         />
         <article className="branches-document">
-        <header style={{ marginBottom: root?.overview ? 52 : 68 }}>
+        <header style={{ marginBottom: root?.overview ? 40 : 56 }}>
           <div
             style={{
-              color: 'var(--term-faint)',
-              fontSize: 10.5,
-              letterSpacing: '.12em',
-              marginBottom: 13,
-              fontFamily: 'var(--ui-font)',
+              color: 'var(--term-accent)',
+              fontSize: 10,
+              letterSpacing: '.14em',
+              marginBottom: 12,
+              fontFamily: 'var(--message-code-font)',
+              textTransform: 'uppercase',
             }}
           >
-            {activeProject.name} / {rows.length} {rows.length === 1 ? 'branch' : 'branches'}
+            Branch Document
           </div>
           <BranchHeading
             id={root ? `branch-${root.nodeId}` : undefined}
@@ -253,6 +270,16 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
             streaming={root?.streaming ?? false}
             onOpen={root ? () => openBranch(root.nodeId) : undefined}
           />
+          <div
+            style={{
+              fontFamily: 'var(--message-code-font)',
+              fontSize: 10.5,
+              color: 'var(--term-faint)',
+              marginTop: 4,
+            }}
+          >
+            {rows.length} {rows.length === 1 ? 'branch' : 'branches'} · {activeProject.name}
+          </div>
           {root?.overview && (
             <OverviewText text={root.overview} generated={root.generated} root />
           )}
@@ -284,14 +311,15 @@ function BranchDirectory({
     <nav className="branches-directory" aria-label="Branch directory">
       <div
         style={{
-          marginBottom: 10,
+          padding: '0 16px 8px',
           color: 'var(--term-faint)',
-          fontFamily: 'var(--ui-font)',
-          fontSize: 10.5,
-          letterSpacing: '.1em',
+          fontFamily: 'var(--message-code-font)',
+          fontSize: 9,
+          letterSpacing: '.12em',
+          textTransform: 'uppercase',
         }}
       >
-        Directory
+        Outline
       </div>
       <div role="tree" aria-label="Branch hierarchy">
         {rows.map((row) => {
@@ -307,13 +335,13 @@ function BranchDirectory({
               className={`branches-directory__item${current ? ' is-current' : ''}`}
               onClick={() => onNavigate(row.nodeId)}
               style={{
-                padding: '6px 7px 6px',
-                paddingLeft: 8 + Math.min(row.depth, 5) * 14,
-                fontWeight: row.depth === 0 ? 600 : row.hasChildren ? 520 : 420,
+                padding: '6px 14px',
+                paddingLeft: 14 + Math.min(row.depth, 5) * 12,
+                fontWeight: current ? 600 : row.depth === 0 ? 600 : 420,
               }}
             >
               {row.title}
-              {row.streaming && <span aria-label=" active" style={{ color: 'var(--term-accent)' }}> ·</span>}
+              {row.streaming && <span aria-label=" active" className="map-card__live-dot" style={{ color: 'var(--term-accent)' }}> ●</span>}
             </button>
           );
         })}
@@ -330,7 +358,7 @@ function BranchSection({ row, onOpen }: { row: BranchDocumentRow; onOpen: () => 
       id={`branch-${row.nodeId}`}
       aria-labelledby={`branch-title-${row.nodeId}`}
       style={{
-        marginTop: row.depth === 1 ? 54 : row.depth === 2 ? 42 : 34,
+        marginTop: row.depth === 1 ? 32 : row.depth === 2 ? 26 : 22,
         marginLeft: deepIndent,
       }}
     >
@@ -377,8 +405,8 @@ function BranchHeading({
   streaming: boolean;
   onOpen?: () => void;
 }) {
-  const sizes = { 1: 42, 2: 25, 3: 19, 4: 16 } as const;
-  const margins = { 1: 22, 2: 13, 3: 10, 4: 9 } as const;
+  const sizes = { 1: 26, 2: 16.5, 3: 15, 4: 14 } as const;
+  const margins = { 1: 6, 2: 10, 3: 8, 4: 7 } as const;
   const Tag = `h${level}` as keyof React.JSX.IntrinsicElements;
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
@@ -389,9 +417,9 @@ function BranchHeading({
           color: 'var(--term-fg)',
           fontFamily: 'var(--message-latin-font), var(--message-cjk-font)',
           fontSize: sizes[level],
-          lineHeight: level === 1 ? 1.08 : 1.2,
-          letterSpacing: level <= 2 ? '-.025em' : '-.012em',
-          fontWeight: level === 1 ? 560 : level === 2 ? 540 : 600,
+          lineHeight: level === 1 ? 1.15 : 1.3,
+          letterSpacing: level === 1 ? '-.02em' : '-.01em',
+          fontWeight: 700,
           textWrap: 'balance',
           minWidth: 0,
         }}
@@ -433,7 +461,17 @@ function BranchHeading({
 
 function OverviewText({ text, generated, root = false }: { text: string; generated: boolean; root?: boolean }) {
   return (
-    <div title={generated ? 'Agent-maintained branch overview' : 'Preview from the latest conversation'}>
+    <div
+      title={generated ? 'Agent-maintained branch overview' : 'Preview from the latest conversation'}
+      // The root summary reads as an inset panel on the sheet; per-branch
+      // overviews flow as plain body copy.
+      style={root ? {
+        marginTop: 20,
+        background: 'color-mix(in srgb, var(--term-bg) 60%, var(--term-surface))',
+        border: '1px solid color-mix(in srgb, var(--term-fg) 5%, transparent)',
+        padding: '14px 18px',
+      } : undefined}
+    >
       <MarkdownContent
         text={text}
         size={root ? 'base' : 'sm'}
@@ -441,8 +479,8 @@ function OverviewText({ text, generated, root = false }: { text: string; generat
         style={{
           color: 'var(--term-mid)',
           fontFamily: 'var(--message-latin-font), var(--message-cjk-font)',
-          fontSize: root ? 16 : 15,
-          lineHeight: root ? 1.72 : 1.68,
+          fontSize: root ? 13.5 : 13,
+          lineHeight: root ? 1.75 : 1.68,
           maxWidth: '68ch',
         }}
       />

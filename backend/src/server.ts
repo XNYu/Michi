@@ -18,6 +18,7 @@ import { setupUserKeysRoutes } from './routes/userKeys';
 import { setupUploadsRoutes } from './routes/uploads';
 import { setupFilesRoutes } from './routes/files';
 import { setupArtifactRoutes } from './routes/artifacts';
+import { closeAllArtifactWatchers } from './services/artifactWatcher';
 import { setupDiffRoutes } from './routes/diff';
 import { ChatManager } from './services/chatManager';
 import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
@@ -444,6 +445,7 @@ const ACCESS_LOG_SILENT_2XX = [
   /^(?:\/api)?\/workspaces$/,                // lightweight workspace index load
   /^(?:\/api)?\/workspaces\/all$/,           // full workspace hydration
   /^(?:\/api)?\/workspaces\/[^/]+\/sync$/,   // bulk chat sync (frequent client poll)
+  /^(?:\/api)?\/chats\/[^/]+\/heartbeat$/,   // pane ownership heartbeat (every 10s per pane)
 ];
 app.use((req, res, next) => {
   const t0 = Date.now();
@@ -565,6 +567,7 @@ const gracefulShutdown = async (): Promise<void> => {
   // keep POSTing to /api/mcp/:slotId on the old port and the next backend
   // instance 404s them ("unknown mcp slot").
   await Promise.allSettled(listRuntimes().map((runtime) => runtime.shutdown()));
+  closeAllArtifactWatchers();
   closeDb();
   closeAuditDb();
   await new Promise<void>((resolve) => {

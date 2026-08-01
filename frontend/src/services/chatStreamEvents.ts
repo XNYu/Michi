@@ -56,7 +56,7 @@ export interface StreamHandlers {
   onMcpServerError?: (data: ChatStreamPayloads['mcp_server_error']) => void;
   onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean, completedAt?: number) => void;
   onAborted?: () => void;
-  onError?: (msg: string, assistantId?: string, turnId?: string) => void;
+  onError?: (msg: string, assistantId?: string, turnId?: string, code?: string) => void;
 }
 
 function assertNever(value: never): never {
@@ -176,7 +176,7 @@ export function dispatchChatStreamEvent(
       }
       return;
     case CHAT_STREAM_EVENTS.error:
-      handlers.onError?.(streamEvent.data.message, streamEvent.data.assistantId, streamEvent.data.turnId);
+      handlers.onError?.(streamEvent.data.message, streamEvent.data.assistantId, streamEvent.data.turnId, streamEvent.data.code);
       return;
     default:
       assertNever(streamEvent);

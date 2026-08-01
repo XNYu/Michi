@@ -209,6 +209,14 @@ export interface AgentRuntime {
   listModels?(opts?: { provider?: string }): Promise<ModelInfo[]>;
   /** Refresh a dynamic model catalog from the underlying runtime. */
   refreshModels?(): Promise<ModelInfo[]>;
+  /**
+   * Force a fresh connectivity check for a cwd, tearing down any stale
+   * process/connection first. Powers the "Test Connection" affordance the UI
+   * shows after a connection-class turn failure. Resolves `{ ok }` when the
+   * runtime can reach its backend again, or `{ ok: false, detail }` with a
+   * human-readable reason. Optional: runtimes without it fall back to warm().
+   */
+  checkHealth?(cwd: string, opts?: { model?: string | null }): Promise<{ ok: boolean; detail?: string }>;
   shutdown(): Promise<void>;
 }
 

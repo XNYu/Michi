@@ -68,6 +68,36 @@ export async function warmCwd(cwd: string): Promise<void> {
   startupMark('warm_request_done', { cwd, status: res.status, durMs: Date.now() - startedAt });
 }
 
+/**
+ * "Test Connection": ask the backend to force-respawn the runtime for a cwd /
+ * workspace and probe backend reachability. Powers the affordance shown after a
+ * connection-class turn failure. Unlike warmCwd, errors are surfaced (not
+ * swallowed) — the whole point is to report the connection's health. Resolves
+ * `{ ok }` on success or `{ ok:false, detail }` with the backend's reason.
+ */
+export async function checkRuntimeHealth(
+  target: { cwd?: string; workspaceId?: string },
+): Promise<{ ok: boolean; detail?: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/runtime/health`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(target),
+    });
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+  if (!res.ok) {
+    return { ok: false, detail: `health check failed: ${res.status}` };
+  }
+  try {
+    return (await res.json()) as { ok: boolean; detail?: string };
+  } catch {
+    return { ok: false, detail: 'invalid health response' };
+  }
+}
+
 export type ResumeStrategy = 'fresh' | 'live' | 'exact' | 'compatible';
 
 export interface EnsureSessionOptions {

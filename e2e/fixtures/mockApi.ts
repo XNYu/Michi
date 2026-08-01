@@ -61,7 +61,12 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
   chatIdCounter = 0;
   nodeIdCounter = 0;
 
-  await page.route('**/api/**', async (route) => {
+  // Match only real backend calls: `<origin>/api/...`. A plain `**/api/**`
+  // glob also matches Vite dev module URLs like
+  // `http://127.0.0.1:3001/src/services/api/artifacts.ts` (the `/api/` segment
+  // sits mid-path), which would return JSON for a module script and white-screen
+  // the app. Anchoring `/api/` to just after the host avoids that.
+  await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
     if (overrides.custom && (await overrides.custom(route))) return;
 
     const url = new URL(route.request().url());
@@ -138,6 +143,39 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
     }
     if (method === 'POST' && /^\/chats\/[^/]+\/set-(mode|model)$/.test(path)) {
       return json({ currentModeId: null, currentModelId: 'mock-model' });
+    }
+
+    // boot gates (added to the app after these fixtures were first written).
+    // Without these the app parks on the FirstRunSetup "Welcome to Michi"
+    // wizard: the workspace-dialog auto-open in TerminalShell is gated on
+    // `prefs.onboardingCompletedAt != null`, and FirstRunSetup itself pops
+    // whenever onboarding is incomplete. Returning a completed-onboarding pref
+    // simulates a returning user, suppressing the wizard and letting the
+    // new-workspace dialog auto-open — the state every spec's bootWithWorkspace
+    // expects.
+    if (method === 'GET' && path === '/prefs') {
+      return json({ prefs: { onboardingCompletedAt: 1 } });
+    }
+    if (method === 'PUT' && path === '/prefs') {
+      return json({ ok: true });
+    }
+    if (method === 'GET' && path === '/ready') {
+      return json({ status: 'ready', error: null });
+    }
+    if (method === 'GET' && path === '/auth-config') {
+      return json({ requireAuth: false });
+    }
+    if (method === 'GET' && path === '/persistence/capabilities') {
+      // Advisory probe (workspacePersistence never gates on it), but returning
+      // the real v2 shape keeps the boot console clean.
+      return json({
+        protocolVersion: 2,
+        authoritativeTurnPersistence: true,
+        durableNodePrerequisite: true,
+        explicitCommands: true,
+        backgroundWorkspaceSync: false,
+        legacySyncAccepted: true,
+      });
     }
 
     // workspaces

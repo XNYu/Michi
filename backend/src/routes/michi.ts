@@ -529,6 +529,63 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
     });
 
+    // "Test Connection": force-respawn the runtime for a cwd and probe backend
+    // reachability. Powers the affordance the UI shows after a connection-class
+    // turn failure so the user can tell "Kiro is back" from "still broken".
+    router.post("/runtime/health", async (req, res) => {
+        let cwd: string;
+        if (process.env.MICHI_CLOUD === "1") {
+            const userId = req.user!.id;
+            const workspaceId: unknown = req.body?.workspaceId;
+            if (typeof workspaceId !== "string" || !workspaceId) {
+                return res.status(400).json({ error: "workspaceId is required in cloud mode" });
+            }
+            try {
+                cwd = deriveSandboxCwd(userId, workspaceId);
+            } catch (err) {
+                if (err instanceof NotFoundError) {
+                    return res.status(404).json({ error: "workspace not found" });
+                }
+                return res.status(400).json({ error: (err as Error).message });
+            }
+            assertCwdAllowed(cwd, userId);
+        } else {
+            const cwdRaw: unknown = req.body?.cwd;
+            if (typeof cwdRaw !== "string" || !path.isAbsolute(cwdRaw)) {
+                return res.status(400).json({ error: "cwd must be an absolute path" });
+            }
+            cwd = cwdRaw;
+            try {
+                if (!fs.statSync(cwd).isDirectory()) {
+                    return res.status(400).json({ error: "cwd is not a directory" });
+                }
+            } catch {
+                return res.status(400).json({ error: "cwd does not exist or is not accessible" });
+            }
+        }
+
+        const userIdForConfig: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
+        const cfg = getAgentConfig(userIdForConfig);
+        const runtime = getRuntime(cfg.runtime);
+        if (!runtime) {
+            return res.status(503).json({ ok: false, detail: "no runtime configured" });
+        }
+        try {
+            if (runtime.checkHealth) {
+                const result = await runtime.checkHealth(cwd, { model: resolveModel(cfg.runtime, userIdForConfig) });
+                return res.json(result);
+            }
+            // Runtimes without a dedicated probe: warm() spawns/reaches the
+            // backend, so a clean return is a positive liveness signal.
+            if (runtime.capabilities.warmSessions) {
+                await runtime.warm(cwd, { model: resolveModel(cfg.runtime, userIdForConfig) });
+            }
+            return res.json({ ok: true });
+        } catch (err) {
+            return res.json({ ok: false, detail: (err as Error).message });
+        }
+    });
+
     router.post("/chats", requireWorkspaceOwner, async (req, res) => {
         try {
             const parentChatId: string | undefined = req.body?.parentChatId;

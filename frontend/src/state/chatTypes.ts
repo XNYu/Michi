@@ -31,6 +31,14 @@ export interface ArtifactState {
   /** Loading/error state. */
   status: 'idle' | 'loading' | 'error';
   error?: string;
+  /**
+   * Set by the artifact watcher when the file changed on disk since the last
+   * load. Drives the "● Changed on disk · refresh" badge; content is NOT auto-replaced —
+   * the user clicks to reload. Cleared on a successful reload.
+   */
+  pendingRefresh?: boolean;
+  /** Set when the watcher reports the file was deleted on disk. */
+  removed?: boolean;
 }
 
 export type ViewMode = 'single' | 'two' | 'three';
@@ -309,6 +317,11 @@ export interface ChatNodeState {
   /** Epoch ms when the current streaming turn began. Survives remounts. */
   streamingStartedAt?: number;
   error?: string;
+  /** Classification of the last error (Kiro runtime): 'connection' | 'auth' |
+   * 'generic'. Drives the error banner variant + Test Connection affordance.
+   * Undefined for unclassified errors / non-Kiro runtimes. Transient only —
+   * not persisted; cleared when a new turn starts. */
+  errorKind?: string;
   minimized?: boolean;
   /**
    * Transient - how long (ms) the agent has been silent during the current
@@ -616,7 +629,7 @@ export type ChatAction =
        *  finalized as 'interrupted' instead of 'completed'. */
       aborted?: boolean;
     }
-  | { type: 'error'; nodeId: string; assistantId: string; message: string }
+  | { type: 'error'; nodeId: string; assistantId: string; message: string; errorKind?: string }
   | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
   | { type: 'apply-seq'; nodeId: string; turnId: string; seq: number }
   | { type: 'apply-background-seq'; nodeId: string; turnId: string; seq: number }
@@ -647,6 +660,8 @@ export type ChatAction =
   | { type: 'artifact-loaded'; nodeId: string; content: string; basename: string; extension: string; size: number; modifiedAt: number }
   | { type: 'artifact-error'; nodeId: string; error: string }
   | { type: 'artifact-set-view'; nodeId: string; viewMode: 'rendered' | 'source' }
+  | { type: 'artifact-mark-stale'; nodeId: string }
+  | { type: 'artifact-mark-removed'; nodeId: string }
   | { type: 'create-digest'; nodeId: string; projectId: string; sources: string[] }
   | { type: 'digest-started'; nodeId: string }
   | { type: 'digest-chunk'; nodeId: string; text: string }

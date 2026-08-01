@@ -192,7 +192,7 @@ function Sparkline({ values, color, width = 110, height = 22 }: { values: number
   const area = path + ` L${width - 1.5},${height - 1.5} L${1.5},${height - 1.5} Z`;
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden style={{ display: 'block' }}>
-      <path d={area} fill={color} opacity="0.18" />
+      <path d={area} fill={color} opacity="0.14" />
       <path d={path} stroke={color} strokeWidth="1.1" fill="none" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
@@ -328,7 +328,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
         background: 'var(--term-bg)',
       }}
     >
-      <header style={{ marginBottom: 20 }}>
+      <header style={{
+        marginBottom: 28,
+      }}>
         <div
           style={{
             display: 'flex',
@@ -336,34 +338,29 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             justifyContent: 'space-between',
             gap: 16,
             flexWrap: 'wrap',
-            marginBottom: 10,
+            marginBottom: 0,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
             <h1
               style={{
                 margin: 0,
                 fontFamily: 'var(--ui-font)',
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: '.16em',
-                textTransform: 'uppercase',
+                fontSize: 21,
+                fontWeight: 650,
+                letterSpacing: '-.01em',
                 color: 'var(--term-fg)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
               }}
             >
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 4,
-                  height: 12,
-                  background: 'var(--term-accent)',
-                }}
-              />
-              workspaces
+              Workspaces
             </h1>
+            <span style={{
+              fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+              fontSize: 12,
+              color: 'var(--term-muted)',
+            }}>
+              {allCards.length}
+            </span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, justifyContent: 'flex-end' }}>
@@ -374,8 +371,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                 gap: 6,
                 border: '1px solid var(--term-line)',
                 background: 'var(--term-surface)',
+                boxShadow: 'inset 0 1px 2px rgba(26,25,22,.06)',
                 padding: '0 8px',
-                height: 30,
+                height: 32,
                 minWidth: 220,
                 maxWidth: 320,
                 flex: '0 1 280px',
@@ -424,7 +422,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               onClick={openNew}
               style={{
                 padding: '0 14px',
-                height: 30,
+                height: 32,
                 border: '1px solid var(--term-fg)',
                 background: 'var(--term-fg)',
                 color: 'var(--term-surface)',
@@ -434,7 +432,11 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                 letterSpacing: '.02em',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
+                boxShadow: '0 1px 3px rgba(26,25,22,.15)',
+                transition: 'transform 130ms, box-shadow 130ms',
               }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 3px 8px rgba(26,25,22,.2)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(26,25,22,.15)'; }}
             >
               + new workspace
             </button>
@@ -447,16 +449,13 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             alignItems: 'center',
             gap: 18,
             flexWrap: 'wrap',
-            paddingTop: 10,
-            borderTop: '1px solid var(--term-line)',
+            marginTop: 12,
             fontFamily: 'var(--ui-font)',
             fontSize: 11.5,
             color: 'var(--term-muted)',
             letterSpacing: '.04em',
           }}
         >
-          <Metric label="workspaces" value={allCards.length} />
-          <MetricSep />
           <Metric label="nodes" value={totals.nodes} />
           <MetricSep />
           <Metric label="threads" value={totals.threads} />
@@ -467,15 +466,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             color={totals.streaming > 0 ? 'var(--term-select, var(--term-accent))' : undefined}
             pulse={totals.streaming > 0}
           />
-          <MetricSep />
-          <Metric
-            label="digests"
-            value={totals.digests}
-            color={totals.digests > 0 ? 'var(--term-digest, #2f6b4e)' : undefined}
-          />
           <span style={{ flex: 1 }} />
           {totals.lastTs > 0 && (
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 10.5 }}>
               last activity{' '}
               <span style={{ color: 'var(--term-fg)' }}>{formatRelative(totals.lastTs)} ago</span>
             </span>
@@ -493,8 +486,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               textAlign: 'center',
               color: 'var(--term-muted)',
               fontSize: 13,
-              border: '1px dashed var(--term-line)',
+              border: '1px solid var(--term-line)',
               background: 'var(--term-surface)',
+              boxShadow: '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
             }}
           >
             No workspaces match &ldquo;{query}&rdquo;.
@@ -603,32 +597,38 @@ function WorkspaceCard({
       style={{
         background: 'var(--term-surface)',
         border: '1px solid var(--term-line)',
-        borderTop: `2px solid ${accent}`,
         padding: '18px 18px 16px',
         cursor: 'pointer',
         position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 240,
-        outline: w.active ? `1px solid var(--term-accent)` : 'none',
+        outline: w.active ? `1.5px solid var(--term-accent)` : 'none',
         outlineOffset: w.active ? -1 : 0,
+        boxShadow: hover
+          ? '0 2px 4px rgba(26,25,22,.05), 0 18px 40px rgba(26,25,22,.11)'
+          : '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
+        transition: 'box-shadow 150ms cubic-bezier(.2,0,.4,1), transform 150ms cubic-bezier(.2,0,.4,1)',
+        transform: hover ? 'translateY(-3px)' : 'none',
       }}
     >
       {/* Header strip */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
         <span
           style={{
-            width: 36,
-            height: 36,
+            width: 34,
+            height: 34,
             background: accent,
+            border: 'none',
             color: '#fff',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 14,
+            fontSize: 13,
             fontWeight: 700,
             fontFamily: 'var(--ui-font)',
             flexShrink: 0,
+            borderRadius: 0,
           }}
         >
           {initialOf(w.name)}
@@ -716,40 +716,25 @@ function WorkspaceCard({
             </span>
           )}
           {w.active && !w.streaming && (
-            <span
-              style={{
-                fontSize: 9.5,
-                color: 'var(--term-accent)',
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '.08em',
-              }}
-            >
-              ACTIVE
-            </span>
+            <Dot color="var(--term-accent)" size={7} pulse />
           )}
         </div>
       </div>
 
-      {/* Stats block (replaces tree preview) */}
+      {/* Stats block */}
       <div
         style={{
-          background: 'var(--term-bg)',
+          background: 'rgba(250,249,245,.8)',
           border: '1px solid var(--term-line)',
           padding: '10px 12px',
           marginBottom: 12,
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
+          gridTemplateColumns: 'repeat(2, 1fr)',
           gap: 12,
         }}
       >
         <Stat label="nodes" value={String(w.liveCount)} />
         <Stat label="threads" value={String(w.threadCount)} />
-        <Stat
-          label="digests"
-          value={w.digests > 0 ? `§ ${w.digests}` : '—'}
-          color={w.digests > 0 ? 'var(--term-digest, #2f6b4e)' : undefined}
-        />
       </div>
 
       {/* Preview list: matched nodes while filtering, recent threads otherwise. */}
@@ -764,7 +749,7 @@ function WorkspaceCard({
                   alignItems: 'baseline',
                   gap: 8,
                   padding: '4px 0',
-                  borderTop: i === 0 ? 'none' : '1px dashed var(--term-line)',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--term-line)',
                   fontSize: 12,
                   color: 'var(--term-fg)',
                 }}
@@ -778,7 +763,7 @@ function WorkspaceCard({
                   }}
                 >
                   {n.kind === 'digest' && (
-                    <span style={{ color: 'var(--term-digest, #2f6b4e)', marginRight: 4 }}>§</span>
+                    <span style={{ color: 'var(--term-digest, #2f6b4e)', marginRight: 4 }}>●</span>
                   )}
                   <Highlight text={n.title} q={query} />
                 </span>
@@ -803,7 +788,7 @@ function WorkspaceCard({
                   alignItems: 'baseline',
                   gap: 8,
                   padding: '4px 0',
-                  borderTop: i === 0 ? 'none' : '1px dashed var(--term-line)',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--term-line)',
                   fontSize: 12,
                   color: 'var(--term-fg)',
                 }}
@@ -845,7 +830,7 @@ function WorkspaceCard({
         )}
       </ul>
 
-      {/* Footer: sparkline + models */}
+      {/* Footer: sparkline + last activity */}
       <div
         style={{
           display: 'flex',
@@ -857,20 +842,15 @@ function WorkspaceCard({
         }}
       >
         <Sparkline values={w.spark} color={accent} />
-        <div
+        <span
           style={{
             fontSize: 9.5,
-            color: 'var(--term-muted)',
-            letterSpacing: '.08em',
-            textTransform: 'uppercase',
-            display: 'flex',
-            gap: 8,
+            color: 'var(--term-faint, var(--term-muted))',
+            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
           }}
         >
-          {w.models.map((m) => (
-            <span key={m} style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>{m}</span>
-          ))}
-        </div>
+          {formatRelative(w.lastTs)}
+        </span>
       </div>
 
       {/* Kebab menu — three dots, top-right */}
@@ -955,19 +935,19 @@ function Metric({ label, value, color, pulse }: { label: string; value: number; 
           fontFamily: 'var(--font-mono, ui-monospace, monospace)',
           fontVariantNumeric: 'tabular-nums',
           color: color || 'var(--term-fg)',
-          fontSize: 12,
+          fontSize: 13,
           fontWeight: 600,
         }}
       >
         {value}
       </span>
-      <span style={{ textTransform: 'uppercase', letterSpacing: '.08em', fontSize: 10.5 }}>{label}</span>
+      <span style={{ textTransform: 'uppercase', letterSpacing: '.08em', fontSize: 9 }}>{label}</span>
     </span>
   );
 }
 
 function MetricSep() {
-  return <span style={{ color: 'var(--term-faint, var(--term-line))' }} aria-hidden>│</span>;
+  return <span style={{ color: 'var(--term-line)', fontSize: 14 }} aria-hidden>│</span>;
 }
 
 function Highlight({ text, q }: { text: string; q: string }) {
@@ -1006,9 +986,10 @@ function EmptyState({ onNew }: { onNew: () => void }) {
         margin: '40px auto',
         maxWidth: 520,
         padding: '40px 32px',
-        border: '1px dashed var(--term-line)',
+        border: '1px solid var(--term-line)',
         background: 'var(--term-surface)',
         textAlign: 'center',
+        boxShadow: '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
       }}
     >
       <div

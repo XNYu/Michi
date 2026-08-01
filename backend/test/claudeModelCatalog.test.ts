@@ -14,11 +14,11 @@ describe('claudeModelCatalog', () => {
     assert.equal(isFallback, false);
     assert.ok(entry, 'entry must be defined');
     assert.equal(entry.contextWindow, 1_000_000);
-    // Sonnet rates
-    assert.equal(entry.rates.input, 3);
-    assert.equal(entry.rates.output, 15);
-    assert.equal(entry.rates.cacheCreation, 3.75);
-    assert.equal(entry.rates.cacheRead, 0.3);
+    // Cost tracking disabled — all rates are zero
+    assert.equal(entry.rates.input, 0);
+    assert.equal(entry.rates.output, 0);
+    assert.equal(entry.rates.cacheCreation, 0);
+    assert.equal(entry.rates.cacheRead, 0);
   });
 
   // ── Case 2: unknown model returns fallback ────────────────────────────────
@@ -63,9 +63,10 @@ describe('claudeModelCatalog', () => {
     assert.equal(UNKNOWN_CLAUDE_MODEL_FALLBACK.contextWindow, 200_000);
   });
 
-  // ── Case 5: all rate fields are finite positive numbers ───────────────────
+  // ── Case 5: all rate fields are finite non-negative numbers ────────────────
+  // Cost tracking is disabled for Claude runtime; rates are zero.
 
-  test('all catalog entries have finite positive rate fields', () => {
+  test('all catalog entries have finite non-negative rate fields', () => {
     const allEntries = [
       ...Object.entries(CLAUDE_MODEL_CATALOG).map(([name, entry]) => ({ name, entry })),
       { name: 'UNKNOWN_FALLBACK', entry: UNKNOWN_CLAUDE_MODEL_FALLBACK },
@@ -73,15 +74,15 @@ describe('claudeModelCatalog', () => {
 
     for (const { name, entry } of allEntries) {
       const { input, output, cacheCreation, cacheRead } = entry.rates;
-      assert.ok(Number.isFinite(input) && input > 0, `${name}.rates.input must be finite positive, got ${input}`);
-      assert.ok(Number.isFinite(output) && output > 0, `${name}.rates.output must be finite positive, got ${output}`);
+      assert.ok(Number.isFinite(input) && input >= 0, `${name}.rates.input must be finite non-negative, got ${input}`);
+      assert.ok(Number.isFinite(output) && output >= 0, `${name}.rates.output must be finite non-negative, got ${output}`);
       assert.ok(
-        Number.isFinite(cacheCreation) && cacheCreation > 0,
-        `${name}.rates.cacheCreation must be finite positive, got ${cacheCreation}`,
+        Number.isFinite(cacheCreation) && cacheCreation >= 0,
+        `${name}.rates.cacheCreation must be finite non-negative, got ${cacheCreation}`,
       );
       assert.ok(
-        Number.isFinite(cacheRead) && cacheRead > 0,
-        `${name}.rates.cacheRead must be finite positive, got ${cacheRead}`,
+        Number.isFinite(cacheRead) && cacheRead >= 0,
+        `${name}.rates.cacheRead must be finite non-negative, got ${cacheRead}`,
       );
     }
   });

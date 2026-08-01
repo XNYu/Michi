@@ -133,7 +133,7 @@ export class ClaudeSession implements AgentSession {
   private slotId: string | null = null;
   private externalSessionId: string | null = null;
   private lastUsedAt = Date.now();
-  private mwinitNoticeSent = false;
+  private authNoticeSent = false;
   private readonly followUpsHookPocEnabled = isClaudeFollowUpsHookPocEnabled();
   private readonly followUpsExperimentMode: FollowUpsExperimentMode =
     resolveFollowUpsExperimentMode();
@@ -981,14 +981,14 @@ export class ClaudeSession implements AgentSession {
       if (!trimmed) return;
       console.warn(`[ClaudeSession] stderr: ${trimmed.slice(0, 200)}`);
       // claude CLI prints this when the awsCredentialExport hook can't
-      // produce creds — almost always a missing/expired Midway cookie.
-      // Surface as a user-visible banner so they know to run `mwinit -o`.
-      if (!this.mwinitNoticeSent && /awsCredentialExport did not return a valid value/i.test(trimmed)) {
-        this.mwinitNoticeSent = true;
+      // produce creds — almost always missing or expired credentials.
+      // Surface as a user-visible banner so they know to refresh them.
+      if (!this.authNoticeSent && /awsCredentialExport did not return a valid value/i.test(trimmed)) {
+        this.authNoticeSent = true;
         this.queue.push({
           kind: 'mcp_server_error',
-          serverName: 'midway',
-          error: 'AWS credentials unavailable. Run `mwinit -o` in your terminal to refresh your Midway cookie, then retry.',
+          serverName: 'auth',
+          error: 'AWS credentials unavailable. Refresh your credentials in your terminal, then retry.',
         });
       }
     });

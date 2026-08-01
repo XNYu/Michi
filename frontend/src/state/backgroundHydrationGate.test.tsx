@@ -35,6 +35,8 @@ vi.mock('../services/api', () => ({
   listAgentModels: vi.fn(async () => ({ models: [], defaultModel: null })),
   fetchPrefs: vi.fn(async () => null),
   savePrefs: vi.fn(async () => {}),
+  artifactWatchStreamUrl: vi.fn((id: string) => `/api/workspaces/${id}/watch/stream`),
+  postArtifactWatchPaths: vi.fn(async () => ({ watching: [] })),
   subscribeBackground: apiMocks.subscribeBackground,
   subscribeChat: apiMocks.subscribeChat,
   claimPane: apiMocks.claimPane,

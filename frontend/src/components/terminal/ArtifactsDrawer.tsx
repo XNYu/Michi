@@ -185,10 +185,10 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
             if (stat && stat.size > 5 * 1024 * 1024) {
               const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
               const confirmed = await confirmDialog({
-                title: 'ファイルが大きすぎます',
-                message: `このファイルは ${sizeMB}MB あります（5MB超）。外部アプリで開きますか？`,
-                confirmLabel: '外部で開く',
-                cancelLabel: 'キャンセル',
+                title: 'File too large',
+                message: `This file is ${sizeMB} MB (over 5 MB). Open in external app?`,
+                confirmLabel: 'Open externally',
+                cancelLabel: 'Cancel',
                 danger: false,
               });
               if (confirmed) openViaOS(c);

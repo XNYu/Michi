@@ -339,28 +339,12 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
               onPin={(id) => store.pinContext?.(id)}
               onDelete={(id) => store.deleteContext?.(id)}
               onPreview={(filePath) => {
-                const electron = getElectron();
-                if (electron?.openPath) {
-                  void electron.openPath(filePath).then((r) => {
-                    if (!r.ok && r.error) {
-                      console.warn(`openPath(${filePath}) failed:`, r.error);
-                      toast.error(`Could not open ${filePath}: ${r.error}`);
-                    }
-                  });
-                  return;
-                }
-                // Web mode: no shell access. Copy the path so the user can paste
-                // it into their own editor / file manager.
-                const canCopy = !!navigator.clipboard?.writeText;
-                const msg = `Preview requires the desktop app. Path${canCopy ? ' copied' : ''}: ${filePath}`;
-                if (canCopy) {
-                  void navigator.clipboard
-                    .writeText(filePath)
-                    .then(() => toast.info(msg))
-                    .catch(() => toast.warning(msg));
-                } else {
-                  toast.warning(msg);
-                }
+                void store.openArtifactPane(filePath).catch((err: unknown) => {
+                  console.warn(`openArtifactPane(${filePath}) failed:`, err);
+                  toast.error(
+                    `Could not open ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                });
               }}
             />
           </>

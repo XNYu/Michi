@@ -16,7 +16,7 @@ import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
-import { saveAgentOptions } from '../../services/api';
+import { saveAgentOptions, checkRuntimeHealth } from '../../services/api';
 import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
@@ -516,6 +516,15 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     if (activeProject?.cwd) return activeProject.cwd;
     if (!activeProject?.id) return null;
     return getWebUploadCwd(activeProject.id);
+  }, [activeProject?.cwd, activeProject?.id]);
+
+  // "Test Connection" for the connection/auth error tail: force-respawn the
+  // runtime and probe reachability. Desktop sends the workspace cwd; cloud
+  // sends the workspaceId (backend derives the sandbox cwd).
+  const handleTestConnection = useCallback(async () => {
+    if (activeProject?.cwd) return checkRuntimeHealth({ cwd: activeProject.cwd });
+    if (activeProject?.id) return checkRuntimeHealth({ workspaceId: activeProject.id });
+    return { ok: false, detail: 'no active workspace' };
   }, [activeProject?.cwd, activeProject?.id]);
 
   const progressForFile = useCallback(
@@ -1947,6 +1956,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           onEditStart={handleEditStart}
           onEditSave={handleEditSave}
           onEditCancel={handleEditCancel}
+          onTestConnection={handleTestConnection}
         />
       </div>
       {!n.pendingPermission && (

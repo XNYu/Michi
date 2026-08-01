@@ -136,11 +136,13 @@ export default function ArtifactPane({
   const filePath = artifact?.filePath ?? '';
   const workspaceId = activeProject?.id;
 
-  // Fetch file content on mount (or when filePath changes)
-  useEffect(() => {
-    if (!artifact || !workspaceId || !filePath) return;
-    // Only fetch once: skip if already loaded, currently loading, or previously errored
-    if (artifact.content !== null || artifact.status === 'loading' || artifact.status === 'error') return;
+  // (Re)read the file from disk and push the result into node state. The pane
+  // is a pure viewer with no dirty buffer, so re-reading is always safe and
+  // idempotent — this backs BOTH the once-on-mount load and the badge-driven
+  // manual refresh. It deliberately carries NO once-guard: the mount effect
+  // guards the first load; the badge click calls this to force a fresh read.
+  const loadArtifactContent = useCallback(() => {
+    if (!workspaceId || !filePath) return;
     dispatch({ type: 'artifact-loading', nodeId });
 
     const isAbsolute = filePath.startsWith('/');
@@ -202,8 +204,34 @@ export default function ArtifactPane({
           dispatch({ type: 'artifact-error', nodeId, error: (err as Error).message });
         });
     }
+  }, [filePath, workspaceId, nodeId, dispatch]);
+
+  // Fetch file content once on mount (or when filePath changes). Only the FIRST
+  // load is guarded — later refreshes come from the badge (see handleRefresh).
+  //
+  // The `content !== null` guard alone can't stop React StrictMode's dev-mode
+  // double-invoke of this effect: the two runs happen back-to-back with NO
+  // committed re-render between them, so the second run still sees the initial
+  // `content: null` closure and would fire a *second* read. A path-keyed ref
+  // (set synchronously, persists across StrictMode's cleanup+rerun) makes the
+  // initial load fire exactly once per filePath. The badge refresh calls
+  // loadArtifactContent() directly and is unaffected by this guard.
+  const initialLoadPathRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!artifact || !workspaceId || !filePath) return;
+    // Skip if already loaded, currently loading, or previously errored.
+    if (artifact.content !== null || artifact.status === 'loading' || artifact.status === 'error') return;
+    if (initialLoadPathRef.current === filePath) return;
+    initialLoadPathRef.current = filePath;
+    loadArtifactContent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath, workspaceId, nodeId]);
+
+  // Badge click → force a fresh read, bypassing the once-guard above. Disk is
+  // the single source of truth, so this simply replaces the shown content.
+  const handleRefresh = useCallback(() => {
+    loadArtifactContent();
+  }, [loadArtifactContent]);
 
   const toggleView = useCallback(() => {
     if (!artifact) return;
@@ -281,6 +309,62 @@ export default function ArtifactPane({
         <span style={{ color: 'var(--term-accent)', fontSize: 13 }}>📄</span>
         {/* Breadcrumb */}
         <Breadcrumb filePath={filePath} />
+        {/* Live-refresh badge: the file changed on disk (from any source). We
+            never auto-replace the shown content — the user clicks to re-read.
+            `content !== null` while loading distinguishes a manual reload from
+            the initial mount load (which renders "Loading…" in the body). */}
+        {artifact.status === 'loading' && artifact.content !== null ? (
+          <span
+            style={{
+              padding: '2px 8px',
+              fontSize: 10,
+              color: 'var(--term-muted)',
+              fontFamily: 'var(--ui-font)',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            Refreshing…
+          </span>
+        ) : artifact.removed ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
+            style={{
+              padding: '2px 8px',
+              border: '1px solid var(--term-error, #e53e3e)',
+              background: 'transparent',
+              color: 'var(--term-error, #e53e3e)',
+              fontSize: 10,
+              cursor: 'pointer',
+              fontFamily: 'var(--ui-font)',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+            title="File was deleted from disk — click to retry"
+          >
+            ⚠ Deleted on disk
+          </button>
+        ) : artifact.pendingRefresh ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
+            style={{
+              padding: '2px 8px',
+              border: '1px solid var(--term-accent)',
+              background: 'transparent',
+              color: 'var(--term-accent)',
+              fontSize: 10,
+              cursor: 'pointer',
+              fontFamily: 'var(--ui-font)',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+            title="File changed on disk — click to reload the latest version"
+          >
+            ● Changed on disk · refresh
+          </button>
+        ) : null}
         {/* View source toggle */}
         {isMarkdown && (
           <button

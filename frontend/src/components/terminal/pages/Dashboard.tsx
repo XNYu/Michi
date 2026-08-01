@@ -66,6 +66,55 @@ export default function TerminalDashboard() {
   // user is actively scrolling, then fade out 600ms after the last event.
   const thumbRef = useRef<HTMLDivElement>(null);
   const scrollIdleTimerRef = useRef<number | null>(null);
+  // Pane-scoped selection isolation. On mousedown inside a pane we mark the
+  // strip `.selecting` and that pane's wrapper `.sel-source`; CSS then makes
+  // every OTHER pane `user-select: none` so a drag can't sweep the native
+  // selection across DOM order into a neighbor pane / follow-up row (the
+  // flash the user reported). Toggled through classList — never React state —
+  // so it stays off the streaming render path. See index.css `.selecting`.
+  const selectionSourceRef = useRef<HTMLElement | null>(null);
+
+  const clearPaneSelectionIsolation = useCallback(() => {
+    stripRef.current?.classList.remove('selecting');
+    const src = selectionSourceRef.current;
+    if (src) {
+      src.classList.remove('sel-source');
+      selectionSourceRef.current = null;
+    }
+  }, []);
+
+  const handlePaneSelectionMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return; // primary button only — ignore right/middle
+      const strip = stripRef.current;
+      if (!strip) return;
+      // Resolve the strip's DIRECT child — the pane wrapper the CSS `> *` rule
+      // targets. NOT closest('[data-node-id]'): TPane's own root (TPane.tsx)
+      // and mention-chip spans (MessageBlock.tsx) also carry data-node-id, so
+      // closest matched a nested element. The real wrapper then stayed
+      // un-exempted, its inherited user-select:none cascaded through the whole
+      // pane, and selection died in every pane — the regression being fixed.
+      let n = e.target as HTMLElement | null;
+      while (n && n.parentElement !== strip) n = n.parentElement;
+      const paneEl = n && n.parentElement === strip ? n : null;
+      if (!paneEl || !paneEl.hasAttribute('data-node-id')) return;
+      clearPaneSelectionIsolation(); // drop any stale source before re-marking
+      strip.classList.add('selecting');
+      paneEl.classList.add('sel-source');
+      selectionSourceRef.current = paneEl;
+      // Release on the next mouseup anywhere (pointer may leave the pane).
+      window.addEventListener('mouseup', clearPaneSelectionIsolation, { once: true });
+    },
+    [clearPaneSelectionIsolation],
+  );
+
+  useEffect(
+    () => () => {
+      window.removeEventListener('mouseup', clearPaneSelectionIsolation);
+      clearPaneSelectionIsolation();
+    },
+    [clearPaneSelectionIsolation],
+  );
 
   const updateThumbGeometry = useCallback(() => {
     const strip = stripRef.current;
@@ -365,6 +414,7 @@ export default function TerminalDashboard() {
           }),
         );
       }}
+      onMouseDown={handlePaneSelectionMouseDown}
       onDragEnter={handleDashDragEnter}
       onDragOver={handleDashDragOver}
       onDragLeave={handleDashDragLeave}

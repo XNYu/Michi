@@ -14,6 +14,8 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     clearSelection: vi.fn(),
     openChat: vi.fn(),
     switchProject: vi.fn(),
+    workspaces: [],
+    switchWorkspace: vi.fn(),
     createThread: vi.fn(),
     activateTree: vi.fn(),
     archiveTree: vi.fn(),
@@ -89,6 +91,36 @@ describe('thread commands', () => {
     expect(cmds.map((c) => c.label)).toContain('Archive current thread');
     const none = buildCommands({ ...base, activeTreeId: null });
     expect(none.map((c) => c.label)).not.toContain('Archive current thread');
+  });
+});
+
+describe('workspace jump commands', () => {
+  const base = makeCtx({
+    hasActiveProject: true,
+    workspaces: [{ id: 'p2', name: 'Workspace B' }, { id: 'p3', name: 'Workspace C' }],
+  });
+
+  it('emits a switch command per workspace', () => {
+    const cmds = buildCommands(base);
+    const labels = cmds.filter((c) => c.group === 'workspace').map((c) => c.label);
+    expect(labels).toEqual(['Switch to workspace ▸ Workspace B', 'Switch to workspace ▸ Workspace C']);
+  });
+
+  it('routes to the workspace via switchWorkspace', () => {
+    const switchWorkspace = vi.fn();
+    const cmds = buildCommands(makeCtx({
+      hasActiveProject: true,
+      switchWorkspace,
+      workspaces: [{ id: 'p2', name: 'Workspace B' }],
+    }));
+    const cmd = cmds.find((c) => c.id === 'workspace.switch.p2')!;
+    cmd.run();
+    expect(switchWorkspace).toHaveBeenCalledWith('p2');
+  });
+
+  it('emits no workspace rows when the list is empty', () => {
+    const cmds = buildCommands(makeCtx({ hasActiveProject: true, workspaces: [] }));
+    expect(cmds.filter((c) => c.group === 'workspace')).toHaveLength(0);
   });
 });
 

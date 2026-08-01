@@ -3,31 +3,47 @@ import dagre from '@dagrejs/dagre';
 import { useChatStore, useChatNodesSnapshot, useStructuralSelector, chatLabel } from '../../../state/chatStore';
 import { sortTrees } from '../../../state/sidebarSelectors';
 import { relativeTime } from '../../../lib/relativeTime';
-import { Dot, Tag } from '../primitives';
+import { Dot } from '../primitives';
 import ContextMenu from '../../ContextMenu';
 import { visibleMapNodeIds } from './mapVisibility';
 import { buildTreeContextMenu } from '../../../lib/treeContextMenu';
 import { requestDigest } from '../../../lib/digestPrompt';
 import { findTreeIdForNode } from '../../../state/tree';
+import { MapTimeline } from '../map/MapTimeline';
+import { MapCard } from '../map/MapCard';
+import { branchRibbonText } from '../../../state/mapOverviewSelectors';
+import { isNodeUnread } from '../../../state/sidebarSelectors';
+import Branches from './Branches';
+import { MAP_VIEWS, MAP_VIEW_LABELS, type MapView } from './mapView';
+import { useElkLayout, elkEdgePathD, type ElkRoutingStyle } from './useElkLayout';
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
 
-const NODE_W = 240;
-const NODE_H = 36;
-const ROW_GAP = 24;
-const COL_GAP = 60;
-const TREE_GAP = 64;
-const MIN_ZOOM = 0.8;
+// MapCard (DOM) box fed to dagre. Expanding a card reflows the graph — dagre
+// reserves the taller box so neighbors slide down to make room (a MODERATE
+// amount: CARD_H_EXPANDED tracks the real expanded content so the gap stays
+// ≈ NODE_SEP, not a big empty void). Both the cards and the shifted neighbors
+// animate to their new positions (see the wrapper's top/left transition).
+const CARD_W = 348;
+const CARD_H = 118;          // collapsed: heat bar + ASKED strip + title + summary + meta
+const CARD_H_EXPANDED = 220; // expanded: + trail + footer (≈ real content height)
+const NODE_SEP = 48;         // gap between sibling cards (cross-axis, vertical in LR)
+const RANK_SEP = 130;        // gap between ranks (main-axis, horizontal in LR)
+const TREE_GAP = 80;
+const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 3;
-const FIT_PADDING = 48;
+const FIT_PADDING = 72;
+
+// Glass material shared by the floating zoom pill. Token-based so it stays
+// legible across palettes (translucent white on light, dark on dark).
+const GLASS_BG = 'color-mix(in srgb, var(--term-surface) 82%, transparent)';
+const GLASS_BORDER = '1px solid color-mix(in srgb, var(--term-fg) 8%, transparent)';
+const GLASS_SHADOW = '0 12px 36px -18px color-mix(in srgb, var(--term-fg) 35%, transparent)';
 
 type MapMode = 'overview' | 'thread' | 'graph';
 type ZoomMode = 'auto' | 'manual';
 const DEFAULT_MAP_MODE: MapMode = 'thread';
 const EMPTY_TREES: readonly Tree[] = [];
-// Workspace-wide overview/graph code remains available internally, but the
-// public Map surface is intentionally scoped to the active thread.
-const VISIBLE_MAP_MODES: readonly MapMode[] = ['thread'];
 
 type TreeSummary = {
   tree: Tree;
@@ -116,12 +132,10 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
-function maxFitZoom(nodeCount: number): number {
-  if (nodeCount <= 1) return 2.2;
-  if (nodeCount <= 3) return 1.9;
-  if (nodeCount <= 8) return 1.45;
-  return 1.15;
-}
+// Cap how far "fit" is allowed to scale UP the graph. The cards are now
+// full-size (232px) so blowing them past 1:1 is what made them fill the screen;
+// keep fit at natural size (or below) and let the user zoom in manually.
+const MAX_FIT_ZOOM = 1.0;
 
 export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } = {}) {
   const {
@@ -158,8 +172,68 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   );
   const [zoom, setZoom] = useState(1);
   const [zoomMode, setZoomMode] = useState<ZoomMode>('auto');
+  // Top-level view (graph / timeline / doc). Session-only, always opens on graph.
+  // The switcher floats top-right on the canvas, under the Topbar's icon row.
+  const [view, setView] = useState<MapView>('graph');
+  // Which graph cards are expanded (in-place, pushes neighbors via dagre). Session-only.
+  const [expandedSet, setExpandedSet] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) => {
+    setExpandedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Layout engine toggle: 'dagre' (default) vs 'elk'.
+  // Stored in session state so the user can A/B compare.
+  const [layoutEngine, setLayoutEngine] = useState<'dagre' | 'elk'>('elk');
+  const [elkRouting, setElkRouting] = useState<ElkRoutingStyle>('ORTHOGONAL');
+
+  // Measured DOM heights for expanded cards. After the card expands and renders,
+  // a ResizeObserver reports its actual height. This feeds back into dagre so
+  // the layout uses real content height instead of the fixed CARD_H_EXPANDED
+  // estimate, guaranteeing NODE_SEP gaps between expanded cards.
+  const [measuredHeights, setMeasuredHeights] = useState<Map<string, number>>(new Map());
+  const cardRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+  const expandedSetRef = useRef(expandedSet);
+  expandedSetRef.current = expandedSet;
+  const roRef = useRef<ResizeObserver | null>(null);
+  if (!roRef.current) {
+    roRef.current = new ResizeObserver((entries) => {
+      let changed = false;
+      const updates: [string, number][] = [];
+      for (const entry of entries) {
+        const el = entry.target as HTMLDivElement;
+        const nodeId = el.getAttribute('data-map-node');
+        if (!nodeId) continue;
+        // Only care about expanded cards — collapsed ones use CARD_H.
+        if (!expandedSetRef.current.has(nodeId)) continue;
+        const h = Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight);
+        if (h > 0) updates.push([nodeId, h]);
+      }
+      if (updates.length === 0) return;
+      setMeasuredHeights((prev) => {
+        const next = new Map(prev);
+        for (const [nid, h] of updates) {
+          if (prev.get(nid) !== h) { next.set(nid, h); changed = true; }
+        }
+        return changed ? next : prev;
+      });
+    });
+  }
+  // Cleanup the ResizeObserver on unmount.
+  useEffect(() => () => { roRef.current?.disconnect(); }, []);
   const [mode, setMode] = useState<MapMode>(DEFAULT_MAP_MODE);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // fanout grow-in: ids that appeared since the last render play the grow
+  // animation once. `seenIdsRef` is the StrictMode-safe ledger of ids already
+  // mounted; the FIRST effect run seeds it with every current node so opening
+  // the map never animates the existing tree — only nodes that show up
+  // afterwards (agent spawn / branch) grow in.
+  const seenIdsRef = useRef<Set<string> | null>(null);
+  const growTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [growIds, setGrowIds] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: string } | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
@@ -213,10 +287,43 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     return children;
   }, [edges, liveSet]);
 
+  // child -> parent (branch edges only), for the hover-ancestor-chain highlight.
+  const parentOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of edges) {
+      if (!isBranchEdge(e)) continue;
+      if (!liveSet.has(e.source) || !liveSet.has(e.target)) continue;
+      m.set(e.target, e.source);
+    }
+    return m;
+  }, [edges, liveSet]);
+
+  // Hovered node's ancestor chain (itself + every parent up to the root).
+  // null when nothing is hovered — no dimming in that case.
+  const ancestorSet = useMemo(() => {
+    if (!hoveredId) return null;
+    const set = new Set<string>();
+    let cur: string | undefined = hoveredId;
+    while (cur && !set.has(cur)) {
+      set.add(cur);
+      cur = parentOf.get(cur);
+    }
+    return set;
+  }, [hoveredId, parentOf]);
+
+  // Merge-source highlight: when hovering a merge node, light up all its
+  // source nodes + the merge edges flowing into it.
+  const mergeHighlightSet = useMemo(() => {
+    if (!hoveredId) return null;
+    const node = nodesSnapshot[hoveredId];
+    if (!node?.mergeSources?.length) return null;
+    return new Set([hoveredId, ...node.mergeSources]);
+  }, [hoveredId, nodesSnapshot]);
+
   const treeSummaries = useMemo<TreeSummary[]>(() => {
     if (!activeProject) return [];
     return sortTrees(activeProject.trees ?? [], activeProject.activeTreeId)
-      .filter((tree) => !tree.archivedAt && liveSet.has(tree.rootNodeId))
+      .filter((tree) => !tree.archivedAt && tree.kind !== 'merge' && liveSet.has(tree.rootNodeId))
       .map((tree) => {
         const ids = collectReachableIds(tree.rootNodeId, branchChildren, liveSet);
         const root = nodesSnapshot[tree.rootNodeId];
@@ -244,7 +351,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     return tree && !tree.archivedAt ? tree : null;
   }, [activeTreeId, layoutTrees]);
 
-  const layout = useMemo(() => {
+  const dagreLayout = useMemo(() => {
     if (!hasActiveProject || mode === 'overview') return null;
 
     const graphTrees = mode === 'thread'
@@ -255,17 +362,15 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           .filter((t) => !t.archivedAt && liveSet.has(t.rootNodeId))
           .sort((a, b) => a.createdAt - b.createdAt);
 
-    // Per-tree dagre pass. Each tree is placed in its own local coord space; we
-    // record the root's local x so we can align every tree's root onto a shared
-    // vertical centerline below.
+    // Per-tree dagre pass (rankdir LR: root on the left, children fan right).
+    // Each tree is placed in its own local coord space; we record the root's
+    // local y so we can stack trees vertically below.
     type LaidTree = {
       ids: string[];
       nodeLocal: Map<string, { x: number; y: number }>;
-      rootLocalX: number;
+      localMinX: number;
       localMinY: number;
       localMaxY: number;
-      leftExtent: number; // distance from root center to leftmost rect edge
-      rightExtent: number; // distance from root center to rightmost rect edge
     };
     const laid: LaidTree[] = [];
 
@@ -275,9 +380,18 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       const idSet = new Set(ids);
 
       const g = new dagre.graphlib.Graph();
-      g.setGraph({ rankdir: 'TB', nodesep: ROW_GAP, ranksep: COL_GAP });
+      g.setGraph({ rankdir: 'LR', nodesep: NODE_SEP, ranksep: RANK_SEP });
       g.setDefaultEdgeLabel(() => ({}));
-      for (const id of ids) g.setNode(id, { width: NODE_W, height: NODE_H });
+      for (const id of ids) {
+        // Expanded cards reserve a taller box so dagre pushes the cross-axis
+        // neighbors down just enough to clear the expanded content.
+        // Use the measured DOM height when available (after the first render),
+        // otherwise fall back to the CARD_H_EXPANDED estimate.
+        const h = expandedSet.has(id)
+          ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
+          : CARD_H;
+        g.setNode(id, { width: CARD_W, height: h });
+      }
       for (const e of edges) {
         // dagre layout should only follow real parent/child branches.
         // 'link' (cross-tree reference) and 'digest-source' (digest fan-in)
@@ -292,7 +406,6 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
 
       const nodeLocal = new Map<string, { x: number; y: number }>();
       let minX = Infinity;
-      let maxX = -Infinity;
       let minY = Infinity;
       let maxY = -Infinity;
       for (const id of ids) {
@@ -300,61 +413,110 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
         if (!p) continue;
         nodeLocal.set(id, { x: p.x, y: p.y });
         if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
         if (p.y < minY) minY = p.y;
         if (p.y > maxY) maxY = p.y;
       }
-      const rootLocalX = nodeLocal.get(tree.rootNodeId)?.x ?? (minX + maxX) / 2;
-      laid.push({
-        ids,
-        nodeLocal,
-        rootLocalX,
-        localMinY: minY,
-        localMaxY: maxY,
-        leftExtent: rootLocalX - minX + NODE_W / 2,
-        rightExtent: maxX - rootLocalX + NODE_W / 2,
-      });
+      laid.push({ ids, nodeLocal, localMinX: minX, localMinY: minY, localMaxY: maxY });
     }
 
-    const PAD = 30;
+    const PAD = 36;
     if (laid.length === 0) {
       return {
         ids: [],
         positions: new Map<string, { x: number; y: number }>(),
-        width: NODE_W + PAD * 2,
-        height: NODE_H + PAD * 2,
+        width: CARD_W + PAD * 2,
+        height: CARD_H + PAD * 2,
       };
     }
 
-    const maxLeft = laid.reduce((m, t) => Math.max(m, t.leftExtent), NODE_W / 2);
-    const maxRight = laid.reduce((m, t) => Math.max(m, t.rightExtent), NODE_W / 2);
-    const centerX = PAD + maxLeft;
-    const width = centerX + maxRight + PAD;
-
+    // Left edge (root center) shared by every tree; each tree stacks vertically.
+    const leftX = PAD + CARD_W / 2;
     const positions = new Map<string, { x: number; y: number }>();
     const ids: string[] = [];
     let cursorY = PAD;
+    let maxX = -Infinity;
     for (const t of laid) {
       const offsetY = -t.localMinY + cursorY;
       for (const id of t.ids) {
         const local = t.nodeLocal.get(id);
         if (!local) continue;
         ids.push(id);
-        positions.set(id, {
-          x: local.x - t.rootLocalX + centerX,
-          y: local.y + offsetY,
-        });
+        const x = local.x - t.localMinX + leftX;
+        const y = local.y + offsetY;
+        positions.set(id, { x, y });
+        if (x > maxX) maxX = x;
       }
-      cursorY += (t.localMaxY - t.localMinY) + NODE_H + TREE_GAP;
+      cursorY += (t.localMaxY - t.localMinY) + CARD_H + TREE_GAP;
     }
 
     return {
       ids,
       positions,
-      width,
+      width: maxX + CARD_W / 2 + PAD,
       height: cursorY - TREE_GAP + PAD,
     };
-  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode]);
+    // expandedSet IS a dependency: an expanded card reserves a taller dagre box,
+    // so toggling recomputes positions and neighbors slide to make room.
+    // measuredHeights refines the estimate once DOM measures are available.
+  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, expandedSet, measuredHeights]);
+
+  // ELK layout (async). Only runs when layoutEngine === 'elk'.
+  const elkResult = useElkLayout({
+    enabled: layoutEngine === 'elk',
+    trees: layoutTrees,
+    activeTree,
+    edges,
+    liveSet,
+    mode,
+    expandedSet,
+    measuredHeights,
+    graphChildren,
+    routingStyle: elkRouting,
+  });
+
+  // Unified layout: pick the active engine's result.
+  // ELK is async so we fall back to dagre while it computes.
+  const layout = layoutEngine === 'elk' && elkResult ? elkResult : dagreLayout;
+
+  // Detect freshly-appeared graph nodes → play grow-in once, then drop the flag.
+  const layoutIds = layout?.ids;
+  useEffect(() => {
+    if (!layoutIds) return;
+    const current = new Set(layoutIds);
+    const seen = seenIdsRef.current;
+    if (seen === null) {
+      // First pass: adopt the existing tree without animating it.
+      seenIdsRef.current = current;
+      return;
+    }
+    const fresh = layoutIds.filter((id) => !seen.has(id));
+    for (const id of current) seen.add(id);
+    if (fresh.length === 0) return;
+    setGrowIds((prev) => {
+      const next = new Set(prev);
+      for (const id of fresh) next.add(id);
+      return next;
+    });
+    const timers = growTimersRef.current;
+    for (const id of fresh) {
+      const existing = timers.get(id);
+      if (existing) clearTimeout(existing);
+      timers.set(id, setTimeout(() => {
+        timers.delete(id);
+        setGrowIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 720)); // matches map-card-in (0.5s) / edge-draw (0.7s) + a hair
+    }
+  }, [layoutIds]);
+
+  useEffect(() => {
+    const timers = growTimersRef.current;
+    return () => { for (const t of timers.values()) clearTimeout(t); timers.clear(); };
+  }, []);
 
   useEffect(() => {
     if (mode === 'overview') return;
@@ -392,8 +554,11 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   const fitZoom = useMemo(() => {
     if (!layout || surfaceSize.width <= 0 || surfaceSize.height <= 0) return 1;
     const usableWidth = Math.max(1, surfaceSize.width - FIT_PADDING * 2);
-    const fit = usableWidth / layout.width;
-    return clamp(fit, MIN_ZOOM, maxFitZoom(layout.ids.length));
+    const usableHeight = Math.max(1, surfaceSize.height - FIT_PADDING * 2);
+    // Fit both axes so a wide (deep) tree AND a tall (branchy) tree both settle
+    // inside the viewport rather than overflowing on the unconsidered axis.
+    const fit = Math.min(usableWidth / layout.width, usableHeight / layout.height);
+    return clamp(fit, MIN_ZOOM, MAX_FIT_ZOOM);
   }, [layout, surfaceSize.height, surfaceSize.width]);
 
   const effectiveZoom = zoomMode === 'auto' ? fitZoom : zoom;
@@ -415,17 +580,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   if (!activeProject || !layout) {
     if (activeProject && mode === 'overview') {
       return (
-        <MapFrame
-          liveNodeCount={liveIds.length}
-          mode={mode}
-          setMode={setMapMode}
-          zoom={effectiveZoom}
-          zoomMode={zoomMode}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onFit={fitMap}
-          showZoom={false}
-        >
+        <MapFrame view={view} setView={setView}>
           <OverviewSurface
             summaries={treeSummaries}
             activeTreeId={activeProject.activeTreeId}
@@ -548,7 +703,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       case 'link':
         return { stroke: 'var(--term-accent)', dasharray: '2 6', opacity: 0.7 };
       default:
-        return { stroke: 'var(--term-line-s)', opacity: 1 };
+        return { stroke: 'color-mix(in srgb, var(--term-fg) 25%, transparent)', opacity: 1 };
     }
   };
 
@@ -556,92 +711,31 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   const scaledHeight = layout.height * effectiveZoom;
   const canvasWidth = Math.max(scaledWidth, surfaceSize.width);
   const canvasHeight = Math.max(scaledHeight, surfaceSize.height);
+  const nowTs = Date.now();
+  const rootNodeId = activeTree?.rootNodeId ?? null;
 
   return (
-    <MapFrame
-      liveNodeCount={liveIds.length}
-      mode={mode}
-      setMode={setMapMode}
-      zoom={effectiveZoom}
-      zoomMode={zoomMode}
-      onZoomIn={zoomIn}
-      onZoomOut={zoomOut}
-      onFit={fitMap}
-      streamingCount={streamingCount}
-      showZoom
-    >
-      <div
-        style={{
-          height: 28,
-          borderBottom: '1px solid var(--term-line)',
-          background: 'var(--term-alt)',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 14px',
-          gap: 18,
-          fontSize: 10,
-          color: 'var(--term-muted)',
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <svg width={18} height={4}>
-            <line x1={0} y1={2} x2={18} y2={2} stroke="var(--term-line-s)" strokeWidth={1.4} />
-          </svg>
-          branch
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <svg width={18} height={4}>
-            <line
-              x1={0}
-              y1={2}
-              x2={18}
-              y2={2}
-              stroke="var(--term-mauve)"
-              strokeWidth={1.4}
-              strokeDasharray="6 4"
-            />
-          </svg>
-          merge
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <svg width={18} height={4}>
-            <line
-              x1={0}
-              y1={2}
-              x2={18}
-              y2={2}
-              stroke="var(--term-accent)"
-              strokeWidth={1.4}
-              strokeDasharray="2 6"
-            />
-          </svg>
-          link
-        </span>
-        <div style={{ flex: 1 }} />
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <Dot color="var(--term-select)" size={6} pulse /> streaming
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              background: 'var(--term-select-f)',
-              border: '1px solid var(--term-select)',
-            }}
-          />
-          selected
-        </span>
-      </div>
-
+    <MapFrame view={view} setView={setView}>
+      {view === 'timeline' && (
+        <MapTimeline
+          nodes={liveIds.map((id) => nodesSnapshot[id]).filter(Boolean)}
+          now={Date.now()}
+          parentOf={parentOf}
+          onOpenPane={(id) => {
+            openPane(id);
+            onNav?.('dashboard');
+          }}
+          onFocus={(id) => {
+            openPane(id);
+            onNav?.('dashboard');
+          }}
+        />
+      )}
+      {view === 'doc' && <Branches onNav={onNav} />}
+      {view === 'graph' && (
       <div
         onPointerDownCapture={closeMenuFromMapPointerDown}
-        style={{
-          flex: 1,
-          position: 'relative',
-          minHeight: 0,
-        }}
+        style={{ flex: 1, position: 'relative', minHeight: 0 }}
       >
         {/* map surface */}
         <div
@@ -684,13 +778,24 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
             panRef.current = null;
             setPanning(false);
           }}
+          onWheel={(e) => {
+            // ⌘/Ctrl + wheel (or trackpad pinch, which browsers report as
+            // ctrlKey wheel) zooms; plain wheel keeps scrolling the canvas.
+            if (!e.ctrlKey && !e.metaKey) return;
+            e.preventDefault();
+            setZoomMode('manual');
+            setZoom((z) => {
+              const base = zoomMode === 'auto' ? fitZoom : z;
+              const next = base * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
+              return clamp(Math.round(next * 100) / 100, MIN_ZOOM, MAX_ZOOM);
+            });
+          }}
           style={{
             width: '100%',
             height: '100%',
             overflow: 'auto',
-            background: 'var(--term-bg)',
-            backgroundImage: 'radial-gradient(var(--term-line) 1px, transparent 1px)',
-            backgroundSize: '16px 16px',
+            backgroundImage: 'radial-gradient(color-mix(in srgb, var(--term-line) 55%, var(--term-bg)) 1px, transparent 1px)',
+            backgroundSize: '20px 20px',
             cursor: panning ? 'grabbing' : 'grab',
             // Block native text selection while dragging — a stray drag would
             // otherwise paint a selection rectangle across node labels.
@@ -708,10 +813,26 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               justifyContent: 'center',
             }}
           >
+            {/* Scaled canvas: SVG draws edges, DOM layer draws MapCards. Both
+                share one transform so pan/zoom stay aligned. The outer box
+                reserves the *scaled* footprint so the scroll container can pan;
+                the inner box is scaled from its top-left origin. */}
+            <div style={{ position: 'relative', width: scaledWidth, height: scaledHeight, flexShrink: 0 }}>
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: layout.width,
+                height: layout.height,
+                transform: `scale(${effectiveZoom})`,
+                transformOrigin: '0 0',
+              }}
+            >
             <svg
-              width={scaledWidth}
-              height={scaledHeight}
-              viewBox={`0 0 ${layout.width} ${layout.height}`}
+              width={layout.width}
+              height={layout.height}
+              style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}
             >
               {edges.map((e, i) => {
                 const src = layout.positions.get(e.source);
@@ -719,156 +840,160 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                 // Digest endpoints are absent from `positions` (digests are
                 // hidden from the map), so digest-source edges drop out here.
                 if (!src || !tgt) return null;
-                const sx = src.x;
-                const sy = src.y + NODE_H / 2;
-                const tx = tgt.x;
-                const ty = tgt.y - NODE_H / 2;
-                const midY = (sy + ty) / 2;
+                // Card width is fixed (expansion only grows height, as an
+                // overlay), so edges anchor to the constant collapsed box.
+                // LR: leave the parent's right edge, enter the child's left edge.
+                const sx = src.x + CARD_W / 2;
+                const sy = src.y;
+                const tx = tgt.x - CARD_W / 2;
+                const ty = tgt.y;
+                const dx = Math.max(42, (tx - sx) * 0.5);
+
+                // ELK edge routing: use computed bend points when available.
+                const elkEdgeKey = `${e.source}->${e.target}`;
+                const elkRoute = layoutEngine === 'elk' && elkResult?.edgeRoutes?.get(elkEdgeKey);
+                const pathD = elkRoute
+                  ? elkEdgePathD(elkRoute.sections, src, tgt, elkRouting)
+                  : `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`;
+
+                const streamingEdge = streamingIds.has(e.target);
+                const growEdge = isBranchEdge(e) && growIds.has(e.target);
+                // Ancestor-chain highlight: an edge lights only when BOTH its
+                // endpoints are on the hovered node's chain.
+                const ancEdge = ancestorSet != null
+                  && ancestorSet.has(e.source) && ancestorSet.has(e.target);
+                // Merge-source highlight: a merge edge lights when hovering
+                // the merge target and its source is in the highlight set.
+                const mergeEdge = e.kind === 'merge'
+                  && mergeHighlightSet != null
+                  && mergeHighlightSet.has(e.source) && mergeHighlightSet.has(e.target);
+                const dimEdge = ancestorSet != null && !ancEdge && !mergeEdge;
                 const { stroke, dasharray, opacity } = strokeFor(e.kind);
+                const litStroke = streamingEdge || ancEdge || mergeEdge;
+                const edgeClass = [
+                  streamingEdge ? 'map-edge--flow' : '',
+                  growEdge ? 'map-edge--draw' : '',
+                ].filter(Boolean).join(' ') || undefined;
                 return (
                   <path
                     key={i}
-                    d={`M${sx},${sy} C${sx},${midY} ${tx},${midY} ${tx},${ty}`}
-                    stroke={stroke}
-                    strokeWidth={1.2}
-                    strokeDasharray={dasharray}
+                    className={edgeClass}
+                    d={pathD}
+                    stroke={mergeEdge ? 'var(--term-mauve)' : litStroke ? 'var(--term-accent)' : stroke}
+                    strokeWidth={litStroke ? 1.8 : 1.4}
+                    strokeLinecap="round"
+                    strokeDasharray={streamingEdge || mergeEdge ? undefined : growEdge ? undefined : dasharray}
                     fill="none"
-                    opacity={opacity}
+                    opacity={dimEdge ? opacity * 0.3 : opacity}
+                    style={{ transition: 'opacity .16s, stroke .16s' }}
                   />
                 );
               })}
-
-              {layout.ids.map((id, index) => {
-                const n = nodesSnapshot[id];
-                if (!n) return null;
-                const pos = layout.positions.get(id);
-                if (!pos) return null;
-                const x = pos.x - NODE_W / 2;
-                const y = pos.y - NODE_H / 2;
-                // Map view shows the global graph — never paint a "focused" ring
-                // for the active pane, that signal belongs in dashboard.
-                const focused = false;
-                const sel = selection.has(id);
-                const streaming = streamingIds.has(id);
-                const isDigest = n.kind === 'digest';
-                const bg = isDigest
-                  ? 'var(--term-digest-f)'
-                  : 'var(--term-surface)';
-                const fg = isDigest
-                  ? 'var(--term-digest)'
-                  : 'var(--term-fg)';
-                const title = n.title || chatLabel(n) || id;
-                const titleX = x + (isDigest ? 22 : 10);
-                const titleW = NODE_W - (isDigest ? 32 : 20);
-                return (
-                  <g
-                    key={id}
-                    data-map-node={id}
-                    onClick={(e) => {
-                      if (e.metaKey || e.ctrlKey || e.shiftKey) {
-                        toggleSelection(id);
+            </svg>
+            {layout.ids.map((id) => {
+              const n = nodesSnapshot[id];
+              if (!n) return null;
+              const pos = layout.positions.get(id);
+              if (!pos) return null;
+              const exp = expandedSet.has(id);
+              // Wrapper uses dagre's allocated height (which incorporates the
+              // measured DOM height for expanded cards, falling back to the
+              // estimate). This keeps the card centered on dagre's pos.y.
+              const w = CARD_W;
+              const h = exp
+                ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
+                : CARD_H;
+              const sel = selection.has(id);
+              const onMap = view === 'graph';
+              return (
+                <div
+                  key={id}
+                  data-map-node={id}
+                  ref={(el) => {
+                    const ro = roRef.current!;
+                    const prev = cardRefsMap.current.get(id);
+                    if (prev && prev !== el) { ro.unobserve(prev); }
+                    if (el) { cardRefsMap.current.set(id, el); ro.observe(el); }
+                    else { cardRefsMap.current.delete(id); }
+                  }}
+                  onMouseEnter={onMap ? () => setHoveredId(id) : undefined}
+                  onMouseLeave={onMap ? () => setHoveredId((h) => (h === id ? null : h)) : undefined}
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                      toggleSelection(id);
+                    } else {
+                      toggleExpanded(id);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({ x: e.clientX, y: e.clientY, targetId: id });
+                  }}
+                  style={{
+                    position: 'absolute',
+                    left: pos.x - w / 2,
+                    top: pos.y - h / 2,
+                    width: w,
+                    // Animation #2: when expand/collapse reflows the layout, each
+                    // card slides to its new position instead of jumping. Keep
+                    // the expanded card (and the hovered one) above neighbors so
+                    // any transient overlap during the slide reads cleanly.
+                    // Hover/expand raises above neighbors so content reads
+                    // cleanly during animated reflows.
+                    zIndex: exp ? 10 : hoveredId === id ? 5 : undefined,
+                    transition: 'top .24s cubic-bezier(.4,0,.2,1), left .24s cubic-bezier(.4,0,.2,1)',
+                    outline: sel ? '2px solid var(--term-select)' : undefined,
+                    outlineOffset: 2,
+                  }}
+                >
+                  <MapCard
+                    node={n}
+                    ribbon={branchRibbonText(n)}
+                    now={nowTs}
+                    expanded={exp}
+                    unread={isNodeUnread(n, null)}
+                    anc={ancestorSet != null && ancestorSet.has(id)}
+                    dim={ancestorSet != null && !ancestorSet.has(id) && !(mergeHighlightSet != null && mergeHighlightSet.has(id))}
+                    grow={growIds.has(id)}
+                    isMain={id === rootNodeId}
+                    isMerge={!!(n.mergeSources && n.mergeSources.length > 0)}
+                    mergeSource={mergeHighlightSet != null && mergeHighlightSet.has(id) && id !== hoveredId}
+                    onOpenPane={() => {
+                      openPane(id);
+                      if (n.kind === 'digest') {
+                        window.dispatchEvent(
+                          new CustomEvent('michi:focus-digest', { detail: { nodeId: id } }),
+                        );
+                        onNav?.('digest');
                       } else {
-                        openPane(id);
-                        if (isDigest) {
-                          window.dispatchEvent(
-                            new CustomEvent('michi:focus-digest', { detail: { nodeId: id } }),
-                          );
-                          onNav?.('digest');
-                        } else {
-                          onNav?.('dashboard');
-                        }
+                        onNav?.('dashboard');
                       }
                     }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setMenu({ x: e.clientX, y: e.clientY, targetId: id });
-                    }}
-                    onMouseEnter={() => setHoveredId(id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    style={{
-                      cursor: 'pointer',
-                      animation: 'tMapNodeIn 180ms ease-out both',
-                      animationDelay: `${Math.min(index * 20, 400)}ms`,
-                    }}
-                  >
-                    <title>{title}</title>
-                    {sel && (
-                      <rect
-                        x={x - 3}
-                        y={y - 3}
-                        width={NODE_W + 6}
-                        height={NODE_H + 6}
-                        fill="var(--term-select-f)"
-                        stroke="var(--term-select)"
-                        strokeWidth={1.5}
-                      />
-                    )}
-                    <rect
-                      x={x}
-                      y={y}
-                      width={NODE_W}
-                      height={NODE_H}
-                      fill={bg}
-                      stroke={focused ? 'var(--term-fg)' : hoveredId === id ? 'var(--term-accent)' : (isDigest ? 'var(--term-digest)' : 'var(--term-line-s)')}
-                      strokeWidth={focused ? 3 : hoveredId === id ? 2 : 1}
-                    />
-                    {isDigest && (
-                      <rect x={x} y={y} width={3} height={NODE_H} fill="var(--term-digest)" />
-                    )}
-                    {streaming && (
-                      <circle cx={x + NODE_W - 10} cy={y + NODE_H / 2} r={3.5} fill="var(--term-select)">
-                        <animate
-                          attributeName="opacity"
-                          values="1;0.3;1"
-                          dur="1.1s"
-                          repeatCount="indefinite"
-                        />
-                      </circle>
-                    )}
-                    {isDigest && (
-                      <text
-                        x={x + 10}
-                        y={y + 14}
-                        fontSize={10}
-                        fontFamily="var(--ui-font)"
-                        fill="var(--term-digest)"
-                      >
-                        §
-                      </text>
-                    )}
-                    <foreignObject x={titleX} y={y + 4} width={titleW} height={17}>
-                      <div
-                        style={{
-                          color: fg,
-                          fontFamily: 'var(--ui-font)',
-                          fontSize: 12,
-                          fontWeight: focused || isDigest ? 600 : 400,
-                          height: 17,
-                          lineHeight: '17px',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          width: '100%',
-                        }}
-                      >
-                        {title}
-                      </div>
-                    </foreignObject>
-                    <text
-                      x={x + 8}
-                      y={y + 28}
-                      fontSize={8.5}
-                      fontFamily="var(--ui-font)"
-                      fill={isDigest ? 'var(--term-digest)' : 'var(--term-muted)'}
-                    >
-                      {n.messages.length} msg
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
+                  />
+                </div>
+              );
+            })}
+            </div>
+            </div>
           </div>
         </div>
+
+        {/* Floating zoom pill — graph view only, bottom-right. */}
+        <ZoomPill
+          zoom={effectiveZoom}
+          auto={zoomMode === 'auto'}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onFit={fitMap}
+        />
+
+        {/* Layout engine toggle — bottom-left, for A/B comparison. */}
+        <LayoutEnginePill
+          engine={layoutEngine}
+          routing={elkRouting}
+          onToggleEngine={() => setLayoutEngine((e) => (e === 'dagre' ? 'elk' : 'dagre'))}
+          onSetRouting={setElkRouting}
+        />
 
         {selectedMapIds.length > 0 && (
           <MapSelectionBar
@@ -885,7 +1010,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           />
         )}
       </div>
-      {menu && activeProject && (
+      )}
+      {menu && view === 'graph' && activeProject && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
@@ -920,6 +1046,135 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
         />
       )}
     </MapFrame>
+  );
+}
+
+function ZoomPill({
+  zoom,
+  auto,
+  onZoomIn,
+  onZoomOut,
+  onFit,
+}: {
+  zoom: number;
+  auto: boolean;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFit: () => void;
+}) {
+  const btn: React.CSSProperties = {
+    width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none',
+    background: 'transparent', color: 'var(--term-mid)', cursor: 'pointer', fontSize: 14,
+    fontFamily: 'var(--message-code-font)',
+  };
+  return (
+    <div
+      style={{
+        position: 'absolute', right: 18, bottom: 18,
+        display: 'flex', alignItems: 'center',
+        background: GLASS_BG,
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: GLASS_BORDER,
+        boxShadow: GLASS_SHADOW,
+      }}
+    >
+      <button type="button" style={btn} onClick={onZoomOut} title="zoom out"
+        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--term-alt)')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>−</button>
+      <span style={{
+        fontFamily: 'var(--message-code-font)', fontSize: 10.5, color: 'var(--term-fg)',
+        minWidth: 40, textAlign: 'center',
+      }}>{Math.round(zoom * 100)}%</span>
+      <button type="button" style={btn} onClick={onZoomIn} title="zoom in"
+        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--term-alt)')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>+</button>
+      <button
+        type="button"
+        onClick={onFit}
+        title="fit map to the visible area"
+        style={{
+          border: 'none', borderLeft: GLASS_BORDER, background: 'transparent',
+          padding: '0 12px', height: 28, cursor: 'pointer',
+          fontFamily: 'var(--message-code-font)', fontSize: 10, letterSpacing: '.08em',
+          color: auto ? 'var(--term-accent)' : 'var(--term-mid)',
+        }}
+      >FIT</button>
+    </div>
+  );
+}
+
+function LayoutEnginePill({
+  engine,
+  routing,
+  onToggleEngine,
+  onSetRouting,
+}: {
+  engine: string;
+  routing: ElkRoutingStyle;
+  onToggleEngine: () => void;
+  onSetRouting: (r: ElkRoutingStyle) => void;
+}) {
+  const btn: React.CSSProperties = {
+    border: 'none',
+    background: 'transparent',
+    padding: '4px 10px',
+    fontFamily: 'var(--message-code-font)',
+    fontSize: 10,
+    letterSpacing: '.06em',
+    cursor: 'pointer',
+    height: 28,
+  };
+  const routingOptions: ElkRoutingStyle[] = ['SPLINES', 'POLYLINE', 'ORTHOGONAL'];
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: 18,
+        bottom: 18,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0,
+        background: GLASS_BG,
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: GLASS_BORDER,
+        boxShadow: GLASS_SHADOW,
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggleEngine}
+        title="Toggle layout engine (dagre ↔ ELK)"
+        style={{
+          ...btn,
+          color: engine === 'elk' ? 'var(--term-accent)' : 'var(--term-mid)',
+          fontWeight: engine === 'elk' ? 700 : 450,
+        }}
+      >
+        {engine === 'elk' ? 'ELK' : 'DAGRE'}
+      </button>
+      {engine === 'elk' && (
+        <>
+          <span style={{ width: 1, height: 16, background: 'var(--term-line)' }} />
+          {routingOptions.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => onSetRouting(r)}
+              style={{
+                ...btn,
+                color: routing === r ? 'var(--term-accent)' : 'var(--term-mid)',
+                fontWeight: routing === r ? 700 : 400,
+                fontSize: 9,
+              }}
+            >
+              {r === 'SPLINES' ? 'spline' : r === 'POLYLINE' ? 'poly' : 'ortho'}
+            </button>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1029,143 +1284,72 @@ export function MapSelectionBar({
   );
 }
 
+/** The Map page canvas frame: the paper field behind whichever view is active,
+ *  plus the floating Graph/Timeline/Doc switcher anchored top-right — sitting
+ *  just under the Topbar's icon row (back / MAP / title stay in the Topbar). */
 function MapFrame({
   children,
-  liveNodeCount,
-  mode,
-  setMode,
-  zoom,
-  zoomMode,
-  onZoomIn,
-  onZoomOut,
-  onFit,
-  streamingCount = 0,
-  showZoom,
+  view,
+  setView,
 }: {
   children: React.ReactNode;
-  liveNodeCount: number;
-  mode: MapMode;
-  setMode: (mode: MapMode) => void;
-  zoom: number;
-  zoomMode: ZoomMode;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onFit: () => void;
-  streamingCount?: number;
-  showZoom: boolean;
+  view: MapView;
+  setView: (view: MapView) => void;
 }) {
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        position: 'relative',
+        background: 'color-mix(in srgb, var(--term-bg) 60%, var(--term-surface))',
+        overflow: 'hidden',
+      }}
+    >
       <div
+        role="tablist"
+        aria-label="Map views"
         style={{
-          height: 36,
-          borderBottom: '1px solid var(--term-line)',
-          background: 'var(--term-surface)',
+          position: 'absolute',
+          top: 8,
+          right: 14,
+          zIndex: 20,
           display: 'flex',
-          alignItems: 'center',
-          padding: '0 14px',
-          gap: 14,
-          fontSize: 11,
-          flexShrink: 0,
-          WebkitAppRegion: 'drag',
-        } as React.CSSProperties}
+          background: GLASS_BG,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          border: GLASS_BORDER,
+          boxShadow: GLASS_SHADOW,
+          padding: 2,
+        }}
       >
-        <span style={{ color: 'var(--term-fg)', fontWeight: 600 }}>{liveNodeCount} nodes</span>
-        {streamingCount > 0 && (
-          <>
-            <span style={{ color: 'var(--term-muted)' }}>·</span>
-            <span style={{ color: 'var(--term-select)' }}>{streamingCount} streaming</span>
-          </>
-        )}
-        <div style={{ flex: 1 }} />
-        {showZoom && (
-          <>
-            <span style={{ color: 'var(--term-mid)' }}>zoom</span>
-            <div
+        {MAP_VIEWS.map((v) => {
+          const active = v === view;
+          return (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setView(v)}
               style={{
-                display: 'flex',
-                border: '1px solid var(--term-line)',
-                WebkitAppRegion: 'no-drag',
-              } as React.CSSProperties}
+                border: 'none',
+                padding: '4px 14px',
+                fontFamily: 'var(--ui-font)',
+                fontSize: 11.5,
+                color: active ? 'var(--term-bg)' : 'var(--term-mid)',
+                background: active ? 'var(--term-fg)' : 'transparent',
+                fontWeight: active ? 600 : 450,
+                cursor: active ? 'default' : 'pointer',
+                transition: 'background .18s',
+              }}
             >
-              <span
-                onClick={onZoomOut}
-                style={{
-                  padding: '3px 8px',
-                  borderRight: '1px solid var(--term-line)',
-                  color: 'var(--term-mid)',
-                  cursor: 'pointer',
-                }}
-              >
-                -
-              </span>
-              <span
-                style={{
-                  padding: '3px 10px',
-                  color: 'var(--term-fg)',
-                  background: 'var(--term-alt)',
-                }}
-              >
-                {Math.round(zoom * 100)}%
-              </span>
-              <span
-                onClick={onZoomIn}
-                style={{
-                  padding: '3px 8px',
-                  borderLeft: '1px solid var(--term-line)',
-                  color: 'var(--term-mid)',
-                  cursor: 'pointer',
-                }}
-              >
-                +
-              </span>
-            </div>
-            <span
-              onClick={onFit}
-              style={{ cursor: 'pointer', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-              title="fit map to the visible area"
-            >
-              <Tag color={zoomMode === 'auto' ? 'var(--term-accent)' : 'var(--term-mid)'}>
-                fit
-              </Tag>
-            </span>
-            <div style={{ width: 1, height: 16, background: 'var(--term-line)' }} />
-          </>
-        )}
-        {VISIBLE_MAP_MODES.length > 1 ? (
-          <>
-            <span style={{ color: 'var(--term-mid)' }}>view</span>
-            <div
-              style={{
-                display: 'flex',
-                border: '1px solid var(--term-line)',
-                WebkitAppRegion: 'no-drag',
-              } as React.CSSProperties}
-            >
-              {VISIBLE_MAP_MODES.map((k, i) => {
-                const active = k === mode;
-                return (
-                  <span
-                    key={k}
-                    onClick={() => setMode(k)}
-                    style={{
-                      padding: '3px 8px',
-                      color: active ? 'var(--term-fg)' : 'var(--term-mid)',
-                      background: active ? 'var(--term-alt)' : 'var(--term-surface)',
-                      borderRight: i < VISIBLE_MAP_MODES.length - 1 ? '1px solid var(--term-line)' : 'none',
-                      cursor: active ? 'default' : 'pointer',
-                      fontWeight: active ? 700 : 450,
-                    }}
-                  >
-                    {k}
-                  </span>
-                );
-              })}
-            </div>
-          </>
-        ) : (
-          <Tag color="var(--term-mid)">graph</Tag>
-        )}
+              {MAP_VIEW_LABELS[v]}
+            </button>
+          );
+        })}
       </div>
       {children}
     </div>
@@ -1195,9 +1379,8 @@ function OverviewSurface({
       style={{
         flex: 1,
         overflow: 'auto',
-        background: 'var(--term-bg)',
-        backgroundImage: 'radial-gradient(var(--term-line) 1px, transparent 1px)',
-        backgroundSize: '16px 16px',
+        backgroundImage: 'radial-gradient(color-mix(in srgb, var(--term-line) 55%, var(--term-bg)) 1px, transparent 1px)',
+        backgroundSize: '20px 20px',
         minHeight: 0,
         padding: 18,
       }}
