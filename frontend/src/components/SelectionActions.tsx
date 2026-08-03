@@ -44,6 +44,11 @@ const BAR_APPROX_WIDTH = 280;
 const COMPOSER_WIDTH = 340;
 const COMPOSER_MIN_HEIGHT = 110;
 const VIEWPORT_MARGIN = 8;
+/**
+ * Selection-driven placement changes smaller than this (px, per axis) are
+ * ignored and the popup keeps its current position. See `stickyPlacement`.
+ */
+const POSITION_DEADZONE = 8;
 
 /**
  * Text-selection action bar + composer, rendered via portal so it can
@@ -85,6 +90,13 @@ export default function SelectionActions({
   // state machine, and doesn't conflict with scroll events.
   const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSelTextRef = useRef('');
+  // Last placement actually rendered, tagged with the mode it was computed
+  // for. Lets `stickyPlacement` suppress sub-perceptual selection-driven
+  // repositioning, while a bar↔composer swap (different size, different
+  // pinned edge) always starts from a freshly computed position.
+  const stickyPlacementRef = useRef<
+    { mode: ComposerMode; left: number; top: number; above: boolean } | null
+  >(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -183,6 +195,11 @@ export default function SelectionActions({
       try {
         const measured = measureRange(anchor.range, containerRef.current);
         if (!measured) return;
+        // Scroll / resize must track the text 1:1. The dead-zone exists for
+        // selection edits only — applying it here would make the popup lag
+        // behind a slow scroll and then jump once the delta crossed the
+        // threshold, so drop the sticky position and let this frame win.
+        stickyPlacementRef.current = null;
         setAnchor((prev) => (prev ? { ...prev, ...measured } : prev));
       } catch {
         /* range detached; next selection change rebuilds */
@@ -286,6 +303,18 @@ export default function SelectionActions({
     setMeasuredSize(null);
   }, [composerMode, anchor?.text]);
 
+  // Drop the sticky placement once the popup is dismissed so the next
+  // appearance is positioned from scratch instead of inheriting a stale spot.
+  // Deliberately keyed on visibility rather than `anchor` itself — `anchor`
+  // gets a new identity on every selection edit, which would defeat the
+  // dead-zone entirely. The `if` matters: without it this would also fire on
+  // the render that first shows the popup, clearing the placement it just
+  // committed and letting the next selection edit move freely.
+  const popupVisible = anchor !== null;
+  useLayoutEffect(() => {
+    if (!popupVisible) stickyPlacementRef.current = null;
+  }, [popupVisible]);
+
   // Measure actual rendered popup size so placement uses real height/width
   // instead of the constant estimates — those underestimate the composer
   // and let it overlap the selection when placed above.
@@ -302,13 +331,19 @@ export default function SelectionActions({
     if (!anchor) return;
     const el = popupRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
+    // Use offsetWidth/offsetHeight instead of getBoundingClientRect() because
+    // the latter reports the *transformed* size. When the entry animation
+    // applies scale(0.92), getBoundingClientRect() returns ~92% of the true
+    // layout dimensions; this stale measurement then corrects on the next
+    // trigger (first keystroke), causing a visible position jump.
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (w === 0 || h === 0) return;
     setMeasuredSize((prev) => {
-      if (prev && Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5) {
+      if (prev && Math.abs(prev.width - w) < 0.5 && Math.abs(prev.height - h) < 0.5) {
         return prev;
       }
-      return { width: rect.width, height: rect.height };
+      return { width: w, height: h };
     });
   }, [anchor?.text, composerMode, prompt]);
 
@@ -322,13 +357,21 @@ export default function SelectionActions({
   const popupWidth = measuredSize?.width ?? fallbackWidth;
   const popupHeight = measuredSize?.height ?? fallbackHeight;
   const bottomBoundary = getComposerTopBoundary(containerRef.current);
-  const placement = placePopup(
+  const rawPlacement = placePopup(
     anchor.bounds,
     anchor.highlightRects,
     bottomBoundary,
     popupWidth,
     popupHeight,
   );
+  // Suppress sub-perceptual twitching while the user is still adjusting the
+  // selection. Writing the ref during render is safe because the write is
+  // idempotent: a repeat render with the same inputs compares the fresh
+  // placement against the value we just committed and reaches the same
+  // decision, so a StrictMode double-invoke can't change the outcome.
+  const sticky = stickyPlacementRef.current;
+  const placement = stickyPlacement(rawPlacement, sticky?.mode === composerMode ? sticky : null);
+  stickyPlacementRef.current = { mode: composerMode, ...placement };
 
   const composerHeaderLabel =
     composerMode === 'branch' ? 'BRANCH FROM SELECTION' : 'COMMENT ON SELECTION';
@@ -605,6 +648,44 @@ export function placePopup(
   top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - height - VIEWPORT_MARGIN));
 
   return { left, top, above: !useBelow };
+}
+
+/**
+ * Dead-zone filter for popup placement.
+ *
+ * `placePopup` is recomputed from live selection geometry, and that geometry
+ * wobbles for reasons the user never intended as movement:
+ *
+ *   - `getBoundingClientRect` returns fractional values, so the same visual
+ *     line can measure 123.48 one frame and 123.51 the next;
+ *   - the first highlight rect can change identity mid-selection (an inline
+ *     `<code>` / `<strong>` run has a slightly different top than the plain
+ *     text around it), shifting `top` by a pixel or two;
+ *   - extending a selection by one short word moves `unionCenterX` — and
+ *     therefore `left` — by only a few pixels.
+ *
+ * Individually those are sub-perceptual, but each one triggers a re-render
+ * that re-pins `left`/`top`, which reads as the popup twitching around while
+ * the user is still adjusting their selection. Holding the last rendered
+ * position until the popup would move meaningfully removes the twitch.
+ *
+ * Both axes are gated together: the point is "the popup barely moved, so
+ * leave it alone", not "freeze one axis while the other slides". Comparing
+ * against the *rendered* position (not the previous computed one) means many
+ * small steps still accumulate and eventually cross the threshold, so the
+ * popup can't drift away from its selection.
+ */
+export function stickyPlacement(
+  next: { left: number; top: number; above: boolean },
+  prev: { left: number; top: number; above: boolean } | null,
+): { left: number; top: number; above: boolean } {
+  if (!prev) return next;
+  // Flipping sides changes edge-pinning and transform-origin — never a jitter.
+  if (prev.above !== next.above) return next;
+  const settled =
+    Math.abs(next.left - prev.left) < POSITION_DEADZONE &&
+    Math.abs(next.top - prev.top) < POSITION_DEADZONE;
+  return settled ? prev : next;
 }
 
 /**

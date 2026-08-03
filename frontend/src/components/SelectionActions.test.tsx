@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import SelectionActions, { placePopup, findMessageIdForRange } from './SelectionActions';
+import SelectionActions, { placePopup, stickyPlacement, findMessageIdForRange } from './SelectionActions';
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return {
@@ -512,6 +512,136 @@ describe('SelectionActions', () => {
     expect(screen.getByRole('button', { name: /Branch/i })).toBeTruthy();
   });
 
+  it('holds the bar position when a selection edit barely moves it, and follows a real move', () => {
+    const onBranch = vi.fn();
+    const onQuote = vi.fn();
+    const onComment = vi.fn();
+
+    let lineRects = [rect(300, 200, 120, 18), rect(300, 222, 160, 18)];
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: vi.fn(() => lineRects as unknown as DOMRectList),
+    });
+
+    function Harness() {
+      const ref = React.useRef<HTMLDivElement>(null);
+      React.useEffect(() => {
+        if (ref.current) {
+          ref.current.getBoundingClientRect = () => rect(0, 0, 1000, 600);
+        }
+      }, []);
+      return (
+        <div ref={ref}>
+          hello world foobar
+          <SelectionActions
+            containerRef={ref}
+            onBranch={onBranch}
+            onQuote={onQuote}
+            onComment={onComment}
+          />
+        </div>
+      );
+    }
+
+    render(<Harness />);
+    const textNode = screen.getByText('hello world foobar').firstChild!;
+
+    const select = (end: number) => {
+      act(() => {
+        const range = document.createRange();
+        range.setStart(textNode, 0);
+        range.setEnd(textNode, end);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+      });
+    };
+
+    select(5);
+    act(() => { vi.advanceTimersByTime(80); });
+
+    const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
+    expect(bar).toBeTruthy();
+    const settled = { left: bar.style.left, top: bar.style.top };
+    // Union 300..460 → centre 380 → left 240; firstVisible.top 200 → top 150.
+    // Away from every viewport clamp, so the assertions below are meaningful.
+    expect(settled.left).toBe('240px');
+    expect(settled.top).toBe('150px');
+
+    // Extending the selection by a short word nudges the union edges a few px
+    // (and sub-pixel rect noise nudges the top). The bar must not budge.
+    lineRects = [rect(301.4, 201.2, 124, 18), rect(300, 223.1, 165, 18)];
+    select(11);
+    expect(bar.style.left).toBe(settled.left);
+    expect(bar.style.top).toBe(settled.top);
+
+    // A real extension — union centre jumps 90px — moves it.
+    lineRects = [rect(300, 200, 300, 18), rect(300, 222, 340, 18)];
+    select(18);
+    expect(bar.style.left).toBe('330px');
+  });
+
+  it('follows scroll 1:1 even when the shift is inside the dead-zone', () => {
+    // Regression guard: the selection-edit dead-zone must not apply to
+    // scroll-driven repositioning, or the bar visibly lags a slow scroll and
+    // then snaps once the accumulated delta crosses the threshold.
+    const onBranch = vi.fn();
+    const onQuote = vi.fn();
+    const onComment = vi.fn();
+
+    let lineRects = [rect(300, 200, 120, 18), rect(300, 222, 160, 18)];
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: vi.fn(() => lineRects as unknown as DOMRectList),
+    });
+
+    function Harness() {
+      const ref = React.useRef<HTMLDivElement>(null);
+      React.useEffect(() => {
+        if (ref.current) {
+          ref.current.getBoundingClientRect = () => rect(0, 0, 1000, 600);
+        }
+      }, []);
+      return (
+        <div ref={ref}>
+          hello world foobar
+          <SelectionActions
+            containerRef={ref}
+            onBranch={onBranch}
+            onQuote={onQuote}
+            onComment={onComment}
+          />
+        </div>
+      );
+    }
+
+    render(<Harness />);
+    const textNode = screen.getByText('hello world foobar').firstChild!;
+    act(() => {
+      const range = document.createRange();
+      range.setStart(textNode, 0);
+      range.setEnd(textNode, 5);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    act(() => { vi.advanceTimersByTime(80); });
+
+    const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
+    expect(bar.style.top).toBe('150px');
+
+    // Scroll by 3px — under the dead-zone, but the bar is glued to the text.
+    lineRects = [rect(300, 197, 120, 18), rect(300, 219, 160, 18)];
+    act(() => {
+      window.dispatchEvent(new Event('scroll'));
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(bar.style.top).toBe('147px');
+  });
+
   it('disables the footer Save button when the composer prompt is empty', () => {
     const onBranch = vi.fn();
     const onQuote = vi.fn();
@@ -684,5 +814,43 @@ describe('placePopup', () => {
     );
     // Union: left=80, right=800 → center=440. left = 440 - 140 = 300.
     expect(placement.left).toBe(300);
+  });
+});
+
+describe('stickyPlacement', () => {
+  const at = (left: number, top: number, above = true) => ({ left, top, above });
+
+  it('takes the fresh placement when there is no previous position', () => {
+    expect(stickyPlacement(at(300, 350), null)).toEqual(at(300, 350));
+  });
+
+  it('holds the previous position when both axes move less than the dead-zone', () => {
+    const prev = at(300, 350);
+    // 4px left / 2px top — the sub-perceptual twitch we want to swallow.
+    expect(stickyPlacement(at(304, 352), prev)).toBe(prev);
+  });
+
+  it('moves when either axis crosses the dead-zone', () => {
+    const prev = at(300, 350);
+    expect(stickyPlacement(at(312, 350), prev)).toEqual(at(312, 350));
+    expect(stickyPlacement(at(300, 372), prev)).toEqual(at(300, 372));
+  });
+
+  it('accumulates small steps so the popup cannot drift from its selection', () => {
+    // Each step is under the dead-zone, but they are all compared against the
+    // held position — so the popup stays put until the total drift crosses it.
+    let rendered = at(300, 350);
+    rendered = stickyPlacement(at(304, 350), rendered);
+    expect(rendered.left).toBe(300);
+    rendered = stickyPlacement(at(307, 350), rendered);
+    expect(rendered.left).toBe(300);
+    rendered = stickyPlacement(at(310, 350), rendered);
+    expect(rendered.left).toBe(310);
+  });
+
+  it('always honours an above/below flip regardless of distance', () => {
+    const prev = at(300, 350, true);
+    const flipped = at(302, 351, false);
+    expect(stickyPlacement(flipped, prev)).toEqual(flipped);
   });
 });
