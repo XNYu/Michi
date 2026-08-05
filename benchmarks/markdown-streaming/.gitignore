@@ -1,0 +1,10 @@
+dist/
+node_modules/
+results/latest.json
+results/latest.md
+results/strategy-comparison.json
+results/strategy-comparison.md
+results/feature-parity-comparison.json
+results/feature-parity-comparison.md
+results/hybrid-snapshot-comparison.json
+results/hybrid-snapshot-comparison.md

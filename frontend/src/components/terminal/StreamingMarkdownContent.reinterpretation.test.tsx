@@ -15,20 +15,26 @@ describe('StreamingMarkdownContent semantic reinterpretation', () => {
     window.localStorage.removeItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY);
   });
 
-  it('shows appended source immediately and applies Markdown semantics on the next 1Hz tick', () => {
+  it('shows inline semantics immediately while the 1Hz snapshot catches up', () => {
     const { container, rerender } = render(
       <StreamingMarkdownContent text="**bo" />,
     );
 
     rerender(<StreamingMarkdownContent text="**bold**" />);
 
-    expect(container.textContent).toBe('**bold**');
-    expect(container.querySelector('strong')).toBeNull();
+    expect(container.textContent).toBe('bold');
+    expect([...container.querySelectorAll('strong')].map((node) => node.textContent).join('')).toBe('bold');
+    expect(container.querySelector('[data-markdown-snapshot-chars]')?.getAttribute(
+      'data-markdown-snapshot-chars',
+    )).toBe('4');
 
     act(() => vi.advanceTimersByTime(1_000));
 
     expect(container.textContent).toBe('bold');
     expect(container.querySelector('strong')?.textContent).toBe('bold');
+    expect(container.querySelector('[data-markdown-snapshot-chars]')?.getAttribute(
+      'data-markdown-snapshot-chars',
+    )).toBe('8');
   });
 
   it('keeps a live plain-text tail inside the same paragraph', () => {
@@ -114,7 +120,8 @@ describe('StreamingMarkdownContent semantic reinterpretation', () => {
     );
 
     rerender(<StreamingMarkdownContent text={complete} />);
-    expect(container.textContent).toBe(complete);
+    expect(container.textContent).toBe(complete.replace('## ', ''));
+    expect(container.textContent).not.toContain('##');
 
     act(() => vi.advanceTimersByTime(1_000));
 

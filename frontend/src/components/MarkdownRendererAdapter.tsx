@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 
 interface MarkdownRendererAdapterProps {
   text: string;
+  remarkPluginsAfterGfm?: unknown[];
   legacyRemarkPlugins?: unknown[];
   legacyRehypePlugins: unknown[];
   legacyComponents?: ReactMarkdownComponents;
@@ -11,13 +12,18 @@ interface MarkdownRendererAdapterProps {
 
 export default function MarkdownRendererAdapter({
   text,
+  remarkPluginsAfterGfm,
   legacyRemarkPlugins,
   legacyRehypePlugins,
   legacyComponents,
 }: MarkdownRendererAdapterProps) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, ...((legacyRemarkPlugins as any[]) ?? [])]}
+      remarkPlugins={[
+        remarkGfm,
+        ...((remarkPluginsAfterGfm as any[]) ?? []),
+        ...((legacyRemarkPlugins as any[]) ?? []),
+      ]}
       rehypePlugins={legacyRehypePlugins as any[]}
       components={legacyComponents}
     >

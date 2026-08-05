@@ -120,4 +120,37 @@ describe('StreamingMarkdownContent', () => {
 
     expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello', 'replacement']);
   });
+
+  it('reinterprets adaptive snapshots at Markdown structure boundaries', () => {
+    vi.useFakeTimers();
+    const strategy = { mode: 'adaptive', maxIntervalMs: 1_000 } as const;
+    const { rerender } = render(
+      <StreamingMarkdownContent text="hello" reinterpretStrategy={strategy} />,
+    );
+
+    rerender(<StreamingMarkdownContent text="hello world" reinterpretStrategy={strategy} />);
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello']);
+
+    rerender(<StreamingMarkdownContent text={'hello world\n\n'} reinterpretStrategy={strategy} />);
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual([
+      'hello',
+      'hello world',
+      '\n\n',
+    ]);
+  });
+
+  it('caps adaptive semantic lag at its maximum interval', () => {
+    vi.useFakeTimers();
+    const strategy = { mode: 'adaptive', maxIntervalMs: 1_000 } as const;
+    const { rerender } = render(
+      <StreamingMarkdownContent text="hello" reinterpretStrategy={strategy} />,
+    );
+
+    rerender(<StreamingMarkdownContent text="hello world" reinterpretStrategy={strategy} />);
+    act(() => vi.advanceTimersByTime(999));
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello']);
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello', 'hello world']);
+  });
 });
