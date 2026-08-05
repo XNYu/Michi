@@ -486,7 +486,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     if (dragDepthRef.current === 0) setDropzoneVisible(false);
   }, []);
 
-  const addPendingPaths = useCallback((items: ReadonlyArray<string | { abs: string; displayName?: string }>) => {
+  const addPendingPaths = useCallback((items: ReadonlyArray<string | { abs: string; displayName?: string; relPath?: string }>) => {
     if (items.length === 0) return;
     setPendingAttachments(prev => {
       const have = new Set(prev.map(p => p.absPath));
@@ -494,12 +494,14 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       for (const item of items) {
         const abs = typeof item === 'string' ? item : item.abs;
         const override = typeof item === 'string' ? undefined : item.displayName;
+        const relPath = typeof item === 'string' ? undefined : item.relPath;
         if (have.has(abs)) continue;
         const name = override || abs.split('/').pop() || abs;
         next.push({
           id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           name,
           absPath: abs,
+          relPath,
         });
         have.add(abs);
       }
@@ -553,7 +555,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     focusPane(nodeId);
 
     const electron = getElectron();
-    const items: Array<string | { abs: string; displayName: string }> = [];
+    const items: Array<string | { abs: string; displayName: string; relPath?: string }> = [];
     const errors: string[] = [];
 
     for (const [fileIndex, file] of files.entries()) {
@@ -575,7 +577,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         const abs = result.filePath.startsWith('/')
           ? result.filePath
           : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-        items.push({ abs, displayName: result.displayName || file.name });
+        items.push({ abs, displayName: result.displayName || file.name, relPath: result.filePath });
       } catch (err) {
         errors.push(`${file.name}: ${(err as Error).message}`);
       }
@@ -621,7 +623,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           const abs = result.filePath.startsWith('/')
             ? result.filePath
             : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-          addPendingPaths([{ abs, displayName: fileName }]);
+          addPendingPaths([{ abs, displayName: fileName, relPath: result.filePath }]);
         } catch (err) {
           toast.error('Failed to save pasted text as file', {
             description: (err as Error).message,
@@ -641,7 +643,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     e.preventDefault();
 
     const electron = getElectron();
-    const pendingItems: Array<string | { abs: string; displayName: string }> = [];
+    const pendingItems: Array<string | { abs: string; displayName: string; relPath?: string }> = [];
     const errors: string[] = [];
 
     for (const [fileIndex, file] of items.entries()) {
@@ -676,7 +678,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         const abs = result.filePath.startsWith('/')
           ? result.filePath
           : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-        pendingItems.push({ abs, displayName: result.displayName || fileName });
+        pendingItems.push({ abs, displayName: result.displayName || fileName, relPath: result.filePath });
       } catch (err) {
         errors.push(`${file.name || 'pasted file'}: ${(err as Error).message}`);
       }
@@ -717,7 +719,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         const files = Array.from(input.files ?? []);
         input.value = '';
         if (files.length === 0) return;
-        const items: Array<{ abs: string; displayName: string }> = [];
+        const items: Array<{ abs: string; displayName: string; relPath?: string }> = [];
         const errors: string[] = [];
         for (const [fileIndex, file] of files.entries()) {
           try {
@@ -733,7 +735,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             const abs = result.filePath.startsWith('/')
               ? result.filePath
               : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-            items.push({ abs, displayName: result.displayName || file.name });
+            items.push({ abs, displayName: result.displayName || file.name, relPath: result.filePath });
           } catch (err) {
             errors.push(`${file.name}: ${(err as Error).message}`);
           }
@@ -1458,6 +1460,19 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // typing somewhere else (another input/textarea/contenteditable) so we
   // don't yank focus mid-keystroke.
   const streaming = n?.status === 'streaming';
+
+  // Blur the composer once when streaming starts, removing the distracting
+  // blinking cursor while the user is reading the AI response. We only blur
+  // once (on the idle→streaming transition); user can click back any time.
+  const prevStreamingForBlur = useRef(streaming);
+  useEffect(() => {
+    const justStarted = !prevStreamingForBlur.current && streaming;
+    prevStreamingForBlur.current = streaming;
+    if (justStarted) {
+      inputRef.current?.editor?.commands.blur();
+    }
+  }, [streaming]);
+
   const observing = isObserver(nodeId);
   const prevFocusedRef = useRef(isFocused);
   const wasStreamingRef = useRef(streaming);
@@ -1654,7 +1669,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // allowed.
     if (!raw && pending.length === 0 && pendingAttachments.length === 0) return;
     clearComposerDraft();
-    const attachmentsForSend = pendingAttachments.map(p => ({ name: p.name, absPath: p.absPath }));
+    const attachmentsForSend = pendingAttachments.map(p => ({ name: p.name, absPath: p.absPath, relPath: p.relPath }));
     // Attachments stay scoped to this turn — the agent reads them via the
     // [Attached files: …] sentinel appended below. We deliberately do NOT
     // promote them to workspace artifacts: that registered every uploaded image
