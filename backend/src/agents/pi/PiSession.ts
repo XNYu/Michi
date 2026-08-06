@@ -521,43 +521,93 @@ export class PiSession implements AgentSession {
     }
 }
 
-async function* streamSimpleWithFallback(
+/**
+ * Model-fallback wrapper that returns a real AssistantMessageEventStream
+ * (has both `[Symbol.asyncIterator]` AND `.result()`), satisfying
+ * pi-agent-core's `StreamFn` contract.
+ *
+ * Pattern: synchronously return an outer EventStream, drive it from an
+ * async IIFE — identical to pi-ai's own faux/lazyStream pattern.
+ */
+function streamSimpleWithFallback(
     piMod: any,
     upstreamProvider: string,
     modelIds: string[],
     context: any,
     options: any,
-): AsyncIterableIterator<any> {
+): any /* AssistantMessageEventStream */ {
+    const outer = piMod.createAssistantMessageEventStream();
     const attempts = modelIds.length > 0 ? modelIds : [undefined];
-    let lastErrorEvent: any;
-    let lastThrown: unknown;
 
-    for (let i = 0; i < attempts.length; i += 1) {
-        const modelId = attempts[i];
-        const model = modelId ? piMod.getModel(upstreamProvider, modelId) : undefined;
-        let yieldedAny = false;
-        try {
-            for await (const ev of piMod.streamSimple(model, context, options)) {
-                if (ev?.type === "error" && !yieldedAny && i < attempts.length - 1) {
-                    lastErrorEvent = ev;
-                    break;
+    (async () => {
+        let lastError: any;
+
+        for (let i = 0; i < attempts.length; i += 1) {
+            const modelId = attempts[i];
+            const model = modelId ? piMod.getModel(upstreamProvider, modelId) : undefined;
+            let yieldedAny = false;
+
+            try {
+                const inner = piMod.streamSimple(model, context, options);
+                for await (const ev of inner) {
+                    // Still no output + error + more models to try → switch
+                    if (ev?.type === "error" && !yieldedAny && i < attempts.length - 1) {
+                        lastError = ev;
+                        break;
+                    }
+                    yieldedAny = true;
+                    outer.push(ev);
+                    // push of done/error event auto-resolves outer.result()
                 }
-                yieldedAny = true;
-                yield ev;
+                if (yieldedAny) return; // success: outer already received done event
+            } catch (err) {
+                if (yieldedAny || i === attempts.length - 1) {
+                    outer.push({
+                        type: "error",
+                        reason: "error",
+                        error: {
+                            role: "assistant",
+                            content: [],
+                            api: "",
+                            provider: upstreamProvider,
+                            model: modelId ?? "",
+                            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+                            stopReason: "error",
+                            errorMessage: err instanceof Error ? err.message : String(err),
+                            timestamp: Date.now(),
+                        },
+                    });
+                    return;
+                }
+                lastError = err;
             }
-            if (!lastErrorEvent || yieldedAny || i === attempts.length - 1) return;
-            lastErrorEvent = undefined;
-        } catch (err) {
-            if (yieldedAny || i === attempts.length - 1) throw err;
-            lastThrown = err;
         }
-    }
 
-    if (lastErrorEvent) {
-        yield lastErrorEvent;
-        return;
-    }
-    if (lastThrown) throw lastThrown;
+        // All attempts exhausted without yielding any content
+        if (lastError && typeof lastError === "object" && "type" in lastError) {
+            outer.push(lastError);
+        } else {
+            outer.push({
+                type: "error",
+                reason: "error",
+                error: {
+                    role: "assistant",
+                    content: [],
+                    api: "",
+                    provider: upstreamProvider,
+                    model: "",
+                    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+                    stopReason: "error",
+                    errorMessage: lastError instanceof Error
+                        ? lastError.message
+                        : "All model attempts failed",
+                    timestamp: Date.now(),
+                },
+            });
+        }
+    })();
+
+    return outer;
 }
 
 /**
