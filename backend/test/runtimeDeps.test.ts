@@ -13,7 +13,7 @@ const fakeStore: HistoryStore = {
   grantPermission: () => {},
 };
 const fakeConfig = {
-  getAgentConfig: () => ({ runtime: "pi", provider: "openrouter-free", modelByRuntime: {}, reasoningByRuntime: {} }),
+  getAgentConfig: () => ({ runtime: "pi", provider: "anthropic", modelByRuntime: {}, reasoningByRuntime: {} }),
   resolveModel: () => "",
   resolveReasoning: () => undefined,
 };

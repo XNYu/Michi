@@ -6,7 +6,7 @@ import { ChatManager, ExtraContext } from "../services/chatManager";
 import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
 import { getRuntime } from "../agents/registry";
-import { getAgentConfig, resolveModel, resolveReasoning } from "../services/agentConfig";
+import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider } from "../services/agentConfig";
 import { startupMark } from "../services/startupTrace";
 import * as sessionRegistry from "../agents/sessionRegistry";
 import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/chatHub";
@@ -765,7 +765,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 contextManifest: validatedContextManifest,
                 enableFollowUps,
                 model: (model as string | undefined) ?? resolveModel(cfg.runtime, userIdForConfig),
-                provider: cfg.provider,
+                provider: resolveProvider(cfg.runtime, userIdForConfig),
                 reasoning: resolveReasoning(cfg.runtime, userIdForConfig),
                 sessionId: validatedSessionId,
                 workspaceId,

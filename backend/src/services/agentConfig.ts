@@ -4,11 +4,18 @@ import path from "path";
 import os from "os";
 import type { RuntimeId, AgentReasoning } from "../agents/types";
 import { getUserAgentConfig, upsertUserAgentConfig } from "./dbRepository";
-import { OPENROUTER_FREE_PRIMARY_MODEL } from "../agents/pi/piProviders";
+import { DEFAULT_MODELS } from "../agents/agentConfig";
+import { resolveDefaultPiProvider } from "./resolveProvider";
 
 export interface AgentConfig {
   runtime: RuntimeId;
   provider: string;
+  /**
+   * Per-runtime provider memory. When the user explicitly switches providers
+   * while on a specific runtime, the choice is recorded here so switching
+   * back to that runtime later restores it automatically.
+   */
+  providerByRuntime: Record<string, string>;
   modelByRuntime: Record<string, string>;
   reasoningByRuntime: Record<string, AgentReasoning>;
   /**
@@ -30,8 +37,8 @@ const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 // Empty string means "let the runtime pick from listModels()".
 const BUILTIN_DEFAULT_MODEL_BY_RUNTIME: Record<string, string> = {
   claude: "sonnet",
-  // Keep in lockstep with the locked free-trial model (env-overridable).
-  pi: OPENROUTER_FREE_PRIMARY_MODEL,
+  // Keep in lockstep with the default Pi provider (anthropic).
+  pi: DEFAULT_MODELS.pi,
   kiro: "",
 };
 
@@ -44,10 +51,9 @@ const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
 };
 
 const DEFAULTS: AgentConfig = {
-  runtime: process.env.MICHI_DEFAULT_RUNTIME === "gemini"
-    ? "antigravity"
-    : process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
-  provider: "openrouter-free",
+  runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
+  provider: "anthropic",
+  providerByRuntime: {},
   modelByRuntime: {},
   reasoningByRuntime: {},
 };
@@ -56,6 +62,7 @@ const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "
 
 let current: AgentConfig = {
   ...DEFAULTS,
+  providerByRuntime: { ...DEFAULTS.providerByRuntime },
   modelByRuntime: { ...DEFAULTS.modelByRuntime },
   reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
 };
@@ -121,6 +128,7 @@ export function loadAgentConfig(): AgentConfig {
   const disk = readDiskFile();
   let next: AgentConfig = {
     ...DEFAULTS,
+    providerByRuntime: { ...DEFAULTS.providerByRuntime },
     modelByRuntime: { ...DEFAULTS.modelByRuntime },
     reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
   };
@@ -136,6 +144,11 @@ export function loadAgentConfig(): AgentConfig {
       if (typeof a.provider === "string" && a.provider) next.provider = a.provider;
       if (typeof a.claudeConfigDir === "string" && a.claudeConfigDir.trim()) {
         next.claudeConfigDir = a.claudeConfigDir.trim();
+      }
+      if (a.providerByRuntime && typeof a.providerByRuntime === "object" && !Array.isArray(a.providerByRuntime)) {
+        for (const [k, v] of Object.entries(a.providerByRuntime)) {
+          if (typeof v === "string" && v.length > 0) next.providerByRuntime[k] = v;
+        }
       }
       if (a.modelByRuntime && typeof a.modelByRuntime === "object" && !Array.isArray(a.modelByRuntime)) {
         for (const [k, v] of Object.entries(a.modelByRuntime)) {
@@ -208,12 +221,15 @@ export function getAgentConfig(userId?: string): AgentConfig {
       // first write via updateAgentConfig.
       return {
         ...DEFAULTS,
+        providerByRuntime: { ...DEFAULTS.providerByRuntime },
         modelByRuntime: { ...DEFAULTS.modelByRuntime },
         reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
       };
     }
+    let providerByRuntime: Record<string, string> = {};
     let modelByRuntime: Record<string, string> = {};
     let reasoningByRuntime: Record<string, AgentReasoning> = {};
+    try { providerByRuntime = JSON.parse((row as any).provider_by_runtime ?? "{}"); } catch { /* keep {} */ }
     try { modelByRuntime = JSON.parse(row.model_by_runtime); } catch { /* keep {} */ }
     try {
       const raw = JSON.parse(row.reasoning_by_runtime);
@@ -226,6 +242,7 @@ export function getAgentConfig(userId?: string): AgentConfig {
     return {
       runtime: normalizeLegacyRuntimeId(row.runtime),
       provider: row.provider,
+      providerByRuntime,
       modelByRuntime,
       reasoningByRuntime,
     };
@@ -238,6 +255,9 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
   // Cloud mode with a known user: write to DB.
   if (process.env.MICHI_CLOUD === '1' && userId) {
     const existing = getAgentConfig(userId);
+    const mergedProviderByRuntime = patch.providerByRuntime
+      ? { ...existing.providerByRuntime, ...patch.providerByRuntime }
+      : { ...existing.providerByRuntime };
     const mergedModelByRuntime = patch.modelByRuntime
       ? { ...existing.modelByRuntime, ...patch.modelByRuntime }
       : { ...existing.modelByRuntime };
@@ -250,12 +270,21 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       model_by_runtime: JSON.stringify(mergedModelByRuntime),
       reasoning_by_runtime: JSON.stringify(mergedReasoningByRuntime),
     });
-    return { ...existing, ...patch, modelByRuntime: mergedModelByRuntime, reasoningByRuntime: mergedReasoningByRuntime };
+    return {
+      ...existing,
+      ...patch,
+      providerByRuntime: mergedProviderByRuntime,
+      modelByRuntime: mergedModelByRuntime,
+      reasoningByRuntime: mergedReasoningByRuntime,
+    };
   }
   // Desktop: mutate in-memory singleton + persist to disk.
   const merged: AgentConfig = { ...current, ...patch };
-  // Never replace modelByRuntime / reasoningByRuntime wholesale through a
-  // generic patch — use updateAgent{Model,Reasoning}ForRuntime() for those.
+  // Never replace providerByRuntime / modelByRuntime / reasoningByRuntime
+  // wholesale through a generic patch — merge incrementally.
+  merged.providerByRuntime = patch.providerByRuntime
+    ? { ...current.providerByRuntime, ...patch.providerByRuntime }
+    : { ...current.providerByRuntime };
   merged.modelByRuntime = patch.modelByRuntime
     ? { ...current.modelByRuntime, ...patch.modelByRuntime }
     : { ...current.modelByRuntime };
@@ -387,4 +416,40 @@ export function reconcileRuntimeWithRegistered(registeredIds: readonly string[])
     `[agentConfig] persisted runtime '${current.runtime}' is not registered (registered: ${registeredIds.join(", ")}); falling back to '${fallback}'`,
   );
   updateAgentConfig({ runtime: fallback });
+}
+
+/**
+ * Resolve the effective provider for a runtime. For Pi, dynamically picks
+ * the best provider based on key availability rather than a static default.
+ *
+ * Priority:
+ *   1. providerByRuntime[runtimeId] — last explicitly-used provider for this runtime (if key still valid)
+ *   2. First provider with a configured key
+ *   3. openrouter-free (no key required)
+ *
+ * Other runtimes return cfg.provider as-is since they don't have the
+ * multi-provider concept.
+ */
+export function resolveProvider(runtimeId: string, userId?: string): string {
+  const cfg = getAgentConfig(userId);
+  if (runtimeId === "pi") {
+    return resolveDefaultPiProvider(cfg.providerByRuntime, cfg.provider, userId);
+  }
+  return cfg.provider;
+}
+
+/**
+ * Record a per-runtime provider choice. Called when the user explicitly
+ * switches providers — persists the mapping so switching back to this
+ * runtime later restores their last-used provider.
+ */
+export function updateProviderForRuntime(
+  runtimeId: string,
+  providerId: string,
+  userId?: string,
+): AgentConfig {
+  return updateAgentConfig(
+    { provider: providerId, providerByRuntime: { [runtimeId]: providerId } },
+    userId,
+  );
 }
