@@ -1431,6 +1431,13 @@ html[data-vibrancy="on"],
   background: transparent !important;
 }
 
+/* Section label → first workspace row: collapse the inter-workspace gap so
+   the distance from label text to content matches the Activity view time label
+   → tree row spacing (~8px = label bottom-pad 4 + row top-pad 4-5). */
+.sb-section-items > *:first-child {
+  margin-top: 0px !important;
+}
+
 /* Tab — non-focused tabs only. */
 .t-tab-hover {
   cursor: pointer;

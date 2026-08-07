@@ -826,7 +826,44 @@ export default function WorkspaceTree({
           </button>
         </div>
       )}
-      {projectsToRender.map((p) => renderProject(p, { dnd: dndForProject(p.id) }))}
+      {(() => {
+        const pinned = projectsToRender.filter((p) => !!p.pinnedAt);
+        const unpinned = projectsToRender.filter((p) => !p.pinnedAt);
+        const showPinnedSection = pinned.length > 0;
+        return (
+          <>
+            {showPinnedSection && (
+              <>
+                <SectionLabel label="Pinned" />
+                <div className="sb-section-items">
+                  {pinned.map((p) => renderProject(p, { dnd: dndForProject(p.id) }))}
+                </div>
+              </>
+            )}
+            {unpinned.length > 0 && (
+              <>
+                <SectionLabel label="Projects" />
+                <div className="sb-section-items">
+                  {unpinned.map((p) => renderProject(p, { dnd: dndForProject(p.id) }))}
+                </div>
+              </>
+            )}
+            <SectionLabel label="Chats" />
+            <div className="sb-section-items">
+              <div
+                style={{
+                  padding: '4px 6px 4px 6px',
+                  fontSize: 11,
+                  color: 'var(--term-faint)',
+                  fontFamily: 'var(--ui-font)',
+                }}
+              >
+                No project chats
+              </div>
+            </div>
+          </>
+        );
+      })()}
       {unreadFilterOn && projectsToRender.length === 0 && (
         <div
           data-testid="all-caught-up"
@@ -848,6 +885,35 @@ export default function WorkspaceTree({
           onClose={() => setMenu(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Section header for the Structure sidebar (Pinned / Projects / Chats).
+ *  Style matches ActivityView's time-label: uppercase, 11px, faint color,
+ *  aligned to WorkspaceRow folder-icon left edge (6 + inset from sidebar). */
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div
+      data-testid={`section-label-${label.toLowerCase()}`}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: '0.03em',
+        textTransform: 'uppercase',
+        color: 'var(--term-faint)',
+        // Match ActivityView time-label exactly: same padding, same left
+        // offset (6px inside container inset → aligns with folder icon edge).
+        padding: 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
+        // Match ActivityView exactly: 8px marginTop on all labels so that
+        // "Projects" and "Today" sit at the same vertical position.
+        marginTop: 8,
+        fontFamily: 'var(--ui-font)',
+      }}
+    >
+      {label}
     </div>
   );
 }

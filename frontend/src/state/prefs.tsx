@@ -10,6 +10,10 @@ export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
  *  breathe without loosening chat messages. */
 export type SidebarDensity = 'compact' | 'comfortable' | 'airy';
 
+/** Sidebar lens mode: hierarchical tree ('structure') or time-grouped
+ *  activity feed ('activity'). */
+export type SidebarView = 'structure' | 'activity';
+
 /** Assistant code-block chrome. Two design variants:
  *  - 'hairline' (01): no header bar - language sits as a faint mono overline,
  *    copy reveals on hover, recessed paper fill. Quietest.
@@ -103,6 +107,10 @@ export interface Prefs {
   /** When true, the docked terminal sidebar is hidden and a hover popover replaces it.
    *  Toggled via ⌘B and the topbar icon. */
   sidebarCollapsed: boolean;
+  /** Sidebar lens mode. 'structure' = traditional tree hierarchy,
+   *  'activity' = time-grouped flat list (Now / Today / Yesterday).
+   *  Toggled via ⌥⌘U and the Structure/Activity tabs. */
+  sidebarView: SidebarView;
   /** Days a soft-deleted node stays in the trash before being purged. 0 = never auto-purge. */
   trashTTLDays: number;
   /** How much to dim unfocused panes. 0 = no dimming, 100 = maximum dimming. */
@@ -165,6 +173,7 @@ export const DEFAULT_PREFS: Prefs = {
   glassDepth: 30,
   sidebarVibrancy: 'under-window',
   sidebarCollapsed: false,
+  sidebarView: 'structure',
   trashTTLDays: 30,
   focusDim: 20,
   paneTopFadeHeight: 30,

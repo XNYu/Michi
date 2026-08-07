@@ -3204,7 +3204,7 @@ export function selectAllChats(state: {
       if (node.deletedAt) continue;
       out.push({
         id: chatId,
-        title: chatLabel(node),
+        title: node.title?.trim() || chatLabel(node),
         projectId: project.id,
         projectName: project.name,
       });
