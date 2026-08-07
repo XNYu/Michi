@@ -188,7 +188,6 @@ function RecentRow({
         transition: 'background var(--t-quick) var(--t-ease)',
       }}
     >
-      <span style={{ color: 'var(--term-faint)', width: 12 }}>{hover ? '›' : '>'}</span>
       <span
         style={{
           flex: 1,
