@@ -84,6 +84,8 @@ export interface MessageAttachment {
   name: string;
   /** Absolute path on the user's disk. */
   absPath: string;
+  /** Workspace-relative path (e.g. ".attachments/img.png"). Present for uploaded files. */
+  relPath?: string;
 }
 
 /**

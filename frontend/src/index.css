@@ -1086,6 +1086,11 @@ html[data-vibrancy="on"],
   0%, 100% { opacity: .55; }
   50%      { opacity: 1; }
 }
+/* Gentle size + opacity pulse for the Activity View "Now" dot indicator. */
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.8); }
+}
 @keyframes tspin {
   to { transform: rotate(360deg); }
 }
@@ -1763,17 +1768,19 @@ html[data-vibrancy="on"],
   padding: 2px 8px;
   background: transparent;
   border: 1px solid var(--term-line);
-  border-radius: 2px;
+  border-radius: 0;
   font-family: var(--ui-font);
   font-size: 11px;
   color: var(--term-fg);
   max-width: 280px;
   transition: background var(--t-quick) var(--t-ease),
-              border-color var(--t-quick) var(--t-ease);
+              border-color var(--t-quick) var(--t-ease),
+              box-shadow var(--t-quick) var(--t-ease);
 }
 .t-att-chip:hover {
   background: var(--term-hover-bg, var(--term-alt));
   border-color: var(--term-line-s);
+  box-shadow: 0 0 6px rgba(128,128,128,.2);
 }
 .t-att-chip-x {
   color: var(--term-muted);
@@ -1784,6 +1791,67 @@ html[data-vibrancy="on"],
   line-height: 1;
 }
 .t-att-chip-x:hover { color: var(--term-danger); }
+
+/* Sent-message image thumbnail button — hover effect */
+.t-att-thumb-btn {
+  border-radius: 0;
+  transition: box-shadow 120ms ease;
+}
+.t-att-thumb-btn:hover {
+  box-shadow: 0 0 6px rgba(128,128,128,.2);
+}
+
+/* Pending attachment item — hover-reveal close button + unified hover */
+.t-att-pending-item {
+  position: relative;
+  border-radius: 0;
+  transition: box-shadow 120ms ease;
+}
+.t-att-pending-item:hover {
+  box-shadow: 0 0 6px rgba(128,128,128,.2);
+}
+/* Non-image file pill in pending state */
+.t-att-pending-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 0;
+  background: var(--color-surface, var(--term-alt));
+  border: 1px solid var(--color-line, var(--term-line));
+  font-size: 12px;
+  height: 64px;
+  box-sizing: border-box;
+}
+.t-att-pending-x {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface, var(--term-bg));
+  border: 1px solid var(--term-line);
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--term-muted);
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.t-att-pending-item:hover .t-att-pending-x {
+  opacity: 1;
+  pointer-events: auto;
+}
+.t-att-pending-x:hover {
+  color: var(--term-danger);
+}
 
 .t-upload-progress {
   margin: 8px 12px 0;
