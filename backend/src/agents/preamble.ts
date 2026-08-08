@@ -2,12 +2,23 @@ import fs from "fs";
 import path from "path";
 import type { AgentSession, ChatMessage, ExtraContext } from "./types";
 
+const TOOL_CAPABILITIES_SECTION = `
+Capabilities — you have these tools available and should use them proactively:
+- Workspace files: \`read\` (view file contents), \`ls\` (list directory), \`grep\` (search file contents), \`find\` (locate files by pattern). \`write\`, \`edit\`, \`bash\` — modify files or run commands (require user approval).
+- Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript.
+- Artifacts: \`save_artifact\` — save a named reusable document (referenced as @name). \`update_artifact\` — revise an existing artifact.
+- Branching: \`spawn_branches\` — fan out parallel child threads (only when user explicitly asks to branch/split).
+- Media: \`show_image\` — display an image inline in the conversation.
+
+Use tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.`;
+
 const PREAMBLE_TEMPLATE = `You are a knowledge-exploration assistant inside a visual "workspace" app.
 The user is diving deep into topics and wants thoughtful, structured answers.
 
 Style:
 - Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.
 - Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.
+${TOOL_CAPABILITIES_SECTION}
 
 Required final answer metadata:
 - In your final answer only, after all tool use and intermediate commentary is complete,

@@ -1,0 +1,34 @@
+@import "../../../frontend/src/index.css";
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
+@source "../node_modules/@streamdown/cjk/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+
+html,
+body {
+  min-height: 100%;
+  background: var(--app-bg, #f7f7f5);
+  color: var(--fg, #20201f);
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+}
+
+#benchmark-root {
+  box-sizing: border-box;
+  width: 760px;
+  min-height: 600px;
+  contain: layout style;
+}
+
+.benchmark-surface {
+  box-sizing: border-box;
+  width: 760px;
+  min-height: 600px;
+  padding: 20px 24px;
+  border: 1px solid var(--line, #ddd);
+  background: var(--surface, #fff);
+}

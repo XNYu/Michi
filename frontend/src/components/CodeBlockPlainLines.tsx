@@ -53,15 +53,21 @@ function linkifyLine(line: string): React.ReactNode {
 export default function CodeBlockPlainLines({
   source,
   tail,
+  lineNumbers = false,
 }: {
   source: string;
   tail?: React.ReactNode;
+  lineNumbers?: boolean;
 }) {
   const lines = useMemo(() => source.split('\n'), [source]);
   return (
     <>
       {lines.map((line, index) => (
-        <span className="michi-code-line" key={index}>
+        <span
+          className="michi-code-line"
+          data-line-number={lineNumbers ? index + 1 : undefined}
+          key={index}
+        >
           {linkifyLine(line)}
           {index === lines.length - 1 ? tail : null}
         </span>

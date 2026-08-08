@@ -18,6 +18,7 @@ import { ComposerShell } from '../ComposerShell';
 import { PaneComposerToolbarLeft, type PaneMenuAnchor } from '../PaneComposerToolbarLeft';
 import { PaneAgentMenus } from '../PaneAgentMenus';
 import { PaneComposerActions } from '../PaneComposerActions';
+import { API_BASE_URL } from '../../../config/env';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 
 type ComposerDraft = { value: string; mentions: MentionRecord[] };
@@ -26,6 +27,8 @@ interface PendingAttachment {
   id: string;
   name: string;
   absPath: string;
+  /** Workspace-relative path (e.g. ".attachments/img.png"). Present for uploaded files. */
+  relPath?: string;
 }
 
 // In-memory draft survives unmount within a session, but successful sends
@@ -57,6 +60,24 @@ interface Props {
    */
   enableAgentSelect?: boolean;
   onSubmitted: () => void;
+}
+
+/** Build a thumbnail src for a pending image attachment in ManageComposer. */
+function pendingThumbSrc(p: PendingAttachment, workspaceId?: string): string | null {
+  if (workspaceId && p.relPath) {
+    const encoded = p.relPath.split('/').map(encodeURIComponent).join('/');
+    return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+  }
+  if (workspaceId && p.absPath) {
+    const marker = '/.attachments/';
+    const idx = p.absPath.indexOf(marker);
+    if (idx !== -1) {
+      const rel = '.attachments/' + p.absPath.slice(idx + marker.length);
+      const encoded = rel.split('/').map(encodeURIComponent).join('/');
+      return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+    }
+  }
+  return null;
 }
 
 export default function ManageComposer({
@@ -143,7 +164,7 @@ export default function ManageComposer({
     return getWebUploadCwd(project.id);
   }, [project?.cwd, project?.id]);
 
-  const addPendingPaths = useCallback((items: ReadonlyArray<string | { abs: string; displayName?: string }>) => {
+  const addPendingPaths = useCallback((items: ReadonlyArray<string | { abs: string; displayName?: string; relPath?: string }>) => {
     if (items.length === 0) return;
     setPendingAttachments((prev) => {
       const have = new Set(prev.map((p) => p.absPath));
@@ -151,12 +172,14 @@ export default function ManageComposer({
       for (const item of items) {
         const abs = typeof item === 'string' ? item : item.abs;
         const override = typeof item === 'string' ? undefined : item.displayName;
+        const relPath = typeof item === 'string' ? undefined : item.relPath;
         if (have.has(abs)) continue;
         const name = override || abs.split('/').pop() || abs;
         next.push({
           id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           name,
           absPath: abs,
+          relPath,
         });
         have.add(abs);
       }
@@ -199,7 +222,7 @@ export default function ManageComposer({
         const files = Array.from(input.files ?? []);
         input.value = '';
         if (files.length === 0) return;
-        const items: Array<{ abs: string; displayName: string }> = [];
+        const items: Array<{ abs: string; displayName: string; relPath?: string }> = [];
         const errors: string[] = [];
         for (const [fileIndex, file] of files.entries()) {
           try {
@@ -215,7 +238,7 @@ export default function ManageComposer({
             const abs = result.filePath.startsWith('/')
               ? result.filePath
               : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-            items.push({ abs, displayName: result.displayName || file.name });
+            items.push({ abs, displayName: result.displayName || file.name, relPath: result.filePath });
           } catch (err) {
             errors.push(`${file.name}: ${(err as Error).message}`);
           }
@@ -260,7 +283,7 @@ export default function ManageComposer({
       e.preventDefault();
 
       const electron = getElectron();
-      const pendingItems: Array<string | { abs: string; displayName: string }> = [];
+      const pendingItems: Array<string | { abs: string; displayName?: string; relPath?: string }> = [];
       const errors: string[] = [];
       for (const [fileIndex, file] of items.entries()) {
         const path = electron?.getPathForFile?.(file) ?? null;
@@ -291,7 +314,7 @@ export default function ManageComposer({
           const abs = result.filePath.startsWith('/')
             ? result.filePath
             : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-          pendingItems.push({ abs, displayName: result.displayName || fileName });
+          pendingItems.push({ abs, displayName: result.displayName || fileName, relPath: result.filePath });
         } catch (err) {
           errors.push(`${file.name || 'pasted file'}: ${(err as Error).message}`);
         }
@@ -346,7 +369,7 @@ export default function ManageComposer({
       if (files.length === 0) return;
 
       const electron = getElectron();
-      const absPaths: string[] = [];
+      const absPaths: Array<string | { abs: string; relPath?: string }> = [];
       const errors: string[] = [];
       for (const [fileIndex, file] of files.entries()) {
         const path = electron?.getPathForFile?.(file) ?? null;
@@ -371,7 +394,7 @@ export default function ManageComposer({
           const abs = result.filePath.startsWith('/')
             ? result.filePath
             : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
-          absPaths.push(abs);
+          absPaths.push({ abs, relPath: result.filePath });
         } catch (err) {
           errors.push(`${file.name}: ${(err as Error).message}`);
         }
@@ -397,6 +420,7 @@ export default function ManageComposer({
     const attachmentsForSend = pendingAttachments.map((p) => ({
       name: p.name,
       absPath: p.absPath,
+      relPath: p.relPath,
     }));
     // Attachments stay scoped to the thread we're about to create (the agent
     // reads them via the [Attached files: …] sentinel). We intentionally do
@@ -466,27 +490,45 @@ export default function ManageComposer({
           <>
             <UploadProgressBar progress={uploadProgress} />
             {pendingAttachments.length > 0 ? (
-              <div className="t-pre-block tone-muted is-att">
-                <div className="t-pre-block-cap">
-                  <b>{pendingAttachments.length}</b>{' '}
-                  {pendingAttachments.length === 1 ? 'file' : 'files'} · sent with next message
-                </div>
-                <div className="t-att-chips">
-                  {pendingAttachments.map((p) => (
-                    <span key={p.id} className="t-att-chip" title={p.absPath}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 8px' }}>
+                {pendingAttachments.map((p) => {
+                  const ext = p.name.split('.').pop()?.toLowerCase() ?? '';
+                  const isImage = ['png','jpg','jpeg','gif','webp'].includes(ext);
+                  const thumbSrc = isImage ? pendingThumbSrc(p, workspaceId) : null;
+
+                  if (isImage && thumbSrc) {
+                    return (
+                      <span key={p.id} title={p.name} className="t-att-pending-item" style={{ display: 'inline-block' }}>
+                        <img
+                          src={thumbSrc}
+                          alt={p.name}
+                          style={{ width: 64, height: 64, objectFit: 'cover', display: 'block' }}
+                        />
+                        <span
+                          className="t-att-pending-x"
+                          onClick={() => removePendingAttachment(p.id)}
+                        >
+                          ×
+                        </span>
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <span key={p.id} className="t-att-pending-item t-att-pending-file" title={p.absPath}>
                       <span style={{ fontSize: 10, opacity: 0.7 }}>📄</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
                         {p.name}
                       </span>
                       <span
-                        className="t-att-chip-x"
+                        className="t-att-pending-x"
                         onClick={() => removePendingAttachment(p.id)}
                       >
                         ×
                       </span>
                     </span>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
             ) : null}
           </>

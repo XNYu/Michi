@@ -1,5 +1,5 @@
 import type { AgentConfig } from "./agentConfig";
-import { getBuiltinDefaultModel, getBuiltinDefaultReasoning } from "./agentConfig";
+import { getBuiltinDefaultModel, getBuiltinDefaultReasoning, resolveProvider } from "./agentConfig";
 import type { AgentReasoning, AgentRuntime } from "../agents/types";
 import {
   computeTranscriptFingerprint as computeSharedTranscriptFingerprint,
@@ -68,7 +68,7 @@ export function buildTargetResumeSignature(
   );
   return {
     runtimeId,
-    providerId: runtime.capabilities.providerModels ? normalizeSignaturePart(cfg.provider) : null,
+    providerId: runtime.capabilities.providerModels ? normalizeSignaturePart(resolveProvider(runtimeId)) : null,
     modelId,
     reasoning: runtime.capabilities.reasoning
       ? normalizeReasoning(cfg.reasoningByRuntime[runtimeId] ?? getBuiltinDefaultReasoning(runtimeId))

@@ -318,6 +318,40 @@
   color: var(--term-fg, var(--fg));
 }
 
+.michi-code-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+}
+
+.michi-code-actions .michi-code-copy,
+.michi-code-download {
+  position: static;
+}
+
+.michi-code-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--term-line, var(--line));
+  border-radius: 5px;
+  background: var(--term-surface, var(--surface));
+  color: var(--term-muted, var(--fg-muted));
+  cursor: pointer;
+  font-family: var(--ui-font);
+}
+
+.michi-code-download:hover {
+  background: var(--term-hover-bg, var(--term-alt, var(--line)));
+  color: var(--term-fg, var(--fg));
+}
+
 .michi-code-scroll {
   overflow-x: auto;
 }
@@ -358,9 +392,100 @@
   white-space: pre;
 }
 
+.michi-code-line[data-line-number]::before {
+  content: attr(data-line-number);
+  display: inline-block;
+  width: 3ch;
+  margin-right: 14px;
+  color: var(--term-faint, var(--fg-subtle));
+  text-align: right;
+  user-select: none;
+}
+
 .michi-code-token {
   color: var(--michi-code-token, inherit);
   background-color: var(--michi-code-token-bg, transparent);
+}
+
+.michi-table-feature,
+.michi-mermaid-block {
+  position: relative;
+  margin: var(--message-paragraph-spacing, 1em) 0;
+  border: 1px solid var(--term-line, var(--line));
+  border-radius: 5px;
+  background: var(--term-surface, var(--surface));
+}
+
+.michi-table-feature.is-fullscreen,
+.michi-mermaid-block.is-fullscreen {
+  position: fixed;
+  inset: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 12px;
+  background: var(--app-bg, var(--background));
+}
+
+.michi-table-controls,
+.michi-mermaid-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--term-line, var(--line));
+}
+
+.michi-table-controls button,
+.michi-mermaid-controls button {
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--term-line, var(--line));
+  border-radius: 4px;
+  background: var(--term-surface, var(--surface));
+  color: var(--term-muted, var(--fg-muted));
+  cursor: pointer;
+  font-family: var(--ui-font);
+  font-size: 11px;
+}
+
+.michi-table-scroll {
+  overflow: auto;
+}
+
+.prose .michi-table-feature table {
+  margin: 0;
+}
+
+.michi-mermaid-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+}
+
+.michi-mermaid-viewport {
+  min-height: 200px;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.michi-mermaid-svg {
+  display: flex;
+  justify-content: center;
+  transform-origin: center;
+  transition: transform var(--t-soft, 120ms) var(--t-ease, ease);
+}
+
+.michi-mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.michi-mermaid-loading,
+.michi-mermaid-error {
+  color: var(--term-muted, var(--fg-muted));
+  font-family: var(--message-code-font);
+  font-size: 12px;
 }
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -961,6 +1086,11 @@ html[data-vibrancy="on"],
   0%, 100% { opacity: .55; }
   50%      { opacity: 1; }
 }
+/* Gentle size + opacity pulse for the Activity View "Now" dot indicator. */
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.8); }
+}
 @keyframes tspin {
   to { transform: rotate(360deg); }
 }
@@ -1301,6 +1431,13 @@ html[data-vibrancy="on"],
   background: transparent !important;
 }
 
+/* Section label → first workspace row: collapse the inter-workspace gap so
+   the distance from label text to content matches the Activity view time label
+   → tree row spacing (~8px = label bottom-pad 4 + row top-pad 4-5). */
+.sb-section-items > *:first-child {
+  margin-top: 0px !important;
+}
+
 /* Tab — non-focused tabs only. */
 .t-tab-hover {
   cursor: pointer;
@@ -1638,17 +1775,19 @@ html[data-vibrancy="on"],
   padding: 2px 8px;
   background: transparent;
   border: 1px solid var(--term-line);
-  border-radius: 2px;
+  border-radius: 0;
   font-family: var(--ui-font);
   font-size: 11px;
   color: var(--term-fg);
   max-width: 280px;
   transition: background var(--t-quick) var(--t-ease),
-              border-color var(--t-quick) var(--t-ease);
+              border-color var(--t-quick) var(--t-ease),
+              box-shadow var(--t-quick) var(--t-ease);
 }
 .t-att-chip:hover {
   background: var(--term-hover-bg, var(--term-alt));
   border-color: var(--term-line-s);
+  box-shadow: 0 0 6px rgba(128,128,128,.2);
 }
 .t-att-chip-x {
   color: var(--term-muted);
@@ -1659,6 +1798,67 @@ html[data-vibrancy="on"],
   line-height: 1;
 }
 .t-att-chip-x:hover { color: var(--term-danger); }
+
+/* Sent-message image thumbnail button — hover effect */
+.t-att-thumb-btn {
+  border-radius: 0;
+  transition: box-shadow 120ms ease;
+}
+.t-att-thumb-btn:hover {
+  box-shadow: 0 0 6px rgba(128,128,128,.2);
+}
+
+/* Pending attachment item — hover-reveal close button + unified hover */
+.t-att-pending-item {
+  position: relative;
+  border-radius: 0;
+  transition: box-shadow 120ms ease;
+}
+.t-att-pending-item:hover {
+  box-shadow: 0 0 6px rgba(128,128,128,.2);
+}
+/* Non-image file pill in pending state */
+.t-att-pending-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 0;
+  background: var(--color-surface, var(--term-alt));
+  border: 1px solid var(--color-line, var(--term-line));
+  font-size: 12px;
+  height: 64px;
+  box-sizing: border-box;
+}
+.t-att-pending-x {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface, var(--term-bg));
+  border: 1px solid var(--term-line);
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--term-muted);
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.t-att-pending-item:hover .t-att-pending-x {
+  opacity: 1;
+  pointer-events: auto;
+}
+.t-att-pending-x:hover {
+  color: var(--term-danger);
+}
 
 .t-upload-progress {
   margin: 8px 12px 0;

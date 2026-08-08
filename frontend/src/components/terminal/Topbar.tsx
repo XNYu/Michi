@@ -72,7 +72,6 @@ export default function TerminalTopbar({
     openPanes,
     focusedPane,
     focusedNodeId,
-    unreadFilterOn,
     canNavBack,
     canNavForward,
   } = useChatProjects();
@@ -81,11 +80,10 @@ export default function TerminalTopbar({
     closePane,
     reorderPane,
     setPaneWidth,
-    setUnreadFilterOn,
     navBack,
     navForward,
   } = useChatActions();
-  const { prefs } = usePrefs();
+  const { prefs, setPref } = usePrefs();
 
   const closeOtherPanes = useCallback((keepId: string) => {
     const others = openPanes.filter((id) => id !== keepId);
@@ -102,15 +100,11 @@ export default function TerminalTopbar({
   const unreadDisplay = unreadTotal === 0 ? '' : unreadTotal >= 10 ? '9+' : String(unreadTotal);
 
   const onUnreadClick = useCallback(() => {
-    const next = !unreadFilterOn;
-    setUnreadFilterOn(next);
-    // No page navigation: the filter has no effect on any page body — it only
-    // narrows + force-expands the WorkspaceTree, which lives in the always-present
-    // sidebar. Turning the filter on therefore "force-shows" the unread items by
-    // making sure the sidebar is open (handles narrow/overlay mode too, since
-    // sidebarCollapsed/onToggleSidebar are the effective values from the shell).
-    if (next && sidebarCollapsed) onToggleSidebar();
-  }, [unreadFilterOn, setUnreadFilterOn, sidebarCollapsed, onToggleSidebar]);
+    const next = prefs.sidebarView === 'activity' ? 'structure' : 'activity';
+    setPref('sidebarView', next as 'structure' | 'activity');
+    // Make sure the sidebar is visible so the user sees the view switch.
+    if (sidebarCollapsed) onToggleSidebar();
+  }, [prefs.sidebarView, setPref, sidebarCollapsed, onToggleSidebar]);
 
   // Per-pane data we need to render captions: title, status, kind. Uses
   // useStructuralSelector so HIGH_FREQ streaming dispatches don't re-render the topbar.
@@ -399,9 +393,9 @@ export default function TerminalTopbar({
         )}
         <Zone1IconButton
           onClick={onUnreadClick}
-          tooltip={unreadFilterOn ? 'Filter: unread only — click to clear' : `${unreadTotal} unread threads — click to filter`}
-          aria-label={unreadFilterOn ? 'Filter: unread only — click to clear' : `${unreadTotal} unread`}
-          active={unreadFilterOn}
+          tooltip={prefs.sidebarView === 'activity' ? 'Activity view — click for structure' : 'Activity view'}
+          aria-label={prefs.sidebarView === 'activity' ? 'Switch to structure view' : 'Switch to activity view'}
+          active={prefs.sidebarView === 'activity'}
         >
           <UnreadIcon />
           {unreadDisplay && (

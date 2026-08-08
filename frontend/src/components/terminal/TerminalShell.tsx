@@ -274,6 +274,14 @@ export default function TerminalShell() {
         setPref('sidebarCollapsed', !prefs.sidebarCollapsed);
         return;
       }
+      // ⌥⌘U toggle sidebar Activity/Structure lens
+      if (e.altKey && !e.shiftKey && (e.key === 'u' || e.key === 'U' || e.key === '¨')) {
+        e.preventDefault();
+        setPref('sidebarView', prefs.sidebarView === 'activity' ? 'structure' : 'activity');
+        // Ensure sidebar is visible when toggling the lens
+        if (prefs.sidebarCollapsed) setPref('sidebarCollapsed', false);
+        return;
+      }
       // ⌘P → open profile page (gated by VITE_MICHI_PROFILE_PAGE).
       if (PROFILE_PAGE_ENABLED && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
         e.preventDefault();

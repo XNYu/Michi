@@ -87,7 +87,17 @@ function PaneMessageListInner({
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);
   }, []);
+  // Suppress follow-ups if the last assistant message is still receiving chunks.
+  // This prevents the race where `set_follow_ups` MCP tool delivers all 3
+  // follow-ups (triggering visibleResponseComplete) before the final text
+  // chunks arrive via the parallel ACP stream.
+  const lastMsg = node.messages[node.messages.length - 1];
+  const lastAssistantStillStreaming =
+    lastMsg?.role === 'assistant' && lastMsg.streaming;
+
   const showFollowUps = node.messagesLoaded === false
+    ? false
+    : lastAssistantStillStreaming
     ? false
     : node.visibleResponseComplete
     ? node.followUps.length > 0

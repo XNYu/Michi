@@ -6,6 +6,8 @@ import {
   updateAgentReasoningForRuntime,
   resolveModel,
   resolveReasoning,
+  resolveProvider,
+  updateProviderForRuntime,
 } from "../services/agentConfig";
 import {
   getProviderApiKey,
@@ -50,7 +52,7 @@ export function setupAgentRoutes(): Router {
           apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false,
         },
         availableRuntimes,
-        provider: cfg.provider,
+        provider: resolveProvider(cfg.runtime, userId),
         model: resolveModel(cfg.runtime, userId),
         modelByRuntime: cfg.modelByRuntime,
         reasoning: resolveReasoning(cfg.runtime, userId),
@@ -64,6 +66,8 @@ export function setupAgentRoutes(): Router {
     // Providers (only meaningful for runtimes that report apiKeys capability).
     let providers: AgentStatus["providers"] = undefined;
     let hasRequiredKey = true;
+    const effectiveProvider = resolveProvider(cfg.runtime, userId);
+
     if (hasProviders(active)) {
       const list = await active.listProviders();
       const userId = (_req as any).user?.id as string | undefined;
@@ -91,7 +95,7 @@ export function setupAgentRoutes(): Router {
       if (userId) {
         hasRequiredKey = list.some((p) => hasUsableKey(p));
       } else {
-        hasRequiredKey = !!getProviderApiKey(cfg.provider, userId);
+        hasRequiredKey = !!getProviderApiKey(effectiveProvider, userId);
       }
     }
 
@@ -107,7 +111,7 @@ export function setupAgentRoutes(): Router {
       label: active.label,
       capabilities: active.capabilities,
       availableRuntimes,
-      provider: cfg.provider,
+      provider: effectiveProvider,
       providers,
       model,
       modelByRuntime: getAgentConfig(userId).modelByRuntime,
@@ -161,7 +165,22 @@ export function setupAgentRoutes(): Router {
       reasoningToSet = req.body.reasoning as AgentReasoning;
     }
     const runtimeForModel = getRuntime(patch.runtime ?? cfg.runtime);
-    const providerForModel = patch.provider ?? cfg.provider;
+    const effectiveRuntime = patch.runtime ?? cfg.runtime;
+
+    // When switching runtime and no explicit provider was sent, auto-resolve
+    // the best provider for that runtime (based on key availability).
+    if (patch.runtime && !patch.provider) {
+      const resolved = resolveProvider(patch.runtime, userId);
+      patch.provider = resolved;
+    }
+
+    // When the user explicitly selects a provider, record it per-runtime
+    // so switching back to this runtime later restores their choice.
+    if (patch.provider) {
+      patch.providerByRuntime = { [effectiveRuntime]: patch.provider };
+    }
+
+    const providerForModel = patch.provider ?? resolveProvider(effectiveRuntime, userId);
     const providerInfo = runtimeForModel?.capabilities.providerModels
       ? getProviderInfo(providerForModel)
       : undefined;

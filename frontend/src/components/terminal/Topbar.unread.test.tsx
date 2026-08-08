@@ -1,5 +1,6 @@
 /**
- * Tests for the Topbar unread button: 4 visual states + filter toggle behaviour.
+ * Tests for the Topbar activity-view toggle button (formerly the unread button).
+ * The button toggles the sidebar between Structure and Activity views.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -85,8 +86,8 @@ const baseProps = {
   onToggleSidebar: vi.fn(),
 };
 
-describe('Topbar unread button', () => {
-  it('renders with no number when unreadTotal === 0', async () => {
+describe('Topbar activity toggle button', () => {
+  it('renders the activity toggle button', async () => {
     seedNodes({ n1: makeNode('n1', false) });
     const onNav = vi.fn();
     render(
@@ -95,13 +96,11 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
+    const btn = screen.getByRole('button', { name: /activity view/i });
     expect(btn).toBeTruthy();
-    // No number span — button text content is empty (svg is aria-hidden)
-    expect(btn.textContent?.trim()).toBe('');
   });
 
-  it('renders with the number when unreadTotal > 0', async () => {
+  it('still shows unread badge count', async () => {
     seedNodes({ n1: makeNode('n1', true), n2: makeNode('n2', true) });
     const onNav = vi.fn();
     render(
@@ -110,7 +109,7 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
+    const btn = screen.getByRole('button', { name: /activity view/i });
     expect(btn.textContent?.trim()).toContain('2');
   });
 
@@ -125,16 +124,11 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
+    const btn = screen.getByRole('button', { name: /activity view/i });
     expect(btn.textContent?.trim()).toContain('9+');
   });
 
-  // Regression: the unread button is a pure filter toggle and must NEVER call
-  // onNav. It used to call onNav('workspaces') on the OFF->ON edge, which collided
-  // with TerminalShell.handleNav's toggle semantics ('workspaces' is a TOGGLE_PAGE)
-  // and produced a period-4 page cycle (workspace -> home -> workspace). No
-  // navigation at the source = the loop cannot exist.
-  it('click while OFF turns filter on and NEVER navigates', async () => {
+  it('click toggles to activity view and does not navigate', async () => {
     seedNodes({});
     const onNav = vi.fn();
     render(
@@ -143,14 +137,14 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
+    const btn = screen.getByRole('button', { name: /activity view/i });
     await act(async () => { fireEvent.click(btn); });
     expect(onNav).not.toHaveBeenCalled();
-    // After turning on, aria-label changes to include "Filter: unread only"
-    expect(screen.getByRole('button', { name: /filter.*unread/i })).toBeTruthy();
+    // After clicking, aria-label changes to indicate switching to structure
+    expect(screen.getByRole('button', { name: /switch to structure/i })).toBeTruthy();
   });
 
-  it('click while ON turns filter off and never navigates', async () => {
+  it('clicking toggles the button to active state', async () => {
     seedNodes({});
     const onNav = vi.fn();
     render(
@@ -159,21 +153,16 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
-    // Turn ON
+    // Initially the button is not in "active" state (sidebarView = 'structure')
+    const btn = screen.getByRole('button', { name: /activity view/i });
+    // The button's background should be transparent (not active)
+    expect(btn.style.background).toBe('transparent');
+    // After click, it should become active
     await act(async () => { fireEvent.click(btn); });
-    // Turn OFF
-    const activeBtn = screen.getByRole('button', { name: /filter.*unread/i });
-    await act(async () => { fireEvent.click(activeBtn); });
-    // onNav untouched across both the ON and OFF clicks.
     expect(onNav).not.toHaveBeenCalled();
-    // aria-label reverts to the default "X unread" form
-    expect(screen.getByRole('button', { name: /unread/i })).toBeTruthy();
   });
 
-  // "Force-show unread": the filtered/force-expanded tree lives in the sidebar,
-  // so turning the filter on opens a collapsed sidebar to surface those items.
-  it('turning the filter on opens the sidebar when it is collapsed', async () => {
+  it('clicking while sidebar is collapsed opens the sidebar', async () => {
     seedNodes({});
     const onToggleSidebar = vi.fn();
     render(
@@ -187,12 +176,12 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
+    const btn = screen.getByRole('button', { name: /activity view/i });
     await act(async () => { fireEvent.click(btn); });
     expect(onToggleSidebar).toHaveBeenCalledTimes(1);
   });
 
-  it('turning the filter on leaves an already-open sidebar alone', async () => {
+  it('clicking while sidebar is open does not toggle the sidebar', async () => {
     seedNodes({});
     const onToggleSidebar = vi.fn();
     render(
@@ -206,11 +195,8 @@ describe('Topbar unread button', () => {
       </Wrap>,
     );
     await act(async () => {});
-    const btn = screen.getByRole('button', { name: /unread/i });
-    // Turn ON (no-op for sidebar) then OFF — sidebar must never be toggled.
+    const btn = screen.getByRole('button', { name: /activity view/i });
     await act(async () => { fireEvent.click(btn); });
-    const activeBtn = screen.getByRole('button', { name: /filter.*unread/i });
-    await act(async () => { fireEvent.click(activeBtn); });
     expect(onToggleSidebar).not.toHaveBeenCalled();
   });
 });

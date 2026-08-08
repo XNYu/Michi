@@ -77,14 +77,32 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     {
         name: "save_artifact",
         description:
-            "Save a named artifact referenceable as @name. Use when user asks, or when you produced a reusable artifact (spec/summary/API/code/links). Artifacts are project-level files that persist across conversations.",
-        parameters: { object: { name: f("string"), body: f("string") } },
+            "Save a named artifact referenceable as @name. Use when user asks, or when you produced a reusable artifact (spec/summary/API/code/links). Artifacts are project-level files that persist across conversations. " +
+            "Artifacts are stored as `.contexts/<name>.md` in the workspace. " +
+            "If you already wrote the file directly (via write/edit tools), the artifact is already saved — do NOT call this tool redundantly.",
+        parameters: {
+            object: {
+                name: f("string"),
+                body: f("string", {
+                    description: "The full artifact content as text. Must be the actual document text, NOT a file path.",
+                }),
+            },
+        },
     },
     {
         name: "update_artifact",
         description:
-            "Update an existing named artifact @name with a full replacement body. Use only when revising an artifact that already exists; use save_artifact for new artifacts.",
-        parameters: { object: { name: f("string"), body: f("string") } },
+            "Update an existing named artifact @name with a full replacement body. Use only when revising an artifact that already exists; use save_artifact for new artifacts. " +
+            "Artifacts are stored as `.contexts/<name>.md` in the workspace. " +
+            "If you already edited the file directly (via write/edit tools), the artifact is already updated — do NOT call this tool redundantly.",
+        parameters: {
+            object: {
+                name: f("string"),
+                body: f("string", {
+                    description: "The complete new content of the artifact as text. Must be the actual document text, NOT a file path.",
+                }),
+            },
+        },
     },
     {
         name: "show_image",

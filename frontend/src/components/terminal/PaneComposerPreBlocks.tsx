@@ -1,10 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import type { ChatNodeState } from '../../state/chatTypes';
+import { useChatProjects } from '../../state/chatStore';
+import { API_BASE_URL } from '../../config/env';
 
 export interface PanePendingAttachment {
   id: string;
   name: string;
   absPath: string;
+  /** Workspace-relative path (e.g. ".attachments/img.png"). Present for uploaded files. */
+  relPath?: string;
 }
 
 interface PaneComposerPreBlocksProps {
@@ -19,6 +23,27 @@ interface PaneComposerPreBlocksProps {
   onRemovePendingAttachment: (attachmentId: string) => void;
 }
 
+/** Build a thumbnail src for a pending image attachment. Always uses the
+ *  backend /api/files route — file:// URLs are blocked when the renderer
+ *  loads from http:// (Electron dev and prod both use localhost). */
+function pendingThumbSrc(p: PanePendingAttachment, workspaceId?: string): string | null {
+  if (workspaceId && p.relPath) {
+    const encoded = p.relPath.split('/').map(encodeURIComponent).join('/');
+    return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+  }
+  // Fallback: derive relPath from absPath if it contains .attachments/
+  if (workspaceId && p.absPath) {
+    const marker = '/.attachments/';
+    const idx = p.absPath.indexOf(marker);
+    if (idx !== -1) {
+      const rel = '.attachments/' + p.absPath.slice(idx + marker.length);
+      const encoded = rel.split('/').map(encodeURIComponent).join('/');
+      return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+    }
+  }
+  return null;
+}
+
 export function PaneComposerPreBlocks({
   node,
   quoteMaxLines,
@@ -30,6 +55,13 @@ export function PaneComposerPreBlocks({
   onDismissQuote,
   onRemovePendingAttachment,
 }: PaneComposerPreBlocksProps) {
+  let workspaceId: string | undefined;
+  try {
+    const { activeProject } = useChatProjects();
+    workspaceId = activeProject?.id;
+  } catch {
+    // No ChatProvider (test environment) — thumbnails degrade to pills
+  }
   return (
     <>
       {(node.pendingQueued ?? []).map((q, i) => {
@@ -96,26 +128,45 @@ export function PaneComposerPreBlocks({
       )}
 
       {pendingAttachments.length > 0 && (
-        <div className="t-pre-block tone-muted is-att">
-          <div className="t-pre-block-cap">
-            <b>{pendingAttachments.length}</b> {pendingAttachments.length === 1 ? 'file' : 'files'} · sent with next message
-          </div>
-          <div className="t-att-chips">
-            {pendingAttachments.map((p) => (
-              <span key={p.id} className="t-att-chip" title={p.absPath}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 8px' }}>
+          {pendingAttachments.map((p) => {
+            const ext = p.name.split('.').pop()?.toLowerCase() ?? '';
+            const isImage = ['png','jpg','jpeg','gif','webp'].includes(ext);
+            const thumbSrc = isImage ? pendingThumbSrc(p, workspaceId) : null;
+
+            if (isImage && thumbSrc) {
+              return (
+                <span key={p.id} title={p.name} className="t-att-pending-item" style={{ display: 'inline-block' }}>
+                  <img
+                    src={thumbSrc}
+                    alt={p.name}
+                    style={{ width: 64, height: 64, objectFit: 'cover', display: 'block' }}
+                  />
+                  <span
+                    className="t-att-pending-x"
+                    onClick={() => onRemovePendingAttachment(p.id)}
+                  >
+                    ×
+                  </span>
+                </span>
+              );
+            }
+
+            return (
+              <span key={p.id} className="t-att-pending-item t-att-pending-file" title={p.absPath}>
                 <span style={{ fontSize: 10, opacity: 0.7 }}>📄</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
                   {p.name}
                 </span>
                 <span
-                  className="t-att-chip-x"
+                  className="t-att-pending-x"
                   onClick={() => onRemovePendingAttachment(p.id)}
                 >
                   ×
                 </span>
               </span>
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
     </>

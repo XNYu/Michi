@@ -17,4 +17,21 @@ describe('LegacyCodeBlock chrome', () => {
     const { container } = render(<LegacyCodeBlock text={'x\ny'} deferHighlight />);
     expect(container.querySelector('.michi-code-language')?.textContent).toBe('text');
   });
+
+  it('optionally renders line numbers and a download action', () => {
+    const { container } = render(
+      <LegacyCodeBlock
+        text={'a\nb\nc'}
+        language="bash"
+        deferHighlight
+        lineNumbers
+        showDownload
+      />,
+    );
+
+    expect([...container.querySelectorAll('[data-line-number]')].map((line) => (
+      line.getAttribute('data-line-number')
+    ))).toEqual(['1', '2', '3']);
+    expect(container.querySelector('[data-michi-code-download]')).not.toBeNull();
+  });
 });

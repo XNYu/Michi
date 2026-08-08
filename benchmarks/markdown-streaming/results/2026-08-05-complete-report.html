@@ -1,0 +1,1404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Michi Markdown Streaming · 2026-08-05 完整实验报告</title>
+  <style>
+    :root {
+      --term-bg: #fdfdfc;
+      --term-page-bg: #fdfdfc;
+      --term-surface: #ffffff;
+      --term-alt: #efece5;
+      --term-alt2: #e8e4d8;
+      --term-line: #d8d2c4;
+      --term-line-s: #b5ac98;
+      --term-fg: #1a1916;
+      --term-mid: #5a544a;
+      --term-muted: #70695d;
+      --term-faint: #777064;
+      --term-accent: #b8451f;
+      --term-accent-f: #f4dccf;
+      --term-select: #c48300;
+      --term-select-f: #f8eccf;
+      --term-digest: #2f6b4e;
+      --term-digest-f: #d7e7df;
+      --term-mauve: #6d4aa8;
+      --term-mauve-f: #ebe4f6;
+      --term-danger: #a8261a;
+      --term-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 12px 34px rgba(0, 0, 0, .045);
+      --ui-font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      --topbar-h: 40px;
+      --status-h: 24px;
+      --sidebar-w: 236px;
+    }
+
+    :root[data-theme="dark"] {
+      --term-bg: #282828;
+      --term-page-bg: #282828;
+      --term-surface: #2e2e2e;
+      --term-alt: #3c3836;
+      --term-alt2: #504945;
+      --term-line: #504945;
+      --term-line-s: #665c54;
+      --term-fg: #ebdbb2;
+      --term-mid: #a89984;
+      --term-muted: #928374;
+      --term-faint: #7c6f64;
+      --term-accent: #fabd2f;
+      --term-accent-f: #2a2410;
+      --term-select: #fabd2f;
+      --term-select-f: #2a2410;
+      --term-digest: #b8bb26;
+      --term-digest-f: #1e2210;
+      --term-mauve: #d3869b;
+      --term-mauve-f: #281a20;
+      --term-danger: #fb4934;
+      --term-shadow: 0 2px 8px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .18);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --term-bg: #282828;
+        --term-page-bg: #282828;
+        --term-surface: #2e2e2e;
+        --term-alt: #3c3836;
+        --term-alt2: #504945;
+        --term-line: #504945;
+        --term-line-s: #665c54;
+        --term-fg: #ebdbb2;
+        --term-mid: #a89984;
+        --term-muted: #928374;
+        --term-faint: #7c6f64;
+        --term-accent: #fabd2f;
+        --term-accent-f: #2a2410;
+        --term-select: #fabd2f;
+        --term-select-f: #2a2410;
+        --term-digest: #b8bb26;
+        --term-digest-f: #1e2210;
+        --term-mauve: #d3869b;
+        --term-mauve-f: #281a20;
+        --term-danger: #fb4934;
+        --term-shadow: 0 2px 8px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .18);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 58px; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(680px 460px at -6% -12%, color-mix(in srgb, var(--term-accent) 9%, transparent), transparent 60%),
+        radial-gradient(560px 520px at 8% 118%, color-mix(in srgb, var(--term-mauve) 7%, transparent), transparent 62%),
+        var(--term-bg);
+      color: var(--term-fg);
+      font-family: var(--ui-font);
+      font-size: 14px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; }
+    button, select { font: inherit; }
+    code, pre, .mono { font-family: var(--mono); }
+    strong { font-weight: 650; }
+
+    .topbar {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 30;
+      height: var(--topbar-h);
+      display: grid;
+      grid-template-columns: var(--sidebar-w) minmax(0, 1fr) auto;
+      align-items: center;
+      background: color-mix(in srgb, var(--term-surface) 88%, transparent);
+      backdrop-filter: blur(18px) saturate(1.15);
+      border-bottom: 1px solid var(--term-line);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .brand {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 14px;
+      border-right: 1px solid var(--term-line);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .brand-mark {
+      width: 13px;
+      height: 13px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--term-accent);
+      color: var(--term-accent);
+      font-size: 9px;
+      line-height: 1;
+    }
+    .topbar-title {
+      min-width: 0;
+      padding: 0 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--term-mid);
+    }
+    .topbar-title b { color: var(--term-fg); font-weight: 600; }
+    .top-actions { display: flex; align-items: center; height: 100%; }
+    .top-action {
+      height: 100%;
+      padding: 0 13px;
+      border: 0;
+      border-left: 1px solid var(--term-line);
+      color: var(--term-muted);
+      background: transparent;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .top-action:hover { color: var(--term-fg); background: var(--term-alt); }
+
+    .sidebar {
+      position: fixed;
+      z-index: 20;
+      left: 0;
+      top: var(--topbar-h);
+      bottom: var(--status-h);
+      width: var(--sidebar-w);
+      overflow-y: auto;
+      border-right: 1px solid var(--term-line);
+      background: color-mix(in srgb, var(--term-surface) 82%, transparent);
+      backdrop-filter: blur(20px) saturate(1.1);
+      padding: 14px 10px 24px;
+    }
+    .side-section { margin-bottom: 18px; }
+    .side-label {
+      padding: 0 8px 6px;
+      color: var(--term-faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .nav-link {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      gap: 7px;
+      align-items: center;
+      min-height: 31px;
+      padding: 5px 8px;
+      color: var(--term-mid);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      font-size: 12px;
+    }
+    .nav-link:hover { background: var(--term-alt); color: var(--term-fg); }
+    .nav-link.active {
+      color: var(--term-fg);
+      border-left-color: var(--term-accent);
+      background: color-mix(in srgb, var(--term-accent-f) 72%, transparent);
+    }
+    .nav-index { color: var(--term-faint); font-family: var(--mono); font-size: 9px; }
+    .nav-count { color: var(--term-faint); font-family: var(--mono); font-size: 9px; }
+    .side-meta {
+      margin: 6px 8px 0;
+      padding: 10px;
+      border: 1px solid var(--term-line);
+      background: color-mix(in srgb, var(--term-bg) 60%, transparent);
+      color: var(--term-muted);
+      font-family: var(--mono);
+      font-size: 9px;
+      line-height: 1.75;
+    }
+    .side-meta b { color: var(--term-fg); font-weight: 600; }
+
+    .mobile-toc { display: none; }
+    main {
+      margin-left: var(--sidebar-w);
+      padding: calc(var(--topbar-h) + 28px) 34px calc(var(--status-h) + 64px);
+      min-width: 0;
+    }
+    .content { width: min(1240px, 100%); margin: 0 auto; }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(260px, .55fr);
+      gap: 28px;
+      align-items: end;
+      padding: 28px 0 30px;
+      border-bottom: 1px solid var(--term-line-s);
+    }
+    .eyebrow {
+      color: var(--term-accent);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 10px 0 0;
+      max-width: 880px;
+      font-size: clamp(30px, 4.7vw, 58px);
+      line-height: 1.02;
+      letter-spacing: -.045em;
+      font-weight: 640;
+    }
+    .hero-lede {
+      max-width: 780px;
+      margin: 18px 0 0;
+      color: var(--term-mid);
+      font-size: 15px;
+      line-height: 1.75;
+    }
+    .hero-lede b { color: var(--term-fg); }
+    .hero-stamp {
+      border: 1px solid var(--term-line);
+      background: var(--term-surface);
+      box-shadow: var(--term-shadow);
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--term-muted);
+    }
+    .stamp-row { display: flex; justify-content: space-between; gap: 18px; padding: 5px 0; border-bottom: 1px dashed var(--term-line); }
+    .stamp-row:last-child { border-bottom: 0; }
+    .stamp-row b { color: var(--term-fg); font-weight: 600; text-align: right; }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      border: 1px solid var(--term-line);
+      border-top: 0;
+      background: var(--term-surface);
+    }
+    .metric {
+      min-width: 0;
+      padding: 18px 16px;
+      border-right: 1px solid var(--term-line);
+    }
+    .metric:last-child { border-right: 0; }
+    .metric-value {
+      font-family: var(--mono);
+      font-size: clamp(22px, 2.8vw, 34px);
+      line-height: 1;
+      letter-spacing: -.06em;
+    }
+    .metric-value.accent { color: var(--term-accent); }
+    .metric-value.ok { color: var(--term-digest); }
+    .metric-value.mauve { color: var(--term-mauve); }
+    .metric-value.warn { color: var(--term-select); }
+    .metric-label { margin-top: 7px; color: var(--term-muted); font-size: 11px; }
+
+    section { padding-top: 54px; }
+    .section-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    .section-index {
+      min-width: 34px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--term-line);
+      color: var(--term-faint);
+      font-family: var(--mono);
+      font-size: 10px;
+      background: var(--term-surface);
+    }
+    h2 { margin: 0; font-size: 23px; line-height: 1.2; letter-spacing: -.025em; font-weight: 650; }
+    .section-tag {
+      color: var(--term-faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .section-intro { max-width: 920px; margin: -6px 0 20px 47px; color: var(--term-mid); line-height: 1.75; }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--term-line);
+      background: var(--term-surface);
+      box-shadow: var(--term-shadow);
+    }
+    .panel-header {
+      min-height: 37px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--term-line);
+      background: var(--term-alt);
+    }
+    .panel-title { font-size: 12px; font-weight: 650; }
+    .panel-kicker { color: var(--term-faint); font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+    .panel-body { padding: 14px; }
+    .panel-body.flush { padding: 0; }
+
+    .callout {
+      display: grid;
+      grid-template-columns: 4px minmax(0, 1fr);
+      border: 1px solid var(--term-line);
+      background: var(--term-surface);
+      margin: 15px 0;
+    }
+    .callout-bar { background: var(--term-accent); }
+    .callout.ok .callout-bar { background: var(--term-digest); }
+    .callout.warn .callout-bar { background: var(--term-select); }
+    .callout.mauve .callout-bar { background: var(--term-mauve); }
+    .callout-content { padding: 13px 15px; color: var(--term-mid); }
+    .callout-content b { color: var(--term-fg); }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--term-mid);
+      font-family: var(--mono);
+      font-size: 9px;
+      white-space: nowrap;
+    }
+    .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--term-muted); }
+    .status.ok::before { background: var(--term-digest); }
+    .status.warn::before { background: var(--term-select); }
+    .status.accent::before { background: var(--term-accent); }
+    .status.mauve::before { background: var(--term-mauve); }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 7px;
+      border: 1px solid var(--term-line);
+      background: var(--term-alt);
+      color: var(--term-mid);
+      font-family: var(--mono);
+      font-size: 9px;
+      white-space: nowrap;
+    }
+    .tag.accent { border-color: color-mix(in srgb, var(--term-accent) 45%, var(--term-line)); background: var(--term-accent-f); color: var(--term-accent); }
+    .tag.ok { border-color: color-mix(in srgb, var(--term-digest) 45%, var(--term-line)); background: var(--term-digest-f); color: var(--term-digest); }
+    .tag.warn { border-color: color-mix(in srgb, var(--term-select) 45%, var(--term-line)); background: var(--term-select-f); color: var(--term-select); }
+    .tag.mauve { border-color: color-mix(in srgb, var(--term-mauve) 45%, var(--term-line)); background: var(--term-mauve-f); color: var(--term-mauve); }
+
+    .table-wrap { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    th, td { padding: 9px 11px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--term-line); }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--term-alt);
+      color: var(--term-muted);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: color-mix(in srgb, var(--term-alt) 55%, transparent); }
+    td.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+    td.note { min-width: 210px; color: var(--term-mid); }
+    td:first-child strong { white-space: nowrap; }
+
+    .bar-chart { display: grid; gap: 12px; }
+    .bar-row { display: grid; grid-template-columns: minmax(120px, 1.1fr) minmax(130px, 3fr) 74px; gap: 10px; align-items: center; }
+    .bar-label { min-width: 0; color: var(--term-mid); font-size: 11px; }
+    .bar-track { height: 10px; background: var(--term-alt); overflow: hidden; border: 1px solid var(--term-line); }
+    .bar-fill { width: var(--w); height: 100%; background: var(--term-accent); }
+    .bar-fill.ok { background: var(--term-digest); }
+    .bar-fill.warn { background: var(--term-select); }
+    .bar-fill.mauve { background: var(--term-mauve); }
+    .bar-value { text-align: right; color: var(--term-fg); font-family: var(--mono); font-size: 10px; }
+    .bar-note { margin-top: 12px; color: var(--term-faint); font-size: 10px; }
+
+    .timeline { position: relative; display: grid; gap: 0; }
+    .timeline::before { content: ""; position: absolute; left: 14px; top: 14px; bottom: 14px; width: 1px; background: var(--term-line-s); }
+    .timeline-item { position: relative; display: grid; grid-template-columns: 29px minmax(0, 1fr); gap: 12px; padding: 0 0 16px; }
+    .timeline-item:last-child { padding-bottom: 0; }
+    .timeline-dot { width: 9px; height: 9px; margin: 6px 0 0 10px; border-radius: 50%; background: var(--term-surface); border: 2px solid var(--term-accent); z-index: 1; }
+    .timeline-item.ok .timeline-dot { border-color: var(--term-digest); }
+    .timeline-item.warn .timeline-dot { border-color: var(--term-select); }
+    .timeline-card { border: 1px solid var(--term-line); background: var(--term-bg); padding: 11px 12px; }
+    .timeline-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; }
+    .timeline-text { margin-top: 5px; color: var(--term-mid); font-size: 11px; line-height: 1.65; }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: minmax(120px, .75fr) 36px minmax(220px, 1.35fr) 36px minmax(170px, 1fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+    .pipe-node {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 92px;
+      border: 1px solid var(--term-line);
+      background: var(--term-surface);
+      padding: 13px;
+    }
+    .pipe-node.accent { border-left: 3px solid var(--term-accent); }
+    .pipe-node.ok { border-left: 3px solid var(--term-digest); }
+    .pipe-node.mauve { border-left: 3px solid var(--term-mauve); }
+    .pipe-title { font-family: var(--mono); font-size: 10px; font-weight: 650; }
+    .pipe-copy { margin-top: 5px; color: var(--term-mid); font-size: 10.5px; }
+    .pipe-arrow { display: grid; place-items: center; color: var(--term-faint); font-family: var(--mono); }
+    .pipe-split { display: grid; grid-template-rows: 1fr 1fr; gap: 8px; }
+
+    .compare-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 12px;
+      border: 1px solid var(--term-line);
+      background: var(--term-surface);
+      padding: 14px;
+    }
+    .compare-number { min-width: 72px; font-family: var(--mono); font-size: 27px; line-height: 1; color: var(--term-accent); letter-spacing: -.06em; }
+    .compare-title { font-weight: 650; font-size: 12px; }
+    .compare-copy { margin-top: 5px; color: var(--term-mid); font-size: 10.5px; }
+
+    .work-bars { display: grid; gap: 14px; }
+    .work-group { border-bottom: 1px dashed var(--term-line); padding-bottom: 13px; }
+    .work-group:last-child { border-bottom: 0; padding-bottom: 0; }
+    .work-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; font-family: var(--mono); font-size: 9px; color: var(--term-muted); }
+    .work-track { height: 13px; display: flex; background: var(--term-alt); border: 1px solid var(--term-line); overflow: hidden; }
+    .work-streamdown { width: var(--sd); background: color-mix(in srgb, var(--term-mauve) 68%, transparent); }
+    .work-hybrid { width: var(--hy); background: var(--term-accent); }
+
+    .feature-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }
+    .feature-item { display: grid; grid-template-columns: 13px minmax(0, 1fr); gap: 8px; color: var(--term-mid); font-size: 11px; }
+    .feature-item::before { content: "+"; color: var(--term-digest); font-family: var(--mono); font-weight: 700; }
+
+    details { border-top: 1px solid var(--term-line); }
+    details:first-child { border-top: 0; }
+    summary { cursor: pointer; padding: 10px 12px; color: var(--term-mid); font-family: var(--mono); font-size: 10px; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: "+ "; color: var(--term-accent); }
+    details[open] summary::before { content: "− "; }
+    .details-body { padding: 0 12px 12px; color: var(--term-mid); font-size: 11px; }
+
+    pre {
+      margin: 0;
+      padding: 13px;
+      overflow-x: auto;
+      background: var(--term-bg);
+      border: 1px solid var(--term-line);
+      color: var(--term-mid);
+      font-size: 10px;
+      line-height: 1.7;
+      white-space: pre;
+    }
+    .copy-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .copy-button {
+      border: 1px solid var(--term-line);
+      background: var(--term-alt);
+      color: var(--term-mid);
+      padding: 5px 9px;
+      font-family: var(--mono);
+      font-size: 9px;
+      cursor: pointer;
+    }
+    .copy-button:hover { color: var(--term-fg); border-color: var(--term-line-s); }
+
+    .artifact-list { display: grid; gap: 7px; }
+    .artifact {
+      display: grid;
+      grid-template-columns: minmax(190px, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid var(--term-line);
+      background: var(--term-bg);
+    }
+    .artifact a { color: var(--term-fg); text-decoration: none; font-family: var(--mono); font-size: 10px; overflow-wrap: anywhere; }
+    .artifact a:hover { color: var(--term-accent); }
+    .hash { color: var(--term-faint); font-family: var(--mono); font-size: 8px; white-space: normal; overflow-wrap: anywhere; text-align: right; }
+
+    .statusbar {
+      position: fixed;
+      z-index: 40;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: var(--status-h);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 0 10px;
+      background: var(--term-alt);
+      border-top: 1px solid var(--term-line-s);
+      color: var(--term-muted);
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+    .statusbar b { color: var(--term-fg); font-weight: 600; }
+    .statusbar-right { display: flex; gap: 16px; white-space: nowrap; }
+
+    @media (max-width: 1080px) {
+      .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .metric:nth-child(3) { border-right: 0; }
+      .metric:nth-child(n+4) { border-top: 1px solid var(--term-line); }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+      .pipeline { grid-template-columns: 1fr; }
+      .pipe-arrow { min-height: 22px; transform: rotate(90deg); }
+      .pipe-split { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }
+    }
+
+    @media (max-width: 860px) {
+      :root { --sidebar-w: 0px; }
+      .topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
+      .brand { border-right: 1px solid var(--term-line); }
+      .sidebar { display: none; }
+      main { margin-left: 0; padding-left: 16px; padding-right: 16px; padding-top: calc(var(--topbar-h) + 55px); }
+      .mobile-toc {
+        display: block;
+        position: fixed;
+        z-index: 25;
+        top: var(--topbar-h);
+        left: 0;
+        right: 0;
+        background: var(--term-surface);
+        border-bottom: 1px solid var(--term-line);
+      }
+      .mobile-toc summary { padding: 8px 12px; }
+      .mobile-links { display: flex; gap: 8px; overflow-x: auto; padding: 0 10px 10px; }
+      .mobile-links a { flex: 0 0 auto; color: var(--term-mid); font-family: var(--mono); font-size: 9px; text-decoration: none; border: 1px solid var(--term-line); padding: 4px 8px; }
+      .hero { grid-template-columns: 1fr; }
+      .hero-stamp { max-width: 520px; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .feature-list { grid-template-columns: 1fr; }
+      .bar-row { grid-template-columns: 105px minmax(100px, 1fr) 66px; }
+      .section-intro { margin-left: 0; }
+      .statusbar-right span:first-child { display: none; }
+    }
+
+    @media (max-width: 560px) {
+      .topbar-title { display: none; }
+      .topbar { grid-template-columns: 1fr auto; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric, .metric:nth-child(3) { border-right: 1px solid var(--term-line); border-top: 1px solid var(--term-line); }
+      .metric:nth-child(odd) { border-right: 1px solid var(--term-line); }
+      .metric:nth-child(even) { border-right: 0; }
+      .metric:first-child, .metric:nth-child(2) { border-top: 0; }
+      .hero { padding-top: 18px; }
+      h1 { font-size: 34px; }
+      .section-head { grid-template-columns: auto 1fr; }
+      .section-tag { display: none; }
+      .bar-row { grid-template-columns: 1fr 58px; }
+      .bar-label { grid-column: 1 / -1; }
+      .artifact { grid-template-columns: 1fr; }
+      .hash { white-space: normal; overflow-wrap: anywhere; }
+      .pipe-split { grid-template-columns: 1fr; }
+      .statusbar-right { gap: 8px; }
+    }
+
+    /* Readability pass — synthesized from three independent reviews. */
+    :root {
+      --term-mid: #4f4a42;
+      --term-muted: #5f594f;
+      --term-faint: #665f54;
+      --term-select: #8f5f00;
+      --term-shadow: none;
+    }
+    :root[data-theme="dark"] {
+      --term-mid: #c0b093;
+      --term-muted: #b4a58d;
+      --term-faint: #aea084;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --term-mid: #c0b093;
+        --term-muted: #b4a58d;
+        --term-faint: #aea084;
+      }
+    }
+    body {
+      background: var(--term-bg);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    .topbar,
+    .sidebar {
+      background: var(--term-surface);
+      backdrop-filter: none;
+    }
+    .content { width: min(1140px, 100%); }
+    h1 { max-width: 820px; font-size: clamp(32px, 4.2vw, 52px); line-height: 1.06; }
+    .hero-lede { max-width: 720px; font-size: 16px; line-height: 1.7; }
+    .summary-section { padding-top: 26px; }
+    .summary-section .hero { padding-top: 18px; }
+    .summary-section + section { padding-top: 76px; }
+    .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .metric { padding: 22px 18px; }
+    .metric:nth-child(3) { border-right: 0; }
+    .metric-label { font-size: 12.5px; line-height: 1.55; }
+    section { padding-top: 72px; }
+    .section-intro { max-width: 800px; margin-left: 47px; font-size: 14.5px; line-height: 1.75; }
+    .grid-2, .grid-3 { gap: 20px; }
+    .panel { box-shadow: none; }
+    .panel-header { min-height: 44px; padding: 10px 14px; }
+    .panel-title { font-size: 13.5px; }
+    .panel-body { padding: 18px; }
+    .panel-kicker,
+    .section-tag,
+    .status,
+    .tag,
+    .work-label { font-size: 10.5px; }
+    .callout-content { padding: 15px 17px; font-size: 14px; line-height: 1.7; }
+    .timeline-text,
+    .feature-item,
+    .compare-copy,
+    .pipe-copy,
+    .details-body { font-size: 12.5px; line-height: 1.65; }
+    .compare-title,
+    .pipe-title,
+    .timeline-title { font-size: 13px; }
+    .bar-label,
+    .bar-value { font-size: 12px; }
+    .bar-value,
+    .num,
+    .metric-value { font-variant-numeric: tabular-nums lining-nums; }
+    table { font-size: 13px; line-height: 1.5; }
+    th { position: static; font-size: 11px; }
+    th, td { padding: 11px 12px; }
+    tbody tr:nth-child(even) { background: color-mix(in srgb, var(--term-alt) 28%, transparent); }
+    .table-wrap { position: relative; overscroll-behavior-inline: contain; }
+    .table-wrap:focus-visible { outline: 2px solid var(--term-accent); outline-offset: 2px; }
+    .table-wrap table:has(th:nth-child(5)) { min-width: 760px; }
+    .table-wrap table:has(th:nth-child(8)) { min-width: 960px; }
+    .table-wrap.is-scrollable::after {
+      content: "横向滑动查看完整数据 →";
+      display: block;
+      position: sticky;
+      left: 0;
+      width: max-content;
+      margin: 8px 10px 10px;
+      padding: 3px 7px;
+      color: var(--term-muted);
+      background: var(--term-alt);
+      border: 1px solid var(--term-line);
+      font-family: var(--mono);
+      font-size: 10.5px;
+    }
+    .nav-link { font-size: 13px; min-height: 36px; }
+    .nav-count { font-size: 10px; }
+    .side-meta { font-size: 11px; }
+    pre { font-size: 12px; line-height: 1.75; }
+    code:not(pre code) { overflow-wrap: anywhere; word-break: break-word; }
+    .timeline-text,
+    .pipe-copy,
+    .feature-item,
+    .details-body,
+    .callout-content { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+    .hash { font-size: 10.5px; max-width: 15ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: copy; }
+    .artifact a { font-size: 12px; }
+    .top-action:focus-visible,
+    .nav-link:focus-visible,
+    .copy-button:focus-visible,
+    summary:focus-visible,
+    .hash:focus-visible {
+      outline: 2px solid var(--term-accent);
+      outline-offset: 2px;
+    }
+    .data-disclosure {
+      margin-top: 20px;
+      border: 1px solid var(--term-line);
+      background: var(--term-surface);
+    }
+    .data-disclosure > summary {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      padding: 10px 14px;
+      color: var(--term-fg);
+      background: var(--term-alt);
+      font-family: var(--ui-font);
+      font-size: 13px;
+      font-weight: 620;
+    }
+    .data-disclosure > summary::before { margin-right: 5px; }
+    .disclosure-body { padding: 18px; }
+    .disclosure-body > .panel + .panel { margin-top: 20px !important; }
+    .disclosure-body > .panel { margin-top: 0 !important; }
+    .artifact-disclosure .disclosure-body { padding: 12px; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .work-track {
+      height: 34px;
+      display: grid;
+      grid-template-rows: 13px 13px;
+      gap: 6px;
+      background: transparent;
+      border: 0;
+      overflow: visible;
+    }
+    .work-streamdown,
+    .work-hybrid { grid-column: 1; height: 13px; min-width: 2px; }
+    .work-streamdown { grid-row: 1; width: var(--sd); background: color-mix(in srgb, var(--term-mauve) 68%, transparent); }
+    .work-hybrid { grid-row: 2; width: var(--hy); background: var(--term-accent); }
+    .work-group::after {
+      content: "Word full  /  Hybrid";
+      color: var(--term-faint);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+    @media (max-width: 860px) {
+      main { padding-left: 18px; padding-right: 18px; padding-bottom: 38px; }
+      .mobile-toc summary { min-height: 44px; display: flex; align-items: center; }
+      .mobile-links a { min-height: 44px; display: inline-flex; align-items: center; font-size: 11px; }
+      .section-intro { margin-left: 0; }
+    }
+    @media (max-width: 560px) {
+      .metric-grid { grid-template-columns: 1fr; }
+      .metric,
+      .metric:nth-child(3) { border-right: 0; border-top: 1px solid var(--term-line); }
+      .metric:first-child { border-top: 0; }
+      .statusbar { display: none; }
+      .artifact { grid-template-columns: 1fr; }
+      .hash { max-width: 24ch; text-align: left; }
+      .disclosure-body { padding: 12px; }
+    }
+    @media (max-width: 340px) {
+      .brand { padding-inline: 9px; }
+      .top-action { padding-inline: 9px; }
+      main { padding-inline: 12px; }
+      .section-head { gap: 8px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+
+    @media print {
+      .topbar, .sidebar, .mobile-toc, .statusbar, .copy-row { display: none !important; }
+      body { background: var(--term-bg); }
+      main { margin: 0; padding: 20px; }
+      .panel, .hero-stamp { box-shadow: none; break-inside: avoid; }
+      section { break-before: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">M</span><span>Michi Lab</span></div>
+    <div class="topbar-title"><b>Markdown Streaming</b> / 2026-08-05 complete benchmark report</div>
+    <div class="top-actions">
+      <button class="top-action" id="theme-toggle" type="button" aria-label="切换主题">theme</button>
+      <button class="top-action" type="button" onclick="window.print()">print</button>
+    </div>
+  </header>
+
+  <aside class="sidebar" aria-label="报告目录">
+    <div class="side-section">
+      <div class="side-label">Report</div>
+      <a class="nav-link active" href="#summary"><span class="nav-index">00</span><span>执行结论</span><span class="nav-count">decision</span></a>
+      <a class="nav-link" href="#hybrid"><span class="nav-index">01</span><span>Hybrid 证据</span><span class="nav-count">324 pts</span></a>
+      <a class="nav-link" href="#analysis"><span class="nav-index">02</span><span>原因与风险</span><span class="nav-count">3 causes</span></a>
+      <a class="nav-link" href="#parity"><span class="nav-index">03</span><span>功能平齐</span><span class="nav-count">270 pts</span></a>
+      <a class="nav-link" href="#scheduler"><span class="nav-index">04</span><span>调度策略</span><span class="nav-count">225 pts</span></a>
+      <a class="nav-link" href="#remend"><span class="nav-index">05</span><span>Remend 演进</span><span class="nav-count">6 runs</span></a>
+      <a class="nav-link" href="#method"><span class="nav-index">06</span><span>方法与口径</span><span class="nav-count">6 fixtures</span></a>
+      <a class="nav-link" href="#validation"><span class="nav-index">07</span><span>验证与档案</span><span class="nav-count">18 files</span></a>
+    </div>
+  </aside>
+
+  <details class="mobile-toc">
+    <summary>报告目录</summary>
+    <div class="mobile-links">
+      <a href="#summary">结论</a><a href="#hybrid">Hybrid</a><a href="#analysis">原因与风险</a><a href="#parity">功能</a><a href="#scheduler">调度</a><a href="#remend">Remend</a><a href="#method">方法</a><a href="#validation">档案</a>
+    </div>
+  </details>
+
+  <main>
+    <div class="content">
+      <section id="summary" class="summary-section">
+        <div class="hero">
+          <div>
+          <div class="eyebrow">Local benchmark / complete daily record</div>
+          <h1>Hybrid 架构成立，<br>但暂不接生产</h1>
+          <p class="hero-lede">
+            建议继续采用“<b>Streamdown 功能层 + Michi snapshot/tail 调度</b>”路线。功能 audit 与 Streamdown full 完全一致，主线程 Task CPU 节省 <b>68.9–72.7%</b>；当前唯一阻塞项是重插件在 snapshot 时集中追赶，最大 burst frame 达 <b>250ms</b>。
+          </p>
+          </div>
+          <div class="hero-stamp" aria-label="实验元信息">
+            <div class="stamp-row"><span>recommendation</span><b>continue prototype</b></div>
+            <div class="stamp-row"><span>production status</span><b>blocked by burst jank</b></div>
+            <div class="stamp-row"><span>independent runs</span><b>9</b></div>
+            <div class="stamp-row"><span>recorded measurements</span><b>1,629</b></div>
+            <div class="stamp-row"><span>report date</span><b>2026-08-05</b></div>
+          </div>
+        </div>
+
+        <div class="metric-grid" aria-label="核心决策指标">
+          <div class="metric"><div class="metric-value accent">−69–73%</div><div class="metric-label">相对 Streamdown Word full 的 Task CPU</div></div>
+          <div class="metric"><div class="metric-value ok">exact</div><div class="metric-label">Hybrid 与 Word full 的功能 audit / DOM 一致</div></div>
+          <div class="metric"><div class="metric-value warn">250ms</div><div class="metric-label">生产接入前必须解决的最大 burst frame</div></div>
+        </div>
+
+        <div class="callout warn decision-callout">
+          <div class="callout-bar"></div>
+          <div class="callout-content"><b>下一步：</b>先把 Shiki 延迟到 fence-close / idle，把 Mermaid 延迟到 fence-close + viewport，并给 heavy plugins 设置分帧预算；完成真实 Michi pane 视觉验收后再决定生产替换。</div>
+        </div>
+      </section>
+
+      <section id="method">
+        <div class="section-head"><span class="section-index">06</span><h2>实验方法与数据口径</h2><span class="section-tag">methodology</span></div>
+        <p class="section-intro">所有浏览器 benchmark 使用相同 Chromium、相同 Markdown fixture、相同 chunk size 和 requestAnimationFrame 节奏。每个组合重复 3 次，报告取 median；汇总 CPU 为各 fixture median 之和。</p>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">环境</span><span class="status ok">reproducible</span></div>
+            <div class="panel-body flush">
+              <table>
+                <tbody>
+                  <tr><td><strong>Browser</strong></td><td class="num">Chromium 148.0.7778.96</td></tr>
+                  <tr><td><strong>Platform</strong></td><td class="num">darwin / arm64</td></tr>
+                  <tr><td><strong>Node</strong></td><td class="num">v26.5.0</td></tr>
+                  <tr><td><strong>Streamdown</strong></td><td class="num">2.5.0</td></tr>
+                  <tr><td><strong>Cadence</strong></td><td class="num">1 update / rAF</td></tr>
+                  <tr><td><strong>Repeat</strong></td><td class="num">3 · median</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">测量维度</span><span class="panel-kicker">CDP + React Profiler</span></div>
+            <div class="panel-body">
+              <div class="feature-list">
+                <div class="feature-item">Task CPU：Chrome 主线程 Task 总时长</div>
+                <div class="feature-item">Script CPU：脚本执行时间</div>
+                <div class="feature-item">React render：Profiler actual duration</div>
+                <div class="feature-item">Frame p95 / max：帧间隔尾部风险</div>
+                <div class="feature-item">Long task：超过浏览器长任务阈值</div>
+                <div class="feature-item">Semantic lag：等待下次 Markdown 重解释的字符</div>
+                <div class="feature-item">Work count：split、block render、commit 次数</div>
+                <div class="feature-item">Feature audit：DOM 中可观察的功能节点</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <details class="data-disclosure">
+          <summary>展开 Remend 六阶段演进与完整汇总</summary>
+          <div class="disclosure-body">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">测试语料</span><span class="panel-kicker">6 fixtures · 60,629 source chars</span></div>
+          <div class="panel-body flush table-wrap">
+            <table>
+              <thead><tr><th>Fixture</th><th>字符数</th><th>主要压力面</th><th>使用阶段</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Prose + CJK</strong></td><td class="num">11,311</td><td>长段落、中英文、强调边界</td><td><span class="tag">all</span></td></tr>
+                <tr><td><strong>GFM structure</strong></td><td class="num">6,001</td><td>标题、列表、表格、task list</td><td><span class="tag">all</span></td></tr>
+                <tr><td><strong>Code-heavy</strong></td><td class="num">22,542</td><td>大量 fenced code、Shiki、block churn</td><td><span class="tag warn">worst case</span></td></tr>
+                <tr><td><strong>Math + raw HTML</strong></td><td class="num">5,848</td><td>KaTeX、HTML parse、sanitize</td><td><span class="tag">all</span></td></tr>
+                <tr><td><strong>Long footnotes</strong></td><td class="num">11,120</td><td>长距离引用、重复结构、DOM churn</td><td><span class="tag">all</span></td></tr>
+                <tr><td><strong>Full feature parity</strong></td><td class="num">3,807</td><td>CJK、代码/表格控制、Mermaid、RTL、link safety</td><td><span class="tag mauve">parity+</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <div class="callout-bar"></div>
+          <div class="callout-content"><b>如何阅读：</b>Task CPU 是本报告判断 streaming 成本的主指标。Wall time 包含异步语法高亮完成和 150ms DOM quiet window，因此更适合观察用户等待，不适合单独推断解析器效率。Semantic lag 只表示“完整语义尚未重解释”，pending tail 的文字仍然即时可见。</div>
+        </div>
+      </section>
+
+      <section id="remend">
+        <div class="section-head"><span class="section-index">05</span><h2>Remend：从裸标记修复到低开销状态机</h2><span class="section-tag">6 runs · 810 measurements</span></div>
+        <p class="section-intro">这一阶段解决 <code>**abcd</code>、反引号、删除线、链接目标、HTML tag 等未闭合 Markdown 在流式过程中暴露源标记的问题。初版功能正确但 CPU 回退明显，后续通过增量状态与局部窗口把成本收回。</p>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Michi streaming Task CPU · 128 chars/update</span><span class="panel-kicker">lower is better</span></div>
+            <div class="panel-body bar-chart">
+              <div class="bar-row"><div class="bar-label">Before Remend</div><div class="bar-track"><div class="bar-fill ok" style="--w:65.9%"></div></div><div class="bar-value">1350.9</div></div>
+              <div class="bar-row"><div class="bar-label">Unoptimized</div><div class="bar-track"><div class="bar-fill warn" style="--w:100%"></div></div><div class="bar-value">2049.0</div></div>
+              <div class="bar-row"><div class="bar-label">Incremental</div><div class="bar-track"><div class="bar-fill mauve" style="--w:88.9%"></div></div><div class="bar-value">1821.0</div></div>
+              <div class="bar-row"><div class="bar-label">Paragraph window</div><div class="bar-track"><div class="bar-fill mauve" style="--w:91.9%"></div></div><div class="bar-value">1883.0</div></div>
+              <div class="bar-row"><div class="bar-label">Final optimized</div><div class="bar-track"><div class="bar-fill ok" style="--w:68.4%"></div></div><div class="bar-value">1401.2</div></div>
+              <div class="bar-row"><div class="bar-label">All markers</div><div class="bar-track"><div class="bar-fill" style="--w:68.7%"></div></div><div class="bar-value">1407.0</div></div>
+              <div class="bar-note">单位 ms；相对初版 before，最终 all-markers 为 +4.2%，但覆盖范围显著扩大。</div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Michi streaming Task CPU · 512 chars/update</span><span class="panel-kicker">lower is better</span></div>
+            <div class="panel-body bar-chart">
+              <div class="bar-row"><div class="bar-label">Before Remend</div><div class="bar-track"><div class="bar-fill ok" style="--w:61.6%"></div></div><div class="bar-value">681.5</div></div>
+              <div class="bar-row"><div class="bar-label">Unoptimized</div><div class="bar-track"><div class="bar-fill warn" style="--w:100%"></div></div><div class="bar-value">1106.1</div></div>
+              <div class="bar-row"><div class="bar-label">Incremental</div><div class="bar-track"><div class="bar-fill mauve" style="--w:84.2%"></div></div><div class="bar-value">930.9</div></div>
+              <div class="bar-row"><div class="bar-label">Paragraph window</div><div class="bar-track"><div class="bar-fill mauve" style="--w:89.7%"></div></div><div class="bar-value">992.7</div></div>
+              <div class="bar-row"><div class="bar-label">Final optimized</div><div class="bar-track"><div class="bar-fill ok" style="--w:62.2%"></div></div><div class="bar-value">688.3</div></div>
+              <div class="bar-row"><div class="bar-label">All markers</div><div class="bar-track"><div class="bar-fill" style="--w:67.4%"></div></div><div class="bar-value">745.1</div></div>
+              <div class="bar-note">单位 ms；all-markers 相对 before 为 +9.3%，相对 final bold-only 路径为 +8.3%。</div>
+            </div>
+          </div>
+        </div>
+
+        <details class="data-disclosure">
+          <summary>展开 10 行完整策略测量表</summary>
+          <div class="disclosure-body">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">优化演进</span><span class="status ok">functional coverage retained</span></div>
+          <div class="panel-body timeline">
+            <div class="timeline-item ok"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Baseline <span class="tag">08:35Z</span><span class="tag ok">1350.9 / 681.5ms</span></div><div class="timeline-text">原生 3Hz snapshot + incremental unstable tail；性能基线，但未闭合格式标记会短暂裸露。</div></div></div>
+            <div class="timeline-item warn"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Unoptimized Remend <span class="tag">09:24Z</span><span class="tag warn">+51.7% / +62.3%</span></div><div class="timeline-text">功能路径首次接通，但每次更新重复扫描和重建 segment，证明“直接全量处理 tail”不可接受。</div></div></div>
+            <div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Incremental state <span class="tag">09:28Z</span><span class="tag mauve">1821.0 / 930.9ms</span></div><div class="timeline-text">append-only 更新复用 scanner state 和 carry；相对 unoptimized 分别回收 11.1% 与 15.8% CPU。</div></div></div>
+            <div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Paragraph window <span class="tag">09:31Z</span></div><div class="timeline-text">只重解释最终段落语义，避免长 balanced prefix 被重复扫描；本轮数据受噪声影响略高，但验证了局部窗口边界。</div></div></div>
+            <div class="timeline-item ok"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Final optimized <span class="tag">09:33Z</span><span class="tag ok">接近 baseline</span></div><div class="timeline-text">display-only 假闭合、carry 和 resumable state 稳定落位；128/512 仅比 baseline 高 3.7% / 1.0%。</div></div></div>
+            <div class="timeline-item ok"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">All Markdown markers <span class="tag">11:07Z</span><span class="tag accent">production candidate</span></div><div class="timeline-text">扩展到 bold/italic/underscore/strike/code/math/link/image/block prefix/fence/HTML/table marker 等，同时保持每帧不做完整 Markdown parse。</div></div></div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+          <div class="panel-header"><span class="panel-title">Remend 六阶段汇总</span><span class="panel-kicker">sum of fixture medians</span></div>
+          <div class="panel-body flush table-wrap">
+            <table>
+              <thead><tr><th>阶段</th><th>128 CPU</th><th>Δ baseline</th><th>512 CPU</th><th>Δ baseline</th><th>128 &gt;25ms</th><th>512 &gt;25ms</th><th>结论</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Before Remend</strong></td><td class="num">1350.9ms</td><td class="num">—</td><td class="num">681.5ms</td><td class="num">—</td><td class="num">1</td><td class="num">0</td><td class="note">原始性能基线</td></tr>
+                <tr><td><strong>Unoptimized</strong></td><td class="num">2049.0ms</td><td class="num">+51.7%</td><td class="num">1106.1ms</td><td class="num">+62.3%</td><td class="num">1</td><td class="num">0</td><td class="note">功能正确，热路径不可接受</td></tr>
+                <tr><td><strong>Incremental</strong></td><td class="num">1821.0ms</td><td class="num">+34.8%</td><td class="num">930.9ms</td><td class="num">+36.6%</td><td class="num">2</td><td class="num">0</td><td class="note">状态复用有效，但仍有重复工作</td></tr>
+                <tr><td><strong>Paragraph window</strong></td><td class="num">1883.0ms</td><td class="num">+39.4%</td><td class="num">992.7ms</td><td class="num">+45.7%</td><td class="num">1</td><td class="num">0</td><td class="note">局部语义窗口验证</td></tr>
+                <tr><td><strong>Final optimized</strong></td><td class="num">1401.2ms</td><td class="num">+3.7%</td><td class="num">688.3ms</td><td class="num">+1.0%</td><td class="num">1</td><td class="num">0</td><td class="note">基本收回全部性能</td></tr>
+                <tr><td><strong>All markers</strong></td><td class="num">1407.0ms</td><td class="num">+4.2%</td><td class="num">745.1ms</td><td class="num">+9.3%</td><td class="num">3</td><td class="num">0</td><td class="note">完整标记覆盖的最终实验状态</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+          </div>
+        </details>
+      </section>
+
+      <section id="scheduler">
+        <div class="section-head"><span class="section-index">04</span><h2>五种调度策略：CPU、语义延迟与帧稳定性</h2><span class="section-tag">baseline run · 5 fixtures · 225 pts</span></div>
+        <p class="section-intro">这轮是独立的 <b>5-fixture baseline cohort</b>，用于回答“有了 tail 后是否还需要 3Hz parse”。1Hz 最省，但完整语义更新最慢；自适应语义最跟手，但 CPU 提升约 56–60%。3Hz 是平衡点。不同 cohort 的绝对 CPU 不应跨表直接横比，主决策以第 01 节 Hybrid run 为准。</p>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Task CPU · 128 chars/update</span><span class="panel-kicker">5 fixtures</span></div>
+            <div class="panel-body bar-chart">
+              <div class="bar-row"><div class="bar-label">Adaptive max 1s</div><div class="bar-track"><div class="bar-fill mauve" style="--w:16.8%"></div></div><div class="bar-value">2007.9</div></div>
+              <div class="bar-row"><div class="bar-label">Fixed 1Hz</div><div class="bar-track"><div class="bar-fill ok" style="--w:9.8%"></div></div><div class="bar-value">1174.1</div></div>
+              <div class="bar-row"><div class="bar-label">Fixed 3Hz</div><div class="bar-track"><div class="bar-fill" style="--w:10.5%"></div></div><div class="bar-value">1257.0</div></div>
+              <div class="bar-row"><div class="bar-label">Streamdown Word</div><div class="bar-track"><div class="bar-fill warn" style="--w:62.5%"></div></div><div class="bar-value">7478.5</div></div>
+              <div class="bar-row"><div class="bar-label">Streamdown Char</div><div class="bar-track"><div class="bar-fill warn" style="--w:100%"></div></div><div class="bar-value">11958.9</div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Task CPU · 512 chars/update</span><span class="panel-kicker">5 fixtures</span></div>
+            <div class="panel-body bar-chart">
+              <div class="bar-row"><div class="bar-label">Adaptive max 1s</div><div class="bar-track"><div class="bar-fill mauve" style="--w:20.6%"></div></div><div class="bar-value">1059.6</div></div>
+              <div class="bar-row"><div class="bar-label">Fixed 1Hz</div><div class="bar-track"><div class="bar-fill ok" style="--w:12.4%"></div></div><div class="bar-value">637.8</div></div>
+              <div class="bar-row"><div class="bar-label">Fixed 3Hz</div><div class="bar-track"><div class="bar-fill" style="--w:13.2%"></div></div><div class="bar-value">680.0</div></div>
+              <div class="bar-row"><div class="bar-label">Streamdown Word</div><div class="bar-track"><div class="bar-fill warn" style="--w:55.0%"></div></div><div class="bar-value">2830.0</div></div>
+              <div class="bar-row"><div class="bar-label">Streamdown Char</div><div class="bar-track"><div class="bar-fill warn" style="--w:100%"></div></div><div class="bar-value">5144.6</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+          <div class="panel-header"><span class="panel-title">完整策略对比</span><span class="panel-kicker">CPU / rendering / lag</span></div>
+          <div class="panel-body flush table-wrap">
+            <table>
+              <thead><tr><th>Chunk</th><th>Strategy</th><th>Task CPU</th><th>Script CPU</th><th>Wall</th><th>React render</th><th>Frame p95 worst</th><th>&gt;25ms</th><th>Long task</th><th>Semantic lag avg / max</th></tr></thead>
+              <tbody>
+                <tr><td class="num">128</td><td><strong>Adaptive max 1s</strong></td><td class="num">2007.9</td><td class="num">1081.2</td><td class="num">4980.2</td><td class="num">1197.7</td><td class="num">16.8</td><td class="num">0</td><td class="num">0</td><td class="num">362.7 / 2560</td></tr>
+                <tr><td class="num">128</td><td><strong>Fixed 1Hz</strong></td><td class="num">1174.1</td><td class="num">140.1</td><td class="num">4881.4</td><td class="num">376.0</td><td class="num">9.7</td><td class="num">0</td><td class="num">0</td><td class="num">4672.3 / 15360</td></tr>
+                <tr><td class="num">128</td><td><strong>Fixed 3Hz</strong></td><td class="num">1257.0</td><td class="num">320.3</td><td class="num">4897.6</td><td class="num">514.3</td><td class="num">10.2</td><td class="num">1</td><td class="num">0</td><td class="num">2407.4 / 5248</td></tr>
+                <tr><td class="num">128</td><td><strong>Streamdown Word</strong></td><td class="num">7478.5</td><td class="num">1675.4</td><td class="num">8653.3</td><td class="num">5179.2</td><td class="num">58.4</td><td class="num">87</td><td class="num">3</td><td class="num">n/a</td></tr>
+                <tr><td class="num">128</td><td><strong>Streamdown Char</strong></td><td class="num">11958.9</td><td class="num">3685.1</td><td class="num">12523.5</td><td class="num">7152.1</td><td class="num">67.7</td><td class="num">166</td><td class="num">14</td><td class="num">n/a</td></tr>
+                <tr><td class="num">512</td><td><strong>Adaptive max 1s</strong></td><td class="num">1059.6</td><td class="num">516.5</td><td class="num">2089.5</td><td class="num">608.6</td><td class="num">16.7</td><td class="num">0</td><td class="num">0</td><td class="num">650.7 / 2560</td></tr>
+                <tr><td class="num">512</td><td><strong>Fixed 1Hz</strong></td><td class="num">637.8</td><td class="num">100.6</td><td class="num">2258.7</td><td class="num">252.2</td><td class="num">10.2</td><td class="num">0</td><td class="num">0</td><td class="num">5565.9 / 22030</td></tr>
+                <tr><td class="num">512</td><td><strong>Fixed 3Hz</strong></td><td class="num">680.0</td><td class="num">113.7</td><td class="num">2287.4</td><td class="num">260.4</td><td class="num">9.9</td><td class="num">0</td><td class="num">0</td><td class="num">5201.8 / 20480</td></tr>
+                <tr><td class="num">512</td><td><strong>Streamdown Word</strong></td><td class="num">2830.0</td><td class="num">676.0</td><td class="num">3463.9</td><td class="num">1731.3</td><td class="num">58.3</td><td class="num">29</td><td class="num">3</td><td class="num">n/a</td></tr>
+                <tr><td class="num">512</td><td><strong>Streamdown Char</strong></td><td class="num">5144.6</td><td class="num">1313.7</td><td class="num">5493.8</td><td class="num">2361.8</td><td class="num">83.5</td><td class="num">69</td><td class="num">8</td><td class="num">n/a</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+          </div>
+        </details>
+
+        <div class="grid-3" style="margin-top:14px">
+          <div class="compare-card"><div class="compare-number">1Hz</div><div><div class="compare-title">最低 CPU</div><div class="compare-copy">比 3Hz 少约 6–7% CPU，但 128-chunk 最大语义 lag 达 15,360 字符，结构变化更晚确认。</div></div></div>
+          <div class="compare-card"><div class="compare-number">3Hz</div><div><div class="compare-title">默认平衡点</div><div class="compare-copy">帧 p95 仍约 10ms；128-chunk 的平均语义 lag 比 1Hz 低 48.5%，CPU 增量很小。</div></div></div>
+          <div class="compare-card"><div class="compare-number">AUTO</div><div><div class="compare-title">最低语义 lag</div><div class="compare-copy">平均 lag 降低 85–88%，但相对 3Hz 多约 56–60% CPU，长 footnote 成本尤其明显。</div></div></div>
+        </div>
+      </section>
+
+      <section id="parity">
+        <div class="section-head"><span class="section-index">03</span><h2>功能差距与“加功能后是否仍有优势”</h2><span class="section-tag">full-profile run · 6 fixtures · 270 pts</span></div>
+        <p class="section-intro">这是独立的 <b>6-fixture full-profile cohort</b>。为了排除“快是因为功能少”，本轮给 Michi 加入 opt-in full profile，并为 Streamdown 启用等价的代码、表格、Mermaid、CJK、方向和安全交互。生产 renderer 仍保持原 3Hz core 默认。</p>
+
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">Streaming summary · full profile run</span><span class="status ok">advantage retained</span></div>
+          <div class="panel-body flush table-wrap">
+            <table>
+              <thead><tr><th>Mode</th><th>128 Task CPU</th><th>512 Task CPU</th><th>Frame p95 worst 128 / 512</th><th>相对 Word full</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Michi 3Hz core</strong></td><td class="num">2087.5ms</td><td class="num">966.4ms</td><td class="num">16.6 / 9.3ms</td><td class="num">—</td></tr>
+                <tr><td><strong>Michi 3Hz full</strong></td><td class="num">1947.1ms</td><td class="num">941.9ms</td><td class="num">9.3 / 9.2ms</td><td class="num"><span class="tag ok">−79.6% / −75.5%</span></td></tr>
+                <tr><td><strong>Streamdown Word core</strong></td><td class="num">8927.6ms</td><td class="num">3602.0ms</td><td class="num">58.6 / 58.6ms</td><td class="num">core</td></tr>
+                <tr><td><strong>Streamdown Word full</strong></td><td class="num">9560.4ms</td><td class="num">3836.9ms</td><td class="num">58.6 / 65.9ms</td><td class="num">baseline</td></tr>
+                <tr><td><strong>Streamdown Char full</strong></td><td class="num">18635.5ms</td><td class="num">8351.5ms</td><td class="num">91.8 / 116.6ms</td><td class="num"><span class="tag warn">highest cost</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top:14px">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">补齐的 Michi opt-in 功能</span><span class="panel-kicker">MarkdownFeatureProfile</span></div>
+            <div class="panel-body feature-list">
+              <div class="feature-item">CJK punctuation 周边 emphasis</div>
+              <div class="feature-item">语义 strikethrough <code>&lt;del&gt;</code></div>
+              <div class="feature-item">代码行号与下载</div>
+              <div class="feature-item">表格复制、下载、全屏</div>
+              <div class="feature-item">懒加载 Mermaid + 控制按钮</div>
+              <div class="feature-item">自动 <code>dir="auto"</code></div>
+              <div class="feature-item">外部链接确认</div>
+              <div class="feature-item">HTML indentation normalization</div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">仍未完全复刻的交互</span><span class="panel-kicker">small expected cost</span></div>
+            <div class="panel-body">
+              <div class="callout warn" style="margin:0 0 10px"><div class="callout-bar"></div><div class="callout-content"><b>Mermaid drag-to-pan</b>：Michi full 有 zoom 和 controls，但未实现 Streamdown 的拖拽平移。</div></div>
+              <div class="callout mauve" style="margin:0"><div class="callout-bar"></div><div class="callout-content"><b>Separate block caret</b>：Michi 保留逐字 pending tail reveal，没有额外的 Streamdown block caret。</div></div>
+            </div>
+          </div>
+        </div>
+
+        <details class="data-disclosure">
+          <summary>展开功能节点与 DOM 审计表</summary>
+          <div class="disclosure-body">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">Rendered feature audit · static median</span><span class="panel-kicker">dedicated parity fixture</span></div>
+          <div class="panel-body flush table-wrap">
+            <table>
+              <thead><tr><th>Strategy</th><th>CJK strong</th><th>CJK delete</th><th>Code actions</th><th>Numbered lines</th><th>Table actions</th><th>Mermaid SVG</th><th>Direction</th><th>DOM nodes</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Michi 3Hz core</strong></td><td class="num">0</td><td class="num">0</td><td class="num">9</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">922</td></tr>
+                <tr><td><strong>Michi 3Hz full</strong></td><td class="num">4</td><td class="num">4</td><td class="num">8</td><td class="num">52</td><td class="num">12</td><td class="num">4</td><td class="num">1</td><td class="num">1212</td></tr>
+                <tr><td><strong>Streamdown Word core</strong></td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">914</td></tr>
+                <tr><td><strong>Streamdown Word full</strong></td><td class="num">4</td><td class="num">4</td><td class="num">14</td><td class="num">53</td><td class="num">12</td><td class="num">4</td><td class="num">1</td><td class="num">1418</td></tr>
+                <tr><td><strong>Streamdown Char full</strong></td><td class="num">4</td><td class="num">4</td><td class="num">14</td><td class="num">53</td><td class="num">12</td><td class="num">4</td><td class="num">1</td><td class="num">1418</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+          </div>
+        </details>
+      </section>
+
+      <section id="hybrid">
+        <div class="section-head"><span class="section-index">01</span><h2>Hybrid：Streamdown 功能层 + Michi snapshot/tail</h2><span class="section-tag">canonical run · 6 fixtures · 324 pts</span></div>
+        <p class="section-intro">原型保留 Streamdown components、plugins、controls、Shiki 和 Mermaid，只替换 streaming 调度：每个 chunk 更新轻量 tail，完整语义每 333ms 追赶一次；非 append 更新立即 flush，final/static 回到完整 Streamdown。</p>
+
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">数据流</span><span class="status accent">benchmark-only prototype</span></div>
+          <div class="panel-body pipeline">
+            <div class="pipe-node accent"><div class="pipe-title">SSE / text chunks</div><div class="pipe-copy">每帧追加 128 或 512 字符；用户输入保持 append-only 快路径。</div></div>
+            <div class="pipe-arrow">→</div>
+            <div class="pipe-split">
+              <div class="pipe-node ok"><div class="pipe-title">Immediate tail</div><div class="pipe-copy">MarkdownStreamingTail 立即显示新字符；隐藏/继承 inline marker 样式。</div></div>
+              <div class="pipe-node mauve"><div class="pipe-title">3Hz semantic snapshot</div><div class="pipe-copy">每 333ms 更新完整 Markdown snapshot；非 append 立即 flush。</div></div>
+            </div>
+            <div class="pipe-arrow">→</div>
+            <div class="pipe-node accent"><div class="pipe-title">Streamdown full layer</div><div class="pipe-copy">components + plugins + controls + Shiki + Mermaid 只在 snapshot 变化时运行。</div></div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top:14px">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Streaming summary · 128 chars/update</span><span class="panel-kicker">6 fixtures</span></div>
+            <div class="panel-body flush table-wrap">
+              <table>
+                <thead><tr><th>Strategy</th><th>Task CPU</th><th>Wall</th><th>Frame p95</th><th>Long tasks</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>Michi full</strong></td><td class="num">1698.4</td><td class="num">5597.5</td><td class="num">16.6</td><td class="num">0</td></tr>
+                  <tr><td><strong>Hybrid</strong></td><td class="num"><span class="tag accent">2537.6</span></td><td class="num">7248.2</td><td class="num">9.3</td><td class="num">8</td></tr>
+                  <tr><td><strong>Word full</strong></td><td class="num">9279.2</td><td class="num">11532.3</td><td class="num">66.7</td><td class="num">7</td></tr>
+                  <tr><td><strong>Char full</strong></td><td class="num">15730.4</td><td class="num">17250.8</td><td class="num">75.0</td><td class="num">21</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Streaming summary · 512 chars/update</span><span class="panel-kicker">6 fixtures</span></div>
+            <div class="panel-body flush table-wrap">
+              <table>
+                <thead><tr><th>Strategy</th><th>Task CPU</th><th>Wall</th><th>Frame p95</th><th>Long tasks</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>Michi full</strong></td><td class="num">899.6</td><td class="num">2658.4</td><td class="num">9.3</td><td class="num">0</td></tr>
+                  <tr><td><strong>Hybrid</strong></td><td class="num"><span class="tag accent">1171.8</span></td><td class="num">3988.0</td><td class="num">25.0</td><td class="num">2</td></tr>
+                  <tr><td><strong>Word full</strong></td><td class="num">3769.8</td><td class="num">5639.7</td><td class="num">67.2</td><td class="num">8</td></tr>
+                  <tr><td><strong>Char full</strong></td><td class="num">7392.8</td><td class="num">8564.2</td><td class="num">100.4</td><td class="num">20</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-top:14px">
+          <div class="compare-card"><div class="compare-number">−72.7%</div><div><div class="compare-title">vs Word full · 128</div><div class="compare-copy">Hybrid 2,537.6ms，Word full 9,279.2ms；功能 fixture 的 DOM audit 完全一致。</div></div></div>
+          <div class="compare-card"><div class="compare-number">−68.9%</div><div><div class="compare-title">vs Word full · 512</div><div class="compare-copy">更粗 chunk 仍保留近 70% CPU 优势，说明收益不是只来自细粒度更新。</div></div></div>
+          <div class="compare-card"><div class="compare-number">1.30×</div><div><div class="compare-title">vs Michi native · 512</div><div class="compare-copy">保留 Streamdown 成熟功能层的代价约为 +30%；128 档为 +49%。</div></div></div>
+        </div>
+
+        <details class="data-disclosure">
+          <summary>展开 12 行逐 fixture CPU 明细</summary>
+          <div class="disclosure-body">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">逐 fixture Task CPU 与 Hybrid 节省</span><span class="panel-kicker">median · ms</span></div>
+          <div class="panel-body flush table-wrap">
+            <table>
+              <thead><tr><th>Chunk</th><th>Fixture</th><th>Michi full</th><th>Hybrid</th><th>Word full</th><th>Hybrid vs Word</th><th>Char full</th><th>Hybrid vs Char</th></tr></thead>
+              <tbody>
+                <tr><td class="num">128</td><td><strong>Prose + CJK</strong></td><td class="num">224.9</td><td class="num">457.3</td><td class="num">731.1</td><td class="num">−37.5%</td><td class="num">2562.5</td><td class="num">−82.2%</td></tr>
+                <tr><td class="num">128</td><td><strong>GFM structure</strong></td><td class="num">171.9</td><td class="num">238.7</td><td class="num">546.2</td><td class="num">−56.3%</td><td class="num">1288.5</td><td class="num">−81.5%</td></tr>
+                <tr><td class="num">128</td><td><strong>Code-heavy</strong></td><td class="num">671.7</td><td class="num">889.7</td><td class="num">5739.3</td><td class="num"><span class="tag ok">−84.5%</span></td><td class="num">5847.2</td><td class="num">−84.8%</td></tr>
+                <tr><td class="num">128</td><td><strong>Math + raw HTML</strong></td><td class="num">256.2</td><td class="num">345.8</td><td class="num">540.5</td><td class="num">−36.0%</td><td class="num">732.7</td><td class="num">−52.8%</td></tr>
+                <tr><td class="num">128</td><td><strong>Long footnotes</strong></td><td class="num">229.9</td><td class="num">390.7</td><td class="num">1284.8</td><td class="num">−69.6%</td><td class="num">4355.1</td><td class="num">−91.0%</td></tr>
+                <tr><td class="num">128</td><td><strong>Full feature parity</strong></td><td class="num">143.8</td><td class="num">215.5</td><td class="num">437.3</td><td class="num">−50.7%</td><td class="num">944.3</td><td class="num">−77.2%</td></tr>
+                <tr><td class="num">512</td><td><strong>Prose + CJK</strong></td><td class="num">85.4</td><td class="num">110.3</td><td class="num">401.1</td><td class="num">−72.5%</td><td class="num">1547.9</td><td class="num">−92.9%</td></tr>
+                <tr><td class="num">512</td><td><strong>GFM structure</strong></td><td class="num">59.2</td><td class="num">76.3</td><td class="num">268.0</td><td class="num">−71.5%</td><td class="num">646.1</td><td class="num">−88.2%</td></tr>
+                <tr><td class="num">512</td><td><strong>Code-heavy</strong></td><td class="num">418.3</td><td class="num">531.8</td><td class="num">1832.2</td><td class="num">−71.0%</td><td class="num">1861.9</td><td class="num">−71.4%</td></tr>
+                <tr><td class="num">512</td><td><strong>Math + raw HTML</strong></td><td class="num">146.7</td><td class="num">156.5</td><td class="num">363.9</td><td class="num">−57.0%</td><td class="num">512.7</td><td class="num">−69.5%</td></tr>
+                <tr><td class="num">512</td><td><strong>Long footnotes</strong></td><td class="num">78.7</td><td class="num">93.4</td><td class="num">520.6</td><td class="num"><span class="tag ok">−82.0%</span></td><td class="num">1925.0</td><td class="num">−95.1%</td></tr>
+                <tr><td class="num">512</td><td><strong>Full feature parity</strong></td><td class="num">111.4</td><td class="num">203.5</td><td class="num">384.0</td><td class="num">−47.0%</td><td class="num">899.2</td><td class="num">−77.4%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+          </div>
+        </details>
+
+        <div class="grid-2" style="margin-top:14px">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">功能 audit：Hybrid = Streamdown full</span><span class="status ok">exact match</span></div>
+            <div class="panel-body flush table-wrap">
+              <table>
+                <thead><tr><th>Audit item</th><th>Hybrid</th><th>Word full</th></tr></thead>
+                <tbody>
+                  <tr><td>CJK strong / delete</td><td class="num">4 / 4</td><td class="num">4 / 4</td></tr>
+                  <tr><td>Code actions / numbered lines</td><td class="num">14 / 53</td><td class="num">14 / 53</td></tr>
+                  <tr><td>Table actions</td><td class="num">12</td><td class="num">12</td></tr>
+                  <tr><td>Mermaid SVG / direction</td><td class="num">4 / 1</td><td class="num">4 / 1</td></tr>
+                  <tr><td>DOM nodes</td><td class="num">1418</td><td class="num">1418</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">已知视觉限制</span><span class="status warn">prototype</span></div>
+            <div class="panel-body">
+              <div class="callout warn" style="margin:0"><div class="callout-bar"></div><div class="callout-content">未闭合 fenced code 的 pending tail 暂时显示在 code block 后，而不是 Streamdown code body 内。把 React marker 注入 code HAST 会改变 raw-code extraction，因此当前原型选择不破坏功能正确性。</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="analysis">
+        <div class="section-head"><span class="section-index">02</span><h2>为什么 CPU 会差这么多</h2><span class="section-tag">work amplification + blockers</span></div>
+        <p class="section-intro">优势来自“减少昂贵工作的触发次数”，而不是某个 Markdown parser 单次快数倍。Streamdown Word/Char 在 chunk 到来时频繁重分块、重渲染和执行插件；Michi 把语义重解释限频，tail 只做短文本状态更新。</p>
+
+        <div class="grid-3">
+          <div class="compare-card"><div class="compare-number">1</div><div><div class="compare-title">解析调度解耦</div><div class="compare-copy">chunk arrival 不再等于 full parse。3Hz snapshot 把 parse 次数从“更新次数级”降到“时间窗口级”。</div></div></div>
+          <div class="compare-card"><div class="compare-number">2</div><div><div class="compare-title">稳定前缀复用</div><div class="compare-copy">已提交 block 不反复进入 Markdown pipeline；pending tail 短且 append-only，可复用 carry/state。</div></div></div>
+          <div class="compare-card"><div class="compare-number">3</div><div><div class="compare-title">重插件限频</div><div class="compare-copy">Shiki、Mermaid、KaTeX、controls 和 unified pipeline 只在 snapshot 变化时追赶，不在每个 chunk 上重跑。</div></div></div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+          <div class="panel-header"><span class="panel-title">实际工作量减少</span><span class="panel-kicker">Hybrid vs Word full</span></div>
+          <div class="panel-body work-bars">
+            <div class="work-group">
+              <div class="work-label"><span>128 · block splits</span><span>Hybrid 23 / Word 476</span></div>
+              <div class="work-track" style="--hy:4.8%;--sd:100%"><div class="work-hybrid"></div><div class="work-streamdown"></div></div>
+            </div>
+            <div class="work-group">
+              <div class="work-label"><span>128 · block renders</span><span>Hybrid 356 / Word 1323</span></div>
+              <div class="work-track" style="--hy:26.9%;--sd:100%"><div class="work-hybrid"></div><div class="work-streamdown"></div></div>
+            </div>
+            <div class="work-group">
+              <div class="work-label"><span>128 · React commits</span><span>Hybrid 529 / Word 1003</span></div>
+              <div class="work-track" style="--hy:52.7%;--sd:100%"><div class="work-hybrid"></div><div class="work-streamdown"></div></div>
+            </div>
+            <div class="work-group">
+              <div class="work-label"><span>512 · block splits</span><span>Hybrid 13 / Word 122</span></div>
+              <div class="work-track" style="--hy:10.7%;--sd:100%"><div class="work-hybrid"></div><div class="work-streamdown"></div></div>
+            </div>
+            <div class="work-group">
+              <div class="work-label"><span>512 · block renders</span><span>Hybrid 87 / Word 974</span></div>
+              <div class="work-track" style="--hy:8.9%;--sd:100%"><div class="work-hybrid"></div><div class="work-streamdown"></div></div>
+            </div>
+            <div class="work-group">
+              <div class="work-label"><span>512 · React commits</span><span>Hybrid 150 / Word 258</span></div>
+              <div class="work-track" style="--hy:58.1%;--sd:100%"><div class="work-hybrid"></div><div class="work-streamdown"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout warn">
+          <div class="callout-bar"></div>
+          <div class="callout-content"><b>剩余风险是 burst，不是总量：</b>Hybrid code-heavy 512 出现一次约 250ms 最大 frame，128 档 code-heavy 有 5 个 long tasks；Math/HTML 也会在 snapshot 时集中追赶。总 CPU 已下降，但同步执行重插件仍可能产生肉眼可见的单次停顿。</div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">生产化建议顺序</span><span class="status accent">next</span></div>
+          <div class="panel-body timeline">
+            <div class="timeline-item ok"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Shiki fence-close / idle</div><div class="timeline-text">流式 fence 未闭合时先渲染轻量 code body；闭合或浏览器 idle 后再做完整 syntax highlight。</div></div></div>
+            <div class="timeline-item ok"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Mermaid fence-close + viewport</div><div class="timeline-text">只有闭合且进入 viewport 的 Mermaid fence 才动态 import 与渲染 SVG；离屏内容延迟。</div></div></div>
+            <div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">Heavy plugin frame budget</div><div class="timeline-text">将插件工作拆到多个 frame / scheduler task，限制单次 snapshot 的同步预算。</div></div></div>
+            <div class="timeline-item warn"><div class="timeline-dot"></div><div class="timeline-card"><div class="timeline-title">最后再接生产 renderer</div><div class="timeline-text">当前代码仅在 benchmark harness；完成 burst 优化与真实 Michi pane 视觉验收后再决定替换路径。</div></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="validation">
+        <div class="section-head"><span class="section-index">07</span><h2>验证结果、复现方式与 Artifact Ledger</h2><span class="section-tag">traceability</span></div>
+        <p class="section-intro">报告中的每个主结论都有 dated JSON/Markdown artifact。别名文件 <code>latest</code>、<code>strategy-comparison</code>、<code>feature-parity-comparison</code> 和 <code>hybrid-snapshot-comparison</code> 未重复计入 9 次独立运行。</p>
+
+        <div class="grid-2">
+          <div class="panel"><div class="panel-header"><span class="panel-title">Benchmark suite</span><span class="status ok">passed</span></div><div class="panel-body"><div class="metric-value ok" style="font-size:28px">9 / 9</div><div class="metric-label">完整 runs；1,629 条 recorded measurements</div></div></div>
+          <div class="panel"><div class="panel-header"><span class="panel-title">Remend regression tests</span><span class="status ok">passed</span></div><div class="panel-body"><div class="metric-value ok" style="font-size:28px">106 / 106</div><div class="metric-label">7 个相关 test files；scanner、tail、flag、stream integration 和 feature profile</div></div></div>
+          <div class="panel"><div class="panel-header"><span class="panel-title">Hybrid unit tests</span><span class="status ok">passed</span></div><div class="panel-body"><div class="metric-value ok" style="font-size:28px">4 / 4</div><div class="metric-label">inline tail、fence、non-append、single marker mount</div></div></div>
+          <div class="panel"><div class="panel-header"><span class="panel-title">Browser smoke</span><span class="status ok">passed</span></div><div class="panel-body"><div class="metric-value ok" style="font-size:28px">18 / 18</div><div class="metric-label">feature parity no-write smoke；另通过 Vite production build</div></div></div>
+        </div>
+
+        <div class="grid-2" style="margin-top:14px">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">复现</span><span class="panel-kicker">from repository root</span></div>
+            <div class="panel-body">
+              <pre id="repro-command">npm install --prefix benchmarks/markdown-streaming --package-lock=false --ignore-scripts
+node benchmarks/markdown-streaming/run.mjs
+
+cd benchmarks/markdown-streaming
+../../node_modules/.bin/vitest run --config vitest.config.mts
+../../node_modules/.bin/vite build --config vite.config.mts</pre>
+              <div class="copy-row"><button class="copy-button" type="button" data-copy="repro-command">copy commands</button></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">解释限制</span><span class="panel-kicker">do not overclaim</span></div>
+            <div class="panel-body">
+              <div class="feature-list">
+                <div class="feature-item">结果来自本机单一 arm64 环境，不代表所有设备绝对值。</div>
+                <div class="feature-item">跨 run 的小幅差异包含系统调度与浏览器噪声。</div>
+                <div class="feature-item">功能 audit 验证可观察 DOM/controls，不证明全部交互逐像素一致。</div>
+                <div class="feature-item">静态 full-document 性能接近；优势主要属于 streaming 架构。</div>
+                <div class="feature-item">Tail 即时可见，但完整 Markdown semantics 仍按 snapshot 追赶。</div>
+                <div class="feature-item">Hybrid 尚未接入 Michi localhost:3001 生产页面。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <details class="data-disclosure artifact-disclosure">
+          <summary>展开 18 份源 Artifact 与 SHA-256</summary>
+          <div class="disclosure-body">
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">Artifact ledger · SHA-256</span><span class="panel-kicker">18 source files</span></div>
+          <div class="panel-body artifact-list">
+            <div class="artifact"><a href="./before-remend.json">before-remend.json</a><span class="hash">e23f6478f4ecfc73103a814d89880566cefc71473ccfe58f79c1e3bacd2f6a91</span></div>
+            <div class="artifact"><a href="./before-remend.md">before-remend.md</a><span class="hash">03f371f61ee6ed928bcf8224130d32d3c9f1db549049bc4f4dc283af9946477c</span></div>
+            <div class="artifact"><a href="./after-remend-unoptimized.json">after-remend-unoptimized.json</a><span class="hash">60230744935ba88fbb8bc1b6da891bc82a8d7df1b94f9e5cc96cc3295d70a0fe</span></div>
+            <div class="artifact"><a href="./after-remend-unoptimized.md">after-remend-unoptimized.md</a><span class="hash">ad9dd2ad5d292b0bfba6a3960ce5f9fe5881fc61f73f1c7f799df702b867a171</span></div>
+            <div class="artifact"><a href="./after-remend-incremental.json">after-remend-incremental.json</a><span class="hash">660a15a1da0d0cfeeddf87b51dc6cbb73dbe0b667dc0582775945c3af441e573</span></div>
+            <div class="artifact"><a href="./after-remend-incremental.md">after-remend-incremental.md</a><span class="hash">a260d227a57d493c6d28d0f56ae7a8f006ca25b8505588f8670c9a0ab20e364e</span></div>
+            <div class="artifact"><a href="./after-remend-paragraph-window.json">after-remend-paragraph-window.json</a><span class="hash">7ac2ce674e6319f7669ac990687d08d7150f2f3759b414e9df4b2a70a23fc3d7</span></div>
+            <div class="artifact"><a href="./after-remend-paragraph-window.md">after-remend-paragraph-window.md</a><span class="hash">df2d00846aa27c6c8f02e6a2eb823ef72bce3fde767a32a64d0f1da98804dfb0</span></div>
+            <div class="artifact"><a href="./after-remend-final.json">after-remend-final.json</a><span class="hash">fbb6cf605a58761d464da64b8c975bba0bb3d81e247d18b0ed9f892876feafc1</span></div>
+            <div class="artifact"><a href="./after-remend-final.md">after-remend-final.md</a><span class="hash">c6498f5495f07c8f79dae0adf36cd8f74f229257fcdcd43c75fcff30960c8b85</span></div>
+            <div class="artifact"><a href="./after-remend-all-markers.json">after-remend-all-markers.json</a><span class="hash">3f059c9aeb548a098111908006abb76125fd0ef846d0bf8901e11265de13e698</span></div>
+            <div class="artifact"><a href="./after-remend-all-markers.md">after-remend-all-markers.md</a><span class="hash">3efa302eaaaae13cfb027a66ef80cba23521073e454577ec5b81cce17cf3ff82</span></div>
+            <div class="artifact"><a href="./2026-08-05-five-strategy-baseline.json">2026-08-05-five-strategy-baseline.json</a><span class="hash">eeebc75b3c716801e56c7ddef4fbdd540f300d39037bed939c55831b8add43c1</span></div>
+            <div class="artifact"><a href="./2026-08-05-five-strategy-baseline.md">2026-08-05-five-strategy-baseline.md</a><span class="hash">14d0f1e6ca728ab9d3ff5e2019b2f89b7ff72ef92ecfd4b4797021f2ab79b835</span></div>
+            <div class="artifact"><a href="./2026-08-05-full-feature-parity.json">2026-08-05-full-feature-parity.json</a><span class="hash">7a146c744ecf7ea15deb66b582a99c74e4983c860702c9e0cd11ebe12db8b89c</span></div>
+            <div class="artifact"><a href="./2026-08-05-full-feature-parity.md">2026-08-05-full-feature-parity.md</a><span class="hash">83156ee11a2f57fcb888cf058fdad7f08cb74f688b880988c08087ca5bf9853d</span></div>
+            <div class="artifact"><a href="./2026-08-05-hybrid-snapshot.json">2026-08-05-hybrid-snapshot.json</a><span class="hash">c0791ed1879010067aedbea142e13110a1f13a738533be32ba80fd72251d42f7</span></div>
+            <div class="artifact"><a href="./2026-08-05-hybrid-snapshot.md">2026-08-05-hybrid-snapshot.md</a><span class="hash">aa93f39608af9b99023f80f8abab2701cc26ee5e0c3f4eb1582e20100e7fb6d5</span></div>
+          </div>
+        </div>
+          </div>
+        </details>
+
+        <div class="panel" style="margin-top:14px">
+          <div class="panel-header"><span class="panel-title">原始报告索引</span><span class="panel-kicker">expand for notes</span></div>
+          <div class="panel-body flush">
+            <details><summary>Remend implementation plan</summary><div class="details-body"><a href="../../../docs/superpowers/plans/2026-08-05-streaming-tail-remend.md">docs/superpowers/plans/2026-08-05-streaming-tail-remend.md</a></div></details>
+            <details><summary>Functional gap audit</summary><div class="details-body"><a href="./2026-08-05-functional-gap-audit.md">2026-08-05-functional-gap-audit.md</a></div></details>
+            <details><summary>Hybrid implementation source</summary><div class="details-body"><a href="../src/StreamdownSnapshotTail.tsx">src/StreamdownSnapshotTail.tsx</a> · <a href="../src/StreamdownSnapshotTail.test.tsx">focused tests</a></div></details>
+            <details><summary>Benchmark README</summary><div class="details-body"><a href="../README.md">benchmarks/markdown-streaming/README.md</a></div></details>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <div><span class="status ok">report complete</span></div>
+    <div class="statusbar-right"><span>source: <b>local chromium benchmark</b></span><span>date: <b>2026-08-05</b></span><span>scope: <b>benchmark-only</b></span></div>
+  </footer>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const stored = localStorage.getItem('michi-report-theme');
+      if (stored === 'light' || stored === 'dark') root.dataset.theme = stored;
+      const currentTheme = () => root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      const syncLabel = () => { toggle.textContent = currentTheme() === 'dark' ? 'bone' : 'gruvbox'; };
+      syncLabel();
+      toggle.addEventListener('click', () => {
+        const next = currentTheme() === 'dark' ? 'light' : 'dark';
+        root.dataset.theme = next;
+        localStorage.setItem('michi-report-theme', next);
+        syncLabel();
+      });
+
+      document.querySelectorAll('[data-copy]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const target = document.getElementById(button.dataset.copy);
+          if (!target) return;
+          await navigator.clipboard.writeText(target.textContent || '');
+          const old = button.textContent;
+          button.textContent = 'copied';
+          setTimeout(() => { button.textContent = old; }, 1200);
+        });
+      });
+
+      const links = [...document.querySelectorAll('.nav-link')];
+      const sections = links.map((link) => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (!visible) return;
+        links.forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#${visible.target.id}`));
+      }, { rootMargin: '-42px 0px -72% 0px', threshold: [0, .05] });
+      sections.forEach((section) => observer.observe(section));
+    })();
+  </script>
+</body>
+</html>

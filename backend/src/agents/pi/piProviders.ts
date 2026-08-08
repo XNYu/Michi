@@ -56,17 +56,13 @@ export const OPENROUTER_FREE_FALLBACK_MODEL =
 
 export const PI_PROVIDERS: PiProviderInfo[] = [
     {
-        id: OPENROUTER_FREE_PROVIDER_ID,
-        name: "OpenRouter Free Trial",
-        apiKeyLabel: "Built-in OpenRouter trial",
-        envVars: ["OPENROUTER_FREE_API_KEY", "OPENROUTER_API_KEY"],
-        defaultModel: OPENROUTER_FREE_PRIMARY_MODEL,
-        fallbackModel: OPENROUTER_FREE_FALLBACK_MODEL,
-        upstreamProviderId: "openrouter",
-        supportsReasoning: false,
-        requiresUserKey: false,
-        modelLocked: true,
-        keyUrl: "https://openrouter.ai/settings/keys",
+        id: "anthropic",
+        name: "Anthropic",
+        apiKeyLabel: "Anthropic API key",
+        envVars: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        defaultModel: DEFAULT_MODELS.pi,
+        supportsReasoning: true,
+        keyUrl: "https://console.anthropic.com/settings/keys",
     },
     {
         id: "deepseek",
@@ -85,15 +81,6 @@ export const PI_PROVIDERS: PiProviderInfo[] = [
         defaultModel: "gpt-5.5",
         supportsReasoning: true,
         keyUrl: "https://platform.openai.com/api-keys",
-    },
-    {
-        id: "anthropic",
-        name: "Anthropic",
-        apiKeyLabel: "Anthropic API key",
-        envVars: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
-        defaultModel: DEFAULT_MODELS.pi,
-        supportsReasoning: true,
-        keyUrl: "https://console.anthropic.com/settings/keys",
     },
     {
         id: "google",
@@ -184,6 +171,19 @@ export const PI_PROVIDERS: PiProviderInfo[] = [
         defaultModel: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
         supportsReasoning: true,
         keyUrl: "https://huggingface.co/settings/tokens",
+    },
+    {
+        id: OPENROUTER_FREE_PROVIDER_ID,
+        name: "OpenRouter Free Trial",
+        apiKeyLabel: "Built-in OpenRouter trial",
+        envVars: ["OPENROUTER_FREE_API_KEY", "OPENROUTER_API_KEY"],
+        defaultModel: OPENROUTER_FREE_PRIMARY_MODEL,
+        fallbackModel: OPENROUTER_FREE_FALLBACK_MODEL,
+        upstreamProviderId: "openrouter",
+        supportsReasoning: false,
+        requiresUserKey: false,
+        modelLocked: true,
+        keyUrl: "https://openrouter.ai/settings/keys",
     },
 ];
 

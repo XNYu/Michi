@@ -1,14 +1,30 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import remarkCjkFriendly from 'remark-cjk-friendly';
+import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import remarkMath from 'remark-math';
 import { remarkCurrencyGuard } from './remarkCurrencyGuard';
 import { rehypeAutolinkBareUrls } from './rehypeAutolinkBareUrls';
 import MarkdownRendererAdapter from './MarkdownRendererAdapter';
-import LegacyCodeBlock, { languageFromClassName } from './LegacyCodeBlock';
+import LegacyCodeBlock, { languageFromClassName, trimCodeFenceNewline } from './LegacyCodeBlock';
+import MarkdownFeatureTable from './MarkdownFeatureTable';
+import MarkdownMermaidBlock from './MarkdownMermaidBlock';
 import { MarkdownStreamingTail } from './MarkdownStreamingTail';
 import { hasCjkText, performanceNowMs, rendererStreamProbeEnabled, writeRendererStreamProbe } from '../lib/streamProbe';
 import { countRender } from '../services/renderCounters';
+
+export interface MarkdownFeatureProfile {
+  autoDirection?: boolean;
+  cjk?: boolean;
+  codeDownload?: boolean;
+  codeLineNumbers?: boolean;
+  linkSafety?: boolean;
+  mermaid?: boolean;
+  normalizeHtmlIndentation?: boolean;
+  strikethrough?: boolean;
+  tableControls?: boolean;
+}
 
 export interface MarkdownContentProps {
   text: string;
@@ -36,6 +52,8 @@ export interface MarkdownContentProps {
   trimLastChild?: boolean;
   /** Insert the live Smooth tail into the final semantic Markdown element. */
   appendStreamingTail?: boolean;
+  /** Optional feature-parity profile; all features remain off by default. */
+  features?: MarkdownFeatureProfile;
   /**
    * Callback fired when a non-external link is clicked (relative paths, hash,
    * file-like URLs). The handler receives the href and should call
@@ -49,6 +67,14 @@ export interface MarkdownContentProps {
 /** Returns true when the text contains math delimiters that remark-math recognises. */
 function hasMath(text: string): boolean {
   return /\$[^$]|\\\[|\\\(/.test(text);
+}
+
+const HTML_BLOCK_START_RE = /^[ \t]*<[\w!/?-]/;
+const INDENTED_HTML_RE = /(^|\n)[ \t]{4,}(?=<[\w!/?-])/g;
+
+function normalizeHtmlIndentation(text: string): string {
+  if (!HTML_BLOCK_START_RE.test(text)) return text;
+  return text.replace(INDENTED_HTML_RE, '$1');
 }
 
 const sanitizeSchema = {
@@ -318,6 +344,7 @@ function MarkdownContentInner({
   trimFirstChild,
   trimLastChild,
   appendStreamingTail = false,
+  features,
   onLinkClick,
 }: MarkdownContentProps) {
   countRender('MarkdownContent', `${text.length}:${text.slice(0, 24)}`, {
@@ -331,9 +358,13 @@ function MarkdownContentInner({
   const probeIdRef = useRef<string | null>(null);
   const lastCommitAtRef = useRef<number | null>(null);
   const lastTextCharsRef = useRef(text.length);
+  const renderText = useMemo(
+    () => features?.normalizeHtmlIndentation ? normalizeHtmlIndentation(text) : text,
+    [features?.normalizeHtmlIndentation, text],
+  );
   const [rehypeKatex, setRehypeKatex] = useState<null | ((...args: unknown[]) => unknown)>(null);
   useEffect(() => {
-    if (rehypeKatex === null && hasMath(text)) {
+    if (rehypeKatex === null && hasMath(renderText)) {
       void Promise.all([
         import('rehype-katex'),
         import('katex/dist/katex.min.css'),
@@ -341,7 +372,7 @@ function MarkdownContentInner({
         setRehypeKatex(() => mod.default);
       });
     }
-  }, [text, rehypeKatex]);
+  }, [renderText, rehypeKatex]);
   const proseSize =
     size === 'xs' ? 'prose-xs' :
     size === 'sm' ? 'prose-sm' :
@@ -370,7 +401,13 @@ function MarkdownContentInner({
   // (e.g. "$5 to $10") and leaked `${…}` template/shell interpolations (e.g.
   // "${API_BASE_URL}/x/${id}"), so neither is mis-rendered as a formula.
   const remarkPlugins = useMemo(() => [remarkMath, remarkCurrencyGuard], []);
-  const mayContainRawHtml = text.includes('<');
+  const cjkRemarkPlugins = useMemo(
+    () => features?.cjk
+      ? [remarkCjkFriendly, remarkCjkFriendlyGfmStrikethrough]
+      : [],
+    [features?.cjk],
+  );
+  const mayContainRawHtml = renderText.includes('<');
   const rehypePlugins = useMemo(() => {
     // Raw parsing is the expensive parse5 path. Markdown without a '<' cannot
     // contain a raw HTML node, so it is already safe to render through
@@ -402,8 +439,12 @@ function MarkdownContentInner({
       // Non-external, non-mailto links (relative paths, hash anchors, bare
       // filenames like "readme.md") would navigate the SPA to an invalid
       // route, causing a white screen. Intercept and delegate to the host.
-      const handleClick = !external && !mailto
+      const handleClick = external && features?.linkSafety
         ? (e: React.MouseEvent<HTMLAnchorElement>) => {
+            if (!window.confirm(`Open external link?\n${url}`)) e.preventDefault();
+          }
+        : !external && !mailto
+          ? (e: React.MouseEvent<HTMLAnchorElement>) => {
             // Hash-only links (#section) are harmless scroll targets.
             if (url.startsWith('#')) return;
             e.preventDefault();
@@ -417,7 +458,7 @@ function MarkdownContentInner({
               );
             }
           }
-        : undefined;
+          : undefined;
 
       return (
         <a
@@ -430,7 +471,7 @@ function MarkdownContentInner({
         </a>
       );
     };
-  }, [ht, onLinkClick]);
+  }, [features?.linkSafety, ht, onLinkClick]);
   const hlComponents = useMemo(() => {
     if (!ht) return {};
     const wrap = (Tag: string) =>
@@ -469,9 +510,15 @@ function MarkdownContentInner({
   }, [text, revealEnabled, revealTailChars, renderStartedAt, probeEnabled]);
 
   return (
-    <div ref={rootRef} className={cls} style={style}>
+    <div
+      ref={rootRef}
+      className={cls}
+      dir={features?.autoDirection ? 'auto' : undefined}
+      style={style}
+    >
       <MarkdownRendererAdapter
-        text={text}
+        text={renderText}
+        remarkPluginsAfterGfm={cjkRemarkPlugins}
         legacyRemarkPlugins={remarkPlugins}
         legacyRehypePlugins={rehypePlugins}
         legacyComponents={{
@@ -490,11 +537,16 @@ function MarkdownContentInner({
             const language = languageFromClassName(codeClass);
             const isBlock = !!language || codeText.includes('\n');
             if (isBlock) {
+              if (features?.mermaid && language === 'mermaid' && !appendStreamingTail) {
+                return <MarkdownMermaidBlock chart={trimCodeFenceNewline(codeText)} />;
+              }
               return (
                 <LegacyCodeBlock
                   className={codeClass}
                   deferHighlight={revealEnabled}
                   language={language}
+                  lineNumbers={features?.codeLineNumbers}
+                  showDownload={features?.codeDownload}
                   text={codeText}
                   tail={appendStreamingTail && hasStreamingTailMarker(_node)
                     ? <MarkdownStreamingTail />
@@ -509,8 +561,11 @@ function MarkdownContentInner({
               </code>
             );
           },
-          del({ children }: any) {
-            return <>{`~~`}{children}{`~~`}</>;
+          ...(features?.tableControls ? { table: MarkdownFeatureTable } : {}),
+          del({ children, ...props }: any) {
+            return features?.strikethrough
+              ? <del {...props}>{children}</del>
+              : <>{`~~`}{children}{`~~`}</>;
           },
         }}
       />
@@ -531,7 +586,8 @@ const MarkdownContent = React.memo(MarkdownContentInner, (prev, next) =>
   prev.trimEdges === next.trimEdges &&
   prev.trimFirstChild === next.trimFirstChild &&
   prev.trimLastChild === next.trimLastChild &&
-  prev.appendStreamingTail === next.appendStreamingTail,
+  prev.appendStreamingTail === next.appendStreamingTail &&
+  prev.features === next.features,
 );
 
 export default MarkdownContent;

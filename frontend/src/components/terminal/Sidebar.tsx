@@ -3,6 +3,7 @@ import { usePrefs } from '../../state/prefs';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { Row } from './primitives';
 import WorkspaceTree from './WorkspaceTree';
+import ActivityView from './ActivityView';
 import TreeSelectionBar from './TreeSelectionBar';
 import ResizeHandle from '../ResizeHandle';
 import {
@@ -158,10 +159,14 @@ export default function TerminalSidebar({
       }}
     >
       <TreeSelectionBar />
-      <WorkspaceTree
-        onActivate={() => onNav('dashboard')}
-        chatViewActive={activePage === 'dashboard'}
-      />
+      {prefs.sidebarView === 'activity' ? (
+        <ActivityView onActivate={() => onNav('dashboard')} />
+      ) : (
+        <WorkspaceTree
+          onActivate={() => onNav('dashboard')}
+          chatViewActive={activePage === 'dashboard'}
+        />
+      )}
       <BottomNav activePage={activePage} onNav={onNav} />
       {!collapsed && !overlayMode && (
         <ResizeHandle
@@ -312,4 +317,3 @@ function BottomNav({
     </div>
   );
 }
-
