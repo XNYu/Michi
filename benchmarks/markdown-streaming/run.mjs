@@ -12,12 +12,13 @@ const port = Number(process.env.MICHI_MARKDOWN_BENCH_PORT ?? 4317);
 const baseUrl = `http://127.0.0.1:${port}`;
 const repeats = Number(process.env.MICHI_MARKDOWN_BENCH_REPEATS ?? 3);
 const noWrite = process.env.MICHI_MARKDOWN_BENCH_NO_WRITE === '1';
+const mode = process.env.MICHI_MARKDOWN_BENCH_MODE ?? 'hybrid';
 const requestedFixtureIds = (process.env.MICHI_MARKDOWN_BENCH_FIXTURES ?? '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
 const outputDir = resolve(here, 'results');
-const renderers = [
+const defaultRenderers = [
   'michi-3hz-core',
   'michi-3hz-full',
   'streamdown-hybrid-3hz-full',
@@ -25,6 +26,15 @@ const renderers = [
   'streamdown-word-full',
   'streamdown-char-full',
 ];
+const frequencySweepRenderers = [
+  'michi-3hz-core',
+  'michi-10hz-core',
+  'michi-20hz-core',
+  'michi-30hz-core',
+];
+const frequencySweep = mode === 'frequency-sweep';
+const renderers = frequencySweep ? frequencySweepRenderers : defaultRenderers;
+const includeStatic = !frequencySweep;
 const chunkSizes = [128, 512];
 
 function metric(snapshot, name) {
@@ -78,6 +88,7 @@ function aggregate(results) {
     const sample = rows[0];
     const fields = [
       'wallMs',
+      'streamingWallMs',
       'taskDurationMs',
       'scriptDurationMs',
       'layoutDurationMs',
@@ -99,6 +110,7 @@ function aggregate(results) {
       'domNodes',
       'markdownContentRenders',
       'michiSemanticSnapshots',
+      'michiSemanticSnapshotRateHz',
       'streamdownBlockSplits',
       'streamdownBlockRenders',
       'michiSemanticLagAvgChars',
@@ -118,11 +130,101 @@ function aggregate(results) {
 
 function rendererLabel(renderer) {
   if (renderer === 'michi-3hz-core') return 'Michi 3Hz core';
+  if (renderer === 'michi-10hz-core') return 'Michi 10Hz core';
+  if (renderer === 'michi-20hz-core') return 'Michi 20Hz core';
+  if (renderer === 'michi-30hz-core') return 'Michi 30Hz core';
   if (renderer === 'michi-3hz-full') return 'Michi 3Hz full features';
   if (renderer === 'streamdown-hybrid-3hz-full') return 'Streamdown + Michi 3Hz snapshot/tail';
   if (renderer === 'streamdown-word-core') return 'Streamdown Word core';
   if (renderer === 'streamdown-word-full') return 'Streamdown Word full features';
   return 'Streamdown Char full features';
+}
+
+function makeFrequencySweepMarkdown(report) {
+  const rowsFor = (renderer, chunkSize) => report.aggregates.filter((row) =>
+    row.cadence === 'raf' && row.renderer === renderer && row.chunkSize === chunkSize);
+  const total = (rows, field) => rows.reduce((sum, row) => sum + row[field], 0);
+  const maximum = (rows, field) => Math.max(0, ...rows.map((row) => row[field]));
+  const average = (rows, field) => rows.length > 0
+    ? total(rows, field) / rows.length
+    : 0;
+  const ratioDelta = (value, baseline) => baseline > 0
+    ? `${value >= baseline ? '+' : ''}${fmt((value / baseline - 1) * 100)}%`
+    : 'n/a';
+  const reduction = (value, baseline) => baseline > 0
+    ? `${fmt((1 - value / baseline) * 100)}%`
+    : 'n/a';
+  const lines = [
+    '# Michi Markdown semantic parse frequency sweep',
+    '',
+    `Generated: ${report.generatedAt}`,
+    `Browser: ${report.environment.browserVersion}`,
+    `Machine: ${report.environment.platform} / ${report.environment.arch}`,
+    `Repeats: ${report.repeats}; updates paced by requestAnimationFrame; core feature profile held constant`,
+    '',
+  ];
+
+  for (const chunkSize of report.chunkSizes) {
+    const baselineRows = rowsFor('michi-3hz-core', chunkSize);
+    const baselineCpu = total(baselineRows, 'taskDurationMs');
+    const baselineLag = average(baselineRows, 'michiSemanticLagAvgChars');
+    lines.push(`## ${chunkSize} chars/update`, '');
+    lines.push('Frequency | Task CPU total | CPU vs 3Hz | Script CPU | React render / commits | effective snapshots/s | semantic lag avg / max | lag reduction | frame p95 / max | >25ms frames | long tasks');
+    lines.push('---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:');
+    for (const renderer of report.renderers) {
+      const rows = rowsFor(renderer, chunkSize);
+      const cpu = total(rows, 'taskDurationMs');
+      const lag = average(rows, 'michiSemanticLagAvgChars');
+      lines.push([
+        rendererLabel(renderer),
+        `${fmt(cpu)}ms`,
+        ratioDelta(cpu, baselineCpu),
+        `${fmt(total(rows, 'scriptDurationMs'))}ms`,
+        `${fmt(total(rows, 'profilerActualMs'))}ms / ${fmt(total(rows, 'profilerCommits'), 0)}`,
+        fmt(average(rows, 'michiSemanticSnapshotRateHz'), 2),
+        `${fmt(lag)} / ${fmt(maximum(rows, 'michiSemanticLagMaxChars'), 0)} chars`,
+        reduction(lag, baselineLag),
+        `${fmt(maximum(rows, 'frameP95Ms'))} / ${fmt(maximum(rows, 'frameMaxMs'))}ms`,
+        fmt(total(rows, 'framesOver25Ms'), 0),
+        fmt(total(rows, 'longTaskCount'), 0),
+      ].join(' | '));
+    }
+    lines.push('', '### Fixture detail', '');
+    lines.push('Fixture | Frequency | Task CPU | CPU vs fixture 3Hz | semantic lag avg / max | snapshots');
+    lines.push('--- | ---: | ---: | ---: | ---: | ---:');
+    for (const fixture of report.fixtures) {
+      const fixtureBaseline = report.aggregates.find((row) =>
+        row.cadence === 'raf' &&
+        row.chunkSize === chunkSize &&
+        row.fixtureId === fixture.id &&
+        row.renderer === 'michi-3hz-core');
+      for (const renderer of report.renderers) {
+        const row = report.aggregates.find((candidate) =>
+          candidate.cadence === 'raf' &&
+          candidate.chunkSize === chunkSize &&
+          candidate.fixtureId === fixture.id &&
+          candidate.renderer === renderer);
+        if (!row || !fixtureBaseline) continue;
+        lines.push([
+          fixture.label,
+          rendererLabel(renderer),
+          `${fmt(row.taskDurationMs)}ms`,
+          ratioDelta(row.taskDurationMs, fixtureBaseline.taskDurationMs),
+          `${fmt(row.michiSemanticLagAvgChars)} / ${fmt(row.michiSemanticLagMaxChars, 0)} chars`,
+          fmt(row.michiSemanticSnapshots, 0),
+        ].join(' | '));
+      }
+    }
+    lines.push('');
+  }
+
+  lines.push('## Instrumentation notes', '');
+  lines.push('- The only changed parameter is Michi\'s fixed semantic reinterpretation frequency: 3, 10, 20, or 30Hz. Markdown features, fixtures, chunking, browser, and render path are identical.');
+  lines.push('- Pending text remains visible immediately through Michi\'s lightweight tail. Semantic lag measures source characters waiting for the next full Markdown snapshot.');
+  lines.push('- Effective snapshots/s excludes the initial mount snapshot and is measured across the rAF-paced streaming window. It can remain below the configured rate when a fixture finishes quickly or updates do not span enough time.');
+  lines.push('- Task/Script/Layout metrics come from Chrome DevTools Protocol. React Profiler, frame intervals, semantic snapshots, and lag come from the page harness.');
+  lines.push('- Each aggregate is the median of repeated runs for one fixture/renderer/chunk combination. Suite totals sum those per-fixture medians.');
+  return `${lines.join('\n')}\n`;
 }
 
 function verifyHybridStaticParity(report) {
@@ -327,6 +429,7 @@ function makeMarkdown(report) {
 
 async function main() {
   if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10) throw new Error('MICHI_MARKDOWN_BENCH_REPEATS must be 1..10');
+  if (!['hybrid', 'frequency-sweep'].includes(mode)) throw new Error('MICHI_MARKDOWN_BENCH_MODE must be hybrid or frequency-sweep');
   const viteBin = resolve(repoRoot, 'node_modules/vite/bin/vite.js');
   const vite = spawn(process.execPath, [viteBin, '--config', resolve(here, 'vite.config.mts'), '--port', String(port)], {
     cwd: repoRoot,
@@ -346,6 +449,9 @@ async function main() {
     await page.evaluate(() => window.__MARKDOWN_STREAM_BENCHMARK__.warmup());
 
     const allFixtureMeta = await page.evaluate(() => window.__MARKDOWN_STREAM_BENCHMARK__.fixtures);
+    const availableRenderers = await page.evaluate(() => window.__MARKDOWN_STREAM_BENCHMARK__.renderers);
+    const missingRenderers = renderers.filter((renderer) => !availableRenderers.includes(renderer));
+    if (missingRenderers.length > 0) throw new Error(`Benchmark page is missing renderers: ${missingRenderers.join(', ')}`);
     const fixtureMeta = requestedFixtureIds.length > 0
       ? allFixtureMeta.filter((fixture) => requestedFixtureIds.includes(fixture.id))
       : allFixtureMeta;
@@ -379,13 +485,15 @@ async function main() {
         nodeDelta: deltaMetric(before, after, 'Nodes'),
       };
       results.push(result);
-      console.log(`[${results.length}] ${result.cadence} ${result.fixtureId} chunk=${result.chunkSize} ${result.renderer} task=${fmt(result.taskDurationMs)}ms profiler=${fmt(result.profilerActualMs)}ms`);
+      console.log(`[${results.length}] ${result.cadence} ${result.fixtureId} chunk=${result.chunkSize} ${result.renderer} task=${fmt(result.taskDurationMs)}ms profiler=${fmt(result.profilerActualMs)}ms snapshots=${fmt(result.michiSemanticSnapshots, 0)} lag=${fmt(result.michiSemanticLagAvgChars)} chars`);
     }
 
-    for (let repeat = 0; repeat < repeats; repeat += 1) {
-      for (const fixture of fixtureMeta) {
-        for (const renderer of rotate(renderers, repeat + fixtureMeta.indexOf(fixture))) {
-          await measuredRun({ renderer, fixtureId: fixture.id, chunkSize: fixture.chars, cadence: 'burst', staticIterations: 1, variant: 1_000 + repeat, repeat });
+    if (includeStatic) {
+      for (let repeat = 0; repeat < repeats; repeat += 1) {
+        for (const fixture of fixtureMeta) {
+          for (const renderer of rotate(renderers, repeat + fixtureMeta.indexOf(fixture))) {
+            await measuredRun({ renderer, fixtureId: fixture.id, chunkSize: fixture.chars, cadence: 'burst', staticIterations: 1, variant: 1_000 + repeat, repeat });
+          }
         }
       }
     }
@@ -410,6 +518,7 @@ async function main() {
     await client.detach();
     const report = {
       generatedAt: new Date().toISOString(),
+      mode,
       repeats,
       chunkSizes,
       renderers,
@@ -423,14 +532,18 @@ async function main() {
       results,
       aggregates: aggregate(results),
     };
-    verifyHybridStaticParity(report);
+    if (!frequencySweep) verifyHybridStaticParity(report);
     if (!noWrite) {
       mkdirSync(outputDir, { recursive: true });
       const json = `${JSON.stringify(report, null, 2)}\n`;
-      const markdown = makeMarkdown(report);
-      const outputNames = ['latest', 'hybrid-snapshot-comparison'];
+      const markdown = frequencySweep ? makeFrequencySweepMarkdown(report) : makeMarkdown(report);
+      const outputNames = frequencySweep
+        ? ['frequency-sweep-comparison']
+        : ['latest', 'hybrid-snapshot-comparison'];
       if (requestedFixtureIds.length === 0 && repeats === 3) {
-        outputNames.push('2026-08-05-hybrid-snapshot');
+        outputNames.push(frequencySweep
+          ? '2026-08-06-frequency-sweep'
+          : '2026-08-05-hybrid-snapshot');
       }
       for (const outputName of outputNames) {
         const jsonPath = resolve(outputDir, `${outputName}.json`);

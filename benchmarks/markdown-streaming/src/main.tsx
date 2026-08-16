@@ -13,12 +13,17 @@ import MarkdownContent, {
 import StreamingMarkdownContent from '../../../frontend/src/components/terminal/StreamingMarkdownContent';
 import { MARKDOWN_REINTERPRET_HZ_STORAGE_KEY } from '../../../frontend/src/components/terminal/markdownReinterpretationFlag';
 import { fixtures } from './fixtures';
+import {
+  MICHI_CORE_RENDERERS,
+  michiCoreFrequency,
+  type MichiCoreRendererId,
+} from './rendererProfiles';
 import 'katex/dist/katex.min.css';
 import 'streamdown/styles.css';
 import './benchmark.css';
 
 type RendererId =
-  | 'michi-3hz-core'
+  | MichiCoreRendererId
   | 'michi-3hz-full'
   | 'streamdown-hybrid-3hz-full'
   | 'streamdown-word-core'
@@ -51,6 +56,7 @@ interface RunResult {
   cadence: 'raf' | 'burst' | 'static';
   updates: number;
   wallMs: number;
+  streamingWallMs: number;
   renderCallTotalMs: number;
   renderCallP50Ms: number;
   renderCallP95Ms: number;
@@ -68,6 +74,7 @@ interface RunResult {
   domNodes: number;
   markdownContentRenders: number;
   michiSemanticSnapshots: number;
+  michiSemanticSnapshotRateHz: number;
   streamdownBlockSplits: number;
   streamdownBlockRenders: number;
   michiSemanticLagAvgChars: number;
@@ -125,6 +132,14 @@ const michiFullFeatures: MarkdownFeatureProfile = {
   strikethrough: true,
   tableControls: true,
 };
+const benchmarkRenderers: RendererId[] = [
+  ...MICHI_CORE_RENDERERS,
+  'michi-3hz-full',
+  'streamdown-hybrid-3hz-full',
+  'streamdown-word-core',
+  'streamdown-word-full',
+  'streamdown-char-full',
+];
 
 let streamdownBlockSplits = 0;
 let streamdownBlockRenders = 0;
@@ -151,12 +166,13 @@ function BenchmarkRenderer({
   const streaming = phase === 'streaming';
   if (renderer.startsWith('michi-')) {
     const features = renderer === 'michi-3hz-full' ? michiFullFeatures : undefined;
+    const reinterpretHz = michiCoreFrequency(renderer) ?? 3;
     return streaming ? (
       <StreamingMarkdownContent
         features={features}
         text={text}
         revealTailChars={1}
-        reinterpretStrategy={{ mode: 'fixed', hz: 3 }}
+        reinterpretStrategy={{ mode: 'fixed', hz: reinterpretHz }}
       />
     ) : (
       <MarkdownContent features={features} text={text} />
@@ -323,7 +339,10 @@ async function run(request: RunRequest): Promise<RunResult> {
   if (!fixture) throw new Error(`Unknown fixture: ${request.fixtureId}`);
   if (!Number.isInteger(request.chunkSize) || request.chunkSize <= 0) throw new Error('chunkSize must be positive');
 
-  window.localStorage.setItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY, '3');
+  window.localStorage.setItem(
+    MARKDOWN_REINTERPRET_HZ_STORAGE_KEY,
+    String(michiCoreFrequency(request.renderer) ?? 3),
+  );
   window.__MICHI_RENDER_COUNTERS__ = { enabled: true, counts: {}, componentCounts: {} };
   streamdownBlockSplits = 0;
   streamdownBlockRenders = 0;
@@ -367,6 +386,7 @@ async function run(request: RunRequest): Promise<RunResult> {
   const startedAt = performance.now();
   let updates = 0;
   let finalizeRenderMs = 0;
+  let streamingWallMs = 0;
   const baseVariant = request.variant ?? 0;
   const runMarkdown = markdownVariant(fixture.markdown, baseVariant);
 
@@ -377,6 +397,7 @@ async function run(request: RunRequest): Promise<RunResult> {
       if (iteration < request.staticIterations - 1) render('', 'static');
     }
   } else {
+    const streamingStartedAt = performance.now();
     for (const text of prefixes(runMarkdown, request.chunkSize)) {
       if (request.cadence === 'raf') {
         const frameAt = await nextFrame();
@@ -398,6 +419,7 @@ async function run(request: RunRequest): Promise<RunResult> {
         semanticLags.push(Math.max(0, text.length - snapshotChars));
       }
     }
+    streamingWallMs = performance.now() - streamingStartedAt;
     await settle();
     const finalizeStartedAt = performance.now();
     render(runMarkdown, 'final');
@@ -447,6 +469,7 @@ async function run(request: RunRequest): Promise<RunResult> {
     cadence: request.staticIterations ? 'static' : request.cadence,
     updates,
     wallMs,
+    streamingWallMs,
     renderCallTotalMs: sum(renderCallDurations),
     renderCallP50Ms: percentile(renderCallDurations, 0.5),
     renderCallP95Ms: percentile(renderCallDurations, 0.95),
@@ -464,6 +487,9 @@ async function run(request: RunRequest): Promise<RunResult> {
     domNodes,
     markdownContentRenders,
     michiSemanticSnapshots,
+    michiSemanticSnapshotRateHz: streamingWallMs > 0
+      ? Math.max(0, michiSemanticSnapshots - 1) * 1_000 / streamingWallMs
+      : 0,
     streamdownBlockSplits,
     streamdownBlockRenders,
     michiSemanticLagAvgChars: semanticLags.length > 0 ? sum(semanticLags) / semanticLags.length : 0,
@@ -501,14 +527,7 @@ async function warmup(): Promise<void> {
     '<details><summary>HTML</summary><p>ready</p></details>',
   ].join('\n');
 
-  for (const renderer of [
-    'michi-3hz-core',
-    'michi-3hz-full',
-    'streamdown-hybrid-3hz-full',
-    'streamdown-word-core',
-    'streamdown-word-full',
-    'streamdown-char-full',
-  ] as RendererId[]) {
+  for (const renderer of benchmarkRenderers) {
     const { host, root } = newSurface();
     flushSync(() => root.render(<BenchmarkRenderer phase="streaming" renderer={renderer} text={warmText} />));
     await new Promise((resolve) => window.setTimeout(resolve, 600));
@@ -523,14 +542,7 @@ async function warmup(): Promise<void> {
 
 window.__MARKDOWN_STREAM_BENCHMARK__ = {
   fixtures: fixtures.map(({ id, label, markdown }) => ({ id, label, chars: markdown.length })),
-  renderers: [
-    'michi-3hz-core',
-    'michi-3hz-full',
-    'streamdown-hybrid-3hz-full',
-    'streamdown-word-core',
-    'streamdown-word-full',
-    'streamdown-char-full',
-  ],
+  renderers: benchmarkRenderers,
   run,
   warmup,
 };
