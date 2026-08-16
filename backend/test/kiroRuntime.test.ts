@@ -316,6 +316,27 @@ describe('ACP runtime capabilities + MCP attach per profile', () => {
     assert.equal(kiro.capabilities.nativeResume, true, 'Kiro capabilities stay construction-time');
   });
 
+  test('MCP slot callbacks keep the Kiro sentinel and label; Cursor/Grok omit the sentinel', () => {
+    const kiro = new KiroRuntime(bridge, undefined, 0, '/tmp/default') as any;
+    const cursor = new CursorRuntime(bridge, undefined, 0, '/tmp/default') as any;
+    const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default') as any;
+    const kiroCbs = kiro.makeSlotCallbacks(() => 'slot-k');
+    const cursorCbs = cursor.makeSlotCallbacks(() => 'slot-c');
+    const grokCbs = grok.makeSlotCallbacks(() => 'slot-g');
+    assert.equal(kiroCbs.metadataDoneSentinel, '[MICHI_METADATA_DONE]');
+    assert.equal(cursorCbs.metadataDoneSentinel, undefined);
+    assert.equal(grokCbs.metadataDoneSentinel, undefined);
+    assert.deepEqual(kiroCbs.onShowImage('/tmp/x.png'), {
+      error: 'show_image is not supported on the Kiro runtime',
+    });
+    assert.deepEqual(cursorCbs.onShowImage('/tmp/x.png'), {
+      error: 'show_image is not supported on the Cursor runtime',
+    });
+    assert.deepEqual(grokCbs.onShowImage('/tmp/x.png'), {
+      error: 'show_image is not supported on the Grok runtime',
+    });
+  });
+
   test('absorbModes upgrades Grok capabilities.modes when session/new returns availableModes', () => {
     const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default');
     assert.equal(grok.capabilities.modes, false);

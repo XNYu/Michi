@@ -127,6 +127,10 @@ describe('Cursor ACP profile', () => {
         findCursorCli({ CURSOR_CLI_BIN: override, PATH: grokDir }, tmp),
         override,
       );
+      assert.throws(
+        () => findCursorCli({ CURSOR_CLI_BIN: grokAgent, PATH: pathDir }, tmp),
+        /Grok/,
+      );
       assert.equal(
         findCursorCli({ PATH: `${grokDir}:${pathDir}` }, tmp),
         localAgent,

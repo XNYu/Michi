@@ -299,10 +299,12 @@ export class AcpAgentRuntime implements AgentRuntime {
             onUpdateArtifact: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
             onSetFollowUps: (followUps) => this.handleSetFollowUps(getSlotId()!, followUps),
             onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
-            metadataDoneSentinel: KIRO_METADATA_DONE_SENTINEL,
-            // show_image is a Claude-runtime side-effect tool; the Kiro runtime
-            // does not expose it. Satisfy the required callback with a stub.
-            onShowImage: () => ({ error: "show_image is not supported on the Kiro runtime" }),
+            // Kiro-only: KiroSession strips this token after set_branch_overview.
+            // Cursor/Grok must not inherit the sentinel instruction.
+            ...(this.id === "kiro" ? { metadataDoneSentinel: KIRO_METADATA_DONE_SENTINEL } : {}),
+            // show_image is a Claude-runtime side-effect tool; ACP CLI runtimes
+            // do not expose it. Satisfy the required callback with a stub.
+            onShowImage: () => ({ error: `show_image is not supported on the ${this.label} runtime` }),
             onAskUser: (questions) => this.handleAskUser(getSlotId()!, questions),
         };
     }

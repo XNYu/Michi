@@ -84,6 +84,11 @@ export function resolvesToCursorAgent(filePath: string): boolean {
 export function findCursorCli(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
     const override = env.CURSOR_CLI_BIN;
     if (override) {
+        if (isGrokAgentBinary(override)) {
+            throw new Error(
+                `CURSOR_CLI_BIN is set to ${override} but that is the Grok CLI. Do not use ~/.grok/bin/agent.`,
+            );
+        }
         if (existsSync(override)) return override;
         throw new Error(`CURSOR_CLI_BIN is set to ${override} but that file does not exist.`);
     }

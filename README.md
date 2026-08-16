@@ -74,7 +74,7 @@ npm run dev
 
 Open `http://localhost:3001`, create a workspace, and start a thread. Michi
 needs at least one agent runtime or provider — configure these from **Settings**
-after the app starts. CLI-based runtimes (Kiro, Claude Code, Codex) must be
+after the app starts. CLI-based runtimes (Kiro, Claude Code, Codex, Cursor, Grok) must be
 installed and available on your `PATH`.
 
 ---
