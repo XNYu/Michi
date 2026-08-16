@@ -2,6 +2,8 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
 import { KiroSession } from '../src/agents/kiro/KiroSession';
+import { CursorRuntime } from '../src/agents/cursor/CursorRuntime';
+import { GrokRuntime } from '../src/agents/grok/GrokRuntime';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { AgentSession } from '../src/agents/types';
 import type { ModelInfo } from '../src/agents/types';
@@ -214,5 +216,111 @@ describe('Kiro branch overview metadata tool', () => {
         overview: 'Current Kiro branch state.',
       },
     });
+  });
+});
+
+describe('ACP runtime capabilities + MCP attach per profile', () => {
+  test('Kiro keeps saveContext/spawnBranches/nativeResume/modes', () => {
+    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
+    assert.equal(runtime.capabilities.modes, true);
+    assert.equal(runtime.capabilities.saveContext, true);
+    assert.equal(runtime.capabilities.spawnBranches, true);
+    assert.equal(runtime.capabilities.nativeResume, true);
+    assert.equal(runtime.shouldSendBranchOverviewReminder(), true);
+  });
+
+  test('Cursor/Grok start with confirmed save/spawn/resume; Cursor modes on, Grok modes off', () => {
+    const cursor = new CursorRuntime(bridge, undefined, 0, '/tmp/default');
+    const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default');
+    for (const runtime of [cursor, grok]) {
+      assert.equal(runtime.capabilities.saveContext, true);
+      assert.equal(runtime.capabilities.spawnBranches, true);
+      assert.equal(runtime.capabilities.nativeResume, true);
+      assert.equal(runtime.shouldSendBranchOverviewReminder(), false);
+    }
+    assert.equal(cursor.capabilities.modes, true);
+    assert.equal(grok.capabilities.modes, false);
+  });
+
+  test('Kiro openSession still attaches MCP without initialize advertisement', async () => {
+    let created = 0;
+    const registry = {
+      create: () => {
+        created += 1;
+        return { slotId: 'slot-k' };
+      },
+      dispose: async () => {},
+      get: () => undefined,
+    } as any;
+    const runtime = new KiroRuntime(bridge, registry, 3000, '/tmp/default');
+    const rt = runtime as any;
+    let mcpServers: unknown[] | undefined;
+    const client = {
+      getInitializeResult: () => ({}),
+      newSession: async (mcp: unknown[]) => {
+        mcpServers = mcp;
+        return { sessionId: 'sid-k' };
+      },
+    };
+    const opened = await rt.openSession(client, '/tmp/a', () => ({}));
+    assert.equal(created, 1);
+    assert.equal(opened.slotId, 'slot-k');
+    assert.equal((mcpServers as any[])[0].name, 'michi');
+    assert.equal((mcpServers as any[])[0].type, 'http');
+  });
+
+  test('Cursor/Grok openSession attach MCP even without initialize advertisement', async () => {
+    let created = 0;
+    const registry = {
+      create: () => {
+        created += 1;
+        return { slotId: 'slot-c' };
+      },
+      dispose: async () => {},
+      get: () => undefined,
+    } as any;
+    const runtime = new CursorRuntime(bridge, registry, 3000, '/tmp/default');
+    const rt = runtime as any;
+    let mcpServers: unknown[] | undefined;
+    const silent = {
+      getInitializeResult: () => ({ agentCapabilities: {} }),
+      newSession: async (mcp: unknown[]) => {
+        mcpServers = mcp;
+        return { sessionId: 'sid-c' };
+      },
+    };
+    const opened = await rt.openSession(silent, '/tmp/a', () => ({}));
+    assert.equal(created, 1);
+    assert.equal(opened.slotId, 'slot-c');
+    assert.equal((mcpServers as any[])[0].name, 'michi');
+    assert.equal((mcpServers as any[])[0].type, 'http');
+  });
+
+  test('initialize still stores result but does not hide Cursor spawn/save/resume', () => {
+    const runtime = new CursorRuntime(bridge, undefined, 0, '/tmp/default');
+    const rt = runtime as any;
+    assert.equal(runtime.capabilities.nativeResume, true);
+    assert.equal(runtime.capabilities.saveContext, true);
+    assert.equal(runtime.capabilities.spawnBranches, true);
+    rt.applyInitializeResult({
+      agentCapabilities: {
+        loadSession: true,
+        mcpCapabilities: { http: true },
+      },
+    });
+    assert.equal(runtime.capabilities.nativeResume, true);
+    assert.equal(runtime.capabilities.saveContext, true);
+    assert.equal(runtime.capabilities.spawnBranches, true);
+    const kiro = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
+    (kiro as any).applyInitializeResult({ agentCapabilities: { loadSession: false } });
+    assert.equal(kiro.capabilities.nativeResume, true, 'Kiro capabilities stay construction-time');
+  });
+
+  test('absorbModes upgrades Grok capabilities.modes when session/new returns availableModes', () => {
+    const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default');
+    assert.equal(grok.capabilities.modes, false);
+    (grok as any).absorbModes({ availableModes: [{ id: 'agent', name: 'Agent' }], currentModeId: 'agent' });
+    assert.equal(grok.capabilities.modes, true);
+    assert.equal((grok as any).globalAvailableModes[0].id, 'agent');
   });
 });

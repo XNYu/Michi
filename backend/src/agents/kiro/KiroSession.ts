@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
-import type { KiroRuntime } from "./KiroRuntime";
+import type { AcpAgentRuntime } from "../acp/AcpRuntime";
 import { followUpReminder } from "../preamble";
 import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "./acpErrors";
 
@@ -106,7 +106,7 @@ const BRANCH_OVERVIEW_TOOL_REMINDER = `
  *   - Perf timing of `first_chunk` (ChatManager — needs the original `tStart`).
  */
 export class KiroSession implements AgentSession {
-    public readonly runtimeId = "kiro";
+    public readonly runtimeId: string;
     public parentChatId?: string;
     private history: ChatMessage[] = [];
     private pendingAssistantBuf: string[] | undefined;
@@ -115,10 +115,11 @@ export class KiroSession implements AgentSession {
     constructor(
         public readonly id: string,
         public readonly nativeSessionId: string,
-        private readonly runtime: KiroRuntime,
+        private readonly runtime: AcpAgentRuntime,
         private readonly cwd: string,
         opts?: { parentChatId?: string; enableFollowUps?: boolean },
     ) {
+        this.runtimeId = runtime.id;
         this.parentChatId = opts?.parentChatId;
         this.enableFollowUps = opts?.enableFollowUps !== false;
     }
@@ -160,13 +161,19 @@ export class KiroSession implements AgentSession {
         // Append follow-up reminder for the model only — history stays clean.
         const userTurnCount = this.history.filter(m => m.role === "user").length;
         const reminder = followUpReminder(userTurnCount, this.enableFollowUps);
-        const textForModel = text + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
+        const sendOverviewReminder = typeof this.runtime.shouldSendBranchOverviewReminder === "function"
+            ? this.runtime.shouldSendBranchOverviewReminder()
+            : this.runtimeId !== "cursor" && this.runtimeId !== "grok";
+        const overviewReminder = sendOverviewReminder ? BRANCH_OVERVIEW_TOOL_REMINDER : "";
+        const textForModel = text + (reminder || "") + overviewReminder;
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`
             : textForModel;
         this.firstMessagePreamble = null;
-        const imageBlocks = buildKiroImageBlocks(input);
+        const imageBlocks = this.runtime.allowsImagePrompt?.(this.cwd) !== false
+            ? buildKiroImageBlocks(input)
+            : [];
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
         try {

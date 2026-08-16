@@ -43,7 +43,7 @@ interactive, so exploring an alternative never costs you the thread you were on.
 | **Map** | A tree visualization of how a conversation has branched. |
 | **Multi-pane** | View one, two, or three chats side by side in a single view. |
 | **Artifacts** | Save files, links, code, and images; pin them to a workspace or mention them with `@`. |
-| **Multi-runtime** | Codex, Claude Code, Kiro-CLI, Pi (multi-provider), and Antigravity, side by side in the same workspace. |
+| **Multi-runtime** | Codex, Claude Code, Kiro-CLI, Cursor CLI, Grok CLI, Pi (multi-provider), and Antigravity, side by side in the same workspace. |
 
 Attach files or images, add comments, quote earlier text, search messages, and
 export Markdown — all locally.
@@ -148,6 +148,8 @@ Michi is runtime-agnostic. Configure any of these from Settings:
 | **Kiro-CLI** | Kiro agent runtime. |
 | **Pi** | Multi-provider — OpenAI, Anthropic, Gemini, DeepSeek via API keys. |
 | **Antigravity** | Antigravity agent runtime. |
+| **Cursor** | Cursor CLI (`~/.local/bin/agent acp` — never Grok's `~/.grok/bin/agent`). Auth via `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` or an existing `agent login` cache. Official ACP modes: agent / plan / ask. |
+| **Grok** | Official xAI Grok CLI (`grok --no-auto-update agent stdio`). Prefers `grok login` cache, then `XAI_API_KEY` if set, then `grok.com`. Default model `grok-4.6`. |
 
 Provider keys such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
 and `DEEPSEEK_API_KEY` are read from the environment or entered in Settings.
@@ -207,7 +209,9 @@ people touch:
 - `MICHI_DEFAULT_RUNTIME` — choose the default runtime.
 - `MICHI_DATA_DIR` — choose where Michi stores its local data.
 - Provider keys — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
-  `DEEPSEEK_API_KEY`.
+  `DEEPSEEK_API_KEY`, `XAI_API_KEY` (Pi xai provider; also used by the Grok CLI runtime).
+- Cursor CLI — `CURSOR_CLI_BIN` (defaults to `~/.local/bin/agent`; never Grok's `~/.grok/bin/agent`), `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`.
+- Grok CLI — `GROK_CLI_BIN` (official xAI binary). Auth: `grok login` cache, optional `XAI_API_KEY`. Default model `grok-4.6`. Do not implement `grok -p`.
 
 ---
 

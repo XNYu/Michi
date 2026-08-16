@@ -40,6 +40,8 @@ const BUILTIN_DEFAULT_MODEL_BY_RUNTIME: Record<string, string> = {
   // Keep in lockstep with the default Pi provider (anthropic).
   pi: DEFAULT_MODELS.pi,
   kiro: "",
+  cursor: "",
+  grok: "grok-4.6",
 };
 
 // Hard-coded default reasoning level per runtime. Used when neither

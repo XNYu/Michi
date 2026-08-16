@@ -6,6 +6,8 @@ import { ClaudeRuntime } from "./claude/ClaudeRuntime";
 import { KiroRuntime } from "./kiro/KiroRuntime";
 import { CodexRuntime } from "./codex";
 import { AntigravityRuntime } from "./antigravity";
+import { CursorRuntime } from "./cursor/CursorRuntime";
+import { GrokRuntime } from "./grok/GrokRuntime";
 import { getProviderEnvBindings } from "./pi/piProviders";
 import type { RuntimeModelCache } from "./runtimeModelCache";
 
@@ -87,6 +89,28 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
         id: "antigravity",
         label: "Antigravity",
         create: (deps) => new AntigravityRuntime({ modelCache: deps.modelCache }),
+    },
+    {
+        id: "cursor",
+        label: "Cursor",
+        create: (deps) => new CursorRuntime(
+            deps.bridge,
+            deps.mcpRegistry,
+            deps.mcpPort ?? 3000,
+            deps.defaultCwd,
+            deps.modelCache,
+        ),
+    },
+    {
+        id: "grok",
+        label: "Grok",
+        create: (deps) => new GrokRuntime(
+            deps.bridge,
+            deps.mcpRegistry,
+            deps.mcpPort ?? 3000,
+            deps.defaultCwd,
+            deps.modelCache,
+        ),
     },
 ];
 
