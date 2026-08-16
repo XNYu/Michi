@@ -128,3 +128,8 @@ cfn-template.json
 extension/
 feasibility-of-background-execution-during-sleep-*.md
 mocks/
+
+# Large assets and temporary experiments
+/videos/
+/packages/
+/arch-shoot.mjs
