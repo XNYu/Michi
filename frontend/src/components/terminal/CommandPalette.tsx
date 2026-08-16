@@ -99,6 +99,19 @@ const ROW_LABEL = (active: boolean): React.CSSProperties => ({
   whiteSpace: 'nowrap',
 });
 
+export function openWorkspaceFromPalette(
+  projectId: string,
+  actions: {
+    selectProject: (projectId: string) => void;
+    setPage: (page: PageId) => void;
+    onClose: () => void;
+  },
+) {
+  actions.selectProject(projectId);
+  actions.setPage('home');
+  actions.onClose();
+}
+
 export default function CommandPalette({
   onClose,
   setPage,
@@ -189,9 +202,7 @@ export default function CommandPalette({
 
   const switchWorkspace = useCallback(
     (projectId: string) => {
-      selectProject(projectId);
-      setPage('dashboard');
-      onClose();
+      openWorkspaceFromPalette(projectId, { selectProject, setPage, onClose });
     },
     [selectProject, setPage, onClose],
   );
