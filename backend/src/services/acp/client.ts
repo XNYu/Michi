@@ -12,6 +12,7 @@ import type {
     AcpUpdate,
     AcpUserAnswer,
 } from "./types";
+import { formatMcpToolOutput, isPlaceholderToolOutput } from "./toolCallTranslate";
 
 /**
  * Idle timeout for an ACP RPC — reset every time we see progress on the
@@ -192,6 +193,8 @@ export class AcpClient {
     private lastMetadata = new Map<string, any>();
     private rawProbeState = new Map<string, { seq: number; prevAt: number; startedAt: number }>();
     private lastPromptSessionId: string | null = null;
+    /** Latest ACP toolCallId (+ last rawOutput) per session, for MCP result backfill. */
+    private inflightToolBySession = new Map<string, { toolCallId: string; lastOutput: unknown }>();
     private nextIncomingUserInputId = 0;
     private pendingUserInputs = new Map<number, {
         sessionId?: string;
@@ -440,6 +443,7 @@ export class AcpClient {
         if (msg && msg.id !== undefined && msg.id !== null && "method" in msg) {
             if (msg.method === "session/request_permission") {
                 const { sessionId, toolCall, options } = msg.params ?? {};
+                if (sessionId && toolCall) this.trackInflightTool(sessionId, toolCall);
                 const mapped = this.profile.mapPermissionOptions
                     ? this.profile.mapPermissionOptions(Array.isArray(options) ? options : [])
                     : options;
@@ -511,6 +515,7 @@ export class AcpClient {
 
         if (msg?.method === "session/update") {
             const sid: string | undefined = msg.params?.sessionId;
+            if (sid && msg.params?.update) this.trackInflightTool(sid, msg.params.update);
             if (BACKEND_STREAM_PROBE_ENABLED) this.writeRawUpdateProbe(sid, "session/update", msg.params?.update);
             if (sid) {
                 for (const p of this.pending.values()) {
@@ -696,6 +701,42 @@ export class AcpClient {
     }
 
     /**
+     * After a Michi HTTP MCP tools/call completes, push the real result onto
+     * the in-flight ACP tool card. Conservative: requires a known toolCallId
+     * for this session, an in-flight prompt, and a missing / `{success:true}`
+     * current output. Does not invent a toolCallId.
+     */
+    backfillToolOutput(sessionId: string, result: unknown): boolean {
+        if (!this.sessionInFlight.has(sessionId)) return false;
+        const inflight = this.inflightToolBySession.get(sessionId);
+        if (!inflight?.toolCallId) return false;
+        if (!isPlaceholderToolOutput(inflight.lastOutput)) return false;
+        const output = formatMcpToolOutput(result);
+        this.injectUpdate(sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: inflight.toolCallId,
+            rawOutput: output,
+        });
+        inflight.lastOutput = output;
+        return true;
+    }
+
+    private trackInflightTool(sessionId: string, update: any): void {
+        const id = typeof update?.toolCallId === "string" ? update.toolCallId : "";
+        if (!id) return;
+        const kind = update?.sessionUpdate;
+        if (kind && kind !== "tool_call" && kind !== "tool_call_update") return;
+        const prev = this.inflightToolBySession.get(sessionId);
+        let lastOutput: unknown;
+        if (update && Object.prototype.hasOwnProperty.call(update, "rawOutput")) {
+            lastOutput = update.rawOutput;
+        } else if (prev && prev.toolCallId === id) {
+            lastOutput = prev.lastOutput;
+        }
+        this.inflightToolBySession.set(sessionId, { toolCallId: id, lastOutput });
+    }
+
+    /**
      * Stream session/update events for a single prompt turn. Ends with a
      * synthetic `{ sessionUpdate: "turn_end", stopReason }` item so callers
      * have a uniform sentinel. Also emits synthetic
@@ -718,6 +759,7 @@ export class AcpClient {
         if (prev) await prev.catch(() => {});
 
         q.drain();
+        this.inflightToolBySession.delete(sessionId);
         if (BACKEND_STREAM_PROBE_ENABLED) this.rawProbeState.delete(sessionId);
 
         const preTurnMeta = this.lastMetadata.get(sessionId);
@@ -866,6 +908,7 @@ export class AcpClient {
 
     destroySession(sessionId: string): void {
         this.sessionQueues.delete(sessionId);
+        this.inflightToolBySession.delete(sessionId);
     }
 
     async shutdown(): Promise<void> {

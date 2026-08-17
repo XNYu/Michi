@@ -306,6 +306,7 @@ export class AcpAgentRuntime implements AgentRuntime {
             // do not expose it. Satisfy the required callback with a stub.
             onShowImage: () => ({ error: `show_image is not supported on the ${this.label} runtime` }),
             onAskUser: (questions) => this.handleAskUser(getSlotId()!, questions),
+            onMcpToolResult: (toolName, result) => this.handleMcpToolResult(getSlotId()!, toolName, result),
         };
     }
 
@@ -399,6 +400,14 @@ export class AcpAgentRuntime implements AgentRuntime {
             sessionUpdate: "branch_overview",
             overview: cleaned,
         });
+    }
+
+    private handleMcpToolResult(slotId: string, _toolName: string, result: unknown): void {
+        const slot = this.mcpRegistry?.get(slotId);
+        if (!slot) return;
+        const sid = slot.parentChatId;
+        if (!sid || sid === "__pending__") return;
+        this.getClient(slot.cwd)?.backfillToolOutput(sid, result);
     }
 
     private async handleAskUser(

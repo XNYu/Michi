@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
+import { translateAcpToolCall } from "../../services/acp/toolCallTranslate";
 import type { AcpAgentRuntime } from "../acp/AcpRuntime";
 import { followUpReminder } from "../preamble";
 import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "./acpErrors";
@@ -45,6 +46,33 @@ const KIRO_METADATA_DONE_TOOL_RESULT =
 
 function stripMetadataCompletionInstruction(output: string): string {
     return output.split(KIRO_METADATA_DONE_TOOL_RESULT).join("Branch overview updated.");
+}
+
+const MAX_TOOL_PAYLOAD = 16 * 1024;
+
+function clipToolPayload(value: string | undefined): string | undefined {
+    if (value == null) return undefined;
+    return value.length > MAX_TOOL_PAYLOAD ? value.slice(0, MAX_TOOL_PAYLOAD) : value;
+}
+
+function toToolEvent(
+    kind: "tool_call" | "tool_call_update",
+    update: Record<string, any>,
+): Extract<NormalizedEvent, { kind: "tool_call" | "tool_call_update" }> {
+    const translated = translateAcpToolCall(update);
+    const output = translated.output
+        ? stripMetadataCompletionInstruction(translated.output)
+        : undefined;
+    return {
+        kind,
+        toolCallId: translated.toolCallId,
+        title: translated.title,
+        status: translated.status,
+        kindType: translated.kindType,
+        detail: translated.detail,
+        inputJson: clipToolPayload(translated.inputJson),
+        output: clipToolPayload(output),
+    };
 }
 
 class StreamingSentinelStripper {
@@ -287,35 +315,7 @@ export class KiroSession implements AgentSession {
                     })),
                 };
             } else if (kind === "tool_call" || kind === "tool_call_update") {
-                const rawInput = update.rawInput;
-                const toolTitle = update.title || "";
-                const purpose = typeof rawInput?.__tool_use_purpose === "string"
-                    ? rawInput.__tool_use_purpose
-                    : typeof rawInput?.description === "string"
-                        ? rawInput.description
-                        : typeof rawInput?.file_path === "string"
-                            ? `${toolTitle}: ${rawInput.file_path}`
-                            : undefined;
-                const inputStr = rawInput != null
-                    ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
-                    : undefined;
-                const rawOutputStr = update.rawOutput != null
-                    ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
-                    : undefined;
-                const outputStr = rawOutputStr
-                    ? stripMetadataCompletionInstruction(rawOutputStr)
-                    : undefined;
-                const MAX_PAYLOAD = 16 * 1024;
-                yield {
-                    kind,
-                    toolCallId: update.toolCallId || "",
-                    title: toolTitle,
-                    status: update.status || "",
-                    kindType: update.kind || undefined,
-                    detail: purpose,
-                    inputJson: inputStr && inputStr.length > MAX_PAYLOAD ? inputStr.slice(0, MAX_PAYLOAD) : inputStr,
-                    output: outputStr && outputStr.length > MAX_PAYLOAD ? outputStr.slice(0, MAX_PAYLOAD) : outputStr,
-                };
+                yield toToolEvent(kind, update);
             } else if (kind === "__heartbeat__") {
                 yield { kind: "heartbeat", idleMs: update.idleMs || 0 };
             } else if (kind === "spawn_branches") {
@@ -358,13 +358,23 @@ export class KiroSession implements AgentSession {
                     yield { kind: "follow_ups" as const, followUps };
                 }
             } else if (kind === "permission_request") {
-                // Incoming permission request from kiro-cli — forward to SSE
-                // so the frontend can show an approval dialog.
+                // Incoming permission request from the ACP agent — forward to
+                // SSE so the frontend can show an approval dialog. Cursor (and
+                // similar) put the real tool name / args on toolCall here
+                // while the earlier tool_call event was an empty "MCP: tool"
+                // stub, so also emit a tool_call_update to enrich the chip.
+                const toolCall = update.toolCall && typeof update.toolCall === "object"
+                    ? update.toolCall
+                    : {};
+                const enriched = toToolEvent("tool_call_update", toolCall);
+                if (enriched.toolCallId) {
+                    yield enriched;
+                }
                 yield {
                     kind: "permission_request" as const,
                     requestId: update.requestId,
-                    toolCallId: update.toolCall?.toolCallId,
-                    title: update.toolCall?.title ?? "Tool call",
+                    toolCallId: enriched.toolCallId || update.toolCall?.toolCallId,
+                    title: enriched.title || update.toolCall?.title || "Tool call",
                     options: Array.isArray(update.options) ? update.options : [],
                 };
             } else if (kind === "subagent_list_update") {

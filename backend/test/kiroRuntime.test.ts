@@ -345,3 +345,43 @@ describe('ACP runtime capabilities + MCP attach per profile', () => {
     assert.equal((grok as any).globalAvailableModes[0].id, 'agent');
   });
 });
+
+describe('ACP MCP tool-result backfill', () => {
+  test('slot callback forwards the real MCP result to the live ACP client', () => {
+    let backfilled: { sessionId: string; result: unknown } | null = null;
+    const registry = {
+      get: (slotId: string) => slotId === 'slot-mcp'
+        ? { parentChatId: 'acp-sid-1', cwd: '/tmp/a' }
+        : undefined,
+    } as any;
+    const runtime = new KiroRuntime(bridge, registry, 0, '/tmp/default');
+    const rt = runtime as any;
+    rt.pool.set('/tmp/a', {
+      backfillToolOutput: (sessionId: string, result: unknown) => {
+        backfilled = { sessionId, result };
+        return true;
+      },
+    });
+    const callbacks = rt.makeSlotCallbacks(() => 'slot-mcp');
+    callbacks.onMcpToolResult('list_threads', { content: [{ type: 'text', text: '{"ok":true}' }] });
+    assert.deepEqual(backfilled, {
+      sessionId: 'acp-sid-1',
+      result: { content: [{ type: 'text', text: '{"ok":true}' }] },
+    });
+  });
+
+  test('does not invent a backfill when the slot is still pending', () => {
+    let called = 0;
+    const registry = {
+      get: () => ({ parentChatId: '__pending__', cwd: '/tmp/a' }),
+    } as any;
+    const runtime = new KiroRuntime(bridge, registry, 0, '/tmp/default');
+    const rt = runtime as any;
+    rt.pool.set('/tmp/a', {
+      backfillToolOutput: () => { called += 1; return false; },
+    });
+    const callbacks = rt.makeSlotCallbacks(() => 'slot-pending');
+    callbacks.onMcpToolResult('list_threads', { content: [] });
+    assert.equal(called, 0);
+  });
+});

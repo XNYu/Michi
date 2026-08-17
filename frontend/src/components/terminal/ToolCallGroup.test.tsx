@@ -254,3 +254,13 @@ describe('ToolCallGroup — SubAgent spine Now: line', () => {
     expect(container.textContent).not.toContain('Now:');
   });
 });
+
+describe('ToolCallGroup — permission-enriched title', () => {
+  it('renders a Cursor-style MCP title that prettifyToolTitle does not strip', () => {
+    const tools = [tool('1', 'michi-list_threads: list_threads', 'pending', 'other')];
+    const { getByText } = render(
+      <ToolCallGroup tools={tools} defaultExpanded={true} />,
+    );
+    expect(getByText('michi-list_threads: list_threads')).toBeTruthy();
+  });
+});

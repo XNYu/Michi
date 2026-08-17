@@ -107,6 +107,8 @@ export interface McpSlot {
         options: Array<{ label: string; description?: string }>;
         multiSelect: boolean;
     }>) => Promise<Record<string, string> | null>;
+    /** Best-effort UI backfill of the real MCP result onto the in-flight ACP tool card. */
+    onMcpToolResult?: (toolName: string, result: unknown) => void;
 }
 
 export interface McpSlotCallbacks {
@@ -127,6 +129,7 @@ export interface McpSlotCallbacks {
         | { behavior: "deny"; message: string }
     >;
     onAskUser?: McpSlot["onAskUser"];
+    onMcpToolResult?: McpSlot["onMcpToolResult"];
 }
 
 export class McpSlotRegistry {
@@ -196,11 +199,34 @@ function resolveSlotBinding(slot: McpSlot): { workspaceId: string | null; nodeId
  * A new McpServer + transport pair is built per-slot on demand so the
  * tool handler has a closure over the specific slot.
  */
+function notifyMcpToolResult(slot: McpSlot, toolName: string, result: unknown): void {
+    if (!slot.onMcpToolResult) return;
+    setImmediate(() => {
+        try {
+            slot.onMcpToolResult?.(toolName, result);
+        } catch {
+            // Backfill is best-effort; never fail the MCP response.
+        }
+    });
+}
+
+function attachMcpToolResultNotify(server: McpServer, slot: McpSlot): void {
+    const proto = server as unknown as { registerTool: (...args: any[]) => unknown };
+    const original = proto.registerTool.bind(server);
+    proto.registerTool = (name: string, config: unknown, handler: (...args: any[]) => unknown) =>
+        original(name, config, async (...args: any[]) => {
+            const result = await handler(...args);
+            notifyMcpToolResult(slot, name, result);
+            return result;
+        });
+}
+
 export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     const server = new McpServer(
         { name: "michi-tools", version: "1.0.0" },
         { capabilities: { tools: {} } },
     );
+    attachMcpToolResultNotify(server, slot);
 
     // Side-effect tools that mutate the chat graph or filesystem. The
     // globalContext tools (list_threads / search_messages / read_node) are

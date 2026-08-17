@@ -103,3 +103,43 @@ describe('AcpClient cancellation transport', () => {
     assert.equal(client.pending.size, 0);
   });
 });
+
+describe('AcpClient MCP tool-result backfill', () => {
+  test('injects a tool_call_update only for an in-flight placeholder tool', () => {
+    const client = new AcpClient('/bin/false', '/tmp') as any;
+    const pushed: any[] = [];
+    client.sessionQueues.set('s1', { push: (item: unknown) => pushed.push(item) });
+    client.sessionInFlight.set('s1', Promise.resolve());
+    client.inflightToolBySession.set('s1', { toolCallId: 'tc-1', lastOutput: { success: true } });
+
+    assert.equal(client.backfillToolOutput('s1', { content: [{ type: 'text', text: '{"n":2}' }] }), true);
+    assert.equal(pushed.length, 1);
+    assert.deepEqual(pushed[0].update, {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-1',
+      rawOutput: '{"n":2}',
+    });
+  });
+
+  test('does not invent a toolCallId when none is in flight', () => {
+    const client = new AcpClient('/bin/false', '/tmp') as any;
+    const pushed: any[] = [];
+    client.sessionQueues.set('s1', { push: (item: unknown) => pushed.push(item) });
+    client.sessionInFlight.set('s1', Promise.resolve());
+    assert.equal(client.backfillToolOutput('s1', { content: [{ type: 'text', text: 'x' }] }), false);
+    assert.equal(pushed.length, 0);
+  });
+
+  test('does not overwrite a real existing output', () => {
+    const client = new AcpClient('/bin/false', '/tmp') as any;
+    const pushed: any[] = [];
+    client.sessionQueues.set('s1', { push: (item: unknown) => pushed.push(item) });
+    client.sessionInFlight.set('s1', Promise.resolve());
+    client.inflightToolBySession.set('s1', {
+      toolCallId: 'tc-1',
+      lastOutput: { items: [{ Json: { ok: true } }] },
+    });
+    assert.equal(client.backfillToolOutput('s1', { content: [{ type: 'text', text: 'late' }] }), false);
+    assert.equal(pushed.length, 0);
+  });
+});

@@ -240,3 +240,51 @@ describe('reduceNodes bind-chat — currentModeId preservation', () => {
     expect(after.n1.currentModeId).toBe('security-reviewer');
   });
 });
+
+describe('reduceNodes tool-call-update — title / input / output', () => {
+  it('replaces title, inputJson, and output when a later update provides them', () => {
+    const started = reduceNodes({ n1: makeNode() }, {
+      type: 'tool-call',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: { id: 'tc-1', title: 'MCP: tool', kind: 'other', status: 'pending' },
+    });
+    expect(started.n1.messages[0].toolCalls?.[0]?.title).toBe('MCP: tool');
+
+    const after = reduceNodes(started, {
+      type: 'tool-call-update',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: {
+        id: 'tc-1',
+        title: 'michi-list_threads: list_threads',
+        status: 'pending',
+        inputJson: '{\n  "keyword": "probe"\n}',
+        output: '{"threads":[]}',
+      },
+    });
+    const tool = after.n1.messages[0].toolCalls?.[0];
+    expect(tool?.title).toBe('michi-list_threads: list_threads');
+    expect(tool?.inputJson).toBe('{\n  "keyword": "probe"\n}');
+    expect(tool?.output).toBe('{"threads":[]}');
+  });
+
+  it('keeps a previously enriched title when a later update omits title', () => {
+    const started = reduceNodes({ n1: makeNode() }, {
+      type: 'tool-call',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: { id: 'tc-1', title: 'michi-list_threads: list_threads', status: 'pending' },
+    });
+    const after = reduceNodes(started, {
+      type: 'tool-call-update',
+      nodeId: 'n1',
+      assistantId: 'a1',
+      tool: { id: 'tc-1', title: '', status: 'completed', output: '{"ok":true}' },
+    });
+    const tool = after.n1.messages[0].toolCalls?.[0];
+    expect(tool?.title).toBe('michi-list_threads: list_threads');
+    expect(tool?.output).toBe('{"ok":true}');
+    expect(tool?.status).toBe('completed');
+  });
+});
