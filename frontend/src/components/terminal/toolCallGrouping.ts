@@ -253,17 +253,28 @@ export function filterSubagentRelayedTools(
 }
 
 /**
- * Strips the `mcp__<server>__` prefix that Claude CLI prepends to MCP tool
- * names so a chip reads `list_threads` instead of
- * `mcp__michi-tools__list_threads`. Server names may contain hyphens; the
- * segment separator is always `__`, and tool names use single underscores, so
- * splitting on `__` keeps the tool segment intact. Non-MCP titles pass through.
+ * Short MCP tool names for chips.
+ * Claude: `mcp__michi-tools__list_threads` → `list_threads`
+ * Cursor: `michi-list_threads: list_threads` → `list_threads`
+ * Grok / bare: `michi__list_threads` or `michi-list_threads` → `list_threads`
+ * Non-MCP titles pass through.
  */
 export function prettifyToolTitle(title: string): string {
-  if (!title.startsWith('mcp__')) return title;
-  const parts = title.split('__');
-  if (parts.length < 3) return title;
-  return parts.slice(2).join('__');
+  const trimmed = title.trim();
+  if (!trimmed) return title;
+
+  const cursorPrefixed = trimmed.match(/^michi[-_][\w.-]+:\s*([\w.-]+)$/i);
+  if (cursorPrefixed) return cursorPrefixed[1];
+
+  if (trimmed.startsWith('mcp__')) {
+    const parts = trimmed.split('__');
+    if (parts.length >= 3) return parts.slice(2).join('__');
+  }
+
+  const michiPrefixed = trimmed.match(/^michi(?:__|-)(.+)$/i);
+  if (michiPrefixed) return michiPrefixed[1];
+
+  return trimmed;
 }
 
 export function summarizeTools(tools: ToolCallState[]): string {

@@ -338,6 +338,16 @@ describe('prettifyToolTitle', () => {
   it('leaves a malformed mcp name (no tool segment) untouched', () => {
     expect(prettifyToolTitle('mcp__michi-tools')).toBe('mcp__michi-tools');
   });
+
+  it('strips Cursor ACP michi-<tool>: <tool> titles', () => {
+    expect(prettifyToolTitle('michi-list_threads: list_threads')).toBe('list_threads');
+    expect(prettifyToolTitle('michi-set_follow_ups: set_follow_ups')).toBe('set_follow_ups');
+  });
+
+  it('strips a bare michi- / michi__ prefix', () => {
+    expect(prettifyToolTitle('michi-list_threads')).toBe('list_threads');
+    expect(prettifyToolTitle('michi__list_threads')).toBe('list_threads');
+  });
 });
 
 describe('summarizeTools — MCP tool (regression)', () => {

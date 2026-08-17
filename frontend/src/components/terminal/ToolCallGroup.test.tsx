@@ -256,11 +256,12 @@ describe('ToolCallGroup — SubAgent spine Now: line', () => {
 });
 
 describe('ToolCallGroup — permission-enriched title', () => {
-  it('renders a Cursor-style MCP title that prettifyToolTitle does not strip', () => {
+  it('renders a Cursor MCP title as the short tool name', () => {
     const tools = [tool('1', 'michi-list_threads: list_threads', 'pending', 'other')];
-    const { getByText } = render(
+    const { getByText, queryByText } = render(
       <ToolCallGroup tools={tools} defaultExpanded={true} />,
     );
-    expect(getByText('michi-list_threads: list_threads')).toBeTruthy();
+    expect(getByText('list_threads')).toBeTruthy();
+    expect(queryByText('michi-list_threads: list_threads')).toBeNull();
   });
 });
