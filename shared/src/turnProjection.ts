@@ -9,6 +9,11 @@ export interface DurableToolCall {
   inputJson?: string;
   output?: string;
   textOffset?: number;
+  /** Wall-clock ms when the tool_call event was first projected. Optional:
+   *  turns persisted before this field exists simply omit durations. */
+  startedAt?: number;
+  /** Wall-clock ms when the tool first reached a terminal status. */
+  endedAt?: number;
 }
 
 export type DurableAssistantBlock =
@@ -312,13 +317,15 @@ function appendText(
 function mergeTool(previous: DurableToolCall | undefined, update: ToolCallStreamPayload): DurableToolCall {
   const merged: DurableToolCall = previous
     ? { ...previous }
-    : { id: update.toolCallId, title: '', status: '' };
+    : { id: update.toolCallId, title: '', status: '', startedAt: Date.now() };
   if (update.title) merged.title = update.title;
   if (update.status) merged.status = update.status;
   if (update.kind) merged.kind = update.kind;
   if (update.detail) merged.detail = update.detail;
   if (update.inputJson) merged.inputJson = update.inputJson;
   if (update.output) merged.output = update.output;
+  // Stamp completion once, on the first transition into a terminal status.
+  if (!merged.endedAt && !isActiveToolStatus(merged.status)) merged.endedAt = Date.now();
   return merged;
 }
 
@@ -363,7 +370,7 @@ function finalizeMessage(message: DurableMessage, interrupted = false): DurableM
     ),
     toolCalls: message.toolCalls.map((tool) => {
       const active = isActiveToolStatus(tool.status);
-      return active ? { ...tool, status: finalStatus } : tool;
+      return active ? { ...tool, status: finalStatus, endedAt: tool.endedAt ?? Date.now() } : tool;
     }),
   };
 }

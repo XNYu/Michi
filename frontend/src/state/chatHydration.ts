@@ -105,6 +105,8 @@ function parseToolCalls(raw: unknown): ToolCallState[] {
       inputJson: asString(t.inputJson),
       output: asString(t.output),
       textOffset: asOptionalNumber(t.textOffset),
+      startedAt: asOptionalNumber(t.startedAt),
+      endedAt: asOptionalNumber(t.endedAt),
     }];
   });
 }

@@ -44,13 +44,19 @@ describe('durable turn projector', () => {
     assert.equal(turn.userMessage?.id, 'u-a-node-1-turn-1');
     assert.equal(turn.assistantMessage.id, 'a-node-1-turn-1');
     assert.equal(turn.assistantMessage.content, 'answer done');
-    assert.deepEqual(turn.assistantMessage.toolCalls, [{
+    const [projectedTool, ...extraTools] = turn.assistantMessage.toolCalls;
+    assert.equal(extraTools.length, 0);
+    // Projection stamps wall-clock start/end; assert presence, compare the rest.
+    assert.equal(typeof projectedTool.startedAt, 'number');
+    assert.equal(typeof projectedTool.endedAt, 'number');
+    const { startedAt: _s, endedAt: _e, ...toolRest } = projectedTool;
+    assert.deepEqual(toolRest, {
       id: 'tool-1',
       title: 'Read',
       status: 'completed',
       textOffset: 8,
       output: 'ok',
-    }]);
+    });
     assert.deepEqual(turn.assistantMessage.blocks.map((block) => block.kind), [
       'thinking', 'tool', 'answer', 'image', 'answer',
     ]);

@@ -224,7 +224,7 @@ describe('MessageBlock — subagents forwarding', () => {
       />,
     );
     expect(getByTestId('subagent-spine-row')).toBeTruthy();
-    expect(container.textContent).toContain('Now: Glob');
+    expect(container.textContent).toContain('now: Glob');
   });
 });
 

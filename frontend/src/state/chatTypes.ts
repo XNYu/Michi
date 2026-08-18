@@ -58,6 +58,12 @@ export interface ToolCallState {
    *  section-local rawOffset; this field is kept for older projections and
    *  pre-block persisted data. */
   textOffset?: number;
+  /** Wall-clock ms when the tool_call was first projected (see shared
+   *  turnProjection mergeTool). Absent on turns persisted before the field
+   *  existed — consumers must degrade to "no duration shown". */
+  startedAt?: number;
+  /** Wall-clock ms when the tool first reached a terminal status. */
+  endedAt?: number;
 }
 
 export type AssistantBlock =

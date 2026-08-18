@@ -1152,6 +1152,66 @@ html[data-vibrancy="on"],
   vertical-align: middle;
   animation: bounce-dot 1.2s infinite ease-in-out;
 }
+
+/* ── Tool call / thinking status language (ToolCallGroup, TermThoughtBlock) ──
+   One glyph system: breathing accent dot = running, muted dot = done,
+   red × = failed (rendered inline, no class). Labels shimmer while live. */
+.term-dot-i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--term-faint);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+.term-dot-i--run {
+  background: var(--term-accent);
+  opacity: 1;
+  animation: termBreathe 1.6s ease-in-out infinite;
+}
+@keyframes termBreathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+/* Streaming label shimmer — a highlight sweeping across the text, in the
+   Claude-app family. Colors ride --term-* tokens so it adapts per theme. */
+.term-shimmer {
+  background: linear-gradient(90deg,
+    var(--term-muted) 0%, var(--term-muted) 35%,
+    var(--term-fg) 50%,
+    var(--term-muted) 65%, var(--term-muted) 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: termShimmer 2.2s linear infinite;
+}
+@keyframes termShimmer {
+  0% { background-position: 110% 0; }
+  100% { background-position: -110% 0; }
+}
+/* Expanded tool-rows entrance — a soft fade/slide on mount. Collapse is
+   intentionally instant (mount/unmount), per "collapse fast, expand soft". */
+.tool-rows-in {
+  animation: toolRowsIn 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes toolRowsIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-dot-i--run { animation: none; opacity: 1; }
+  .term-shimmer {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--term-muted);
+  }
+  .tool-rows-in { animation: none; }
+}
+
 @keyframes tMapNodeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

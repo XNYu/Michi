@@ -80,7 +80,7 @@ describe('summarizeTools', () => {
         t('2', 'Read b', 'read'),
         t('3', 'Read c', 'read'),
       ]),
-    ).toBe('Read 3 files');
+    ).toBe('read 3 files');
   });
 
   it('multiple kinds: comma-joined bucket phrases', () => {
@@ -90,7 +90,7 @@ describe('summarizeTools', () => {
         t('2', 'Read b', 'read'),
         t('3', 'Bash npm test', 'bash'),
       ]),
-    ).toBe('Read 2 files, ran 1 command');
+    ).toBe('read 2 files, ran 1 command');
   });
 
   it('unknown kind falls back to generic phrasing', () => {
@@ -99,7 +99,7 @@ describe('summarizeTools', () => {
         t('1', 'Mystery 1', 'mystery'),
         t('2', 'Mystery 2', 'mystery'),
       ]),
-    ).toBe('Used 2 tools');
+    ).toBe('used 2 tools');
   });
 
   it('mixed: one failed appends · 1 failed', () => {
@@ -109,7 +109,7 @@ describe('summarizeTools', () => {
         t('2', 'Read b', 'read', 'error'),
         t('3', 'Bash x', 'bash', 'completed'),
       ]),
-    ).toBe('Read 2 files, ran 1 command · 1 failed');
+    ).toBe('read 2 files, ran 1 command · 1 failed');
   });
 
   it('no kind, no title falls back to generic', () => {
@@ -118,7 +118,7 @@ describe('summarizeTools', () => {
         { id: '1', title: '', status: 'completed' },
         { id: '2', title: '', status: 'completed' },
       ]),
-    ).toBe('Used 2 tools');
+    ).toBe('used 2 tools');
   });
 
   it('summarizes Claude Agent tool calls as SubAgent work', () => {

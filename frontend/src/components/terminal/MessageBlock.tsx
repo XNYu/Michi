@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
-import { isRunningStatus } from './toolCallGrouping';
+import { isRunningStatus, formatDurationMs, toolSpanMs } from './toolCallGrouping';
 import { ToolCallGroup } from './ToolCallGroup';
 import { type TerminalDensity } from '../../state/prefs';
 import type { PlanEntry } from '../../services/api';
@@ -248,24 +248,48 @@ function CodexStepList({ text, streaming }: { text: string; streaming?: boolean 
   );
 }
 
+/**
+ * Ephemeral thinking timer: stamps when `streaming` first turns true and
+ * reports elapsed ms once it turns false. Hydrated (never-streaming) messages
+ * return undefined — the label degrades to a duration-less form.
+ */
+function useThinkingTimer(streaming: boolean | undefined): number | undefined {
+  const startRef = useRef<number | null>(null);
+  const [elapsed, setElapsed] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (streaming && startRef.current == null) {
+      startRef.current = Date.now();
+      return;
+    }
+    if (!streaming && startRef.current != null) {
+      setElapsed((prev) => prev ?? Date.now() - startRef.current!);
+    }
+  }, [streaming]);
+  return elapsed;
+}
+
 function TermThoughtBlock({
   text,
   streaming,
   children,
   toolCount,
   runtimeId,
+  durationMs,
 }: {
   text: string;
   streaming?: boolean;
   children?: React.ReactNode;
   toolCount?: number;
   runtimeId?: string | null;
+  /** Fallback duration (e.g. tool-span of the run) for hydrated turns. */
+  durationMs?: number;
 }) {
   // Default mode: tail while streaming, collapsed once finished.
   // User clicks cycle: tail/collapsed → expanded → (streaming ? tail : collapsed).
   const [userMode, setUserMode] = useState<ThoughtMode | null>(null);
   const tailRef = useRef<HTMLDivElement | null>(null);
   const expandedRef = useRef<HTMLDivElement | null>(null);
+  const liveElapsed = useThinkingTimer(streaming);
 
   // Once streaming flips false, drop any sticky 'tail' override so the block
   // auto-collapses to 0 rows. 'expanded' is preserved (user is reading).
@@ -297,17 +321,46 @@ function TermThoughtBlock({
     }
   };
 
-  const marker = mode === 'expanded' ? '▾' : '▸';
+  // "thought for 12s" when a duration is known, bare "thoughts" otherwise.
+  // Suffix: embedded tool-call count, or Codex reasoning step count.
+  const dur = liveElapsed ?? durationMs;
   const codexStepCount = runtimeId === 'codex'
     ? text.split('\n').filter((s) => s.trim().length > 0).length
     : 0;
-  const headerLabel = mode === 'expanded'
-    ? 'HIDE REASONING'
-    : toolCount && toolCount > 0
-      ? `WORKED THROUGH ${toolCount} ${toolCount === 1 ? 'STEP' : 'STEPS'}`
-      : runtimeId === 'codex' && codexStepCount > 0 && !streaming
-        ? `WORKED THROUGH ${codexStepCount} ${codexStepCount === 1 ? 'STEP' : 'STEPS'}`
-        : 'THINKING';
+  const base = dur != null ? `thought for ${formatDurationMs(dur)}` : 'thoughts';
+  const suffix = toolCount && toolCount > 0
+    ? ` · ${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`
+    : codexStepCount > 0
+      ? ` · ${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
+      : '';
+  const doneLabel = `${base}${suffix}`;
+
+  const body = (ref: React.Ref<HTMLDivElement>, tail: boolean) => (
+    <div
+      ref={ref}
+      style={{
+        paddingLeft: 10,
+        marginLeft: 2,
+        borderLeft: '1px solid var(--term-line)',
+        color: 'var(--term-muted)',
+        lineHeight: 1.55,
+        marginTop: 4,
+        ...(tail ? { maxHeight: THOUGHT_TAIL_MAX_HEIGHT, overflow: 'hidden' } : null),
+      }}
+    >
+      {runtimeId === 'codex' ? (
+        <CodexStepList text={text} streaming={streaming} />
+      ) : (
+        <MarkdownContent
+          text={text}
+          size="xs"
+          style={thoughtProseVars}
+          className="[&_a]:underline"
+        />
+      )}
+      {children}
+    </div>
+  );
 
   return (
     <div style={{ marginBottom: 8, fontSize: 11 }}>
@@ -315,67 +368,38 @@ function TermThoughtBlock({
         onClick={handleToggle}
         style={{
           cursor: 'pointer',
-          fontSize: 9.5,
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 7,
+          fontSize: 11,
           color: 'var(--term-muted)',
-          letterSpacing: '.12em',
           fontFamily: 'var(--ui-font)',
           userSelect: 'none',
         }}
+        className="t-hover-fg"
       >
-        {marker} {headerLabel}
+        {streaming ? (
+          <>
+            {mode === 'expanded' ? (
+              <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>▾</span>
+            ) : (
+              <span aria-hidden style={{ width: 8, display: 'inline-flex', flexShrink: 0, alignSelf: 'center' }}>
+                <span className="term-dot-i term-dot-i--run" />
+              </span>
+            )}
+            <span className="term-shimmer">thinking</span>
+          </>
+        ) : (
+          <>
+            <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
+              {mode === 'expanded' ? '▾' : '▸'}
+            </span>
+            <span>{doneLabel}</span>
+          </>
+        )}
       </div>
-      {mode === 'tail' && (
-        <div
-          ref={tailRef}
-          style={{
-            paddingLeft: 8,
-            borderLeft: '2px solid var(--term-line)',
-            color: 'var(--term-muted)',
-            fontStyle: 'italic',
-            lineHeight: 1.5,
-            marginTop: 4,
-            maxHeight: THOUGHT_TAIL_MAX_HEIGHT,
-            overflow: 'hidden',
-          }}
-        >
-          {runtimeId === 'codex' ? (
-            <CodexStepList text={text} streaming={streaming} />
-          ) : (
-            <MarkdownContent
-              text={text}
-              size="xs"
-              style={thoughtProseVars}
-              className="[&_a]:underline"
-            />
-          )}
-          {children}
-        </div>
-      )}
-      {mode === 'expanded' && (
-        <div
-          ref={expandedRef}
-          style={{
-            paddingLeft: 8,
-            borderLeft: '2px solid var(--term-line)',
-            color: 'var(--term-muted)',
-            fontStyle: 'italic',
-            lineHeight: 1.5,
-            marginTop: 4,
-          }}
-        >
-          {runtimeId === 'codex' ? (
-            <CodexStepList text={text} streaming={streaming} />
-          ) : (
-            <MarkdownContent
-              text={text}
-              size="xs"
-              style={thoughtProseVars}
-              className="[&_a]:underline"
-            />
-          )}
-          {children}
-        </div>
-      )}
+      {mode === 'tail' && body(tailRef, true)}
+      {mode === 'expanded' && body(expandedRef, false)}
     </div>
   );
 }
@@ -643,8 +667,11 @@ function ThinkingRunViewInner({ blocks, tools, streaming, subagents, runtimeId }
   const text = useMemo(() => thinkingRunRawText(blocks), [blocks]);
   const groups = useMemo(() => thinkingToolGroups(blocks, toolsById), [blocks, toolsById]);
   const toolCount = useMemo(() => groups.reduce((n, g) => n + g.length, 0), [groups]);
+  // Hydrated turns have no live thinking timer; the run's tool-call span is
+  // the best available duration approximation.
+  const spanMs = useMemo(() => toolSpanMs(tools), [tools]);
   return (
-    <TermThoughtBlock text={text} streaming={streaming} toolCount={toolCount} runtimeId={runtimeId}>
+    <TermThoughtBlock text={text} streaming={streaming} toolCount={toolCount} runtimeId={runtimeId} durationMs={spanMs}>
       {groups.length > 0
         ? groups.map((group) => (
             <ToolCallGroup

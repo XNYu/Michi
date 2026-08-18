@@ -72,13 +72,13 @@ export interface SubagentToolInfo {
 }
 
 const BUCKETS: Record<BucketKey, BucketDef> = {
-  read:    { verb: 'Read',    noun: 'file' },
-  edit:    { verb: 'Edited',  noun: 'file' },
-  write:   { verb: 'Created', noun: 'file' },
-  bash:    { verb: 'Ran',     noun: 'command' },
-  grep:    { verb: 'Searched', noun: 'pattern' },
-  glob:    { verb: 'Listed',  noun: 'path' },
-  unknown: { verb: 'Used',    noun: 'tool' },
+  read:    { verb: 'read',     noun: 'file' },
+  edit:    { verb: 'edited',   noun: 'file' },
+  write:   { verb: 'created',  noun: 'file' },
+  bash:    { verb: 'ran',      noun: 'command' },
+  grep:    { verb: 'searched', noun: 'pattern' },
+  glob:    { verb: 'listed',   noun: 'path' },
+  unknown: { verb: 'used',     noun: 'tool' },
 };
 
 function bucketKeyForTool(tool: ToolCallState): BucketKey {
@@ -277,9 +277,50 @@ export function prettifyToolTitle(title: string): string {
   return trimmed;
 }
 
-export function summarizeTools(tools: ToolCallState[]): string {
+export function failedToolCount(tools: readonly ToolCallState[]): number {
+  return tools.reduce((n, t) => n + (isFailedStatus(t.status) ? 1 : 0), 0);
+}
+
+/**
+ * Duration of a single tool call, from projection-stamped timestamps.
+ * Undefined for turns persisted before timestamps existed.
+ */
+export function toolDurationMs(tool: ToolCallState): number | undefined {
+  if (tool.startedAt == null || tool.endedAt == null) return undefined;
+  const d = tool.endedAt - tool.startedAt;
+  return d >= 0 ? d : undefined;
+}
+
+/**
+ * Wall-clock span of a group: earliest startedAt → latest endedAt across
+ * tools that carry timestamps. Undefined when none do.
+ */
+export function toolSpanMs(tools: readonly ToolCallState[]): number | undefined {
+  let min: number | undefined;
+  let max: number | undefined;
+  for (const t of tools) {
+    if (t.startedAt != null) min = min == null ? t.startedAt : Math.min(min, t.startedAt);
+    if (t.endedAt != null) max = max == null ? t.endedAt : Math.max(max, t.endedAt);
+  }
+  if (min == null || max == null || max < min) return undefined;
+  return max - min;
+}
+
+/** "0.3s" below 10s, "12s" below 1m, "1m 12s" beyond. */
+export function formatDurationMs(ms: number): string {
+  if (ms < 10_000) return `${Math.max(0.1, Math.round(ms / 100) / 10).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+/**
+ * Base summary without the failed-count suffix, so renderers can color the
+ * failure fragment independently (color marks state, never whole rows).
+ */
+export function summarizeToolsBase(tools: ToolCallState[]): string {
   if (tools.length === 0) return '';
-  const failed = tools.filter((t) => isFailedStatus(t.status)).length;
 
   const subagentInfos = tools.map(subagentToolInfo);
   if (tools.length === 1 && subagentInfos[0]) {
@@ -287,18 +328,15 @@ export function summarizeTools(tools: ToolCallState[]): string {
   }
   if (tools.length > 1 && subagentInfos.every(Boolean)) {
     const running = tools.filter((t) => isRunningStatus(t.status)).length;
+    const failed = failedToolCount(tools);
     if (running > 0) return `${tools.length} SubAgents · ${running} working`;
-    if (failed > 0) return `${tools.length} SubAgents · ${failed} failed`;
+    if (failed > 0) return `${tools.length} SubAgents`;
     return `${tools.length} SubAgents · completed`;
   }
 
   if (tools.length === 1) {
-    const failedSuffix = failed > 0 ? ' · failed' : '';
-    const title = prettifyToolTitle(tools[0].title) || BUCKETS[bucketKeyForTool(tools[0])].verb;
-    return `${title}${failedSuffix}`;
+    return prettifyToolTitle(tools[0].title) || BUCKETS[bucketKeyForTool(tools[0])].verb;
   }
-
-  const failedSuffix = failed > 0 ? ` · ${failed} failed` : '';
 
   const counts = new Map<BucketKey, number>();
   for (const tool of tools) {
@@ -306,22 +344,30 @@ export function summarizeTools(tools: ToolCallState[]): string {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  // Single bucket → "Read 3 files"
+  // Single bucket → "read 3 files"
   if (counts.size === 1) {
     const [key, count] = counts.entries().next().value as [BucketKey, number];
     const def = BUCKETS[key];
-    return `${def.verb} ${count} ${pluralize(def.noun, count)}${failedSuffix}`;
+    return `${def.verb} ${count} ${pluralize(def.noun, count)}`;
   }
 
-  // Multi-bucket → "Read 2 files, ran 1 command"
-  // First bucket capitalized, subsequent lowercased.
+  // Multi-bucket → "read 2 files, ran 1 command"
   const phrases: string[] = [];
-  let first = true;
   for (const [key, count] of counts.entries()) {
     const def = BUCKETS[key];
-    const verb = first ? def.verb : def.verb.toLowerCase();
-    phrases.push(`${verb} ${count} ${pluralize(def.noun, count)}`);
-    first = false;
+    phrases.push(`${def.verb} ${count} ${pluralize(def.noun, count)}`);
   }
-  return `${phrases.join(', ')}${failedSuffix}`;
+  return phrases.join(', ');
+}
+
+export function summarizeTools(tools: ToolCallState[]): string {
+  if (tools.length === 0) return '';
+  const base = summarizeToolsBase(tools);
+  const failed = failedToolCount(tools);
+  if (failed === 0) return base;
+  if (tools.length === 1) {
+    // A single SubAgent's base already carries its status label ("· failed").
+    return subagentToolInfo(tools[0]) ? base : `${base} · failed`;
+  }
+  return `${base} · ${failed} failed`;
 }

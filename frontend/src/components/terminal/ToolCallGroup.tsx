@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCallState, SubagentInfo } from '../../state/chatTypes';
 import {
-  summarizeTools,
+  summarizeToolsBase,
+  failedToolCount,
+  toolDurationMs,
+  toolSpanMs,
+  formatDurationMs,
   isTerminalStatus,
   isFailedStatus,
   isRunningStatus,
@@ -29,8 +33,46 @@ function allTerminal(tools: ToolCallState[]): boolean {
   return tools.every((t) => isTerminalStatus(t.status));
 }
 
-function anyFailed(tools: ToolCallState[]): boolean {
-  return tools.some((t) => isFailedStatus(t.status));
+/**
+ * Status marker — the single glyph language for tool rows:
+ *   running → breathing accent dot
+ *   failed  → red ×
+ *   done    → muted dot
+ * Rows with an openable payload swap the dot for a ▸/▾ disclosure chevron
+ * once terminal (running/failed keep their state glyph).
+ */
+function StatusDot({ status }: { status: string | undefined }) {
+  if (isFailedStatus(status)) {
+    return (
+      <span aria-hidden style={{ color: FAIL_COLOR, fontSize: 10, width: 8, flexShrink: 0, lineHeight: 1 }}>×</span>
+    );
+  }
+  const running = isRunningStatus(status);
+  return (
+    <span
+      aria-hidden
+      style={{ width: 8, display: 'inline-flex', justifyContent: 'flex-start', flexShrink: 0, alignSelf: 'center' }}
+    >
+      <span className={running ? 'term-dot-i term-dot-i--run' : 'term-dot-i'} />
+    </span>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
+      {open ? '▾' : '▸'}
+    </span>
+  );
+}
+
+function DurLabel({ ms }: { ms: number | undefined }) {
+  if (ms == null) return null;
+  return (
+    <span style={{ marginLeft: 'auto', color: 'var(--term-faint)', fontSize: 10, flexShrink: 0, paddingLeft: 8 }}>
+      {formatDurationMs(ms)}
+    </span>
+  );
 }
 
 function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
@@ -65,8 +107,10 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
 
   if (visibleTools.length === 0) return null;
 
-  const failed = anyFailed(visibleTools);
-  const headerColor = failed ? FAIL_COLOR : 'var(--term-mauve)';
+  const failed = failedToolCount(visibleTools);
+  const running = !allTerminal(visibleTools);
+  const doneCount = visibleTools.filter((t) => isTerminalStatus(t.status)).length;
+  const spanMs = running ? undefined : toolSpanMs(visibleTools);
 
   const onHeaderClick = () => {
     userInteractedRef.current = true;
@@ -76,10 +120,23 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
   const containerStyle: React.CSSProperties = {
     fontSize: 10.5,
     fontFamily: 'var(--ui-font)',
-    color: headerColor,
+    color: 'var(--term-muted)',
     marginTop: 4,
     padding: '3px 0',
-    borderTop: '1px dotted var(--term-line)',
+  };
+
+  const headerBtnStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: 7,
+    background: 'transparent',
+    border: 'none',
+    padding: 0,
+    color: 'inherit',
+    font: 'inherit',
+    cursor: 'pointer',
+    textAlign: 'left',
+    width: '100%',
   };
 
   if (!expanded) {
@@ -90,25 +147,18 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
           data-toolgroup-header
           onClick={onHeaderClick}
           className="t-hover-fg"
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 8,
-            background: 'transparent',
-            border: 'none',
-            padding: 0,
-            color: 'inherit',
-            font: 'inherit',
-            cursor: 'pointer',
-            textAlign: 'left',
-            width: '100%',
-          }}
+          style={headerBtnStyle}
         >
-          <span style={{ opacity: 0.7, flexShrink: 0 }}>↳</span>
-          <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-            {summarizeTools(visibleTools)}
+          <Chevron open={false} />
+          <span style={{ minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+            {summarizeToolsBase(visibleTools)}
+            {failed > 0 && (
+              <span style={{ color: FAIL_COLOR }}>
+                {' '}· {visibleTools.length === 1 ? 'failed' : `${failed} failed`}
+              </span>
+            )}
           </span>
-          <span style={{ color: 'var(--term-muted)', flexShrink: 0, marginLeft: 8 }}>›</span>
+          <DurLabel ms={spanMs} />
         </button>
       </div>
     );
@@ -121,25 +171,25 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
         data-toolgroup-header
         onClick={onHeaderClick}
         className="t-hover-fg"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          background: 'transparent',
-          border: 'none',
-          padding: 0,
-          color: 'inherit',
-          font: 'inherit',
-          cursor: 'pointer',
-          textAlign: 'left',
-          width: '100%',
-        }}
+        style={headerBtnStyle}
       >
-        <span style={{ opacity: 0.7, flexShrink: 0 }}>↳</span>
-        <span style={{ flex: 1, color: 'var(--term-muted)', fontSize: 9.5 }}>
-          {visibleTools.length} {visibleTools.length === 1 ? 'tool' : 'tools'}
-        </span>
-        <span style={{ color: 'var(--term-muted)', flexShrink: 0, marginLeft: 8 }}>⌃</span>
+        <Chevron open />
+        {running ? (
+          <>
+            <span className="term-shimmer">running tools</span>
+            <span style={{ marginLeft: 'auto', color: 'var(--term-faint)', fontSize: 10, flexShrink: 0, paddingLeft: 8 }}>
+              {doneCount}/{visibleTools.length}
+            </span>
+          </>
+        ) : (
+          <>
+            <span>
+              {visibleTools.length} {visibleTools.length === 1 ? 'tool' : 'tools'}
+              {failed > 0 && <span style={{ color: FAIL_COLOR }}> · {failed} failed</span>}
+            </span>
+            <DurLabel ms={spanMs} />
+          </>
+        )}
       </button>
       <div
         ref={listRef}
@@ -148,12 +198,13 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
           const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
           stickyRef.current = atBottom;
         }}
-        className={visibleTools.length > SCROLL_THRESHOLD ? 'term-scrollbar' : undefined}
+        className={`tool-rows-in${visibleTools.length > SCROLL_THRESHOLD ? ' term-scrollbar' : ''}`}
         style={{
-          marginTop: 2,
+          marginTop: 3,
+          paddingLeft: 2,
           display: 'flex',
           flexDirection: 'column',
-          gap: 2,
+          gap: 3,
           ...(visibleTools.length > SCROLL_THRESHOLD
             ? { maxHeight: SCROLL_MAX_HEIGHT, overflowY: 'auto' }
             : null),
@@ -184,39 +235,50 @@ export const ToolCallGroup = React.memo(ToolCallGroupInner, (prev, next) =>
 
 function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly SubagentInfo[] }) {
   const subagent = subagentToolInfo(t);
+  const hasPayload = !!(t.inputJson || t.output);
+  const failed = isFailedStatus(t.status);
+  const running = isRunningStatus(t.status);
+  // Failed rows with output auto-open so the error is visible without a click.
+  // Failure usually arrives via a later tool-call-update, so an effect (not
+  // just the initial state) handles the live transition. A user toggle wins.
+  const [open, setOpen] = useState(failed && hasPayload);
+  const userToggledRef = useRef(false);
+  useEffect(() => {
+    if (failed && hasPayload && !userToggledRef.current) setOpen(true);
+  }, [failed, hasPayload]);
+
   if (subagent) {
     const owner = findOwningSubagent(t, subagents);
     return <SubagentSpineRow t={t} info={subagent} currentTool={owner?.currentTool} />;
   }
 
-  const hasPayload = !!(t.inputJson || t.output);
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'input' | 'output'>('input');
-
-  const failed = isFailedStatus(t.status);
-  const accent = failed ? FAIL_COLOR : 'var(--term-mauve)';
+  const titleColor = failed ? FAIL_COLOR : running ? 'var(--term-fg)' : 'var(--term-muted)';
+  const durMs = toolDurationMs(t);
 
   return (
-    <div style={{ paddingLeft: 16, color: accent }}>
+    <div style={{ paddingLeft: 14 }}>
       <div
         style={{
           display: 'flex',
-          alignItems: 'flex-start',
-          gap: 8,
+          alignItems: 'baseline',
+          gap: 7,
           cursor: hasPayload ? 'pointer' : 'default',
+          color: titleColor,
         }}
-        onClick={hasPayload ? () => setOpen((o) => !o) : undefined}
+        className={hasPayload ? 't-hover-fg' : undefined}
+        onClick={hasPayload ? () => { userToggledRef.current = true; setOpen((o) => !o); } : undefined}
       >
-        <span style={{ opacity: 0.7, flexShrink: 0 }}>{hasPayload ? (open ? '▾' : '▸') : '·'}</span>
+        {hasPayload && !running && !failed ? <Chevron open={open} /> : <StatusDot status={t.status} />}
         <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
           {t.detail || prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
+          {failed && ' · failed'}
           {t.detail && (
             <span
               style={{
                 display: 'block',
                 fontSize: 9.5,
-                color: 'var(--term-muted)',
-                fontStyle: 'normal',
+                color: failed ? FAIL_COLOR : 'var(--term-faint)',
+                opacity: failed ? 0.8 : 1,
                 marginTop: 1,
               }}
             >
@@ -224,68 +286,64 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
             </span>
           )}
         </span>
-        <span style={{ color: 'var(--term-muted)', flexShrink: 0, marginLeft: 8 }}>
-          {t.status || 'running'}
-        </span>
+        <DurLabel ms={durMs} />
       </div>
       {open && hasPayload && (
-        <div style={{ marginLeft: 18, marginTop: 4 }}>
-          <div style={{ display: 'flex', gap: 0, alignItems: 'center', marginBottom: 4 }}>
-            {t.inputJson && (
-              <button
-                type="button"
-                onClick={() => setTab('input')}
-                style={{
-                  fontSize: 10,
-                  padding: '1px 8px',
-                  border: '1px solid var(--term-line)',
-                  borderRight: t.output ? 'none' : undefined,
-                  background: tab === 'input' ? 'var(--term-mauve-f, var(--term-alt))' : 'transparent',
-                  color: tab === 'input' ? 'var(--term-mauve)' : 'var(--term-muted)',
-                  cursor: 'pointer',
-                  fontFamily: 'var(--ui-font)',
-                }}
-              >
-                Input
-              </button>
-            )}
-            {t.output && (
-              <button
-                type="button"
-                onClick={() => setTab('output')}
-                style={{
-                  fontSize: 10,
-                  padding: '1px 8px',
-                  border: '1px solid var(--term-line)',
-                  background: tab === 'output' ? 'var(--term-mauve-f, var(--term-alt))' : 'transparent',
-                  color: tab === 'output' ? 'var(--term-mauve)' : 'var(--term-muted)',
-                  cursor: 'pointer',
-                  fontFamily: 'var(--ui-font)',
-                }}
-              >
-                Output
-              </button>
-            )}
-          </div>
-          <pre
-            className="term-scrollbar"
-            style={{
-              fontSize: 10,
-              lineHeight: 1.5,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              color: 'var(--term-mid)',
-              background: 'var(--term-alt)',
-              border: '1px solid var(--term-line)',
-              padding: '6px 8px',
-              maxHeight: 180,
-              overflowY: 'auto',
-              margin: 0,
-            }}
-          >
-            {tab === 'input' ? formatToolPayload(t.inputJson ?? '') : formatToolPayload(t.output ?? '')}
-          </pre>
-        </div>
+        <PayloadBlock inputJson={t.inputJson} output={t.output} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Stacked in/out payload — one mono block with hairline section labels,
+ * replacing the old Input/Output tab buttons.
+ */
+function PayloadBlock({ inputJson, output }: { inputJson?: string; output?: string }) {
+  const labelStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '3px 8px 2px',
+    fontSize: 9,
+    letterSpacing: '.12em',
+    color: 'var(--term-faint)',
+    fontFamily: 'var(--ui-font)',
+  };
+  const ruleStyle: React.CSSProperties = { flex: 1, borderTop: '1px solid var(--term-line)' };
+  const preStyle: React.CSSProperties = {
+    fontSize: 10,
+    lineHeight: 1.5,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    color: 'var(--term-mid)',
+    padding: '2px 10px 8px',
+    margin: 0,
+  };
+  return (
+    <div
+      className="term-scrollbar"
+      style={{
+        marginLeft: 15,
+        marginTop: 4,
+        marginBottom: 2,
+        border: '1px solid var(--term-line)',
+        background: 'var(--term-alt)',
+        maxHeight: 200,
+        overflowY: 'auto',
+      }}
+    >
+      {inputJson && (
+        <>
+          <div style={labelStyle}><span>in</span><span style={ruleStyle} /></div>
+          <pre style={preStyle}>{formatToolPayload(inputJson)}</pre>
+        </>
+      )}
+      {output && (
+        <>
+          <div style={labelStyle}><span>out</span><span style={ruleStyle} /></div>
+          <pre style={preStyle}>{formatToolPayload(output)}</pre>
+        </>
       )}
     </div>
   );
@@ -347,8 +405,7 @@ function SubagentSpineRow({
 }) {
   const failed = isFailedStatus(t.status);
   const running = isRunningStatus(t.status);
-  const accent = failed ? FAIL_COLOR : running ? 'var(--term-accent)' : 'var(--term-mauve)';
-  const dot = running ? '●' : failed ? '×' : '✓';
+  const accent = failed ? FAIL_COLOR : running ? 'var(--term-accent)' : 'var(--term-muted)';
   const mission = info.description ?? info.prompt;
   const showNow = running && !!currentTool;
 
@@ -356,42 +413,43 @@ function SubagentSpineRow({
     <div
       data-testid="subagent-spine-row"
       style={{
-        marginLeft: 16,
+        marginLeft: 14,
         marginTop: 2,
         paddingLeft: 10,
-        borderLeft: '1px dotted var(--term-line)',
-        color: 'var(--term-fg)',
+        borderLeft: '1px dotted var(--term-line-s)',
+        color: 'var(--term-muted)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span style={{ color: accent, flexShrink: 0 }}>{dot}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0 }}>
+        <StatusDot status={t.status} />
         <span
           style={{
-            color: accent,
+            color: failed ? FAIL_COLOR : 'var(--term-fg)',
             fontWeight: 600,
             minWidth: 0,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
           {subagentHeading(info)}
         </span>
         {info.model && (
-          <span style={{ color: 'var(--term-faint)', flexShrink: 0 }}>{info.model}</span>
+          <span style={{ color: 'var(--term-faint)', flexShrink: 0, fontSize: 10 }}>{info.model}</span>
         )}
-        <span style={{ marginLeft: 'auto', color: 'var(--term-muted)', flexShrink: 0 }}>
+        <span style={{ marginLeft: 'auto', color: failed ? FAIL_COLOR : accent, flexShrink: 0, fontSize: 10, paddingLeft: 8 }}>
           {subagentStatusLabel(t.status)}
         </span>
       </div>
       {mission && (
         <div style={{ marginTop: 2, lineHeight: 1.45, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-          <span style={{ color: 'var(--term-muted)' }}>Mission: </span>
+          <span style={{ color: 'var(--term-faint)' }}>mission: </span>
           {clampText(mission, 180)}
         </div>
       )}
       {showNow && (
         <div style={{ marginTop: 1, lineHeight: 1.45 }}>
-          <span style={{ color: 'var(--term-muted)' }}>Now: </span>
+          <span style={{ color: 'var(--term-faint)' }}>now: </span>
           <span style={{ color: 'var(--term-accent)' }}>{currentTool}</span>
         </div>
       )}
