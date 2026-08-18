@@ -235,6 +235,12 @@ export function findOwningSubagent(
  * subagent (Bash/Glob/Read forwarded for visibility). SubAgent tool-calls
  * themselves are always kept — they ARE the card.
  *
+ * The filter applies ONLY while at least one subagent is actively working:
+ * once every subagent has terminated, all tool-calls render normally. The
+ * node-level `subagents` roster outlives the turn (cleared on the next
+ * user send), and the main agent's own tool-calls (michi tools, reads made
+ * after the subagents finished) must not be hidden by a stale roster.
+ *
  * If `subagents` is empty/undefined the input is returned as-is, so this
  * is safe to call unconditionally on every tool group.
  */
@@ -243,10 +249,12 @@ export function filterSubagentRelayedTools(
   subagents: readonly SubagentInfo[] | undefined,
 ): ToolCallState[] {
   if (!subagents || subagents.length === 0) return [...tools];
+  const anyWorking = subagents.some((s) => s.status === 'working');
+  if (!anyWorking) return [...tools];
   return tools.filter((tool) => {
     // Always keep SubAgent tool-calls; they ARE the card.
     if (subagentToolInfo(tool)) return true;
-    // Drop everything else when ANY subagent is active. The peer rows
+    // Drop everything else while a subagent is working. The peer rows
     // are forwarded subagent activity surfaced via the card's Now: line.
     return false;
   });

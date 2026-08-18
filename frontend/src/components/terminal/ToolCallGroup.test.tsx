@@ -202,6 +202,22 @@ describe('ToolCallGroup — relayed-tool filter', () => {
     expect(getByText(/SubAgent · Explore/)).toBeTruthy();
   });
 
+  it('keeps peers once every subagent has terminated (stale roster must not hide tools)', () => {
+    const tools: ToolCallState[] = [
+      { id: 't1', title: 'list_threads', status: 'completed', kind: 'tool' },
+      { id: 't2', title: 'search_messages', status: 'completed', kind: 'tool' },
+    ];
+    const subagents = [
+      subInfo({ sessionId: 's1', status: 'terminated' }),
+      subInfo({ sessionId: 's2', status: 'terminated' }),
+    ];
+    const { getByText } = render(
+      <ToolCallGroup tools={tools} defaultExpanded={true} subagents={subagents} />,
+    );
+    expect(getByText('list_threads')).toBeTruthy();
+    expect(getByText('search_messages')).toBeTruthy();
+  });
+
   it('keeps peers when subagents prop is undefined (legacy callers)', () => {
     const tools: ToolCallState[] = [
       { id: 't1', title: 'Bash ls', status: 'completed', kind: 'bash' },
