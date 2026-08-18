@@ -77,12 +77,53 @@ export function assertWithinCwd(absolutePath: string, cwd: string): void {
 }
 
 /**
+ * Multi-folder variant of assertWithinCwd. Throws if `absolutePath` is not
+ * inside ANY of the provided folder paths. When `folders` is empty, falls
+ * back to `cwd` (single-folder legacy behavior).
+ */
+export function assertPathAllowed(
+    absolutePath: string,
+    folders: Array<{ path: string }>,
+    cwd?: string,
+): void {
+    // Build effective allowlist: all folder paths, plus cwd as fallback
+    const allowlist: string[] = folders.map(f => f.path);
+    if (allowlist.length === 0 && cwd) allowlist.push(cwd);
+    if (allowlist.length === 0) {
+        throw new PathSandboxError(absolutePath, '(no workspace directory)');
+    }
+
+    const resolved = path.resolve(absolutePath);
+    const allowed = allowlist.some(dir => {
+        const resolvedDir = path.resolve(dir);
+        return resolved === resolvedDir || resolved.startsWith(resolvedDir + sep);
+    });
+    if (!allowed) {
+        throw new PathSandboxError(absolutePath, allowlist[0]);
+    }
+}
+
+/**
  * Convenience: resolve and assert in one step. Returns the absolute
  * path on success.
  */
 export function resolveWithinCwd(filePath: string, cwd: string): string {
     const abs = resolveToCwd(filePath, cwd);
     assertWithinCwd(abs, cwd);
+    return abs;
+}
+
+/**
+ * Multi-folder convenience: resolve against primary cwd, then assert against
+ * all registered folders. Returns the absolute path on success.
+ */
+export function resolveWithinFolders(
+    filePath: string,
+    cwd: string,
+    folders: Array<{ path: string }>,
+): string {
+    const abs = resolveToCwd(filePath, cwd);
+    assertPathAllowed(abs, folders, cwd);
     return abs;
 }
 

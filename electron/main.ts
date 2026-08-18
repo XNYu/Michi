@@ -714,6 +714,20 @@ ipcMain.handle('app:chooseFolder', async () => {
   };
 });
 
+ipcMain.handle('app:chooseFolders', async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory', 'multiSelections'],
+    defaultPath: pickerDefaultPath(),
+  });
+  if (r.canceled || r.filePaths.length === 0) {
+    return { canceled: true, folders: [] };
+  }
+  return {
+    canceled: false,
+    folders: r.filePaths.map((p) => ({ path: p, name: path.basename(p) })),
+  };
+});
+
 // Mint a per-project scratch cwd outside macOS-protected directories so
 // kiro-cli doesn't trip TCC prompts when the user skips folder selection.
 ipcMain.handle('app:resolveSkipCwd', async (_ev, projectId: string) => {

@@ -1,5 +1,6 @@
 import { getDb, prepareCached, runInTransaction } from './db';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import {
   appendBranchOverviewEntry,
   checkpointTurnContent,
@@ -24,6 +25,14 @@ import { computeTranscriptFingerprint, type TranscriptMessage } from './resumeSt
 export const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 // --- Row types ---
+
+/** A registered folder within a workspace. folders[0] is the immutable cwd. */
+export interface FolderEntry {
+  id: string;
+  path: string;
+  label?: string;
+  addedAt: number;
+}
 
 export interface WorkspaceRow {
   id: string;
@@ -52,6 +61,9 @@ export interface WorkspaceRow {
   sync_rev?: number;
   /** Persistence ownership protocol. v2 workspaces reject legacy snapshot sync. */
   persistence_version?: number;
+  /** JSON-serialized FolderEntry[]. folders[0].path is the immutable cwd.
+   *  NULL/empty + cwd present → auto-upgrade to [{path: cwd}]. */
+  folders?: string | null;
 }
 
 export interface TreeRow {
@@ -237,6 +249,50 @@ export function getWorkspace(id: string, userId?: string): WorkspaceRow | null {
   return row;
 }
 
+// ── Multi-folder helpers ─────────────────────────────────────────────────────
+
+/**
+ * Parse `WorkspaceRow.folders` JSON with fallback to legacy `cwd`.
+ * Returns a guaranteed non-null array (may be empty if workspace has no cwd).
+ */
+export function parseFolders(ws: WorkspaceRow): FolderEntry[] {
+  if (ws.folders) {
+    try {
+      const arr = JSON.parse(ws.folders);
+      if (Array.isArray(arr) && arr.length > 0) return arr as FolderEntry[];
+    } catch { /* fall through to cwd fallback */ }
+  }
+  // Legacy fallback: single cwd → synthesized folder entry
+  if (ws.cwd) {
+    return [{ id: 'legacy-cwd', path: ws.cwd, addedAt: ws.created_at }];
+  }
+  return [];
+}
+
+/** Max folders per workspace. */
+export const MAX_FOLDERS = 10;
+
+/**
+ * Check whether `newPath` nests with any existing folder.
+ * Returns an error message string, or null if valid.
+ */
+export function validateNoNesting(existing: FolderEntry[], newPath: string): string | null {
+  const resolved = path.resolve(newPath);
+  for (const f of existing) {
+    const existingResolved = path.resolve(f.path);
+    if (resolved === existingResolved) {
+      return `"${newPath}" is already registered`;
+    }
+    if (resolved.startsWith(existingResolved + path.sep)) {
+      return `"${newPath}" is already contained within "${f.path}"`;
+    }
+    if (existingResolved.startsWith(resolved + path.sep)) {
+      return `"${f.path}" is inside "${newPath}" — remove it first`;
+    }
+  }
+  return null;
+}
+
 /**
  * Upsert a workspace row. Refuses to write if a tombstone exists for this id
  * (purged_at IS NOT NULL) — that's the multi-tab anti-revival guard. The
@@ -254,15 +310,16 @@ export function saveWorkspace(ws: WorkspaceRow): void {
   if (existing && existing.purged_at !== null) return;
 
   getDb().prepare(`
-    INSERT INTO workspaces (id, name, cwd, active_tree_id, created_at, updated_at, settings, deleted_at, archived_at, pinned_at, backend, owner_user_id)
-    VALUES (@id, @name, @cwd, @active_tree_id, @created_at, @updated_at, @settings, @deleted_at, @archived_at, @pinned_at, @backend, @owner_user_id)
+    INSERT INTO workspaces (id, name, cwd, active_tree_id, created_at, updated_at, settings, deleted_at, archived_at, pinned_at, backend, owner_user_id, folders)
+    VALUES (@id, @name, @cwd, @active_tree_id, @created_at, @updated_at, @settings, @deleted_at, @archived_at, @pinned_at, @backend, @owner_user_id, @folders)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, cwd=excluded.cwd,
       active_tree_id=excluded.active_tree_id, updated_at=excluded.updated_at, settings=excluded.settings,
       deleted_at=excluded.deleted_at, archived_at=excluded.archived_at, pinned_at=excluded.pinned_at,
       backend=excluded.backend,
-      owner_user_id=COALESCE(excluded.owner_user_id, workspaces.owner_user_id)
-  `).run({ cwd: null, active_tree_id: null, settings: null, deleted_at: null, archived_at: null, pinned_at: null, backend: 'kiro', owner_user_id: null, ...ws });
+      owner_user_id=COALESCE(excluded.owner_user_id, workspaces.owner_user_id),
+      folders=excluded.folders
+  `).run({ cwd: null, active_tree_id: null, settings: null, deleted_at: null, archived_at: null, pinned_at: null, backend: 'kiro', owner_user_id: null, folders: null, ...ws });
 }
 
 /**

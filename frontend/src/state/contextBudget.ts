@@ -64,7 +64,7 @@ export function buildNodeTranscriptBlock(node: ChatNodeState): string {
  * in the displayed message or get sent verbatim to kiro.
  */
 export function stripNodeMentionTokens(text: string): string {
-    return text.replace(/\s*@node:[\w-]+/g, '').replace(/^\s+/, '').replace(/\s{2,}/g, ' ');
+    return text.replace(/@node:[\w-]+[ \t]*/g, '');
 }
 
 /**
@@ -75,10 +75,10 @@ export function rewriteNodeMentionsForDisplay(
     text: string,
     nodes: Record<string, ChatNodeState>,
 ): string {
-    return text.replace(/@node:([\w-]+)/g, (_match, id: string) => {
+    return text.replace(/@node:([\w-]+)([ \t]*)/g, (_match, id: string, trailing: string) => {
         const node = nodes[id];
         if (!node) return '';
         const title = node.title || node.messages.find(m => m.role === 'user')?.text.slice(0, 40) || 'thread';
-        return `@${title}`;
-    }).replace(/^\s+/, '').replace(/\s{2,}/g, ' ');
+        return `@${title}${trailing}`;
+    });
 }

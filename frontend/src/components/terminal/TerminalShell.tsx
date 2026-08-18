@@ -537,8 +537,8 @@ export default function TerminalShell() {
       <NewWorkspaceDialog
         open={newWsOpen}
         onClose={() => setNewWsOpen(false)}
-        onCreate={(name, cwd) => {
-          void createProject(name, cwd);
+        onCreate={(name, cwd, folders) => {
+          void createProject(name, cwd, folders);
           setNewWsOpen(false);
           setPage('home');
         }}

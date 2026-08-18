@@ -13,7 +13,7 @@ import {
   getAiGlobalContext, setAiGlobalContext,
   emptyWorkspaceTrash, purgeWorkspaceNodes,
   trimNode, restoreTrimmedNode,
-  WorkspaceRow,
+  WorkspaceRow, parseFolders, validateNoNesting, MAX_FOLDERS, FolderEntry,
 } from '../services/dbRepository';
 import { normalizeIncomingMessageRow } from '../services/messageSerialization';
 import { requireWorkspaceOwner, requireNodeOwner } from './middleware/ownership';
@@ -167,6 +167,7 @@ export function setupPersistenceRoutes(): express.Router {
         settings: req.body.settings ? JSON.stringify(req.body.settings) : null,
         deleted_at: req.body.deleted_at ?? null,
         archived_at: req.body.archived_at ?? null,
+        folders: req.body.folders ? JSON.stringify(req.body.folders) : null,
         // In cloud mode, stamp owner on INSERT; COALESCE in saveWorkspace
         // preserves the existing owner on UPDATE so this null is fine there.
         owner_user_id: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
@@ -189,6 +190,105 @@ export function setupPersistenceRoutes(): express.Router {
       res.json({ ok: true });
     } catch (err) {
       log.error('workspace', 'delete failed', { id: req.params.id, err: (err as Error).message });
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Workspace folder management ──────────────────────────────────────────
+  // POST /workspaces/:id/folders with { action, ... } payload.
+  // Actions: add-folder, remove-folder, reorder-folders, update-folder-label.
+  router.post('/workspaces/:id/folders', requireWorkspaceOwner, (req, res) => {
+    try {
+      const ws = getWorkspace(req.params.id);
+      if (!ws) return res.status(404).json({ error: 'workspace not found' });
+
+      const folders = parseFolders(ws);
+      const { action } = req.body;
+
+      if (action === 'add-folder') {
+        const { path: folderPath, label } = req.body;
+        if (!folderPath || typeof folderPath !== 'string') {
+          return res.status(400).json({ error: 'path is required' });
+        }
+        if (folders.length >= MAX_FOLDERS) {
+          return res.status(400).json({ error: `maximum ${MAX_FOLDERS} folders reached` });
+        }
+        // Validate path exists and is a directory
+        const fs = require('node:fs');
+        const pathMod = require('node:path');
+        const resolved = pathMod.resolve(folderPath);
+        try {
+          const stat = fs.statSync(resolved);
+          if (!stat.isDirectory()) {
+            return res.status(400).json({ error: `"${folderPath}" is not a directory` });
+          }
+        } catch {
+          return res.status(400).json({ error: `"${folderPath}" does not exist` });
+        }
+        // Nesting check
+        const nestingError = validateNoNesting(folders, resolved);
+        if (nestingError) return res.status(400).json({ error: nestingError });
+
+        const newEntry: FolderEntry = {
+          id: randomUUID().slice(0, 16),
+          path: resolved,
+          label: label || undefined,
+          addedAt: Date.now(),
+        };
+        folders.push(newEntry);
+        saveWorkspace({ ...ws, folders: JSON.stringify(folders), updated_at: Date.now() });
+        log.info('workspace', 'folder added', { id: ws.id, path: resolved });
+        return res.json({ ok: true, folders, added: newEntry });
+
+      } else if (action === 'remove-folder') {
+        const { folderId } = req.body;
+        if (!folderId) return res.status(400).json({ error: 'folderId is required' });
+        if (folders.length > 0 && folders[0].id === folderId) {
+          return res.status(400).json({ error: 'cannot remove the working directory (first folder)' });
+        }
+        const idx = folders.findIndex(f => f.id === folderId);
+        if (idx < 0) return res.status(404).json({ error: 'folder not found' });
+        folders.splice(idx, 1);
+        saveWorkspace({ ...ws, folders: JSON.stringify(folders), updated_at: Date.now() });
+        log.info('workspace', 'folder removed', { id: ws.id, folderId });
+        return res.json({ ok: true, folders });
+
+      } else if (action === 'reorder-folders') {
+        // folderIds is the desired order for indices 1+. Index 0 stays pinned.
+        const { folderIds } = req.body;
+        if (!Array.isArray(folderIds)) {
+          return res.status(400).json({ error: 'folderIds must be an array' });
+        }
+        if (folders.length <= 1) return res.json({ ok: true, folders });
+        const pinned = folders[0];
+        const rest = folders.slice(1);
+        const reordered = folderIds
+          .map((id: string) => rest.find(f => f.id === id))
+          .filter(Boolean) as FolderEntry[];
+        // Append any folders not in the provided order (shouldn't happen but be safe)
+        for (const f of rest) {
+          if (!reordered.some(r => r.id === f.id)) reordered.push(f);
+        }
+        const newFolders = [pinned, ...reordered];
+        saveWorkspace({ ...ws, folders: JSON.stringify(newFolders), updated_at: Date.now() });
+        return res.json({ ok: true, folders: newFolders });
+
+      } else if (action === 'update-folder-label') {
+        const { folderId, label } = req.body;
+        if (!folderId) return res.status(400).json({ error: 'folderId is required' });
+        const target = folders.find(f => f.id === folderId);
+        if (!target) return res.status(404).json({ error: 'folder not found' });
+        target.label = label || undefined;
+        saveWorkspace({ ...ws, folders: JSON.stringify(folders), updated_at: Date.now() });
+        return res.json({ ok: true, folders });
+
+      } else {
+        return res.status(400).json({ error: `unknown action: ${action}` });
+      }
+    } catch (err) {
+      log.error('workspace', 'folder action failed', {
+        id: req.params.id, action: req.body?.action, err: (err as Error).message,
+      });
       res.status(500).json({ error: (err as Error).message });
     }
   });

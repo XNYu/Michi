@@ -50,6 +50,8 @@ export interface MentionEditorProps {
   artifacts: ArtifactEntry[];
   sameTreeNodes: ChatNodeState[];
   currentNodeId: string;
+  /** Nodes from other threads in the same workspace, grouped by thread title. */
+  crossTreeNodes?: import('./mentionItems').CrossTreeGroup[];
 
   /** /-command data sources (were SlashPopup's props). */
   agentCommands?: AgentCommand[];
@@ -302,6 +304,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     artifacts,
     sameTreeNodes,
     currentNodeId,
+    crossTreeNodes,
     agentCommands,
     availableModes,
     currentModeId,
@@ -320,12 +323,14 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   // Refs the (mount-time) ProseMirror plugin callbacks read for fresh values.
   const contextsRef = useRef(artifacts);
   const nodesRef = useRef(sameTreeNodes);
+  const crossTreeNodesRef = useRef(crossTreeNodes);
   const currentNodeIdRef = useRef(currentNodeId);
   const onSubmitRef = useRef(onSubmit);
   const onPasteRef = useRef(onPaste);
   const onSwitchAgentRef = useRef(onSwitchAgent);
   contextsRef.current = artifacts;
   nodesRef.current = sameTreeNodes;
+  crossTreeNodesRef.current = crossTreeNodes;
   currentNodeIdRef.current = currentNodeId;
   onSubmitRef.current = onSubmit;
   onPasteRef.current = onPaste;
@@ -374,7 +379,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
         suggestion: {
           char: '@',
           items: ({ query }) =>
-            buildAtMentionItems(query, contextsRef.current, nodesRef.current, currentNodeIdRef.current).slice(0, 8),
+            buildAtMentionItems(query, contextsRef.current, nodesRef.current, currentNodeIdRef.current, crossTreeNodesRef.current).slice(0, 8),
           command: ({ editor: ed, range, props: picked }) => {
             const item = picked as unknown as AtMentionItem;
             const refId = item.kind === 'context' ? item.token : item.token.replace(/^node:/, '');

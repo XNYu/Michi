@@ -216,6 +216,10 @@ responds in the UI.`;
 
 export interface FirstTurnPrefixInput {
     cwd: string;
+    /** Additional registered folders for this workspace (multi-folder support).
+     *  When provided and non-empty, injected as an allowlist into the prefix so
+     *  the agent knows it can access files across multiple directories. */
+    folders?: Array<{ path: string; label?: string }>;
     contextManifest?: ExtraContext[];
     extraContexts?: ExtraContext[];
     /** Oldest-first ancestor chain. Each entry exposes its history + pendingAssistant. */
@@ -246,6 +250,18 @@ export function buildFirstTurnPrefix(input: FirstTurnPrefixInput): string {
                 `Workspace instructions (these apply to every reply in this conversation — treat as if part of the system prompt):\n\n${trimmed}\n`,
             );
         }
+    }
+
+    // Multi-folder awareness: tell the agent about all registered directories
+    if (input.folders && input.folders.length > 1) {
+        const lines = input.folders.map((f, i) => {
+            const label = f.label ? ` (${f.label})` : '';
+            const marker = i === 0 ? ' (working directory)' : '';
+            return `- ${f.path}${label}${marker}`;
+        }).join('\n');
+        parts.push(
+            `Available source directories for this workspace:\n${lines}\nYou may read, write, and search files in any of these directories.\n`,
+        );
     }
 
     if (input.contextManifest && input.contextManifest.length > 0) {

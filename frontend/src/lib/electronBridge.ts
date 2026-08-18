@@ -8,6 +8,11 @@ export interface ChooseFolderResult {
   name?: string;
 }
 
+export interface ChooseFoldersResult {
+  canceled: boolean;
+  folders: Array<{ path: string; name: string }>;
+}
+
 export interface SaveMarkdownResult {
   canceled: boolean;
   path?: string;
@@ -24,6 +29,8 @@ export interface ElectronBridge {
   /** True when the window uses native macOS vibrancy (see-through). Absent in older builds / web. */
   hasVibrancy?: boolean;
   chooseFolder(): Promise<ChooseFolderResult>;
+  /** Open a multi-select folder picker, returns array of paths. Optional — absent in older builds. */
+  chooseFolders?(): Promise<ChooseFoldersResult>;
   /** Allocate a per-project scratch cwd outside TCC-protected dirs. Optional — absent in older builds. */
   resolveSkipCwd?(projectId: string): Promise<{ path: string }>;
   saveMarkdown(suggestedName: string, content: string): Promise<SaveMarkdownResult>;

@@ -2,10 +2,14 @@ import React from 'react';
 import type { Project } from '../../../state/chatTypes';
 import type { BulkActions } from './ChatTreeList';
 import { confirmDialog } from '../../ui/ConfirmDialog';
+import FolderList from './FolderList';
 
 interface Props {
   workspace: Project;
   onSaveInstructions: (text: string) => void;
+  onAddFolder: (projectId: string, path: string, label?: string) => void;
+  onRemoveFolder: (projectId: string, folderId: string) => void;
+  onUpdateFolderLabel: (projectId: string, folderId: string, label: string) => void;
   manageMode: boolean;
   onToggleManageMode: () => void;
   bulkActions?: BulkActions;
@@ -62,6 +66,9 @@ const faintMeta: React.CSSProperties = {
 export default function ManageSidebar({
   workspace,
   onSaveInstructions,
+  onAddFolder,
+  onRemoveFolder,
+  onUpdateFolderLabel,
   manageMode,
   onToggleManageMode,
   bulkActions,
@@ -144,6 +151,21 @@ export default function ManageSidebar({
             Save
           </button>
         </div>
+      </div>
+      {/* Folders panel */}
+      <div style={panelStyle}>
+        <div style={panelHeader}>
+          <h3 style={panelTitle}>Folders</h3>
+          <span style={{ flex: 1 }} />
+          <span style={subtleBadge}>{(workspace.folders ?? []).length}</span>
+        </div>
+        <FolderList
+          folders={workspace.folders ?? []}
+          projectId={workspace.id}
+          onAddFolder={onAddFolder}
+          onRemoveFolder={onRemoveFolder}
+          onUpdateLabel={onUpdateFolderLabel}
+        />
       </div>
       {/* Manage panel */}
       <div style={panelStyle}>

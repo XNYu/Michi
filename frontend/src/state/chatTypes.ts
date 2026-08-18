@@ -570,11 +570,21 @@ export interface ProjectEdge {
   createdAt?: number;
 }
 
+export interface FolderEntry {
+  id: string;
+  path: string;
+  label?: string;
+  addedAt: number;
+}
+
 export interface Project {
   id: string;
   name: string;
   /** Absolute path the backend runs the agent in. Undefined = default cwd. */
   cwd?: string;
+  /** Registered folders for this workspace. folders[0].path is the immutable cwd.
+   *  Empty/undefined + cwd present → auto-upgrade on hydration. Defaults to []. */
+  folders?: FolderEntry[];
   /** nodeIds belonging to this project, in creation order. First = root. */
   chatIds: string[];
   /** edges parent -> child, using nodeIds. kind defaults to 'branch'. */
@@ -776,7 +786,7 @@ export interface ChatContextValue {
   edges: ProjectEdge[];
   theme: Theme;
   toggleTheme: () => void;
-  createProject: (name?: string, cwd?: string) => Promise<string>;
+  createProject: (name?: string, cwd?: string, folders?: FolderEntry[]) => Promise<string>;
   /**
    * Activate the singleton "Chats" workspace, lazily creating it (and a root
    * thread) on first call. The Skip path of the new-workspace dialog and
@@ -787,6 +797,12 @@ export interface ChatContextValue {
   renameProject: (projectId: string, name: string) => void;
   /** Replace the absolute folder bound to a workspace. Desktop-only UI supplies the path. */
   setProjectCwd: (projectId: string, cwd: string) => void;
+  /** Add a secondary folder to the workspace's allowlist. */
+  addFolder: (projectId: string, folderPath: string, label?: string) => void;
+  /** Remove a secondary folder (cannot remove folders[0]). */
+  removeFolder: (projectId: string, folderId: string) => void;
+  /** Update a folder's display label. */
+  updateFolderLabel: (projectId: string, folderId: string, label: string) => void;
   /** Persist the per-workspace system-prompt addendum. Empty string clears it. */
   setProjectInstructions: (projectId: string, instructions: string) => void;
   deleteProject: (projectId: string) => void;

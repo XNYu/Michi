@@ -7,7 +7,7 @@ import {
 import { getElectron } from '../lib/electronBridge';
 import { reduceProject } from './chatReducers';
 import { descendants } from './tree';
-import type { ChatAction, ChatNodeState, Project } from './chatTypes';
+import type { ChatAction, ChatNodeState, FolderEntry, Project } from './chatTypes';
 import type { Prefs } from './prefs';
 
 type PaneUpdater<T> = T | ((prev: T) => T);
@@ -33,7 +33,7 @@ export function useProjectActions({
   setNodes,
 }: UseProjectActionsArgs) {
   const createProject = useCallback(
-    async (name?: string, cwd?: string) => {
+    async (name?: string, cwd?: string, initFolders?: FolderEntry[]) => {
       const projectId = `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const finalName = (name && name.trim()) || nextUntitledName(projects);
       const now = Date.now();
@@ -51,10 +51,18 @@ export function useProjectActions({
         }
       }
 
+      // If dialog provided full folder list, use it directly; otherwise synthesize from cwd
+      const folders: FolderEntry[] = initFolders && initFolders.length > 0
+        ? initFolders
+        : resolvedCwd
+          ? [{ id: projectId.slice(0, 16), path: resolvedCwd, addedAt: now }]
+          : [];
+
       const project: Project = {
         id: projectId,
         name: finalName,
         cwd: resolvedCwd,
+        folders,
         chatIds: [],
         edges: [],
         createdAt: now,
@@ -84,6 +92,7 @@ export function useProjectActions({
         id: chatsWorkspaceId,
         name: 'Chats',
         cwd: undefined,
+        folders: [],
         chatIds: [],
         edges: [],
         createdAt: now,
@@ -107,6 +116,53 @@ export function useProjectActions({
     setProjects((prev) => prev.map((p) => (
       p.id === projectId && p.cwd !== trimmed ? { ...p, cwd: trimmed } : p
     )));
+  }, [setProjects]);
+
+  const addFolder = useCallback((projectId: string, folderPath: string, label?: string) => {
+    const resolved = folderPath.trim();
+    if (!resolved) return;
+    setProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      const existing = p.folders ?? [];
+      if (existing.length >= 10) return p; // hard limit
+      // Nesting check
+      const hasNesting = existing.some(
+        (f) => resolved.startsWith(f.path + '/') || resolved === f.path || f.path.startsWith(resolved + '/'),
+      );
+      if (hasNesting) {
+        // Schedule toast outside reducer (safe: setState is batched)
+        setTimeout(() => toast.error('This folder overlaps with an existing folder (nested or parent)'), 0);
+        return p;
+      }
+      const entry: FolderEntry = {
+        id: Math.random().toString(36).slice(2, 10),
+        path: resolved,
+        label,
+        addedAt: Date.now(),
+      };
+      return { ...p, folders: [...existing, entry] };
+    }));
+  }, [setProjects]);
+
+  const removeFolder = useCallback((projectId: string, folderId: string) => {
+    setProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      const existing = p.folders ?? [];
+      // Cannot remove folders[0] (the cwd)
+      if (existing.length > 0 && existing[0].id === folderId) return p;
+      return { ...p, folders: existing.filter((f) => f.id !== folderId) };
+    }));
+  }, [setProjects]);
+
+  const updateFolderLabel = useCallback((projectId: string, folderId: string, label: string) => {
+    setProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      const existing = p.folders ?? [];
+      return {
+        ...p,
+        folders: existing.map((f) => f.id === folderId ? { ...f, label } : f),
+      };
+    }));
   }, [setProjects]);
 
   const setProjectInstructions = useCallback(
@@ -211,6 +267,9 @@ export function useProjectActions({
     enterChatsWorkspace,
     renameProject,
     setProjectCwd,
+    addFolder,
+    removeFolder,
+    updateFolderLabel,
     setProjectInstructions,
     deleteProject,
     restoreProject,

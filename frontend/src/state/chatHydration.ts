@@ -4,6 +4,7 @@ import type {
   ChatNodeState,
   ComposerDraft,
   ArtifactEntry,
+  FolderEntry,
   NodeKind,
   Project,
   ToolCallState,
@@ -65,6 +66,23 @@ function asNumber(v: unknown, fallback = 0): number {
 
 function asOptionalNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+/** Parse `workspace.folders` JSON with fallback to legacy `cwd`. */
+function hydrateFolders(workspace: Record<string, unknown>): FolderEntry[] {
+  const raw = workspace.folders;
+  if (raw && typeof raw === 'string') {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) return arr as FolderEntry[];
+    } catch { /* fall through */ }
+  }
+  // Legacy fallback: synthesize from cwd
+  const cwd = asString(workspace.cwd);
+  if (cwd) {
+    return [{ id: 'legacy-cwd', path: cwd, addedAt: asNumber(workspace.created_at, 0) }];
+  }
+  return [];
 }
 
 function parseJsonStringArray(v: unknown): string[] {
@@ -565,6 +583,7 @@ export function hydrateBackendWorkspaces(
       id: projectId,
       name: asString(workspace.name) ?? 'Untitled',
       cwd: asString(workspace.cwd),
+      folders: hydrateFolders(workspace),
       chatIds,
       edges,
       createdAt: asNumber(workspace.created_at, Date.now()),

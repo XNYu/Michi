@@ -6,6 +6,11 @@ interface ChooseFolderResult {
   name?: string;
 }
 
+interface ChooseFoldersResult {
+  canceled: boolean;
+  folders: Array<{ path: string; name: string }>;
+}
+
 interface SaveMarkdownResult {
   canceled: boolean;
   path?: string;
@@ -57,6 +62,9 @@ contextBridge.exposeInMainWorld('electron', {
   hasVibrancy,
   chooseFolder(): Promise<ChooseFolderResult> {
     return ipcRenderer.invoke('app:chooseFolder');
+  },
+  chooseFolders(): Promise<ChooseFoldersResult> {
+    return ipcRenderer.invoke('app:chooseFolders');
   },
   resolveSkipCwd(projectId: string): Promise<{ path: string }> {
     return ipcRenderer.invoke('app:resolveSkipCwd', projectId);

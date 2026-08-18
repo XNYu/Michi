@@ -116,6 +116,11 @@ describe('stripNodeMentionTokens', () => {
     it('leaves non-node mentions intact', () => {
         expect(stripNodeMentionTokens('@api-spec hello')).toBe('@api-spec hello');
     });
+
+    it('preserves line breaks while stripping node tokens', () => {
+        expect(stripNodeMentionTokens('Tasks\n\n@node:n1\n\nS size'))
+            .toBe('Tasks\n\n\n\nS size');
+    });
 });
 
 describe('rewriteNodeMentionsForDisplay', () => {
@@ -138,6 +143,11 @@ describe('rewriteNodeMentionsForDisplay', () => {
         const fallback = { 'x': mkNode('x', '', [{ role: 'user', text: 'My question text' }]) };
         expect(rewriteNodeMentionsForDisplay('see @node:x', fallback))
             .toBe('see @My question text');
+    });
+
+    it('preserves user-authored line breaks and spacing', () => {
+        const text = 'Tasks with estimates\n\nS size = 1 point\n\nM size = 3 / 4 point';
+        expect(rewriteNodeMentionsForDisplay(text, nodes)).toBe(text);
     });
 
     it('drops unresolved tokens', () => {

@@ -5,6 +5,8 @@ import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chat
 import { buildTree, findTreeIdForNode } from '../../state/tree';
 import ThreadRow from './ThreadRow';
 import BranchRow from './BranchRow';
+import ContextMenu from '../ContextMenu';
+import { buildTreeContextMenu } from '../../lib/treeContextMenu';
 import {
   isThreadExpanded,
   isBranchExpanded as isBranchExpandedFn,
@@ -123,9 +125,21 @@ export default function ActivityView({
     clearSelection,
     toggleTreeSelection,
     clearTreeSelection,
+    createBlankChild,
+    deleteNode,
+    trimNode,
+    archiveNode,
+    createMergedChat,
+    createDigest,
+    renameNode,
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
   const nodes = useChatNodesSnapshot();
+
+  const [menu, setMenu] = useState<
+    { x: number; y: number; targetId: string; project: Project } | null
+  >(null);
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
 
   const activityItems = useMemo(
     () => deriveActivityData(projects, nodes),
@@ -272,12 +286,57 @@ export default function ActivityView({
   );
 
   const handleBranchContextMenu = useCallback(
-    (_nodeId: string, event: React.MouseEvent) => {
+    (nodeId: string, event: React.MouseEvent) => {
       event.preventDefault();
-      // Activity view doesn't have its own context menu for branches (yet)
+      const project = projects.find(
+        (p) => !p.deletedAt && p.chatIds.includes(nodeId),
+      );
+      if (!project) return;
+      setMenu({ x: event.clientX, y: event.clientY, targetId: nodeId, project });
     },
-    [],
+    [projects],
   );
+
+  const isBranchMenuTarget = useCallback(
+    (nodeId: string) => menu?.targetId === nodeId,
+    [menu],
+  );
+
+  const menuSections = menu
+    ? buildTreeContextMenu({
+        targetId: menu.targetId,
+        project: menu.project,
+        nodes,
+        selection,
+        actions: {
+          openPane: (id) => {
+            openPane(id);
+            setFocusedNodeId(id);
+            onActivate?.();
+          },
+          createBlankChild,
+          toggleSelection,
+          clearSelection,
+          deleteNode,
+          trimNode,
+          archiveNode,
+          createMergedChat,
+          createDigest,
+          openExportPanel: () =>
+            window.dispatchEvent(new CustomEvent('michi:toggle-export-panel')),
+          archiveTree,
+          focusOrOpen: (id) => {
+            openPane(id);
+            setFocusedNodeId(id);
+            onActivate?.();
+          },
+          beginInlineRename: (id) => {
+            setMenu(null);
+            setRenamingNodeId(id);
+          },
+        },
+      })
+    : [];
 
   const isBranchSelected = useCallback(
     (nodeId: string) => selection.has(nodeId),
@@ -346,6 +405,7 @@ export default function ActivityView({
                 isThreadExpandedFn={isThreadExpandedFn}
                 isBranchExpanded={isBranchExpandedCb}
                 isBranchSelected={isBranchSelected}
+                isBranchMenuTarget={isBranchMenuTarget}
                 toggleThread={toggleThread}
                 toggleBranch={toggleBranch}
                 getNodeOpenState={getNodeOpenState}
@@ -365,6 +425,9 @@ export default function ActivityView({
                 moveTreeToWorkspace={moveTreeToWorkspace}
                 treeSelection={treeSelection}
                 clearTreeSelection={clearTreeSelection}
+                renamingNodeId={renamingNodeId}
+                onRenameNode={renameNode}
+                onRenameEnd={() => setRenamingNodeId(null)}
               />
             ))}
           </div>
@@ -382,6 +445,14 @@ export default function ActivityView({
           No activity yet
         </div>
       )}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          sections={menuSections}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -394,6 +465,7 @@ function ActivityTreeEntry({
   isThreadExpandedFn,
   isBranchExpanded,
   isBranchSelected,
+  isBranchMenuTarget,
   toggleThread,
   toggleBranch,
   getNodeOpenState,
@@ -413,12 +485,16 @@ function ActivityTreeEntry({
   moveTreeToWorkspace,
   treeSelection,
   clearTreeSelection,
+  renamingNodeId,
+  onRenameNode,
+  onRenameEnd,
 }: {
   item: ActivityTree;
   isAlive: (id: string) => boolean;
   isThreadExpandedFn: (treeId: string, ownerActiveTreeId: string | null) => boolean;
   isBranchExpanded: (nodeId: string) => boolean;
   isBranchSelected: (nodeId: string) => boolean;
+  isBranchMenuTarget: (nodeId: string) => boolean;
   toggleThread: (treeId: string) => void;
   toggleBranch: (nodeId: string) => void;
   getNodeOpenState: (id: string) => OpenState;
@@ -438,6 +514,9 @@ function ActivityTreeEntry({
   moveTreeToWorkspace: (treeId: string, targetProjectId: string) => void;
   treeSelection: ReadonlySet<string>;
   clearTreeSelection: () => void;
+  renamingNodeId: string | null;
+  onRenameNode: (nodeId: string, title: string) => void;
+  onRenameEnd: () => void;
 }) {
   const { tree, project } = item;
   const root = buildTree(tree.rootNodeId, project.edges, isAlive);
@@ -516,11 +595,15 @@ function ActivityTreeEntry({
               isFocused={(id) => id === focusedNodeId}
               isSelected={isBranchSelected}
               isExpanded={isBranchExpanded}
+              isMenuTarget={isBranchMenuTarget}
               onToggle={toggleBranch}
               onSelect={onSelectBranch}
               onContextMenu={onBranchContextMenu}
               openState={getNodeOpenState(child.nodeId)}
               getOpenState={getNodeOpenState}
+              renamingNodeId={renamingNodeId}
+              onRenameNode={onRenameNode}
+              onRenameEnd={onRenameEnd}
             />
           ))}
         </div>

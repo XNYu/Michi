@@ -404,6 +404,9 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
       <ManageSidebar
         workspace={project}
         onSaveInstructions={(text) => store.setProjectInstructions(project.id, text)}
+        onAddFolder={store.addFolder}
+        onRemoveFolder={store.removeFolder}
+        onUpdateFolderLabel={store.updateFolderLabel}
         manageMode={manageMode}
         onToggleManageMode={() => {
           if (manageMode) {

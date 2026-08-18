@@ -1,4 +1,5 @@
 import { buildAtMentionItems } from './mentionItems';
+import type { CrossTreeGroup } from './mentionItems';
 import type { ArtifactEntry, ChatNodeState } from '../state/chatTypes';
 
 const mkCtx = (id: string, name: string): ArtifactEntry => ({
@@ -54,5 +55,69 @@ describe('buildAtMentionItems', () => {
   it('node token uses node:nodeId format', () => {
     const items = buildAtMentionItems('Research', [], nodes, 'other');
     expect(items[0].token).toBe('node:n1');
+  });
+});
+
+describe('buildAtMentionItems — cross-tree nodes', () => {
+  const crossTreeNodes: CrossTreeGroup[] = [
+    {
+      treeTitle: 'API Research',
+      nodes: [mkNode('x1', 'Auth flow', 4), mkNode('x2', 'Rate limiting', 2)],
+    },
+    {
+      treeTitle: 'Deployment',
+      nodes: [mkNode('x3', 'CDK setup', 5)],
+    },
+  ];
+
+  it('includes cross-tree nodes after same-tree nodes', () => {
+    const sameTree = [mkNode('n1', 'Local node', 1)];
+    const items = buildAtMentionItems('', [], sameTree, 'other', crossTreeNodes);
+    // 1 same-tree + 3 cross-tree
+    expect(items.filter(i => i.kind === 'node')).toHaveLength(4);
+    // Same-tree first
+    expect(items[0].label).toBe('Local node');
+    expect(items[0].description).toBe('node · 1 msg');
+    // Cross-tree shows thread title
+    expect(items[1].label).toBe('Auth flow');
+    expect(items[1].description).toBe('API Research · 4 msgs');
+  });
+
+  it('filters cross-tree nodes by query on node title', () => {
+    const items = buildAtMentionItems('auth', [], [], 'other', crossTreeNodes);
+    expect(items).toHaveLength(1);
+    expect(items[0].label).toBe('Auth flow');
+  });
+
+  it('filters cross-tree nodes by query on thread title', () => {
+    const items = buildAtMentionItems('deploy', [], [], 'other', crossTreeNodes);
+    expect(items).toHaveLength(1);
+    expect(items[0].label).toBe('CDK setup');
+    expect(items[0].description).toBe('Deployment · 5 msgs');
+  });
+
+  it('excludes current node from cross-tree results', () => {
+    const items = buildAtMentionItems('', [], [], 'x1', crossTreeNodes);
+    const nodeItems = items.filter(i => i.kind === 'node');
+    expect(nodeItems.map(i => i.id)).not.toContain('node-x1');
+    expect(nodeItems).toHaveLength(2);
+  });
+
+  it('excludes cross-tree nodes with no messages', () => {
+    const groups: CrossTreeGroup[] = [
+      { treeTitle: 'Empty thread', nodes: [mkNode('e1', 'Ghost', 0)] },
+    ];
+    const items = buildAtMentionItems('', [], [], 'other', groups);
+    expect(items.filter(i => i.kind === 'node')).toHaveLength(0);
+  });
+
+  it('cross-tree node token uses node:nodeId format', () => {
+    const items = buildAtMentionItems('CDK', [], [], 'other', crossTreeNodes);
+    expect(items[0].token).toBe('node:x3');
+  });
+
+  it('returns empty when crossTreeNodes is undefined', () => {
+    const items = buildAtMentionItems('', [], [], 'other', undefined);
+    expect(items).toHaveLength(0);
   });
 });

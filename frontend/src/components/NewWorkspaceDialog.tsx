@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { getElectron } from '../lib/electronBridge';
+import type { FolderEntry } from '../state/chatTypes';
 import { ModalShell } from './ui/ModalShell';
 import { Button } from './ui/controls';
 
 interface NewWorkspaceDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (workspaceName: string | undefined, cwd: string | undefined) => void;
+  onCreate: (workspaceName: string | undefined, cwd: string | undefined, folders?: FolderEntry[]) => void;
   /** Called when the user picks Skip — opens the singleton Chats workspace. */
   onSkip: () => void;
 }
@@ -14,8 +15,23 @@ interface NewWorkspaceDialogProps {
 // showDirectoryPicker is not in the default TS lib; narrow type.
 type DirectoryPicker = (opts?: { mode?: 'read' | 'readwrite' }) => Promise<{ name: string }>;
 
-// name + folder rows share one surface color so they read as a continuous
-// field group (they previously diverged: surface vs alt).
+const MAX_FOLDERS = 10;
+
+function basename(p: string): string {
+  return p.split('/').pop() || p;
+}
+
+/** Detect nesting between a candidate path and existing entries. */
+function hasNesting(candidate: string, entries: FolderEntry[]): boolean {
+  return entries.some(
+    (f) =>
+      candidate.startsWith(f.path + '/') ||
+      candidate === f.path ||
+      f.path.startsWith(candidate + '/'),
+  );
+}
+
+// Shared styles
 const PROMPT_ROW: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -54,8 +70,7 @@ const PROMPT_INPUT: React.CSSProperties = {
 
 export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: NewWorkspaceDialogProps) {
   const [name, setName] = useState<string>('');
-  const [folderName, setFolderName] = useState<string | null>(null);
-  const [absolutePath, setAbsolutePath] = useState<string | null>(null);
+  const [folders, setFolders] = useState<FolderEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [folderNotice, setFolderNotice] = useState<string | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
@@ -63,8 +78,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   useEffect(() => {
     if (!open) {
       setName('');
-      setFolderName(null);
-      setAbsolutePath(null);
+      setFolders([]);
       setError(null);
       setFolderNotice(null);
     }
@@ -72,38 +86,102 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
 
   if (!open) return null;
 
-  const pickFolder = async () => {
+  const addFolder = async () => {
+    if (folders.length >= MAX_FOLDERS) {
+      setError(`Maximum ${MAX_FOLDERS} folders reached`);
+      return;
+    }
     setError(null);
     setFolderNotice(null);
 
-    // Electron path — always preferred; returns an absolute path.
     const electron = getElectron();
-    if (electron) {
-      const r = await electron.chooseFolder();
-      if (r.canceled || !r.path || !r.name) return;
-      setFolderName(r.name);
-      setAbsolutePath(r.path);
+    if (electron?.chooseFolders) {
+      const r = await electron.chooseFolders();
+      if (r.canceled || r.folders.length === 0) return;
+      const newEntries: FolderEntry[] = [];
+      for (const picked of r.folders) {
+        if (folders.length + newEntries.length >= MAX_FOLDERS) {
+          setError(`Maximum ${MAX_FOLDERS} folders reached — some selections were skipped`);
+          break;
+        }
+        const allCurrent = [...folders, ...newEntries];
+        if (allCurrent.some((f) => f.path === picked.path)) continue; // dedupe
+        if (hasNesting(picked.path, allCurrent)) {
+          setError(`"${picked.name}" overlaps with an existing folder (nested or parent) — skipped`);
+          continue;
+        }
+        newEntries.push({
+          id: Math.random().toString(36).slice(2, 10),
+          path: picked.path,
+          label: picked.name,
+          addedAt: Date.now(),
+        });
+      }
+      if (newEntries.length > 0) {
+        setFolders((prev) => [...prev, ...newEntries]);
+      }
       return;
     }
 
-    // Browser fallback: showDirectoryPicker, then webkitdirectory.
+    // Fallback: single-select chooseFolder (older Electron builds)
+    if (electron?.chooseFolder) {
+      const r = await electron.chooseFolder();
+      if (r.canceled || !r.path) return;
+      if (hasNesting(r.path, folders)) {
+        setError('This folder overlaps with an existing folder (nested or parent)');
+        return;
+      }
+      if (folders.some((f) => f.path === r.path)) {
+        setError('This folder is already added');
+        return;
+      }
+      const entry: FolderEntry = {
+        id: Math.random().toString(36).slice(2, 10),
+        path: r.path,
+        label: r.name,
+        addedAt: Date.now(),
+      };
+      setFolders((prev) => [...prev, entry]);
+      return;
+    }
+
+    // Browser fallback: showDirectoryPicker
     const pick = (window as unknown as { showDirectoryPicker?: DirectoryPicker }).showDirectoryPicker;
     if (pick) {
       try {
         const handle = await pick();
-        setFolderName(handle.name);
-        setAbsolutePath(null);
+        const entry: FolderEntry = {
+          id: Math.random().toString(36).slice(2, 10),
+          path: handle.name, // Browser can only get the name
+          label: handle.name,
+          addedAt: Date.now(),
+        };
+        setFolders((prev) => [...prev, entry]);
         setFolderNotice(
-          `Browsers cannot link an absolute local folder. “${handle.name}” will only be used as the workspace name; the agent will not receive filesystem access.`,
+          'Browsers cannot link absolute local folders. Use the desktop app for full filesystem access.',
         );
         return;
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
-        setError('Could not read that folder. You can create a quick chat instead.');
+        setError('Could not read that folder.');
         return;
       }
     }
     fallbackInputRef.current?.click();
+  };
+
+  const removeFolder = (id: string) => {
+    setFolders((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const makePrimary = (id: string) => {
+    setFolders((prev) => {
+      const idx = prev.findIndex((f) => f.id === id);
+      if (idx <= 0) return prev;
+      const target = prev[idx];
+      const rest = prev.filter((_, i) => i !== idx);
+      return [target, ...rest];
+    });
   };
 
   const onFallbackChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -113,10 +191,15 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
     if (relPath) {
       const first = relPath.split('/')[0];
       if (first) {
-        setFolderName(first);
-        setAbsolutePath(null);
+        const entry: FolderEntry = {
+          id: Math.random().toString(36).slice(2, 10),
+          path: first,
+          label: first,
+          addedAt: Date.now(),
+        };
+        setFolders((prev) => [...prev, entry]);
         setFolderNotice(
-          `Browsers cannot link an absolute local folder. “${first}” will only be used as the workspace name; the agent will not receive filesystem access.`,
+          'Browsers cannot link absolute local folders. Use the desktop app for full filesystem access.',
         );
       }
     }
@@ -124,110 +207,312 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   };
 
   const trimmedName = name.trim();
-  // If the user typed nothing and picked no folder, pass undefined so the
-  // store auto-generates an Untitled-N name.
-  const finalName = trimmedName || folderName || undefined;
+  const primaryFolder = folders[0];
+  const finalName = trimmedName || (primaryFolder ? basename(primaryFolder.path) : undefined);
+  const hasFolders = folders.length > 0;
 
   const handleCreate = () => {
-    onCreate(finalName, absolutePath ?? undefined);
+    const cwd = primaryFolder?.path ?? undefined;
+    onCreate(finalName, cwd, folders.length > 0 ? folders : undefined);
   };
-
-  const browserNameOnly = !!folderName && !absolutePath;
-  const folderDisplay = absolutePath || (folderName ? `${folderName} — not linked` : null);
 
   return (
     <ModalShell open={open} onClose={onClose} title="New workspace" titleGlyph="▸" width={480}>
-        <div style={PROMPT_ROW}>
+      {/* Name row */}
+      <div style={PROMPT_ROW}>
+        <span style={PROMPT_GLYPH} aria-hidden>›_</span>
+        <span style={PROMPT_LABEL}>name</span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={primaryFolder ? basename(primaryFolder.path) : 'untitled workspace'}
+          autoFocus
+          style={PROMPT_INPUT}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleCreate();
+            }
+          }}
+        />
+      </div>
+
+      {/* Folders section */}
+      <div style={{ borderBottom: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
+        <div style={{ padding: '10px 14px 6px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={PROMPT_GLYPH} aria-hidden>›_</span>
-          <span style={PROMPT_LABEL}>name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={folderName ?? 'untitled workspace'}
-            autoFocus
-            style={PROMPT_INPUT}
-            onKeyDown={(e) => {
-              if (e.nativeEvent.isComposing) return;
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleCreate();
-              }
-            }}
-          />
+          <span style={{ ...PROMPT_LABEL, width: 'auto' }}>source folders</span>
         </div>
 
-        <div style={PROMPT_ROW}>
-          <span style={PROMPT_GLYPH} aria-hidden>›_</span>
-          <span style={PROMPT_LABEL}>folder</span>
-          <span
-            title={folderDisplay ?? undefined}
+        {!hasFolders ? (
+          /* Empty state — big clickable area */
+          <button
+            type="button"
+            onClick={() => { void addFolder(); }}
             style={{
-              ...PROMPT_INPUT,
-              fontFamily: folderDisplay
-                ? 'var(--mono-font, ui-monospace, monospace)'
-                : 'var(--ui-font)',
-              fontSize: folderDisplay ? 12.5 : 13.5,
-              color: folderDisplay ? 'var(--term-fg)' : 'var(--term-mid)',
-              fontStyle: folderDisplay ? 'normal' : 'italic',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {folderDisplay ?? '(optional)'}
-          </span>
-          <Button variant="secondary" size="sm" onClick={pickFolder} style={{ flexShrink: 0 }}>
-            browse…
-          </Button>
-        </div>
-
-        {error && (
-          <div
-            style={{
-              padding: '8px 14px 0',
-              fontSize: 12,
-              color: 'var(--term-danger)',
-              fontFamily: 'var(--ui-font)',
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {folderNotice && (
-          <div
-            role="status"
-            style={{
-              padding: '9px 14px 0',
-              fontSize: 11.5,
-              lineHeight: 1.45,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              width: 'calc(100% - 28px)',
+              margin: '0 14px 12px',
+              padding: '18px 14px',
+              border: '1.5px dashed var(--term-line)',
+              borderRadius: 6,
+              background: 'transparent',
               color: 'var(--term-mid)',
               fontFamily: 'var(--ui-font)',
+              fontSize: 13,
+              cursor: 'pointer',
+              transition: 'border-color 0.15s, color 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = 'var(--term-accent)';
+              e.currentTarget.style.color = 'var(--term-fg)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = 'var(--term-line)';
+              e.currentTarget.style.color = 'var(--term-mid)';
             }}
           >
-            {folderNotice} Use the desktop app to link or change a folder later.
+            <FolderPlusIcon />
+            Add folders the agent can read and edit
+          </button>
+        ) : (
+          /* Folder list */
+          <div style={{ padding: '0 14px 8px' }}>
+            {folders.map((f, idx) => (
+              <FolderRow
+                key={f.id}
+                folder={f}
+                isPrimary={idx === 0}
+                onRemove={() => removeFolder(f.id)}
+                onMakePrimary={() => makePrimary(f.id)}
+              />
+            ))}
+            {folders.length < MAX_FOLDERS && (
+              <button
+                type="button"
+                onClick={() => { void addFolder(); }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginTop: 6,
+                  padding: '5px 8px',
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--term-mid)',
+                  fontFamily: 'var(--ui-font)',
+                  fontSize: 11.5,
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: 13 }}>+</span> Add folder
+              </button>
+            )}
           </div>
         )}
+      </div>
 
-        <input
-          ref={fallbackInputRef}
-          type="file"
-          /* @ts-expect-error non-standard but widely supported */
-          webkitdirectory=""
-          directory=""
-          multiple
-          hidden
-          onChange={onFallbackChange}
-        />
-
-        <div style={{ padding: '14px 14px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Button variant="ghost" onClick={onClose}>cancel</Button>
-          <Button variant="secondary" onClick={onSkip}>open quick chat</Button>
-          <Button variant="primary" onClick={handleCreate}>
-            {browserNameOnly ? 'create without folder' : 'create'}
-          </Button>
+      {error && (
+        <div
+          style={{
+            padding: '8px 14px 0',
+            fontSize: 12,
+            color: 'var(--term-danger)',
+            fontFamily: 'var(--ui-font)',
+          }}
+        >
+          {error}
         </div>
+      )}
+
+      {folderNotice && (
+        <div
+          role="status"
+          style={{
+            padding: '9px 14px 0',
+            fontSize: 11.5,
+            lineHeight: 1.45,
+            color: 'var(--term-mid)',
+            fontFamily: 'var(--ui-font)',
+          }}
+        >
+          {folderNotice}
+        </div>
+      )}
+
+      <input
+        ref={fallbackInputRef}
+        type="file"
+        /* @ts-expect-error non-standard but widely supported */
+        webkitdirectory=""
+        directory=""
+        multiple
+        hidden
+        onChange={onFallbackChange}
+      />
+
+      <div style={{ padding: '14px 14px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <Button variant="ghost" onClick={onClose}>cancel</Button>
+        <Button variant="secondary" onClick={onSkip}>open quick chat</Button>
+        <Button variant="primary" onClick={handleCreate}>create</Button>
+      </div>
     </ModalShell>
+  );
+}
+
+/* ---------- Folder row ---------- */
+
+interface FolderRowProps {
+  folder: FolderEntry;
+  isPrimary: boolean;
+  onRemove: () => void;
+  onMakePrimary: () => void;
+}
+
+function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProps) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 8px',
+        borderRadius: 4,
+        background: hovered ? 'var(--term-alt)' : 'transparent',
+        transition: 'background 0.1s',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <FolderIcon />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: 'var(--term-fg)',
+            fontFamily: 'var(--ui-font)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {folder.label || basename(folder.path)}
+        </div>
+        <div
+          style={{
+            fontSize: 10.5,
+            color: 'var(--term-muted)',
+            fontFamily: 'var(--mono-font, monospace)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={folder.path}
+        >
+          {folder.path}
+        </div>
+      </div>
+
+      {isPrimary && (
+        <span
+          style={{
+            fontSize: 10,
+            fontFamily: 'var(--ui-font)',
+            fontWeight: 600,
+            color: 'var(--term-accent)',
+            background: 'color-mix(in srgb, var(--term-accent) 12%, transparent)',
+            padding: '2px 6px',
+            borderRadius: 3,
+            flexShrink: 0,
+          }}
+        >
+          Primary
+        </span>
+      )}
+
+      {!isPrimary && hovered && (
+        <button
+          type="button"
+          onClick={onMakePrimary}
+          title="Make this the working directory"
+          style={{
+            fontSize: 10,
+            fontFamily: 'var(--ui-font)',
+            color: 'var(--term-mid)',
+            background: 'transparent',
+            border: '1px solid var(--term-line)',
+            padding: '2px 6px',
+            borderRadius: 3,
+            cursor: 'pointer',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Make primary
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remove folder"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: hovered ? 'var(--term-fg)' : 'transparent',
+          cursor: 'pointer',
+          fontSize: 14,
+          lineHeight: 1,
+          padding: '2px 4px',
+          flexShrink: 0,
+          transition: 'color 0.1s',
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/* ---------- Icons ---------- */
+
+function FolderPlusIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinejoin="round"
+    >
+      <path d="M2 4h4l1.5 1.5H14v8H2z" />
+      <path d="M8 7.5v4M6 9.5h4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="var(--term-muted)"
+      strokeWidth="1.3"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+    >
+      <path d="M2 4h4l1.5 1.5H14v8H2z" />
+    </svg>
   );
 }

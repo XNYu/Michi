@@ -416,6 +416,22 @@ export default function WorkspaceRow({
               >
                 {project.name}
               </span>
+              {(project.folders?.length ?? 0) > 1 && (
+                <span
+                  title={`${project.folders!.length} folders`}
+                  style={{
+                    fontSize: 9.5,
+                    color: 'var(--term-muted)',
+                    fontFamily: 'var(--ui-font)',
+                    flexShrink: 0,
+                    padding: '0 3px',
+                    background: 'var(--term-surface-2, var(--term-alt))',
+                    lineHeight: '14px',
+                  }}
+                >
+                  +{project.folders!.length - 1}
+                </span>
+              )}
               {project.pinnedAt && (
                 <svg
                   aria-label="pinned"

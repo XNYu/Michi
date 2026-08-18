@@ -13,8 +13,15 @@ export interface AtMentionItem {
   token: string;
 }
 
+/** A group of nodes from another thread, with the thread's display title. */
+export interface CrossTreeGroup {
+  treeTitle: string;
+  nodes: ChatNodeState[];
+}
+
 /**
- * Build the list of mentionable items from artifacts + same-tree nodes.
+ * Build the list of mentionable items from artifacts + same-tree nodes +
+ * optional cross-tree nodes from other threads in the same workspace.
  * Filters by query (case-insensitive substring match).
  */
 export function buildAtMentionItems(
@@ -22,6 +29,7 @@ export function buildAtMentionItems(
   artifacts: ArtifactEntry[],
   sameTreeNodes: ChatNodeState[],
   currentNodeId: string,
+  crossTreeNodes?: CrossTreeGroup[],
 ): AtMentionItem[] {
   const q = query.toLowerCase();
   const items: AtMentionItem[] = [];
@@ -42,7 +50,6 @@ export function buildAtMentionItems(
     if (node.nodeId === currentNodeId) continue;
     if (node.messages.length === 0) continue;
     const title = node.title || node.messages.find(m => m.role === 'user')?.text.slice(0, 50) || node.nodeId;
-    // Generate a stable slug from the title for the @token.
     const token = `node:${node.nodeId}`;
     if (q && !title.toLowerCase().includes(q) && !node.nodeId.toLowerCase().includes(q)) continue;
     const msgCount = node.messages.length;
@@ -53,6 +60,26 @@ export function buildAtMentionItems(
       kind: 'node',
       token,
     });
+  }
+
+  // Cross-thread nodes — shown after same-tree nodes, grouped by thread title
+  if (crossTreeNodes) {
+    for (const { treeTitle, nodes } of crossTreeNodes) {
+      for (const node of nodes) {
+        if (node.nodeId === currentNodeId) continue;
+        if (node.messages.length === 0) continue;
+        const title = node.title || node.messages.find(m => m.role === 'user')?.text.slice(0, 50) || node.nodeId;
+        if (q && !title.toLowerCase().includes(q) && !treeTitle.toLowerCase().includes(q)) continue;
+        const msgCount = node.messages.length;
+        items.push({
+          id: `node-${node.nodeId}`,
+          label: title,
+          description: `${treeTitle} · ${msgCount} msg${msgCount !== 1 ? 's' : ''}`,
+          kind: 'node',
+          token: `node:${node.nodeId}`,
+        });
+      }
+    }
   }
 
   return items;

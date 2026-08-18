@@ -293,6 +293,10 @@ export function serializeWorkspaceRow(project: Project) {
     deleted_at: project.deletedAt ?? null,
     archived_at: project.archivedAt ?? null,
     pinned_at: project.pinnedAt ?? null,
+    // Multi-folder: persist the full folder array (JSON string or null).
+    folders: (project.folders && project.folders.length > 0)
+      ? JSON.stringify(project.folders)
+      : null,
   };
 }
 

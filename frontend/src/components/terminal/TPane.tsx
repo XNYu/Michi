@@ -9,6 +9,7 @@ import MentionEditor, { type MentionEditorHandle } from '../MentionEditor';
 import type { MentionRecord } from '../mentions';
 import { expandMentions } from '../mentions';
 import { findTreeIdForNode } from '../../state/tree';
+import type { CrossTreeGroup } from '../mentionItems';
 import { formatQuotedMessage } from '../../lib/quoteFormat';
 import { buildAnchorMap, type ChildAnchor } from '../../state/branchAnchors';
 import { formatCommentsBlock, joinMessageParts } from '../../lib/commentFormat';
@@ -173,6 +174,7 @@ const PANE_PERF_SLOW_COMMIT_MS = 16;
 const EMPTY_CONTEXTS: ArtifactEntry[] = [];
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 const EMPTY_SAME_TREE_NODES: ChatNodeState[] = [];
+const EMPTY_CROSS_TREE_NODES: CrossTreeGroup[] = [];
 const EMPTY_MERGE_SOURCE_LABELS: string[] = [];
 const EMPTY_CONTEXT_NAMES: ReadonlySet<string> = new Set();
 
@@ -1232,6 +1234,40 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     return out.length > 0 ? out : EMPTY_SAME_TREE_NODES;
   }, [activeProject, nodeId]), shallowArrayEqual);
 
+  // Cross-tree nodes for @mention popup: nodes from OTHER threads in the same
+  // workspace, grouped by thread title. Sorted by tree.lastActiveAt descending.
+  // Cap at ~50 total cross-tree candidates to avoid popup explosion.
+  const crossTreeNodes = useStructuralSelector(useCallback((nodesMap) => {
+    if (!activeProject) return EMPTY_CROSS_TREE_NODES;
+    const currentTreeId = findTreeIdForNode(nodeId, activeProject);
+    if (!currentTreeId) return EMPTY_CROSS_TREE_NODES;
+    const groups: CrossTreeGroup[] = [];
+    // Sort non-archived trees by lastActiveAt descending
+    const otherTrees = activeProject.trees
+      .filter((t) => t.id !== currentTreeId && !t.archivedAt)
+      .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+    let totalCount = 0;
+    for (const tree of otherTrees) {
+      if (totalCount >= 50) break;
+      const treeNodes: ChatNodeState[] = [];
+      for (const nid of activeProject.chatIds) {
+        if (totalCount + treeNodes.length >= 50) break;
+        const nd = nodesMap[nid];
+        if (!nd || nd.deletedAt || nd.kind !== 'chat') continue;
+        if (nd.messages.length === 0) continue;
+        if (findTreeIdForNode(nid, activeProject) !== tree.id) continue;
+        treeNodes.push(nd);
+      }
+      if (treeNodes.length > 0) {
+        const rootNode = nodesMap[tree.rootNodeId];
+        const treeTitle = tree.name || rootNode?.title || chatLabel(rootNode) || `Thread ${tree.id.slice(0, 6)}`;
+        groups.push({ treeTitle, nodes: treeNodes });
+        totalCount += treeNodes.length;
+      }
+    }
+    return groups.length > 0 ? groups : EMPTY_CROSS_TREE_NODES;
+  }, [activeProject, nodeId]), shallowArrayEqual);
+
   const mergeSourceLabels = useStructuralSelector(useCallback((nodesMap) => {
     const node = nodesMap[nodeId];
     if (!node || (node.mergeSources?.length ?? 0) === 0) return EMPTY_MERGE_SOURCE_LABELS;
@@ -2078,6 +2114,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               className="hide-sb"
               artifacts={mentionContexts}
               sameTreeNodes={sameTreeNodes}
+              crossTreeNodes={crossTreeNodes}
               currentNodeId={nodeId}
               agentCommands={n.agentCommands}
               availableModes={availableModes}
