@@ -379,7 +379,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
         suggestion: {
           char: '@',
           items: ({ query }) =>
-            buildAtMentionItems(query, contextsRef.current, nodesRef.current, currentNodeIdRef.current, crossTreeNodesRef.current).slice(0, 8),
+            buildAtMentionItems(query, contextsRef.current, nodesRef.current, currentNodeIdRef.current, crossTreeNodesRef.current),
           command: ({ editor: ed, range, props: picked }) => {
             const item = picked as unknown as AtMentionItem;
             const refId = item.kind === 'context' ? item.token : item.token.replace(/^node:/, '');
