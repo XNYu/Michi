@@ -2,7 +2,8 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
 import { isRunningStatus, formatDurationMs, toolSpanMs } from './toolCallGrouping';
 import { ToolCallGroup } from './ToolCallGroup';
-import { type TerminalDensity } from '../../state/prefs';
+import { type TerminalDensity, useAgentBlockStyle } from '../../state/prefs';
+import { CardSpinner, SparkleIcon, LiveTimerLabel } from './AgentBlockVariants';
 import type { PlanEntry } from '../../services/api';
 import MarkdownContent from '../MarkdownContent';
 import { QuoteChip } from './QuoteChip';
@@ -268,13 +269,22 @@ function useThinkingTimer(streaming: boolean | undefined): number | undefined {
   return elapsed;
 }
 
-function TermThoughtBlock({
+/** Interleaved thought-body content for merged agent clusters: thought prose
+ *  chunks and tool groups in their original stream order. */
+export type ThoughtSegment =
+  | { key: string; kind: 'text'; text: string }
+  | { key: string; kind: 'tools'; tools: ToolCallState[] };
+
+export function TermThoughtBlock({
   text,
   streaming,
   children,
   toolCount,
   runtimeId,
   durationMs,
+  segments,
+  subagents,
+  initialMode,
 }: {
   text: string;
   streaming?: boolean;
@@ -283,13 +293,22 @@ function TermThoughtBlock({
   runtimeId?: string | null;
   /** Fallback duration (e.g. tool-span of the run) for hydrated turns. */
   durationMs?: number;
+  /** When provided, the body renders these interleaved chunks instead of
+   *  `text` + `children` (which are then only used for the header label). */
+  segments?: readonly ThoughtSegment[];
+  /** Roster for tool groups rendered from `segments`. */
+  subagents?: readonly SubagentInfo[];
+  /** Initial user-mode override — used by the dev specimen to show an
+   *  expanded body statically. Live rendering leaves this unset. */
+  initialMode?: ThoughtMode;
 }) {
   // Default mode: tail while streaming, collapsed once finished.
   // User clicks cycle: tail/collapsed → expanded → (streaming ? tail : collapsed).
-  const [userMode, setUserMode] = useState<ThoughtMode | null>(null);
+  const [userMode, setUserMode] = useState<ThoughtMode | null>(initialMode ?? null);
   const tailRef = useRef<HTMLDivElement | null>(null);
   const expandedRef = useRef<HTMLDivElement | null>(null);
   const liveElapsed = useThinkingTimer(streaming);
+  const variant = useAgentBlockStyle();
 
   // Once streaming flips false, drop any sticky 'tail' override so the block
   // auto-collapses to 0 rows. 'expanded' is preserved (user is reading).
@@ -299,7 +318,9 @@ function TermThoughtBlock({
 
   const mode: ThoughtMode = userMode ?? (streaming ? 'tail' : 'collapsed');
 
-  // Pin tail-mode scroll to the bottom as new tokens arrive.
+  // Pin tail-mode scroll to the bottom as new tokens arrive. `segments`
+  // changes identity when cluster content grows (new tool rows), keeping the
+  // tail pinned during tool activity too.
   useEffect(() => {
     if (mode === 'tail' && tailRef.current) {
       tailRef.current.scrollTop = tailRef.current.scrollHeight;
@@ -307,9 +328,9 @@ function TermThoughtBlock({
     if (mode === 'expanded' && streaming && expandedRef.current) {
       expandedRef.current.scrollTop = expandedRef.current.scrollHeight;
     }
-  }, [text, mode, streaming]);
+  }, [text, mode, streaming, segments]);
 
-  if (!text && !children) return null;
+  if (!text && !children && !segments?.length) return null;
 
   const handleToggle = () => {
     if (mode === 'expanded') {
@@ -335,32 +356,175 @@ function TermThoughtBlock({
       : '';
   const doneLabel = `${base}${suffix}`;
 
-  const body = (ref: React.Ref<HTMLDivElement>, tail: boolean) => (
+  const thoughtProse = (chunk: string, chunkStreaming: boolean | undefined, key?: string) =>
+    runtimeId === 'codex' ? (
+      <CodexStepList key={key} text={chunk} streaming={chunkStreaming} />
+    ) : (
+      <MarkdownContent
+        key={key}
+        text={chunk}
+        size="xs"
+        style={thoughtProseVars}
+        className="[&_a]:underline"
+      />
+    );
+
+  const lastTextSegKey = segments
+    ? [...segments].reverse().find((s) => s.kind === 'text')?.key
+    : undefined;
+
+  const bodyContent = segments ? (
+    segments.map((seg) =>
+      seg.kind === 'text' ? (
+        thoughtProse(seg.text, streaming && seg.key === lastTextSegKey, seg.key)
+      ) : (
+        <ToolCallGroup
+          key={seg.key}
+          tools={seg.tools}
+          defaultExpanded={seg.tools.some((t) => isRunningStatus(t.status))}
+          subagents={subagents}
+        />
+      ),
+    )
+  ) : (
+    <>
+      {text ? thoughtProse(text, streaming) : null}
+      {children}
+    </>
+  );
+
+  const body = (ref: React.Ref<HTMLDivElement>, tail: boolean, chrome?: React.CSSProperties) => (
     <div
       ref={ref}
       style={{
-        paddingLeft: 10,
-        marginLeft: 2,
-        borderLeft: '1px solid var(--term-line)',
-        color: 'var(--term-muted)',
-        lineHeight: 1.55,
-        marginTop: 4,
+        ...(chrome ?? {
+          paddingLeft: 10,
+          marginLeft: 2,
+          borderLeft: '1px solid var(--term-line)',
+          color: 'var(--term-muted)',
+          lineHeight: 1.55,
+          marginTop: 4,
+        }),
         ...(tail ? { maxHeight: THOUGHT_TAIL_MAX_HEIGHT, overflow: 'hidden' } : null),
       }}
     >
-      {runtimeId === 'codex' ? (
-        <CodexStepList text={text} streaming={streaming} />
-      ) : (
-        <MarkdownContent
-          text={text}
-          size="xs"
-          style={thoughtProseVars}
-          className="[&_a]:underline"
-        />
-      )}
-      {children}
+      {bodyContent}
     </div>
   );
+
+  const bodyRef = mode === 'tail' ? tailRef : expandedRef;
+  const showBody = mode === 'tail' || mode === 'expanded';
+
+  // ── 1b · card chrome: hairline square-corner card, spinner/sparkle header,
+  //    hairline-divided serif body. ──
+  if (variant === 'card') {
+    const cardBase = dur != null ? `Thought for ${formatDurationMs(dur)}` : 'Thoughts';
+    const cardSuffix = toolCount && toolCount > 0
+      ? `· ${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`
+      : codexStepCount > 0
+        ? `· ${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
+        : '';
+    return (
+      <div style={{ marginBottom: 8, fontSize: 11, fontFamily: 'var(--ui-font)' }}>
+        <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
+          <div
+            onClick={handleToggle}
+            className="t-hover-fg"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '7px 11px',
+              cursor: 'pointer',
+              userSelect: 'none',
+              color: 'var(--term-muted)',
+            }}
+          >
+            {streaming ? (
+              <>
+                <CardSpinner />
+                <span className="term-shimmer" style={{ fontSize: 11.5, fontWeight: 500 }}>Thinking…</span>
+                <LiveTimerLabel active={streaming} />
+              </>
+            ) : (
+              <>
+                <SparkleIcon size={13} color="var(--term-muted)" />
+                <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--term-mid)' }}>{cardBase}</span>
+                {cardSuffix && <span style={{ fontSize: 10, color: 'var(--term-faint)' }}>{cardSuffix}</span>}
+                <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--term-faint)' }}>
+                  {mode === 'expanded' ? '▾' : '▸'}
+                </span>
+              </>
+            )}
+          </div>
+          {showBody && body(bodyRef, mode === 'tail', {
+            borderTop: '1px solid var(--term-line)',
+            padding: '9px 12px',
+            color: 'var(--term-mid)',
+            lineHeight: 1.6,
+            // Mock spec: thought prose sits a step below the answer body
+            // (12px at the default 15px slider). Scales with the size slider.
+            ['--message-body-size' as never]: 'calc(var(--message-body-size-base, 15px) * 0.8)',
+            ['--message-body-leading' as never]: '1.6',
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ── 1d · terminal chrome: ❯-prompt streaming row with a blinking caret,
+  //    tracking-caps collapsed row with a dotted leader, accent-rule body. ──
+  if (variant === 'terminal') {
+    const rightMeta = [
+      dur != null ? formatDurationMs(dur) : null,
+      toolCount && toolCount > 0
+        ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}`
+        : codexStepCount > 0
+          ? `${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
+          : null,
+    ].filter(Boolean).join(' · ');
+    return (
+      <div style={{ marginBottom: 8, fontSize: 11, fontFamily: 'var(--ui-font)' }}>
+        {streaming ? (
+          <div
+            onClick={handleToggle}
+            style={{ display: 'flex', alignItems: 'baseline', gap: 7, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
+          >
+            <span aria-hidden style={{ fontFamily: 'var(--font-mono)', color: 'var(--term-accent)', fontSize: 11, flexShrink: 0 }}>❯</span>
+            <span className="term-shimmer">thinking</span>
+            <span aria-hidden className="agent-caret" />
+          </div>
+        ) : (
+          <div
+            onClick={handleToggle}
+            className="t-hover-fg"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
+          >
+            <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', flexShrink: 0 }}>
+              {mode === 'expanded' ? '▾' : '▸'}
+            </span>
+            <span style={{ fontSize: 9, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
+              thinking
+            </span>
+            <span aria-hidden style={{ flex: 1, borderTop: '1px dotted var(--term-line)', transform: 'translateY(1px)' }} />
+            {rightMeta && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--term-faint)', flexShrink: 0 }}>{rightMeta}</span>
+            )}
+          </div>
+        )}
+        {showBody && body(bodyRef, mode === 'tail', {
+          marginTop: 5,
+          marginLeft: 3,
+          paddingLeft: 11,
+          borderLeft: '2px solid var(--term-accent-f)',
+          color: 'var(--term-muted)',
+          lineHeight: 1.55,
+          ['--message-body-size' as never]: 'calc(var(--message-body-size-base, 15px) * 0.8)',
+          ['--message-body-leading' as never]: '1.55',
+        })}
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginBottom: 8, fontSize: 11 }}>
@@ -694,6 +858,113 @@ const ThinkingRunView = React.memo(ThinkingRunViewInner, (prev, next) =>
   prev.runtimeId === next.runtimeId,
 );
 
+/* ── Agent-run clustering (card / terminal variants) ──
+   Consecutive thinking runs and tool-only answer runs merge into ONE agent
+   block: a single thought header whose body interleaves thought prose and
+   tool groups in stream order. Answer runs with visible text break clusters.
+   The plain variant keeps the historical one-block-per-run rendering. */
+
+type RenderCluster =
+  | { kind: 'agent'; id: string; runs: AssistantRun[] }
+  | { kind: 'run'; run: AssistantRun };
+
+function isToolOnlyAnswerRun(run: AssistantRun): boolean {
+  return run.kind === 'answer' && run.blocks.length > 0 && run.blocks.every((b) => b.kind === 'tool');
+}
+
+function clusterAgentRuns(runs: AssistantRun[]): RenderCluster[] {
+  const out: RenderCluster[] = [];
+  let buf: AssistantRun[] = [];
+  const flush = () => {
+    if (buf.length === 0) return;
+    if (buf.some((r) => r.kind === 'thinking')) {
+      out.push({ kind: 'agent', id: buf[0].id, runs: buf });
+    } else {
+      // Tool-only answer runs with no thinking neighbours keep their plain
+      // rendering — a thought header with zero thoughts would be a lie.
+      for (const r of buf) out.push({ kind: 'run', run: r });
+    }
+    buf = [];
+  };
+  for (const run of runs) {
+    if (run.kind === 'thinking' || isToolOnlyAnswerRun(run)) {
+      buf.push(run);
+    } else {
+      flush();
+      out.push({ kind: 'run', run });
+    }
+  }
+  flush();
+  return out;
+}
+
+interface AgentClusterViewProps {
+  runs: AssistantRun[];
+  tools: ToolCallState[];
+  streaming: boolean;
+  subagents?: readonly SubagentInfo[];
+  runtimeId?: string | null;
+}
+
+function AgentClusterViewInner({ runs, tools, streaming, subagents, runtimeId }: AgentClusterViewProps) {
+  const toolsById = useMemo(() => toolMap(tools), [tools]);
+  const segments = useMemo(() => {
+    const out: ThoughtSegment[] = [];
+    for (const run of runs) {
+      for (const block of run.blocks) {
+        if (block.kind === 'thinking') {
+          if (!block.rawText) continue;
+          const last = out[out.length - 1];
+          // Adjacent thinking blocks are stream fragments of one thought —
+          // concatenate raw (mirrors thinkingRunRawText's '' join).
+          if (last?.kind === 'text') last.text += block.rawText;
+          else out.push({ key: block.id, kind: 'text', text: block.rawText });
+        } else if (block.kind === 'tool') {
+          const tool = toolsById.get(block.toolCallId);
+          if (!tool) continue;
+          const last = out[out.length - 1];
+          if (last?.kind === 'tools') last.tools.push(tool);
+          else out.push({ key: block.id, kind: 'tools', tools: [tool] });
+        }
+      }
+    }
+    return out;
+  }, [runs, toolsById]);
+  const text = useMemo(
+    () => segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n\n'),
+    [segments],
+  );
+  const spanMs = useMemo(() => toolSpanMs(tools), [tools]);
+  return (
+    <TermThoughtBlock
+      text={text}
+      segments={segments}
+      streaming={streaming}
+      toolCount={tools.length}
+      runtimeId={runtimeId}
+      durationMs={spanMs}
+      subagents={subagents}
+    />
+  );
+}
+
+function sameRunRefs(a: AssistantRun[], b: AssistantRun[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || !sameBlockRefs(a[i].blocks, b[i].blocks)) return false;
+  }
+  return true;
+}
+
+const AgentClusterView = React.memo(AgentClusterViewInner, (prev, next) =>
+  sameRunRefs(prev.runs, next.runs) &&
+  sameToolRefs(prev.tools, next.tools) &&
+  prev.streaming === next.streaming &&
+  prev.subagents === next.subagents &&
+  prev.runtimeId === next.runtimeId,
+);
+
 function LegacyAssistantBody({
   m,
   isDark,
@@ -735,12 +1006,22 @@ function BlockAssistantBody({
 }) {
   const runs = useMemo(() => splitAssistantRuns(m.blocks), [m.blocks]);
   const byId = useMemo(() => toolMap(m.toolCalls), [m.toolCalls]);
+  const variant = useAgentBlockStyle();
+  const clusters = useMemo(
+    () =>
+      variant === 'plain'
+        ? runs.map((run): RenderCluster => ({ kind: 'run', run }))
+        : clusterAgentRuns(runs),
+    [runs, variant],
+  );
   // Backward scans (no array copy). `runs` is rebuilt every chunk as blocks
   // grow, so the old [...runs].reverse().find() copied+reversed on every
   // streamed token of the actively-rendering message.
+  // Tool-only answer runs never smooth (no text) — the callback targets the
+  // last answer run that can actually stream prose.
   const tailAnswerRunId = useMemo(() => {
     for (let i = runs.length - 1; i >= 0; i--) {
-      if (runs[i].kind === 'answer') return runs[i].id;
+      if (runs[i].kind === 'answer' && !isToolOnlyAnswerRun(runs[i])) return runs[i].id;
     }
     return undefined;
   }, [runs]);
@@ -758,7 +1039,44 @@ function BlockAssistantBody({
   }, [onSmoothingChange, tailAnswerRunId]);
   return (
     <>
-      {runs.map((run: AssistantRun) => {
+      {clusters.map((cluster) => {
+        if (cluster.kind === 'agent') {
+          const clusterTools = cluster.runs.flatMap((r) => relevantTools(r.blocks, byId));
+          if (!showThoughts) {
+            // Thought prose is hidden, but tool activity from answer-section
+            // runs stays visible — parity with the un-clustered rendering.
+            return cluster.runs.filter(isToolOnlyAnswerRun).map((run) => (
+              <AnswerRunView
+                key={run.id}
+                blocks={run.blocks}
+                tools={relevantTools(run.blocks, byId)}
+                incomingCarry={run.incomingCarry}
+                isDark={isDark}
+                subagents={subagents}
+                runtimeId={runtimeId}
+              />
+            ));
+          }
+          // Keep the block live (tail body visible) while any of its tools is
+          // still running during the stream, not just while thought tokens
+          // arrive — otherwise the header collapses mid-work and hides the
+          // running rows. Gated on m.streaming so hydrated turns with stale
+          // non-terminal tool statuses don't shimmer forever.
+          const active =
+            cluster.runs.some((r) => r.id === liveThinkingId) ||
+            (!!m.streaming && clusterTools.some((t) => isRunningStatus(t.status)));
+          return (
+            <AgentClusterView
+              key={cluster.id}
+              runs={cluster.runs}
+              tools={clusterTools}
+              streaming={active}
+              subagents={subagents}
+              runtimeId={runtimeId}
+            />
+          );
+        }
+        const run = cluster.run;
         const tools = relevantTools(run.blocks, byId);
         if (run.kind === 'image') {
           return <ImageBlockView key={run.id} blocks={run.blocks} />;

@@ -57,7 +57,7 @@ export function isFailedStatus(status: string | undefined): boolean {
   return FAILED_STATUSES.has(status);
 }
 
-type BucketKey = 'read' | 'edit' | 'write' | 'bash' | 'grep' | 'glob' | 'unknown';
+export type BucketKey = 'read' | 'edit' | 'write' | 'bash' | 'grep' | 'glob' | 'unknown';
 
 interface BucketDef {
   verb: string;          // "Read", "Edited", "Ran"
@@ -81,9 +81,16 @@ const BUCKETS: Record<BucketKey, BucketDef> = {
   unknown: { verb: 'used',     noun: 'tool' },
 };
 
-function bucketKeyForTool(tool: ToolCallState): BucketKey {
-  const candidate = (tool.kind || tool.title.split(/\s+/)[0] || '').toLowerCase();
-  if (candidate in BUCKETS) return candidate as BucketKey;
+export function toolBucketKey(tool: ToolCallState): BucketKey {
+  // Try kind first, but fall through to the title when the kind is a value
+  // outside our bucket set — Claude runtime reports kind 'tool' for
+  // everything, kiro ACP uses kinds like 'execute'. Without the fallback a
+  // Bash/Read title lands in 'unknown' and loses its icon + verb.
+  const kind = (tool.kind || '').toLowerCase();
+  if (kind in BUCKETS) return kind as BucketKey;
+  const first = (tool.title.split(/\s+/)[0] || '').toLowerCase();
+  if (first in BUCKETS) return first as BucketKey;
+  if (kind === 'execute') return 'bash';
   return 'unknown';
 }
 
@@ -260,6 +267,52 @@ export function filterSubagentRelayedTools(
   });
 }
 
+/** Priority order for the one-line argument shown beside a tool name.
+ *  Matches what each bucket's primary argument is (command for bash,
+ *  file_path for read/edit, pattern for grep, …). */
+const ROW_DETAIL_KEYS = [
+  'command',
+  'pattern',
+  'file_path',
+  'filePath',
+  'path',
+  'query',
+  'url',
+  'prompt',
+  'description',
+];
+
+const ROW_DETAIL_MAX = 200;
+
+function clampLine(value: string | undefined, max: number): string | undefined {
+  if (!value) return undefined;
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+/**
+ * One-line human-readable argument for a tool row ("npm test", a file path,
+ * a grep pattern). Sources, in order:
+ *   1. the structured input (`inputJson`) — the primary argument key;
+ *   2. `detail` when it's a plain purpose string (kiro's __tool_use_purpose);
+ *   3. `detail` parsed as JSON — Claude runtime backfills detail with a raw
+ *      input dump, and completed MCP tools overwrite it with result content,
+ *      so a raw `detail` is only trusted after extraction, never verbatim.
+ */
+export function toolRowDetail(tool: ToolCallState): string | undefined {
+  const input = tool.inputJson;
+  if (input?.trim().startsWith('{')) {
+    const fromInput = detailField(input, parseDetailObject(input), ROW_DETAIL_KEYS);
+    if (fromInput) return clampLine(fromInput, ROW_DETAIL_MAX);
+  }
+  const detail = compactWhitespace(tool.detail);
+  if (detail && !/^[[{]/.test(detail)) return clampLine(detail, ROW_DETAIL_MAX);
+  if (detail?.startsWith('{')) {
+    const fromDetail = detailField(tool.detail, parseDetailObject(tool.detail), ROW_DETAIL_KEYS);
+    if (fromDetail) return clampLine(fromDetail, ROW_DETAIL_MAX);
+  }
+  return undefined;
+}
+
 /**
  * Short MCP tool names for chips.
  * Claude: `mcp__michi-tools__list_threads` → `list_threads`
@@ -343,12 +396,12 @@ export function summarizeToolsBase(tools: ToolCallState[]): string {
   }
 
   if (tools.length === 1) {
-    return prettifyToolTitle(tools[0].title) || BUCKETS[bucketKeyForTool(tools[0])].verb;
+    return prettifyToolTitle(tools[0].title) || BUCKETS[toolBucketKey(tools[0])].verb;
   }
 
   const counts = new Map<BucketKey, number>();
   for (const tool of tools) {
-    const key = bucketKeyForTool(tool);
+    const key = toolBucketKey(tool);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
@@ -378,4 +431,46 @@ export function summarizeTools(tools: ToolCallState[]): string {
     return subagentToolInfo(tools[0]) ? base : `${base} · failed`;
   }
   return `${base} · ${failed} failed`;
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function cleanJsonValues(obj: unknown): unknown {
+  if (typeof obj === 'string' && /<[a-z][\s\S]*>/i.test(obj)) {
+    return stripHtml(obj);
+  }
+  if (Array.isArray(obj)) return obj.map(cleanJsonValues);
+  if (obj && typeof obj === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = cleanJsonValues(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
+/** Pretty-print a tool payload: JSON re-indented with HTML-bearing string
+ *  values stripped to text; non-JSON passes through verbatim. */
+export function formatToolPayload(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    const cleaned = cleanJsonValues(parsed);
+    return JSON.stringify(cleaned, null, 2);
+  } catch {
+    return raw;
+  }
 }

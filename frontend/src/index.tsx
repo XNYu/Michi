@@ -22,11 +22,22 @@ const root = ReactDOM.createRoot(
 );
 
 startupMark('react_render_start');
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+const specimen = import.meta.env.DEV
+  ? new URLSearchParams(window.location.search).get('specimen')
+  : null;
+if (specimen === 'agent-blocks') {
+  // Dev-only specimen sheet for visual verification of the agent-block
+  // variants — bypasses the app shell entirely.
+  void import('./components/terminal/AgentBlocksSpecimen').then(({ default: AgentBlocksSpecimen }) => {
+    root.render(<AgentBlocksSpecimen />);
+  });
+} else {
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+}
 startupMark('react_render_scheduled');
 
 const stopFrameMetrics = startFrameMetrics();

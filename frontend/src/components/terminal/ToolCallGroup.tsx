@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCallState, SubagentInfo } from '../../state/chatTypes';
+import { useAgentBlockStyle } from '../../state/prefs';
+import { CardToolGroup, TermToolGroup } from './AgentBlockVariants';
 import {
   summarizeToolsBase,
   failedToolCount,
   toolDurationMs,
   toolSpanMs,
   formatDurationMs,
+  formatToolPayload,
   isTerminalStatus,
   isFailedStatus,
   isRunningStatus,
@@ -105,17 +108,26 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
     setExpanded(false);
   }, [visibleTools]);
 
+  const variant = useAgentBlockStyle();
+
   if (visibleTools.length === 0) return null;
+
+  const onToggle = () => {
+    userInteractedRef.current = true;
+    setExpanded((e) => !e);
+  };
+
+  if (variant === 'card') {
+    return <CardToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} />;
+  }
+  if (variant === 'terminal') {
+    return <TermToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} />;
+  }
 
   const failed = failedToolCount(visibleTools);
   const running = !allTerminal(visibleTools);
   const doneCount = visibleTools.filter((t) => isTerminalStatus(t.status)).length;
   const spanMs = running ? undefined : toolSpanMs(visibleTools);
-
-  const onHeaderClick = () => {
-    userInteractedRef.current = true;
-    setExpanded((e) => !e);
-  };
 
   const containerStyle: React.CSSProperties = {
     fontSize: 10.5,
@@ -145,7 +157,7 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
         <button
           type="button"
           data-toolgroup-header
-          onClick={onHeaderClick}
+          onClick={onToggle}
           className="t-hover-fg"
           style={headerBtnStyle}
         >
@@ -169,7 +181,7 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
       <button
         type="button"
         data-toolgroup-header
-        onClick={onHeaderClick}
+        onClick={onToggle}
         className="t-hover-fg"
         style={headerBtnStyle}
       >
@@ -347,46 +359,6 @@ function PayloadBlock({ inputJson, output }: { inputJson?: string; output?: stri
       )}
     </div>
   );
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function cleanJsonValues(obj: unknown): unknown {
-  if (typeof obj === 'string' && /<[a-z][\s\S]*>/i.test(obj)) {
-    return stripHtml(obj);
-  }
-  if (Array.isArray(obj)) return obj.map(cleanJsonValues);
-  if (obj && typeof obj === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      out[k] = cleanJsonValues(v);
-    }
-    return out;
-  }
-  return obj;
-}
-
-function formatToolPayload(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw);
-    const cleaned = cleanJsonValues(parsed);
-    return JSON.stringify(cleaned, null, 2);
-  } catch {
-    return raw;
-  }
 }
 
 function clampText(text: string | undefined, max: number): string | undefined {

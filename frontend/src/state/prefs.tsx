@@ -21,6 +21,15 @@ export type SidebarView = 'structure' | 'activity';
  *    language label. */
 export type CodeBlockStyle = 'hairline' | 'header';
 
+/** Agent block chrome (thinking / tool calls / subagents). Three variants
+ *  from the 2026-08 "Agent Blocks Redesign" exploration:
+ *  - 'plain'    (1a): bare text rows, ▸/▾ glyphs, 5px dots — the baseline.
+ *  - 'card'     (1b): hairline square-corner cards with type icons and a
+ *    right-hand status column (✓ / spinner / FAILED).
+ *  - 'terminal' (1d): bare text with ❯/✓/× glyph columns, tracking-caps
+ *    section headers, dotted leaders; only payloads/subagents get boxes. */
+export type AgentBlockStyle = 'plain' | 'card' | 'terminal';
+
 /** UI font presets the user can A/B test. Each preset resolves to a full
  *  CSS font-family stack in the effect that sets `--ui-font`. Order matches
  *  the picker order in Settings → Interface font. */
@@ -60,6 +69,10 @@ export interface Prefs {
   /** Assistant code-block chrome. Drives the `data-code-block` attribute on
    *  <html>; the visual treatment lives in index.css (`.michi-code-*`). */
   codeBlockStyle: CodeBlockStyle;
+  /** Agent block chrome (thinking / tool calls / subagents). Read via
+   *  `useAgentBlockStyle()` so components render 'plain' outside a
+   *  PrefsProvider (tests, isolated mounts). */
+  agentBlockStyle: AgentBlockStyle;
   /** When true, long lines inside assistant code/text blocks wrap at the
    *  container edge instead of horizontally scrolling. Drives the
    *  `data-code-wrap` attribute on <html>; the wrap CSS lives in index.css.
@@ -159,6 +172,7 @@ export const DEFAULT_PREFS: Prefs = {
   messageFontSize: 15,
   composerFontSize: 15,
   codeBlockStyle: 'header',
+  agentBlockStyle: 'plain',
   codeWrap: false,
   terminalDensity: 'dense',
   paneRules: true,
@@ -247,6 +261,13 @@ function readInitial(): Prefs {
     }
     if (merged.codeBlockStyle !== 'hairline' && merged.codeBlockStyle !== 'header') {
       merged.codeBlockStyle = DEFAULT_PREFS.codeBlockStyle;
+    }
+    if (
+      merged.agentBlockStyle !== 'plain' &&
+      merged.agentBlockStyle !== 'card' &&
+      merged.agentBlockStyle !== 'terminal'
+    ) {
+      merged.agentBlockStyle = DEFAULT_PREFS.agentBlockStyle;
     }
     if (typeof merged.codeWrap !== 'boolean') {
       merged.codeWrap = DEFAULT_PREFS.codeWrap;
@@ -487,6 +508,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       messageFontSize: DEFAULT_PREFS.messageFontSize,
       composerFontSize: DEFAULT_PREFS.composerFontSize,
       codeBlockStyle: DEFAULT_PREFS.codeBlockStyle,
+      agentBlockStyle: DEFAULT_PREFS.agentBlockStyle,
       codeWrap: DEFAULT_PREFS.codeWrap,
       terminalDensity: DEFAULT_PREFS.terminalDensity,
       paneRules: DEFAULT_PREFS.paneRules,
@@ -509,4 +531,17 @@ export function usePrefs(): PrefsContextValue {
   const v = useContext(PrefsContext);
   if (!v) throw new Error('usePrefs must be used within a PrefsProvider');
   return v;
+}
+
+/** Forces a specific agent-block style regardless of prefs — used by the dev
+ *  specimen page to render every variant on one screen. */
+export const AgentBlockStyleOverride = createContext<AgentBlockStyle | null>(null);
+
+/** Active agent-block variant. Unlike usePrefs this never throws: outside a
+ *  PrefsProvider (unit tests mounting ToolCallGroup / MessageBlock directly)
+ *  it falls back to 'plain', keeping the baseline render path. */
+export function useAgentBlockStyle(): AgentBlockStyle {
+  const override = useContext(AgentBlockStyleOverride);
+  const ctx = useContext(PrefsContext);
+  return override ?? ctx?.prefs.agentBlockStyle ?? 'plain';
 }

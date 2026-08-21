@@ -1,4 +1,4 @@
-import { usePrefs, TerminalPalette, CodeBlockStyle } from '../../../../state/prefs';
+import { usePrefs, TerminalPalette, CodeBlockStyle, AgentBlockStyle } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
 import { resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
@@ -13,6 +13,24 @@ const CODE_BLOCK_OPTIONS: Array<{ value: CodeBlockStyle; label: string; desc: st
     value: 'header',
     label: 'Header rule',
     desc: 'A divider bar carrying a lowercase language label. Classic terminal.',
+  },
+];
+
+const AGENT_BLOCK_OPTIONS: Array<{ value: AgentBlockStyle; label: string; desc: string }> = [
+  {
+    value: 'plain',
+    label: 'Plain',
+    desc: 'Bare text rows with ▸/▾ glyphs and status dots. The original treatment.',
+  },
+  {
+    value: 'card',
+    label: 'Card',
+    desc: 'Hairline cards with tool-type icons and a right-hand status column (✓ / spinner / failed).',
+  },
+  {
+    value: 'terminal',
+    label: 'Terminal',
+    desc: 'Bare text with ❯ / ✓ / × glyph columns, caps section headers, and dotted leaders.',
   },
 ];
 
@@ -213,6 +231,59 @@ export function AppearancePane() {
                   gap: 10,
                   background: sel ? 'var(--term-alt)' : 'var(--term-surface)',
                   borderBottom: i < CODE_BLOCK_OPTIONS.length - 1 ? '1px solid var(--term-line)' : 'none',
+                }}
+              >
+                <span
+                  style={{
+                    width: 12,
+                    height: 12,
+                    border: `1px solid ${sel ? 'var(--term-accent)' : 'var(--term-line-s)'}`,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'var(--term-surface-glass)',
+                    flexShrink: 0,
+                  }}
+                >
+                  {sel && <span style={{ width: 6, height: 6, background: 'var(--term-accent)' }} />}
+                </span>
+                <div>
+                  <span
+                    style={{
+                      fontSize: 11.5,
+                      fontFamily: 'var(--ui-font)',
+                      color: sel ? 'var(--term-fg)' : 'var(--term-mid)',
+                      fontWeight: sel ? 600 : 400,
+                    }}
+                  >
+                    {o.label}
+                  </span>
+                  <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginTop: 2, lineHeight: 1.45 }}>
+                    {o.desc}
+                  </div>
+                </div>
+              </ClickableRow>
+            );
+          })}
+        </div>
+      </Row>
+
+      <Row k="theme.agentBlocks" label="Agent blocks">
+        <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
+          {AGENT_BLOCK_OPTIONS.map((o, i) => {
+            const sel = prefs.agentBlockStyle === o.value;
+            return (
+              <ClickableRow
+                key={o.value}
+                active={sel}
+                onClick={() => setPref('agentBlockStyle', o.value)}
+                style={{
+                  padding: '8px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: sel ? 'var(--term-alt)' : 'var(--term-surface)',
+                  borderBottom: i < AGENT_BLOCK_OPTIONS.length - 1 ? '1px solid var(--term-line)' : 'none',
                 }}
               >
                 <span
