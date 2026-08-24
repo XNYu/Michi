@@ -10,10 +10,12 @@ RUN apt-get update \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Cloud Agent workspaces run as ubuntu (uid 1000).
+# Official node images already use uid/gid 1000 as `node`.
+# Cloud Agent workspaces expect the `ubuntu` login at that uid.
 RUN if ! id -u ubuntu >/dev/null 2>&1; then \
-      groupadd -g 1000 ubuntu \
-      && useradd -m -u 1000 -g ubuntu -s /bin/bash ubuntu; \
+      usermod -l ubuntu node \
+      && groupmod -n ubuntu node \
+      && usermod -d /home/ubuntu -m ubuntu; \
     fi
 
 WORKDIR /workspace
