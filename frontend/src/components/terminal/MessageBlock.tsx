@@ -872,6 +872,19 @@ function isToolOnlyAnswerRun(run: AssistantRun): boolean {
   return run.kind === 'answer' && run.blocks.length > 0 && run.blocks.every((b) => b.kind === 'tool');
 }
 
+/**
+ * An answer run is "clusterable" if it has no visible prose — i.e. it consists
+ * entirely of tool blocks, or all its answer-text blocks are empty/whitespace.
+ * These runs merge into the adjacent thinking cluster rather than breaking it.
+ */
+function isClusterableAnswerRun(run: AssistantRun): boolean {
+  if (run.kind !== 'answer' || run.blocks.length === 0) return false;
+  // Every block is either a tool or an answer block with no meaningful text
+  return run.blocks.every(
+    (b) => b.kind === 'tool' || (b.kind === 'answer' && !b.rawText?.trim()),
+  );
+}
+
 function clusterAgentRuns(runs: AssistantRun[]): RenderCluster[] {
   const out: RenderCluster[] = [];
   let buf: AssistantRun[] = [];
@@ -887,7 +900,7 @@ function clusterAgentRuns(runs: AssistantRun[]): RenderCluster[] {
     buf = [];
   };
   for (const run of runs) {
-    if (run.kind === 'thinking' || isToolOnlyAnswerRun(run)) {
+    if (run.kind === 'thinking' || isClusterableAnswerRun(run)) {
       buf.push(run);
     } else {
       flush();
@@ -1021,7 +1034,7 @@ function BlockAssistantBody({
   // last answer run that can actually stream prose.
   const tailAnswerRunId = useMemo(() => {
     for (let i = runs.length - 1; i >= 0; i--) {
-      if (runs[i].kind === 'answer' && !isToolOnlyAnswerRun(runs[i])) return runs[i].id;
+      if (runs[i].kind === 'answer' && !isClusterableAnswerRun(runs[i])) return runs[i].id;
     }
     return undefined;
   }, [runs]);
@@ -1045,7 +1058,7 @@ function BlockAssistantBody({
           if (!showThoughts) {
             // Thought prose is hidden, but tool activity from answer-section
             // runs stays visible — parity with the un-clustered rendering.
-            return cluster.runs.filter(isToolOnlyAnswerRun).map((run) => (
+            return cluster.runs.filter(isClusterableAnswerRun).map((run) => (
               <AnswerRunView
                 key={run.id}
                 blocks={run.blocks}
