@@ -439,8 +439,8 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
 
   const container: React.CSSProperties = {
     fontFamily: 'var(--ui-font)',
-    marginTop: 6,
-    marginBottom: 2,
+    marginTop: 12,
+    marginBottom: 10,
   };
 
   // Pure subagent groups (the spawn_branches case) render as standalone
@@ -732,8 +732,8 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
 
   const container: React.CSSProperties = {
     fontFamily: 'var(--ui-font)',
-    marginTop: 6,
-    marginBottom: 2,
+    marginTop: 12,
+    marginBottom: 10,
   };
   const headerBtn: React.CSSProperties = {
     display: 'flex',
