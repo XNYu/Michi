@@ -1,0 +1,26 @@
+{
+  "name": "Michi",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "user": "ubuntu",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "npm run dev",
+      "description": "Michi backend (http://localhost:3000) and Vite frontend (http://localhost:3001). Open the frontend URL in the browser."
+    }
+  ],
+  "ports": [
+    {
+      "name": "backend",
+      "port": 3000
+    },
+    {
+      "name": "frontend",
+      "port": 3001
+    }
+  ]
+}
