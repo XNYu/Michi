@@ -207,8 +207,8 @@ function TermPlanBlock({ entries }: { entries: PlanEntry[] }) {
   );
 }
 
-// Tail-mode height cap: ~7 lines at line-height 1.5, font-size 11px.
-const THOUGHT_TAIL_MAX_HEIGHT = 7 * 11 * 1.5;
+// Tail-mode height cap: ~10 lines at line-height 1.5, font-size 11px.
+const THOUGHT_TAIL_MAX_HEIGHT = 10 * 11 * 1.5;
 
 type ThoughtMode = 'tail' | 'expanded' | 'collapsed';
 
@@ -278,6 +278,7 @@ export type ThoughtSegment =
 export function TermThoughtBlock({
   text,
   streaming,
+  phase,
   children,
   toolCount,
   runtimeId,
@@ -288,6 +289,7 @@ export function TermThoughtBlock({
 }: {
   text: string;
   streaming?: boolean;
+  phase?: StreamPhase;
   children?: React.ReactNode;
   toolCount?: number;
   runtimeId?: string | null;
@@ -443,7 +445,9 @@ export function TermThoughtBlock({
             {streaming ? (
               <>
                 <CardSpinner />
-                <span className="term-shimmer" style={{ fontSize: 11.5, fontWeight: 500 }}>Thinking…</span>
+                <span className="term-shimmer" style={{ fontSize: 11.5, fontWeight: 500 }}>
+                  {phase === 'working' ? 'Working…' : 'Thinking…'}
+                </span>
                 <LiveTimerLabel active={streaming} />
               </>
             ) : (
@@ -491,7 +495,7 @@ export function TermThoughtBlock({
             style={{ display: 'flex', alignItems: 'baseline', gap: 7, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
           >
             <span aria-hidden style={{ fontFamily: 'var(--font-mono)', color: 'var(--term-accent)', fontSize: 11, flexShrink: 0 }}>❯</span>
-            <span className="term-shimmer">thinking</span>
+            <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
             <span aria-hidden className="agent-caret" />
           </div>
         ) : (
@@ -551,7 +555,7 @@ export function TermThoughtBlock({
                 <span className="term-dot-i term-dot-i--run" />
               </span>
             )}
-            <span className="term-shimmer">thinking</span>
+            <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
           </>
         ) : (
           <>
@@ -911,15 +915,18 @@ function clusterAgentRuns(runs: AssistantRun[]): RenderCluster[] {
   return out;
 }
 
+type StreamPhase = 'thinking' | 'working' | 'done';
+
 interface AgentClusterViewProps {
   runs: AssistantRun[];
   tools: ToolCallState[];
   streaming: boolean;
+  phase: StreamPhase;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
 }
 
-function AgentClusterViewInner({ runs, tools, streaming, subagents, runtimeId }: AgentClusterViewProps) {
+function AgentClusterViewInner({ runs, tools, streaming, phase, subagents, runtimeId }: AgentClusterViewProps) {
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const segments = useMemo(() => {
     const out: ThoughtSegment[] = [];
@@ -953,6 +960,7 @@ function AgentClusterViewInner({ runs, tools, streaming, subagents, runtimeId }:
       text={text}
       segments={segments}
       streaming={streaming}
+      phase={phase}
       toolCount={tools.length}
       runtimeId={runtimeId}
       durationMs={spanMs}
@@ -974,6 +982,7 @@ const AgentClusterView = React.memo(AgentClusterViewInner, (prev, next) =>
   sameRunRefs(prev.runs, next.runs) &&
   sameToolRefs(prev.tools, next.tools) &&
   prev.streaming === next.streaming &&
+  prev.phase === next.phase &&
   prev.subagents === next.subagents &&
   prev.runtimeId === next.runtimeId,
 );
@@ -1075,15 +1084,17 @@ function BlockAssistantBody({
           // arrive — otherwise the header collapses mid-work and hides the
           // running rows. Gated on m.streaming so hydrated turns with stale
           // non-terminal tool statuses don't shimmer forever.
-          const active =
-            cluster.runs.some((r) => r.id === liveThinkingId) ||
-            (!!m.streaming && clusterTools.some((t) => isRunningStatus(t.status)));
+          const isThinking = cluster.runs.some((r) => r.id === liveThinkingId);
+          const isTooling = !isThinking && !!m.streaming && clusterTools.some((t) => isRunningStatus(t.status));
+          const active = isThinking || isTooling;
+          const phase: StreamPhase = isThinking ? 'thinking' : isTooling ? 'working' : 'done';
           return (
             <AgentClusterView
               key={cluster.id}
               runs={cluster.runs}
               tools={clusterTools}
               streaming={active}
+              phase={phase}
               subagents={subagents}
               runtimeId={runtimeId}
             />
