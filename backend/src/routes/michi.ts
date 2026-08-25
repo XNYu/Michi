@@ -1315,6 +1315,26 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
     });
 
+    router.post("/chats/:chatId/steer", requireChatOwner, async (req, res) => {
+        const requestedIdentifier = req.params.chatId;
+        const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
+        const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
+        const ownerToken: string | undefined = req.body?.ownerToken;
+        const text = typeof req.body?.text === "string" ? req.body.text : "";
+        if (!text.trim()) {
+            return res.status(400).json({ error: "text is required", accepted: false });
+        }
+        try {
+            if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
+                return res.status(403).json({ error: "not the pane owner", accepted: false });
+            }
+            const result = await chatHub.steer(nodeId, text);
+            res.status(result.accepted ? 200 : 409).json(result);
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message, accepted: false });
+        }
+    });
+
     router.post("/chats/background/subscribe", (req, res) => {
         const backgroundUserId = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
         if (process.env.MICHI_CLOUD === "1" && !backgroundUserId) {

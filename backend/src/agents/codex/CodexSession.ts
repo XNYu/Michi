@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentSession, AgentTurnInput, ChatMessage } from '../types';
+import type { AgentSession, AgentTurnInput, CancelAck, ChatMessage, CompactResult, SteerResult } from '../types';
 import type { NormalizedEvent, PermissionOption, UserInputQuestion } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
@@ -122,6 +122,9 @@ export class CodexSession implements AgentSession {
   private titleGenerationAttempted = false;
   private readonly activeTurnThreadIds = new Set<string>();
   private cancelRequested = false;
+  private activeNativeTurnId: string | null = null;
+  /** Native thread/fork id only — never becomes a Michi node id. */
+  private alignedForkThreadId: string | null = null;
 
   private followUpsValidationActive = false;
   private followUpsSetThisTurn = false;
@@ -279,7 +282,13 @@ export class CodexSession implements AgentSession {
         ...(this.effort ? { effort: this.effort } : {}),
         summary: 'detailed',
       }).then(
-        () => ({ ok: true as const }),
+        (result) => {
+          const turnId = result && typeof result === 'object' && typeof (result as { turnId?: unknown }).turnId === 'string'
+            ? (result as { turnId: string }).turnId
+            : null;
+          if (turnId) this.activeNativeTurnId = turnId;
+          return { ok: true as const };
+        },
         (error: unknown) => ({ ok: false as const, error }),
       );
 
@@ -352,6 +361,7 @@ export class CodexSession implements AgentSession {
       this.pendingAssistantBuf = null;
       turnEventGate.acceptTitle = false;
       this.activeTurnThreadIds.clear();
+      this.activeNativeTurnId = null;
       this.cancelRequested = false;
       if (this.state === 'in_turn') this.state = 'idle';
       this.finishFollowUpsHookPocTurn();
@@ -359,13 +369,87 @@ export class CodexSession implements AgentSession {
     }
   }
 
-  async cancel(): Promise<void> {
-    if (this.state !== 'in_turn' && this.activeTurnThreadIds.size === 0) return;
+  async cancel(): Promise<CancelAck> {
+    if (this.state !== 'in_turn' && this.activeTurnThreadIds.size === 0) {
+      return { acknowledged: false };
+    }
     this.cancelRequested = true;
     const threadIds = this.activeTurnThreadIds.size > 0
       ? [...this.activeTurnThreadIds]
       : [this.threadId];
     await Promise.all(threadIds.map((threadId) => this.interruptThread(threadId)));
+    return { acknowledged: true };
+  }
+
+  async steer(text: string): Promise<SteerResult> {
+    if (this.state !== 'in_turn') return { accepted: false, reason: 'not_in_turn' };
+    const expectedTurnId = this.activeNativeTurnId ?? this.threadId;
+    try {
+      const result = await this.client.request('turn/steer', {
+        threadId: this.threadId,
+        expectedTurnId,
+        input: [{ type: 'text', text }],
+      });
+      const turnId = result && typeof result === 'object' && typeof (result as { turnId?: unknown }).turnId === 'string'
+        ? (result as { turnId: string }).turnId
+        : expectedTurnId;
+      return { accepted: true, pending: true, turnId };
+    } catch (err) {
+      log.warn('chat', 'codex turn/steer failed', {
+        nodeId: this.id,
+        threadId: this.threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { accepted: false, reason: 'steer_rpc_failed' };
+    }
+  }
+
+  async compact(): Promise<CompactResult> {
+    try {
+      await this.client.request('thread/compact/start', { threadId: this.threadId });
+      return { started: true };
+    } catch (err) {
+      log.warn('chat', 'codex thread/compact/start failed', {
+        nodeId: this.id,
+        threadId: this.threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { started: false };
+    }
+  }
+
+  /**
+   * Aligns a native Codex thread/fork id onto this session. Does not create
+   * a Michi node — conversation fork remains the node/edge graph.
+   */
+  async alignNativeFork(): Promise<{ threadId?: string }> {
+    try {
+      const result = await this.client.request('thread/fork', { threadId: this.threadId });
+      const forked = result && typeof result === 'object' && typeof (result as { thread?: { id?: unknown } }).thread === 'object'
+        ? (result as { thread: { id?: unknown } }).thread.id
+        : (result as { threadId?: unknown } | null)?.threadId;
+      if (typeof forked === 'string' && forked) {
+        this.alignedForkThreadId = forked;
+        return { threadId: forked };
+      }
+      return {};
+    } catch (err) {
+      log.warn('chat', 'codex thread/fork align failed', {
+        nodeId: this.id,
+        threadId: this.threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {};
+    }
+  }
+
+  describeNativeState(): Record<string, unknown> {
+    return {
+      threadId: this.threadId,
+      alignedForkThreadId: this.alignedForkThreadId,
+      activeNativeTurnId: this.activeNativeTurnId,
+      michiNodeId: this.id,
+    };
   }
 
   private async interruptThread(threadId: string): Promise<void> {
@@ -474,6 +558,7 @@ export class CodexSession implements AgentSession {
       title: `Approve request from ${serverName}?`,
       detail: message,
       options,
+      source: 'codex_approval',
     });
 
     const result = await this.awaitPermission(requestId);
@@ -510,6 +595,7 @@ export class CodexSession implements AgentSession {
       title: `Approve ${toolName}?`,
       detail: formatCodexPermissionDetail(method, params),
       options,
+      source: 'codex_approval',
     });
 
     const result = await this.awaitPermission(requestId);

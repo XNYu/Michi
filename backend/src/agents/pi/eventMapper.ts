@@ -144,14 +144,62 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 contextUsagePercentage: ctxPct,
                 totalCredits: ctx.cumulative.totalCost,
                 turnDurationMs: Date.now() - ctx.runStartMs,
+                source: "native",
             };
             yield { kind: "turn_end" };
             return;
         }
 
-        // agent_start / turn_start / turn_end / message_start / tool_execution_update:
-        // intentionally not surfaced — michi has no SSE event for these and they
-        // would just be noise on the wire.
+        case "turn_start":
+            yield {
+                kind: "harness_lifecycle",
+                level: "turn",
+                phase: "start",
+                nativeType: "turn_start",
+            };
+            return;
+
+        case "turn_end":
+            // Pi turn_end is one LLM call, not the ChatHub done boundary.
+            yield {
+                kind: "harness_lifecycle",
+                level: "turn",
+                phase: "completed",
+                nativeType: "turn_end",
+            };
+            return;
+
+        case "tool_execution_update":
+            yield {
+                kind: "tool_call_update",
+                toolCallId: event.toolCallId,
+                title: event.toolName ?? "",
+                status: "in_progress",
+                kindType: "execute",
+                output: truncatePayload(event.args ?? event.partialResult ?? event.result),
+            };
+            return;
+
+        case "compaction_start":
+        case "session_compaction_start":
+            yield { kind: "compaction_start", detail: typeof event.detail === "string" ? event.detail : event.type };
+            return;
+
+        case "compaction_end":
+        case "session_compaction_end":
+            yield { kind: "compaction_end", detail: typeof event.detail === "string" ? event.detail : event.type };
+            return;
+
+        case "auto_retry_start":
+        case "retry_start":
+            yield { kind: "retry_start", detail: typeof event.detail === "string" ? event.detail : event.type };
+            return;
+
+        case "auto_retry_end":
+        case "retry_end":
+            yield { kind: "retry_end", detail: typeof event.detail === "string" ? event.detail : event.type };
+            return;
+
         default:
             return;
     }

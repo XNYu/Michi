@@ -636,4 +636,16 @@ describe('codexEventTranslator', () => {
       `detail length ${(ev['detail'] as string).length} exceeds 200`,
     );
   });
+
+  test('compaction item and interrupted status stay honest', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+    feed('item/started', { item: { id: 'c1', type: 'compaction' } });
+    assert.equal(emitted[0]?.kind, 'compaction_start');
+    feed('item/completed', { item: { id: 'c1', type: 'compaction' } });
+    assert.equal(emitted[1]?.kind, 'compaction_end');
+    startTurn();
+    feed('turn/completed', { turn: { status: 'interrupted' } });
+    const turnEnd = emitted.find((e) => e.kind === 'turn_end');
+    assert.equal(turnEnd && 'stopReason' in turnEnd ? turnEnd.stopReason : '', 'interrupted');
+  });
 });

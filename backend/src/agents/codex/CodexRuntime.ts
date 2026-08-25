@@ -1,3 +1,4 @@
+import type { CapabilityDescriptor } from 'michi-shared';
 import type {
   AgentCapabilities,
   AgentRuntime,
@@ -7,6 +8,7 @@ import type {
   NewAgentSessionOptions,
   RuntimeId,
 } from '../types';
+import { describeRuntimeCapabilities } from '../capabilityDescriptors';
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import { CodexAppServerClient } from './CodexAppServerClient';
@@ -86,6 +88,7 @@ export class CodexRuntime implements AgentRuntime {
   public readonly id: RuntimeId = 'codex';
   public readonly label = 'Codex';
   public readonly capabilities = CODEX_CAPABILITIES;
+  public readonly capabilityDescriptor: CapabilityDescriptor = describeRuntimeCapabilities('codex');
 
   private readonly client: CodexAppServerClient;
   private readonly bridge: AgentToolBridge;

@@ -22,6 +22,9 @@ describe('/agent/status', () => {
       assert.equal(r.status, 200);
       assert.ok('availableRuntimes' in body, 'response should include availableRuntimes');
       assert.ok('runtime' in body, 'response should include runtime');
+      assert.ok('capabilityDescriptor' in body, 'response should include capabilityDescriptor');
+      const descriptor = body.capabilityDescriptor as Record<string, { availability?: string }>;
+      assert.equal(typeof descriptor.steer?.availability, 'string');
     } finally {
       server.close();
     }

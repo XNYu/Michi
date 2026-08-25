@@ -21,6 +21,7 @@ import {
   getUserProviderKey,
 } from "../services/userKeys";
 import { listRuntimes, getRuntime } from "../agents/registry";
+import { describeRuntimeCapabilities } from "../agents/capabilityDescriptors";
 import { hasProviders } from "../agents/types";
 import { getProviderInfo, providerRequiresUserKey } from "../agents/pi/piProviders";
 import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
@@ -51,6 +52,7 @@ export function setupAgentRoutes(): Router {
           modes: false, permissions: false, models: false, providerModels: false, reasoning: false, supportedReasoningLevels: [],
           apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false,
         },
+        capabilityDescriptor: describeRuntimeCapabilities(cfg.runtime),
         availableRuntimes,
         provider: resolveProvider(cfg.runtime, userId),
         model: resolveModel(cfg.runtime, userId),
@@ -110,6 +112,7 @@ export function setupAgentRoutes(): Router {
       runtime: cfg.runtime,
       label: active.label,
       capabilities: active.capabilities,
+      capabilityDescriptor: active.capabilityDescriptor ?? describeRuntimeCapabilities(active.id),
       availableRuntimes,
       provider: effectiveProvider,
       providers,

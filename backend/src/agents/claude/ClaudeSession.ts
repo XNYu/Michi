@@ -1392,6 +1392,7 @@ export class ClaudeSession implements AgentSession {
         title: `Approve ${params.toolName}?`,
         detail: formatPermissionDetail(params.toolName, params.input),
         options,
+        source: 'claude_prompt_tool',
       });
 
       const result = await this.awaitPermission(requestId);

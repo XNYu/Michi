@@ -66,6 +66,17 @@ describe('chatStreamEvents route mapping', () => {
     }
   });
 
+  test('maps HEP v2 events without replacing old names', () => {
+    assert.deepEqual(toChatStreamEvent({ kind: 'cancel_phase', phase: 'requested' }), {
+      event: CHAT_STREAM_EVENTS.cancelPhase,
+      data: { phase: 'requested' },
+    });
+    assert.deepEqual(toChatStreamEvent({ kind: 'steer_accepted', text: 'inject', pending: true }), {
+      event: CHAT_STREAM_EVENTS.steerAccepted,
+      data: { text: 'inject', pending: true },
+    });
+  });
+
   test('maps turn_end to done', () => {
     assert.deepEqual(toChatStreamEvent({ kind: 'turn_end', stopReason: 'end_turn' }), {
       event: CHAT_STREAM_EVENTS.done,

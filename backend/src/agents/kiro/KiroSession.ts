@@ -376,6 +376,7 @@ export class KiroSession implements AgentSession {
                     toolCallId: enriched.toolCallId || update.toolCall?.toolCallId,
                     title: enriched.title || update.toolCall?.title || "Tool call",
                     options: Array.isArray(update.options) ? update.options : [],
+                    source: "acp_permission",
                 };
             } else if (kind === "subagent_list_update") {
                 yield {

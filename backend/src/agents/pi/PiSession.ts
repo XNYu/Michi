@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import type { AgentSession, ChatMessage } from "../types";
+import type { AgentSession, CancelAck, ChatMessage } from "../types";
 import type { NormalizedEvent, PermissionOption } from "../../services/chatEvents";
 import type { AgentToolBridge } from "../toolBridge";
 import { getRuntimeDeps } from "../runtimeDeps";
@@ -445,6 +445,7 @@ export class PiSession implements AgentSession {
                 requestId,
                 title,
                 options,
+                source: "michi_policy",
             });
         });
     }
@@ -501,12 +502,14 @@ export class PiSession implements AgentSession {
         return out;
     }
 
-    cancel(): void {
+    cancel(): CancelAck {
+        const acknowledged = !!this.agent;
         try {
             this.agent?.abort();
         } catch {
             /* ignore */
         }
+        return { acknowledged };
     }
 
     destroy(): void {

@@ -8,13 +8,15 @@ import {
   type DurableMessageMetadata,
   type DurableTurnSnapshot,
 } from "michi-shared";
-import type { AgentSession } from "./types";
+import type { AgentSession, CompactResult, SteerResult } from "./types";
 import type { NormalizedEvent } from "../services/chatEvents";
 import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEvents";
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
 import { extractBranchOverview } from "../services/messageSerialization";
 import { log as appLog } from "../services/logger";
 import { ACPError } from "../services/acpClient";
+import type { HarnessJournal } from "../services/harnessJournal";
+import { createSqliteHarnessJournal } from "../services/harnessJournal";
 
 export interface HubSubscriber {
   send(ev: ChatStreamEvent): void;
@@ -133,18 +135,23 @@ export class ChatHub {
   private readonly persistence: TurnPersistence;
   private readonly checkpointIntervalMs: number;
   private readonly workspaceIdForNode: (nodeId: string) => string | null;
+  private readonly journal: HarnessJournal | null;
 
   constructor(opts: {
     retentionMs?: number;
     persistence?: TurnPersistence;
     checkpointIntervalMs?: number;
     workspaceIdForNode?: (nodeId: string) => string | null;
+    journal?: HarnessJournal | null;
   } = {}) {
     this.retentionMs = opts.retentionMs ?? ENDED_LOG_RETENTION_MS;
     this.persistence = opts.persistence ?? repositoryTurnPersistence;
     this.checkpointIntervalMs = opts.checkpointIntervalMs ?? TURN_CHECKPOINT_INTERVAL_MS;
     this.workspaceIdForNode = opts.workspaceIdForNode
       ?? ((nodeId) => getNode(nodeId)?.workspace_id ?? null);
+    this.journal = opts.journal === undefined
+      ? (opts.persistence ? null : createSqliteHarnessJournal())
+      : opts.journal;
   }
 
   isActive(chatId: string): boolean {
@@ -378,8 +385,112 @@ export class ChatHub {
     const turnId = requestedTurnId ?? log.turnId;
     if (turnId !== log.turnId) return false;
     this.cancelledTurnIds.add(log.turnId);
-    void Promise.resolve(this.activeSessions.get(chatId)?.cancel()).catch(() => {});
+    this.append(chatId, log, {
+      event: CHAT_STREAM_EVENTS.cancelPhase,
+      data: {
+        phase: "requested",
+        source: "michi_simulated",
+        confidence: "projected",
+        nativeMethod: "cancel",
+      },
+    });
+    const session = this.activeSessions.get(chatId);
+    void Promise.resolve(session?.cancel()).then((ack) => {
+      const current = this.turns.get(chatId);
+      if (!current || current.turnId !== log.turnId || current.status !== "active") return;
+      if (ack && typeof ack === "object" && ack.acknowledged === true) {
+        this.append(chatId, current, {
+          event: CHAT_STREAM_EVENTS.cancelPhase,
+          data: {
+            phase: "acknowledged",
+            source: "native",
+            confidence: "native",
+            nativeMethod: "cancel",
+          },
+        });
+      }
+    }).catch(() => {});
     return true;
+  }
+
+  async steer(chatId: string, text: string): Promise<SteerResult> {
+    return this.callOptionalControl(chatId, "steer", async (session, log) => {
+      if (!session.steer) return { accepted: false, reason: "invisible" };
+      const result = await session.steer(text);
+      if (result.accepted) {
+        this.append(chatId, log, {
+          event: CHAT_STREAM_EVENTS.steerAccepted,
+          data: {
+            text,
+            pending: result.pending ?? true,
+            source: "native",
+            confidence: "native",
+            nativeMethod: "steer",
+          },
+        });
+      }
+      return result;
+    }, { accepted: false, reason: "invisible" });
+  }
+
+  async followUp(chatId: string, text: string): Promise<SteerResult> {
+    return this.callOptionalControl(chatId, "followUp", async (session, log) => {
+      if (!session.followUp) return { accepted: false, reason: "invisible" };
+      const result = await session.followUp(text);
+      if (result.accepted) {
+        this.append(chatId, log, {
+          event: CHAT_STREAM_EVENTS.queueUpdate,
+          data: {
+            steering: [],
+            followUp: [text],
+            source: "native",
+            confidence: "native",
+            nativeMethod: "followUp",
+          },
+        });
+      }
+      return result;
+    }, { accepted: false, reason: "invisible" });
+  }
+
+  async clearQueue(chatId: string): Promise<{ cleared: boolean; reason?: string }> {
+    const session = this.activeSessions.get(chatId);
+    if (!session?.clearQueue) return { cleared: false, reason: "invisible" };
+    await session.clearQueue();
+    return { cleared: true };
+  }
+
+  async compact(chatId: string, instructions?: string): Promise<CompactResult> {
+    const session = this.activeSessions.get(chatId);
+    const log = this.turns.get(chatId);
+    if (!session?.compact || !log || log.status !== "active") {
+      return { started: false };
+    }
+    const result = await session.compact(instructions);
+    if (result.started) {
+      this.append(chatId, log, {
+        event: CHAT_STREAM_EVENTS.compactionStart,
+        data: {
+          detail: instructions,
+          source: "native",
+          confidence: "native",
+          nativeMethod: "compact",
+        },
+      });
+    }
+    return result;
+  }
+
+  private async callOptionalControl<T>(
+    chatId: string,
+    _method: string,
+    fn: (session: AgentSession, log: TurnLog) => Promise<T>,
+    missing: T,
+  ): Promise<T> {
+    const session = this.activeSessions.get(chatId);
+    const log = this.turns.get(chatId);
+    if (!session || !log || log.status !== "active") return missing;
+    return fn(session, log);
   }
 
   resolvePermission(chatId: string, requestId: number): void {
@@ -574,9 +685,35 @@ export class ChatHub {
           turnId: log.turnId,
           seq,
           assistantId: log.assistantId,
+          source: ev.data.source ?? "michi_simulated",
+          confidence: ev.data.confidence ?? "projected",
         },
       } as ChatStreamEvent,
     };
+  }
+
+  private journalStamped(log: TurnLog, stamped: { seq: number; ev: ChatStreamEvent }): void {
+    if (!this.journal) return;
+    try {
+      this.journal.append({
+        nodeId: log.nodeId,
+        turnId: log.turnId,
+        seq: stamped.seq,
+        event: stamped.ev.event,
+        source: stamped.ev.data.source,
+        confidence: stamped.ev.data.confidence,
+        nativeMethod: stamped.ev.data.nativeMethod,
+        payload: JSON.stringify(stamped.ev.data),
+        createdAt: Date.now(),
+      });
+    } catch (err) {
+      appLog.warn("chat", "harness journal write failed; snapshot projection continues", {
+        turnId: log.turnId,
+        nodeId: log.nodeId,
+        event: stamped.ev.event,
+        errorClass: err instanceof Error ? err.name : "Error",
+      });
+    }
   }
 
   private append(
@@ -588,6 +725,7 @@ export class ChatHub {
     const stamped = this.stamp(log, ev);
     log.snapshot = applyTurnEvent(log.snapshot, stamped.ev);
     log.events.push(stamped);
+    this.journalStamped(log, stamped);
     this.trackPendingInteraction(log, stamped.ev);
     this.broadcast(chatId, log, stamped.ev);
     if (checkpoint) this.maybeCheckpoint(log, stamped.ev);
@@ -680,7 +818,24 @@ export class ChatHub {
     return true;
   }
 
+  private emitCancelSettled(chatId: string, log: TurnLog): void {
+    if (!this.cancelledTurnIds.has(log.turnId)) return;
+    if (log.events.some((entry) =>
+      entry.ev.event === CHAT_STREAM_EVENTS.cancelPhase && entry.ev.data.phase === "settled"
+    )) return;
+    this.append(chatId, log, {
+      event: CHAT_STREAM_EVENTS.cancelPhase,
+      data: {
+        phase: "settled",
+        source: "michi_simulated",
+        confidence: "projected",
+        nativeMethod: "cancel",
+      },
+    }, false);
+  }
+
   private finishWithDone(chatId: string, log: TurnLog, stopReason?: string): void {
+    this.emitCancelSettled(chatId, log);
     const stamped = this.stamp(log, {
       event: CHAT_STREAM_EVENTS.done,
       data: { stopReason, persisted: true, completedAt: Date.now() },
@@ -697,6 +852,7 @@ export class ChatHub {
     }
     log.snapshot = terminalSnapshot;
     log.events.push(stamped);
+    this.journalStamped(log, stamped);
     this.trackPendingInteraction(log, stamped.ev);
     log.status = "ended";
     logInfo('turn finalized', log, {
@@ -727,6 +883,7 @@ export class ChatHub {
     // plain error tail.
     const acpErrorKind = (err as { acpErrorKind?: string })?.acpErrorKind;
     try {
+      this.emitCancelSettled(chatId, log);
       const stamped = this.stamp(log, {
         event: CHAT_STREAM_EVENTS.error,
         data: { message, completedAt: Date.now(), ...(acpErrorKind ? { code: acpErrorKind } : {}) },
@@ -735,6 +892,7 @@ export class ChatHub {
       this.persistence.finalize(terminalSnapshot);
       log.snapshot = terminalSnapshot;
       log.events.push(stamped);
+      this.journalStamped(log, stamped);
       this.trackPendingInteraction(log, stamped.ev);
       log.status = "error";
       this.broadcast(chatId, log, stamped.ev);

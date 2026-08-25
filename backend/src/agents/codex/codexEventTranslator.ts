@@ -16,6 +16,8 @@ const N = {
   tokenUsageUpdated: 'thread/tokenUsage/updated',
   turnStarted: 'turn/started',
   turnCompleted: 'turn/completed',
+  compactStarted: 'thread/compact/start',
+  compactCompleted: 'thread/compact/completed',
   error: 'error',
   mcpStartupStatus: 'mcpServer/startupStatus/updated',
 } as const;
@@ -284,6 +286,10 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
       case N.itemStarted: {
         const item = (p['item'] ?? p) as Record<string, unknown>;
         const itemType = typeof item['type'] === 'string' ? item['type'] : '';
+        if (itemType === 'compaction' || itemType === 'context_compaction') {
+          emit({ kind: 'compaction_start', detail: itemType });
+          break;
+        }
         if (!TOOL_ITEM_TYPES.has(itemType)) {
           // Streamed items (agentMessage, reasoning) — deltas arrive separately
           break;
@@ -306,6 +312,10 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
       case N.itemCompleted: {
         const item = (p['item'] ?? p) as Record<string, unknown>;
         const itemType = typeof item['type'] === 'string' ? item['type'] : '';
+        if (itemType === 'compaction' || itemType === 'context_compaction') {
+          emit({ kind: 'compaction_end', detail: itemType });
+          break;
+        }
         if (!TOOL_ITEM_TYPES.has(itemType)) break;
         const id = typeof item['id'] === 'string' ? item['id'] : '';
         const status = item['status'] === 'failed' ? 'failed' : 'completed';
@@ -388,7 +398,13 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
         const turnDurationMs = Date.now() - turnStartMs;
         const turn = (p['turn'] ?? p) as Record<string, unknown>;
         const stopReason = typeof turn['status'] === 'string' ? turn['status'] : undefined;
-        emit({ kind: 'usage_summary', contextUsagePercentage: lastContextUsagePercentage, totalCredits: 0, turnDurationMs });
+        emit({
+          kind: 'usage_summary',
+          contextUsagePercentage: lastContextUsagePercentage,
+          totalCredits: 0,
+          turnDurationMs,
+          source: 'native',
+        });
         if (stopReason === 'failed') {
           emit({
             kind: 'runtime_error',
@@ -397,8 +413,18 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           lastRuntimeError = undefined;
           break;
         }
-        emit({ kind: 'turn_end', stopReason });
+        emit({ kind: 'turn_end', stopReason: stopReason === 'interrupted' ? 'interrupted' : stopReason });
         lastRuntimeError = undefined;
+        break;
+      }
+
+      case N.compactStarted: {
+        emit({ kind: 'compaction_start', detail: 'thread/compact/start' });
+        break;
+      }
+
+      case N.compactCompleted: {
+        emit({ kind: 'compaction_end', detail: 'thread/compact/completed' });
         break;
       }
 

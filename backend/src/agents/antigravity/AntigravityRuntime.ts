@@ -11,6 +11,8 @@ import type {
   SessionMode,
 } from "../types";
 import type { RuntimeModelCache } from "../runtimeModelCache";
+import type { CapabilityDescriptor } from "michi-shared";
+import { describeRuntimeCapabilities } from "../capabilityDescriptors";
 import { getRuntimeDeps } from "../runtimeDeps";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildFirstTurnPrefix } from "../preamble";
@@ -58,6 +60,7 @@ export class AntigravitySessionNotResumableError extends Error {
 export class AntigravityRuntime implements AgentRuntime {
   public readonly id = "antigravity";
   public readonly label = "Antigravity";
+  public readonly capabilityDescriptor: CapabilityDescriptor = describeRuntimeCapabilities("antigravity");
   public readonly capabilities = CAPABILITIES;
 
   private readonly binaryPathOverride?: string;

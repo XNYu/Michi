@@ -1,6 +1,7 @@
 import { AcpClient } from "../../services/acpClient";
 import type { AcpInitializeResult, AcpMcpAttach, AcpProfile } from "../../services/acp/types";
 import {
+    acpAgentCapabilities,
     acpShouldAttachMcp,
     acpSupportsHttpMcp,
     acpSupportsImagePrompt,
@@ -8,6 +9,8 @@ import {
 } from "../../services/acp/types";
 import type { McpSlotRegistry, McpSlotCallbacks } from "../../services/mcpServer";
 import * as perf from "../../services/perf";
+import type { CapabilityDescriptor } from "michi-shared";
+import { absorbAcpCapabilities, describeRuntimeCapabilities } from "../capabilityDescriptors";
 import type {
     AgentCapabilities,
     AgentRuntime,
@@ -107,6 +110,7 @@ export class AcpAgentRuntime implements AgentRuntime {
     public readonly id: string;
     public readonly label: string;
     public readonly capabilities: AgentCapabilities;
+    public capabilityDescriptor: CapabilityDescriptor;
     private readonly createProfile: (cwd: string, model?: string) => AcpProfile;
     private readonly concurrencyError: new (message: string) => Error;
     private readonly mcpAttach: AcpMcpAttach;
@@ -185,6 +189,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         this.id = cfg.id;
         this.label = cfg.label;
         this.capabilities = { ...DEFAULT_ACP_CAPABILITIES, ...cfg.capabilities };
+        this.capabilityDescriptor = describeRuntimeCapabilities(cfg.id);
         this.createProfile = cfg.createProfile;
         this.concurrencyError = cfg.concurrencyError ?? AcpConcurrencyError;
         this.mcpAttach = cfg.mcpAttach ?? "always";
@@ -222,6 +227,13 @@ export class AcpAgentRuntime implements AgentRuntime {
     }
 
     private applyInitializeResult(init: AcpInitializeResult): void {
+        const advertised = acpAgentCapabilities(init);
+        this.capabilityDescriptor = absorbAcpCapabilities(describeRuntimeCapabilities(this.id), {
+            loadSession: advertised.loadSession === true,
+            image: advertised.promptCapabilities?.image === true,
+            kiroCompaction: this.id === "kiro",
+            kiroTerminate: this.id === "kiro",
+        });
         if (this.id === "kiro") return;
         // Store-driven upgrades only. Never mask spawn/save/resume back to false
         // when initialize omits an advertisement — those default true for
