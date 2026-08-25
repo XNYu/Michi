@@ -44,6 +44,8 @@ export interface MapperContext {
     contextWindow?: number;
     /** Wall-clock ms of when prompt() began. Set by the caller. */
     runStartMs: number;
+    /** Provider error captured from the terminal assistant message. */
+    terminalError?: string;
 }
 
 export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<NormalizedEvent> {
@@ -66,6 +68,9 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 ctx.cumulative.inputTokens += m.usage.input ?? 0;
                 ctx.cumulative.outputTokens += m.usage.output ?? 0;
                 ctx.cumulative.totalCost += m.usage.cost?.total ?? 0;
+            }
+            if (m?.role === "assistant" && m.stopReason === "error") {
+                ctx.terminalError = formatAssistantError(m.errorMessage);
             }
             return;
         }
@@ -145,7 +150,12 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 totalCredits: ctx.cumulative.totalCost,
                 turnDurationMs: Date.now() - ctx.runStartMs,
             };
-            yield { kind: "turn_end" };
+            if (ctx.terminalError) {
+                yield { kind: "runtime_error", error: ctx.terminalError };
+                yield { kind: "turn_end", stopReason: "error" };
+            } else {
+                yield { kind: "turn_end" };
+            }
             return;
         }
 
@@ -154,6 +164,39 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
         // would just be noise on the wire.
         default:
             return;
+    }
+}
+
+function formatAssistantError(value: unknown): string {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return "The model failed without returning an error message.";
+
+    const jsonStart = raw.indexOf("{");
+    if (jsonStart < 0) return raw;
+
+    try {
+        const parsed = JSON.parse(raw.slice(jsonStart)) as Record<string, any>;
+        const body = parsed.error && typeof parsed.error === "object"
+            ? parsed.error
+            : parsed;
+        const detail = typeof body.metadata?.raw === "string"
+            ? body.metadata.raw.trim()
+            : typeof body.message === "string"
+                ? body.message.trim()
+                : raw;
+        const remedy = typeof body.metadata?.remedy_hint === "string"
+            ? body.metadata.remedy_hint.trim()
+            : "";
+        const prefixCode = raw.slice(0, jsonStart).match(/\b\d{3}\b/)?.[0];
+        const code = body.code != null ? String(body.code) : prefixCode;
+        const headline = code && !detail.startsWith(`${code}:`)
+            ? `${code}: ${detail}`
+            : detail;
+        return remedy && remedy !== detail
+            ? `${headline}\n${remedy}`
+            : headline;
+    } catch {
+        return raw;
     }
 }
 

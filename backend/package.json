@@ -19,8 +19,8 @@
   "license": "ISC",
   "dependencies": {
     "michi-shared": "file:../shared",
-    "@earendil-works/pi-agent-core": "0.80.3",
-    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-agent-core": "^0.84.3",
+    "@earendil-works/pi-ai": "^0.84.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-auth": "^1.6.11",
     "cors": "^2.8.5",

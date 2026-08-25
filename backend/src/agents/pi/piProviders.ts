@@ -1,5 +1,6 @@
 import { loadPiAi } from "./piAi";
 import { DEFAULT_MODELS } from "../agentConfig";
+import { fetchOpenRouterModels, type OpenRouterModelInfo } from "./openrouterModels";
 
 export interface PiProviderInfo {
     id: string;
@@ -87,7 +88,7 @@ export const PI_PROVIDERS: PiProviderInfo[] = [
         name: "Google AI",
         apiKeyLabel: "Gemini API key",
         envVars: ["GEMINI_API_KEY"],
-        defaultModel: "gemini-3-pro-preview",
+        defaultModel: "gemini-3.1-pro-preview",
         supportsReasoning: true,
         keyUrl: "https://aistudio.google.com/app/apikey",
     },
@@ -260,6 +261,15 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
                 typeof model.contextWindow === "number" ? model.contextWindow : undefined,
         }];
     }
+
+    // OpenRouter: prefer dynamic fetch from live API, fall back to static list
+    if (provider === "openrouter") {
+        const apiKey = getEnvProviderApiKey(provider);
+        const dynamic = await fetchOpenRouterModels(apiKey);
+        if (dynamic && dynamic.length > 0) return dynamic;
+        // fall through to static list below
+    }
+
     const piMod = await loadPiAi();
     const models = (piMod as any).getModels(provider) as Array<Record<string, any>>;
     return models.map((m) => ({
@@ -277,10 +287,75 @@ export async function resolveProviderModel(provider: string, requested?: string)
         throw new Error(`Unsupported provider: ${provider}`);
     }
     if (info.modelLocked) return info.defaultModel;
+
+    // OpenRouter: allow arbitrary model ID passthrough. The upstream API
+    // will validate/reject unknown IDs itself. This lets users type any
+    // newly-added model slug (e.g. "stealth/ox-alpha") even before the
+    // dynamic cache refreshes.
+    if (provider === "openrouter" && requested) return requested;
+
     const models = await listPiModels(provider);
     if (requested && models.some((m) => m.model_id === requested)) return requested;
     if (models.some((m) => m.model_id === info.defaultModel)) return info.defaultModel;
     return models[0]?.model_id ?? info.defaultModel;
+}
+
+const OPENROUTER_MODEL_DEFAULTS = {
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: {
+        supportsDeveloperRole: false,
+        thinkingFormat: "openrouter",
+    },
+    reasoning: false,
+    input: ["text"] as Array<"text" | "image">,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 16_384,
+};
+
+function dynamicOpenRouterModel(modelId: string, info?: OpenRouterModelInfo): Record<string, unknown> {
+    return {
+        ...OPENROUTER_MODEL_DEFAULTS,
+        id: modelId,
+        name: info?.model_name || modelId,
+        reasoning: info?.reasoning ?? OPENROUTER_MODEL_DEFAULTS.reasoning,
+        input: info?.input ?? OPENROUTER_MODEL_DEFAULTS.input,
+        cost: info?.cost ?? OPENROUTER_MODEL_DEFAULTS.cost,
+        contextWindow:
+            info?.context_window_tokens ?? OPENROUTER_MODEL_DEFAULTS.contextWindow,
+        maxTokens: info?.max_tokens ?? OPENROUTER_MODEL_DEFAULTS.maxTokens,
+    };
+}
+
+/**
+ * Resolve the actual pi-ai Model object used for a turn.
+ *
+ * pi-ai's compatibility catalog is generated at package publish time, while
+ * OpenRouter adds models continuously. A model selected from OpenRouter's live
+ * catalog therefore may not exist in pi-ai yet. Build the compatible model
+ * descriptor from live metadata instead of passing undefined into pi-agent-core.
+ */
+export async function resolvePiModel(provider: string, modelId: string): Promise<any> {
+    const info = getProviderInfo(provider);
+    if (!info) throw new Error(`Unsupported provider: ${provider}`);
+
+    const upstreamProvider = getUpstreamProviderId(provider);
+    const piMod = await loadPiAi();
+    const builtin = (piMod as any).getModel(upstreamProvider, modelId);
+    if (builtin) return builtin;
+
+    if (upstreamProvider === "openrouter") {
+        const catalog = await fetchOpenRouterModels(getEnvProviderApiKey(provider));
+        const dynamic = catalog?.find((model) => model.model_id === modelId);
+        // Even when the public catalog is temporarily unavailable, return a
+        // valid OpenRouter descriptor. OpenRouter remains the source of truth
+        // and will return a clear upstream error if the model id is invalid.
+        return dynamicOpenRouterModel(modelId, dynamic);
+    }
+
+    throw new Error(`Unknown model ${modelId} for provider ${provider}`);
 }
 
 function formatVerifyError(error: unknown): string {
@@ -340,7 +415,7 @@ export async function verifyPiProviderKey(
     }
 
     const piMod = await loadPiAi();
-    const model = (piMod as any).getModel(getUpstreamProviderId(provider), modelId);
+    const model = await resolvePiModel(provider, modelId);
     const timeoutMs = opts.timeoutMs ?? 15_000;
     const started = Date.now();
     const controller = new AbortController();

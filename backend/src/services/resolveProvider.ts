@@ -2,12 +2,12 @@
  * Dynamic provider resolution for the Pi runtime.
  *
  * Instead of a hardcoded default, the provider is resolved at runtime:
- *   1. Per-runtime last-used provider (providerByRuntime[runtime]) → use it if key still valid
+ *   1. Per-runtime last-used provider (providerByRuntime[runtime]) if it is a
+ *      known Pi provider — even without a key, so Settings can land on a
+ *      provider the user is about to configure
  *   2. Global persisted provider (config.provider) → use if key exists for it
  *   3. First provider in PI_PROVIDERS that has a configured key
  *   4. openrouter-free as final fallback (no key required)
- *
- * This ensures a user is never forced onto a provider they haven't configured.
  */
 
 import { PI_PROVIDERS, OPENROUTER_FREE_PROVIDER_ID } from "../agents/pi/piProviders";
@@ -26,18 +26,22 @@ export function resolveDefaultPiProvider(
   globalProvider: string | undefined,
   userId?: string,
 ): string {
-  // 1. Check per-runtime last-used provider
+  // 1. Honor an explicit per-runtime choice even without a key. Requiring a
+  // key here snaps Settings back to DeepSeek (or whichever key is saved)
+  // and the provider picker looks dead.
   const lastUsed = providerByRuntime?.pi;
-  if (lastUsed && hasValidKey(lastUsed, userId)) {
+  if (lastUsed && isKnownPiProvider(lastUsed)) {
     return lastUsed;
   }
 
   // 2. Check global persisted provider (if it's a Pi provider and has a key)
-  if (globalProvider && globalProvider !== OPENROUTER_FREE_PROVIDER_ID) {
-    const isKnownPiProvider = PI_PROVIDERS.some((p) => p.id === globalProvider);
-    if (isKnownPiProvider && hasValidKey(globalProvider, userId)) {
-      return globalProvider;
-    }
+  if (
+    globalProvider &&
+    globalProvider !== OPENROUTER_FREE_PROVIDER_ID &&
+    isKnownPiProvider(globalProvider) &&
+    hasValidKey(globalProvider, userId)
+  ) {
+    return globalProvider;
   }
 
   // 3. First Pi provider that has a configured key
@@ -52,11 +56,10 @@ export function resolveDefaultPiProvider(
   return OPENROUTER_FREE_PROVIDER_ID;
 }
 
-/**
- * Check if a provider has a usable API key. For server-managed providers
- * (openrouter-free), the key lives in env — this function just checks
- * whether getProviderApiKey returns non-null.
- */
+function isKnownPiProvider(id: string): boolean {
+  return PI_PROVIDERS.some((p) => p.id === id);
+}
+
 function hasValidKey(provider: string, userId?: string): boolean {
   return !!getProviderApiKey(provider, userId);
 }

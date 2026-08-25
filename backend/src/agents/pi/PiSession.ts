@@ -6,7 +6,7 @@ import type { NormalizedEvent, PermissionOption } from "../../services/chatEvent
 import type { AgentToolBridge } from "../toolBridge";
 import { getRuntimeDeps } from "../runtimeDeps";
 import { getProviderInfo } from "./piProviders";
-import { getModelAttemptIds, getUpstreamProviderId } from "./piProviders";
+import { getModelAttemptIds, getUpstreamProviderId, resolvePiModel } from "./piProviders";
 import { loadPiAi, loadPiAgentCore } from "./piAi";
 import { buildPiTools } from "./piTools";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
@@ -227,7 +227,13 @@ export class PiSession implements AgentSession {
         const piMod: any = await loadPiAi();
         const piAgentCore: any = await loadPiAgentCore();
         const { Type } = piMod;
-        const model = piMod.getModel(upstreamProvider, modelAttemptIds[0] ?? requestedModel);
+        const modelIds = modelAttemptIds.length > 0
+            ? modelAttemptIds
+            : [requestedModel];
+        const modelAttempts = await Promise.all(
+            modelIds.map((modelId) => resolvePiModel(provider, modelId)),
+        );
+        const model = modelAttempts[0];
 
         // Reset the per-turn image budget before each LLM-driven loop.
         this.imageQuota.usedBytes = 0;
@@ -276,7 +282,7 @@ export class PiSession implements AgentSession {
                 streamFn: (_m: any, c: any, o: any) => streamSimpleWithFallback(
                     piMod,
                     upstreamProvider,
-                    modelAttemptIds,
+                    modelAttempts,
                     c,
                     { ...o, apiKey },
                 ),
@@ -532,19 +538,19 @@ export class PiSession implements AgentSession {
 function streamSimpleWithFallback(
     piMod: any,
     upstreamProvider: string,
-    modelIds: string[],
+    models: any[],
     context: any,
     options: any,
 ): any /* AssistantMessageEventStream */ {
     const outer = piMod.createAssistantMessageEventStream();
-    const attempts = modelIds.length > 0 ? modelIds : [undefined];
+    const attempts = models.length > 0 ? models : [undefined];
 
     (async () => {
         let lastError: any;
 
         for (let i = 0; i < attempts.length; i += 1) {
-            const modelId = attempts[i];
-            const model = modelId ? piMod.getModel(upstreamProvider, modelId) : undefined;
+            const model = attempts[i];
+            const modelId = model?.id;
             let yieldedAny = false;
 
             try {

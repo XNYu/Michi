@@ -425,7 +425,7 @@ export function reconcileRuntimeWithRegistered(registeredIds: readonly string[])
  * the best provider based on key availability rather than a static default.
  *
  * Priority:
- *   1. providerByRuntime[runtimeId] — last explicitly-used provider for this runtime (if key still valid)
+ *   1. providerByRuntime[runtimeId] — last explicitly-used provider for this runtime
  *   2. First provider with a configured key
  *   3. openrouter-free (no key required)
  *
