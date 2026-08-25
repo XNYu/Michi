@@ -372,7 +372,7 @@ export default function TerminalTopbar({
           // the two stack consistently above adjacent pane content.
           boxShadow: sidebarCollapsed
             ? undefined
-            : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.05))',
+            : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))',
           clipPath: sidebarCollapsed ? undefined : 'inset(-8px -8px 0 0)',
           position: 'relative',
           zIndex: sidebarCollapsed ? undefined : 1,

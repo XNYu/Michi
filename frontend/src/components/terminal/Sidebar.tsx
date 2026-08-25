@@ -140,7 +140,7 @@ export default function TerminalSidebar({
           ? '4px 0 24px rgba(0,0,0,0.18)'
           : (collapsed
               ? undefined
-              : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.05))'),
+              : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))'),
         // Clip the box-shadow's upward feather (top: 0) so it doesn't bleed
         // into the Topbar Zone 1 spacer above and create a visible horizontal
         // joint. Right/bottom are extended past the element so the right glow

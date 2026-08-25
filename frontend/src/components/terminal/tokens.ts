@@ -138,6 +138,7 @@ export function cssVarsFor(
     '--term-bg': p.bg,
     '--term-page-bg': p.bg,
     '--term-surface': p.surface,
+    '--term-sidebar-tint': `color-mix(in srgb, ${p.surface} 88%, #ffffff)`,
     '--term-alt': p.alt,
     '--term-alt2': p.alt2,
     '--term-hover-bg': p.alt,
