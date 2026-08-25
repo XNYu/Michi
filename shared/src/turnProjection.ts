@@ -323,7 +323,12 @@ function mergeTool(previous: DurableToolCall | undefined, update: ToolCallStream
   if (update.kind) merged.kind = update.kind;
   if (update.detail) merged.detail = update.detail;
   if (update.inputJson) merged.inputJson = update.inputJson;
-  if (update.output) merged.output = update.output;
+  if (update.output) {
+    merged.output = update.output;
+    // Output arriving means the tool has finished — infer completed if status
+    // was never explicitly set to a terminal value by the runtime.
+    if (isActiveToolStatus(merged.status)) merged.status = 'completed';
+  }
   // Stamp completion once, on the first transition into a terminal status.
   if (!merged.endedAt && !isActiveToolStatus(merged.status)) merged.endedAt = Date.now();
   return merged;

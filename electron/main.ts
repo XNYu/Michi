@@ -15,6 +15,7 @@ import {
   startupTraceFileQuery,
   withStartupTraceQuery,
 } from './startupTrace';
+import { checkForUpdate, initAutoUpdate } from './autoUpdate';
 import { isClosePaneShortcut } from './paneShortcuts';
 import { listWorkspaceDirectory, resolveAllowedDirectory } from './workspaceFiles';
 import { applyBrowserTheme, normalizeBrowserTheme, type BrowserTheme } from './browserTheme';

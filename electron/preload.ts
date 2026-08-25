@@ -16,6 +16,15 @@ interface SaveMarkdownResult {
   path?: string;
 }
 
+interface AppUpdateState {
+  status: 'idle' | 'checking' | 'available' | 'unavailable' | 'downloading' | 'ready' | 'installing' | 'error';
+  currentVersion: string;
+  latestVersion?: string;
+  notes?: string;
+  percent?: number;
+  error?: string;
+}
+
 interface BrowserSurfaceState {
   surfaceId: string;
   url: string;
