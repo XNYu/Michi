@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat, subscribeChat } from '../services/api';
+import { allocateNodeIds, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat, steerChat, subscribeChat } from '../services/api';
 import type { AgentStatus, SessionMode } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
@@ -1937,6 +1937,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const fn = cancelFns.current[nodeId];
     const node = nodesRef.current[nodeId];
     const activeTurnId = node?.lastAppliedTurnId ?? node?.lastAppliedBackgroundTurnId;
+    if (node?.status === 'streaming') {
+      dispatch({ type: 'cancel-phase', nodeId, phase: 'requested' });
+    }
     if (fn) {
       fn();
     } else if (ownerStateRef.current[nodeId]?.role === 'owner' && node?.chatId) {
@@ -2075,6 +2078,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     },
     [dispatch],
   );
+
+  const steerMessage = useCallback(async (nodeId: string, text: string): Promise<boolean> => {
+    const node = nodesRef.current[nodeId];
+    if (!node?.chatId) return false;
+    const result = await steerChat(node.chatId, text, ownerTokenRef.current);
+    return result.accepted;
+  }, []);
 
   const queueMessage = useCallback(
     (nodeId: string, message: PendingQueuedMessage) => {
@@ -2719,6 +2729,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       editPendingComment,
       removePendingComment,
       clearPendingComments,
+      steerMessage,
       queueMessage,
       dequeueMessage,
       flushQueue,
@@ -2835,6 +2846,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       editPendingComment,
       removePendingComment,
       clearPendingComments,
+      steerMessage,
       queueMessage,
       dequeueMessage,
       flushQueue,
@@ -2907,6 +2919,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       editPendingComment,
       removePendingComment,
       clearPendingComments,
+      steerMessage,
       queueMessage,
       dequeueMessage,
       setComposerDraft,
@@ -2976,6 +2989,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       editPendingComment,
       removePendingComment,
       clearPendingComments,
+      steerMessage,
       queueMessage,
       dequeueMessage,
       setComposerDraft,

@@ -87,7 +87,7 @@ function MessageActions({
   onRetry?: () => void;
   onEdit?: () => void;
   onBranch?: () => void;
-  usageInfo?: { durationMs: number; credits: number } | null;
+  usageInfo?: { durationMs: number; credits: number; unverifiable?: boolean } | null;
 }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
@@ -181,7 +181,9 @@ function MessageActions({
       {hasUsage && (
         <span style={{ fontSize: 10, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
           {(usageInfo.durationMs / 1000).toFixed(1)}s
-          {usageInfo.credits > 0 && ` · ${usageInfo.credits.toFixed(2)} credits`}
+          {usageInfo.unverifiable
+            ? ' · unverifiable'
+            : usageInfo.credits > 0 && ` · ${usageInfo.credits.toFixed(2)} credits`}
         </span>
       )}
     </div>
@@ -1358,7 +1360,7 @@ interface MessageBlockProps {
   showThoughts: boolean;
   fontFamily: string;
   density: TerminalDensity;
-  usageInfo?: { durationMs: number; credits: number } | null;
+  usageInfo?: { durationMs: number; credits: number; unverifiable?: boolean } | null;
   isErrorTail?: boolean;
   errorMessage?: string;
   /** Error classification from the Kiro runtime: 'connection' | 'auth' |
@@ -1690,7 +1692,7 @@ function usageEqual(
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
-  return a.durationMs === b.durationMs && a.credits === b.credits;
+  return a.durationMs === b.durationMs && a.credits === b.credits && a.unverifiable === b.unverifiable;
 }
 
 function childAnchorsEqual(

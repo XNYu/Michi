@@ -601,6 +601,8 @@ export function reduceNodes(
             ? { titleNeedsPersistence: true }
             : {}),
           status: 'idle',
+          cancelPhase: undefined,
+          compacting: undefined,
           visibleResponseComplete: false,
           backgroundTurnAssistantId:
             n.backgroundTurnAssistantId === action.assistantId
@@ -685,6 +687,8 @@ export function reduceNodes(
         [action.nodeId]: {
           ...n,
           status: 'error',
+          cancelPhase: undefined,
+          compacting: undefined,
           visibleResponseComplete: false,
           streamingStartedAt: undefined,
           error: action.message,
@@ -1331,8 +1335,22 @@ export function reduceNodes(
       if (!n) return nodes;
       return { ...nodes, [action.nodeId]: { ...n,
         contextUsagePercentage: action.contextUsagePercentage,
-        usageSummary: { totalCredits: action.totalCredits, turnDurationMs: action.turnDurationMs },
+        usageSummary: {
+          totalCredits: action.totalCredits,
+          turnDurationMs: action.turnDurationMs,
+          source: action.source,
+        },
       } };
+    }
+    case 'cancel-phase': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, cancelPhase: action.phase } };
+    }
+    case 'compaction': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, compacting: action.active || undefined } };
     }
     case 'mcp-server-error': {
       const n = nodes[action.nodeId];

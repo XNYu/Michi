@@ -17,7 +17,8 @@ import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
-import { saveAgentOptions, checkRuntimeHealth } from '../../services/api';
+import { saveAgentOptions, checkRuntimeHealth, steerChat } from '../../services/api';
+import { shouldSteerInsteadOfQueue } from 'michi-shared';
 import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
@@ -328,6 +329,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     removePendingComment,
     clearPendingComments,
     queueMessage,
+    steerMessage,
     dequeueMessage,
     setComposerDraft,
     reorderPane,
@@ -1753,6 +1755,13 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       !slashBranched &&
       (text || attachmentsForSend.length > 0 || pending.length > 0)
     ) {
+      if (shouldSteerInsteadOfQueue(agentStatus?.capabilityDescriptor) && text) {
+        const baseFinal = joinMessageParts(commentBlock, queuedQuote, text);
+        const finalText = appendAttachmentsSentinel(baseFinal, attachmentsForSend);
+        if (pending.length > 0) clearPendingComments(nodeId);
+        const accepted = await steerMessage(nodeId, finalText);
+        if (accepted) return;
+      }
       queueMessage(nodeId, {
         id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         value: submitDraft.value,           // literal text (chip labels intact)
@@ -2151,6 +2160,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             sendMode={sendMode}
             streaming={streaming}
             sendDisabled={sendDisabled}
+            steerNative={shouldSteerInsteadOfQueue(agentStatus?.capabilityDescriptor)}
             onBranch={() => void onSubmit(true)}
             onSend={() => void onSubmit()}
             onStop={() => cancelStream(nodeId)}

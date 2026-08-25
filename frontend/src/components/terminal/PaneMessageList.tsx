@@ -10,6 +10,7 @@ import { StreamActivityIndicator } from './StreamActivityIndicator';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
 import { shouldShowFollowUps } from '../../state/followUpsVisibility';
+import { usageIsUnverifiable } from 'michi-shared';
 
 interface PaneMessageListProps {
   node: ChatNodeState;
@@ -218,10 +219,12 @@ function PaneMessageListInner({
                 }[prefs.fontFamily]}
                 usageInfo={
                   !isUser && node.status === 'idle' && node.usageSummary && i === node.messages.length - 1
-                    ? {
-                        durationMs: node.usageSummary.turnDurationMs,
-                        credits: node.usageSummary.totalCredits,
-                      }
+                    ? usageIsUnverifiable(node.usageSummary.source, node.usageSummary.totalCredits)
+                      ? { durationMs: node.usageSummary.turnDurationMs, credits: 0, unverifiable: true }
+                      : {
+                          durationMs: node.usageSummary.turnDurationMs,
+                          credits: node.usageSummary.totalCredits,
+                        }
                     : undefined
                 }
                 subagents={node.subagents}

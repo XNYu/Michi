@@ -266,7 +266,10 @@ export function runChatStream({
     onContextUsage: (data) =>
       dispatch({ type: 'context-usage', nodeId, contextUsagePercentage: data.contextUsagePercentage }),
     onUsageSummary: (data) =>
-      dispatch({ type: 'usage-summary', nodeId, contextUsagePercentage: data.contextUsagePercentage, totalCredits: data.totalCredits, turnDurationMs: data.turnDurationMs }),
+      dispatch({ type: 'usage-summary', nodeId, contextUsagePercentage: data.contextUsagePercentage, totalCredits: data.totalCredits, turnDurationMs: data.turnDurationMs, source: data.source }),
+    onCancelPhase: (data) => dispatch({ type: 'cancel-phase', nodeId, phase: data.phase }),
+    onCompactionStart: () => dispatch({ type: 'compaction', nodeId, active: true }),
+    onCompactionEnd: () => dispatch({ type: 'compaction', nodeId, active: false }),
     onMcpServerError: (data) =>
       dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
     onDone: (stopReason, _assistantId, turnId, persisted, completedAt) => {

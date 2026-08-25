@@ -1,5 +1,6 @@
 import React from 'react';
 import type { AgentModelInfo, AgentStatus, SessionMode } from '../../services/api';
+import { CapabilityBadges } from './CapabilityBadges';
 
 export const REASONING_LABELS: Record<string, string> = {
   minimal: 'Minimal',
@@ -157,6 +158,7 @@ export function PaneComposerToolbarLeft({
           </span>
         );
       })()}
+      <CapabilityBadges descriptor={agentStatus?.capabilityDescriptor} />
     </>
   );
 }

@@ -53,6 +53,14 @@ export interface StreamHandlers {
   onSubagentToolActivity?: (data: ChatStreamPayloads['subagent_tool_activity']) => void;
   onContextUsage?: (data: ChatStreamPayloads['context_usage']) => void;
   onUsageSummary?: (data: ChatStreamPayloads['usage_summary']) => void;
+  onCancelPhase?: (data: ChatStreamPayloads['cancel_phase']) => void;
+  onQueueUpdate?: (data: ChatStreamPayloads['queue_update']) => void;
+  onSteerAccepted?: (data: ChatStreamPayloads['steer_accepted']) => void;
+  onCompactionStart?: (data: ChatStreamPayloads['compaction_start']) => void;
+  onCompactionEnd?: (data: ChatStreamPayloads['compaction_end']) => void;
+  onRetryStart?: (data: ChatStreamPayloads['retry_start']) => void;
+  onRetryEnd?: (data: ChatStreamPayloads['retry_end']) => void;
+  onHarnessLifecycle?: (data: ChatStreamPayloads['harness_lifecycle']) => void;
   onMcpServerError?: (data: ChatStreamPayloads['mcp_server_error']) => void;
   onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean, completedAt?: number) => void;
   onAborted?: () => void;
@@ -152,6 +160,30 @@ export function dispatchChatStreamEvent(
       return;
     case CHAT_STREAM_EVENTS.usageSummary:
       handlers.onUsageSummary?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.cancelPhase:
+      handlers.onCancelPhase?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.queueUpdate:
+      handlers.onQueueUpdate?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.steerAccepted:
+      handlers.onSteerAccepted?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.compactionStart:
+      handlers.onCompactionStart?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.compactionEnd:
+      handlers.onCompactionEnd?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.retryStart:
+      handlers.onRetryStart?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.retryEnd:
+      handlers.onRetryEnd?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.harnessLifecycle:
+      handlers.onHarnessLifecycle?.(streamEvent.data);
       return;
     case CHAT_STREAM_EVENTS.mcpServerError:
       handlers.onMcpServerError?.(streamEvent.data);

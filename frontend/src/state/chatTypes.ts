@@ -168,6 +168,7 @@ export interface PermissionRequest {
   title: string;
   detail?: string;
   options: Array<{ optionId: string; name: string; kind: string }>;
+  source?: string;
 }
 
 export interface UserInputRequest {
@@ -192,6 +193,7 @@ export interface SubagentInfo {
 export interface UsageSummary {
   totalCredits: number;
   turnDurationMs: number;
+  source?: string;
 }
 
 export interface ComposerMention {
@@ -322,6 +324,9 @@ export interface ChatNodeState {
    * overwriting the canonical server-side extraction. */
   branchOverviewSourceMessageId?: string;
   status: 'idle' | 'streaming' | 'error';
+  /** Honest cancel machine. Idle is not inferred from Stop click alone. */
+  cancelPhase?: 'requested' | 'acknowledged' | 'settled';
+  compacting?: boolean;
   /** Epoch ms when the current streaming turn began. Survives remounts. */
   streamingStartedAt?: number;
   error?: string;
@@ -722,7 +727,9 @@ export type ChatAction =
   | { type: 'subagent-list-update'; nodeId: string; subagents: SubagentInfo[] }
   | { type: 'subagent-tool-activity'; nodeId: string; subagentSessionId: string; title: string; status: string }
   | { type: 'context-usage'; nodeId: string; contextUsagePercentage: number }
-  | { type: 'usage-summary'; nodeId: string; contextUsagePercentage: number; totalCredits: number; turnDurationMs: number }
+  | { type: 'usage-summary'; nodeId: string; contextUsagePercentage: number; totalCredits: number; turnDurationMs: number; source?: string }
+  | { type: 'cancel-phase'; nodeId: string; phase: 'requested' | 'acknowledged' | 'settled' }
+  | { type: 'compaction'; nodeId: string; active: boolean }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }
   | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null }
   | { type: 'add-comment'; nodeId: string; comment: PendingComment }
@@ -1036,6 +1043,8 @@ export interface ChatContextValue {
   removePendingComment: (nodeId: string, commentId: string) => void;
   /** Drop every pending comment on the node. Called by the composer on send. */
   clearPendingComments: (nodeId: string) => void;
+  /** Same-turn native steer. Returns accepted=false when the runtime is invisible. */
+  steerMessage: (nodeId: string, text: string) => Promise<boolean>;
   /** Push a queued message onto the node (used while streaming). */
   queueMessage: (nodeId: string, message: PendingQueuedMessage) => void;
   /** Remove a queued message by id (used when the user × the pill). */
@@ -1141,6 +1150,7 @@ export type ChatActionsValue = Pick<
   | 'editPendingComment'
   | 'removePendingComment'
   | 'clearPendingComments'
+  | 'steerMessage'
   | 'queueMessage'
   | 'dequeueMessage'
   | 'setComposerDraft'
