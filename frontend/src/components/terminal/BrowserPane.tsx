@@ -37,6 +37,8 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
 
   useEffect(() => {
     if (!electron?.browserCreate) return;
+    let disposed = false;
+    let creationBoundsRaf = 0;
     const offState = electron.onBrowserState?.((next) => {
       if (next.surfaceId !== item.surfaceId) return;
       setState(next);
@@ -55,9 +57,23 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
       if (surfaceId === item.surfaceId) closePaneRef.current(item.id);
     });
     electron.browserCreate(item.surfaceId, item.projectId, item.url)
-      .then((next) => { setState(next); if (next.url) setAddress(next.url); })
-      .catch((error) => setState((prev) => ({ ...prev, error: error instanceof Error ? error.message : 'Unable to open browser' })));
+      .then((next) => {
+        if (disposed) return;
+        setState(next);
+        if (next.url) setAddress(next.url);
+        // Surface creation is asynchronous (and may include hidden theme
+        // initialization), so bounds published during mount can arrive before
+        // the main process has registered the surface. Republish the latest
+        // painted rectangle once creation is complete.
+        creationBoundsRaf = requestAnimationFrame(publishBounds);
+      })
+      .catch((error) => {
+        if (disposed) return;
+        setState((prev) => ({ ...prev, error: error instanceof Error ? error.message : 'Unable to open browser' }));
+      });
     return () => {
+      disposed = true;
+      cancelAnimationFrame(creationBoundsRaf);
       offState?.();
       offFocus?.();
       offCloseRequest?.();
@@ -66,7 +82,7 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
     // item.url changes as navigation events arrive; creation is keyed only by
     // the stable surface id so a redirect cannot recreate the WebContentsView.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [electron, focusPane, item.id, item.projectId, item.surfaceId, setFocusedNodeId, updatePaneItem]);
+  }, [electron, focusPane, item.id, item.projectId, item.surfaceId, publishBounds, setFocusedNodeId, updatePaneItem]);
 
   useEffect(() => {
     const element = viewportRef.current;
