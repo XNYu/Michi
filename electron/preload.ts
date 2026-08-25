@@ -16,6 +16,15 @@ interface SaveMarkdownResult {
   path?: string;
 }
 
+interface AppUpdateState {
+  status: 'idle' | 'checking' | 'available' | 'unavailable' | 'downloading' | 'ready' | 'installing' | 'error';
+  currentVersion: string;
+  latestVersion?: string;
+  notes?: string;
+  percent?: number;
+  error?: string;
+}
+
 const isPackaged: boolean = ipcRenderer.sendSync('app:isPackaged') === true;
 const michiWindowId: string = new URLSearchParams(window.location.search).get('michiWindowId') ?? '';
 const hasVibrancy: boolean = ipcRenderer.sendSync('app:vibrancy') === true;
@@ -90,6 +99,23 @@ contextBridge.exposeInMainWorld('electron', {
   /** Relaunch the app (used after self-update). */
   relaunch(): void {
     ipcRenderer.send('app:relaunch');
+  },
+  getUpdateState(): Promise<AppUpdateState> {
+    return ipcRenderer.invoke('app:getUpdateState');
+  },
+  checkForUpdate(): Promise<AppUpdateState> {
+    return ipcRenderer.invoke('app:checkForUpdate');
+  },
+  downloadUpdate(): Promise<AppUpdateState> {
+    return ipcRenderer.invoke('app:downloadUpdate');
+  },
+  installUpdate(): Promise<AppUpdateState> {
+    return ipcRenderer.invoke('app:installUpdate');
+  },
+  onAppUpdate(listener: (state: AppUpdateState) => void): () => void {
+    const handler = (_ev: unknown, state: AppUpdateState) => { listener(state); };
+    ipcRenderer.on('app:update-state', handler);
+    return () => { ipcRenderer.removeListener('app:update-state', handler); };
   },
   chooseFiles(): Promise<{ canceled: boolean; paths?: string[] }> {
     return ipcRenderer.invoke('app:chooseFiles');

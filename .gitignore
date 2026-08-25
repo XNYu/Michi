@@ -35,6 +35,8 @@ coverage/
 
 # Production build
 build/
+electron/releaseInfo.json
+electron/dist/
 
 # Backend specific
 backend/dist/

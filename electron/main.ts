@@ -14,6 +14,7 @@ import {
   startupTraceFileQuery,
   withStartupTraceQuery,
 } from './startupTrace';
+import { checkForUpdate, initAutoUpdate } from './autoUpdate';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -502,6 +503,10 @@ function buildAppMenu(): void {
           label: app.name,
           submenu: [
             { role: 'about' },
+            {
+              label: 'Check for Updates…',
+              click: () => { void checkForUpdate(); },
+            },
             { type: 'separator' },
             { role: 'services' },
             { type: 'separator' },
@@ -903,6 +908,15 @@ app.whenReady().then(async () => {
     await installDevExtensions();
     await createWindow(backendPort);
     elog('INFO', 'boot', 'window created', { backendPort });
+    initAutoUpdate({
+      isDev,
+      isPackaged: app.isPackaged,
+      sendToWindows: (channel, payload) => {
+        for (const w of windows) {
+          if (!w.isDestroyed()) w.webContents.send(channel, payload);
+        }
+      },
+    });
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) void createWindow(resolvedBackendPort);

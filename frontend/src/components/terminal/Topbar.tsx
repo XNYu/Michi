@@ -10,8 +10,8 @@ import {
 } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { IconBtn } from './primitives';
-import { checkVersion, triggerUpdate } from '../../services/api';
 import { getElectron } from '../../lib/electronBridge';
+import type { AppUpdateState } from '../../lib/electronBridge';
 import SidebarToggleButton from './SidebarToggleButton';
 import PaneCaption from './PaneCaption';
 import { HeaderTooltip } from './WorkspaceMenuButton';
@@ -135,6 +135,7 @@ export default function TerminalTopbar({
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [updateState, setUpdateState] = useState<AppUpdateState | null>(null);
 
   // The Artifacts button is a plain toggle for the right-side drawer
   // (owned by TerminalShell). It reflects no open/close state of its own.
@@ -177,51 +178,74 @@ export default function TerminalTopbar({
     window.dispatchEvent(new CustomEvent('michi:toggle-artifacts'));
   }, []);
 
-  // Only the packaged Electron build should ever offer Update & Restart.
-  // Vite dev (`npm run dev`, `electron:dev`) flips import.meta.env.DEV true;
-  // the unpackaged Electron path leaves window.electron.isPackaged false.
-  // Both must be production for the button to even probe the version endpoint.
+  // Packaged Electron builds check GitHub Releases via the main-process updater.
+  const electron = getElectron();
   const updateChannelEnabled =
-    !import.meta.env.DEV && getElectron()?.isPackaged === true;
+    electron?.isPackaged === true && !!electron.onAppUpdate;
 
   useEffect(() => {
     if (!updateChannelEnabled) return;
-    checkVersion()
-      .then((v) => { if (v.updateAvailable) setUpdateAvailable(true); })
-      .catch(() => {});
+    const api = getElectron();
+    if (!api?.onAppUpdate) return;
+    const apply = (next: AppUpdateState) => {
+      setUpdateState(next);
+      if (next.status === 'available' || next.status === 'downloading' || next.status === 'ready' || next.status === 'installing') {
+        setUpdateAvailable(true);
+      }
+      setUpdating(next.status === 'downloading' || next.status === 'installing');
+      if (next.status === 'error') setUpdating(false);
+    };
+    const unsub = api.onAppUpdate(apply);
+    void api.getUpdateState?.().then(apply).catch(() => {});
+    return unsub;
   }, [updateChannelEnabled]);
 
   const handleUpdate = async () => {
-    setUpdating(true);
-    try {
-      let result = await triggerUpdate();
-      if (!result.ok && result.requiresConfirm) {
-        const target = result.branch ?? 'upstream';
-        const detail =
-          result.reason === 'ahead'
-            ? `${result.aheadCount} local commit(s) ahead of ${target} would be hard-reset away.\n\nProceed anyway? A backup ref will be created so the prior tip is recoverable.`
-            : `Tracked files have uncommitted changes that reset --hard will discard.\n\nProceed anyway?`;
-        if (!(await confirmDialog({
-          title: 'Update Michi',
-          message: detail,
-          confirmLabel: 'Update anyway',
-        }))) {
-          setUpdating(false);
-          return;
-        }
-        result = await triggerUpdate(true);
+    const api = getElectron();
+    if (!api?.downloadUpdate || !api.installUpdate) return;
+    if (updateState?.status === 'downloading' || updateState?.status === 'installing') return;
+    const latest = updateState?.latestVersion;
+    if (updateState?.status === 'ready') {
+      if (!(await confirmDialog({
+        title: 'Install update and restart?',
+        message: latest
+          ? `Michi ${latest} is downloaded. Install it now and restart?`
+          : 'Install the downloaded update and restart Michi?',
+        confirmLabel: 'Install and Restart',
+        danger: false,
+      }))) {
+        return;
       }
-      if (result.ok) {
-        const electron = getElectron();
-        if (electron?.relaunch) {
-          electron.relaunch();
-        } else {
-          window.location.reload();
-        }
-      } else {
-        alert(`Update failed: ${result.error}`);
+      setUpdating(true);
+      try {
+        await api.installUpdate();
+      } catch (err) {
+        alert(`Update failed: ${err}`);
         setUpdating(false);
       }
+      return;
+    }
+    setUpdating(true);
+    try {
+      const next = await api.downloadUpdate();
+      setUpdateState(next);
+      if (next.status === 'error') {
+        alert(`Update failed: ${next.error ?? 'download failed'}`);
+        setUpdating(false);
+        return;
+      }
+      if (!(await confirmDialog({
+        title: 'Install update and restart?',
+        message: next.latestVersion
+          ? `Michi ${next.latestVersion} finished downloading. Install it now and restart?`
+          : 'The update finished downloading. Install it now and restart Michi?',
+        confirmLabel: 'Install and Restart',
+        danger: false,
+      }))) {
+        setUpdating(false);
+        return;
+      }
+      await api.installUpdate();
     } catch (err) {
       alert(`Update failed: ${err}`);
       setUpdating(false);
@@ -712,7 +736,19 @@ export default function TerminalTopbar({
                 onClick={handleUpdate}
                 style={{ cursor: updating ? 'wait' : 'pointer' }}
               >
-                {updating ? '⟳ Updating…' : '↑ Update & Restart'}
+                {updateState?.status === 'downloading'
+                  ? (typeof updateState.percent === 'number'
+                    ? `⟳ Downloading ${updateState.percent}%`
+                    : '⟳ Downloading…')
+                  : updateState?.status === 'installing'
+                    ? '⟳ Installing…'
+                    : updateState?.status === 'ready'
+                      ? (updateState.latestVersion
+                        ? `↑ Install ${updateState.latestVersion} & Restart`
+                        : '↑ Install & Restart')
+                      : updateState?.latestVersion
+                        ? `↑ Update to ${updateState.latestVersion}`
+                        : '↑ Update & Restart'}
               </span>
               {!updating && (
                 <IconBtn

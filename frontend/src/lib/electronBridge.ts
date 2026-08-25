@@ -18,6 +18,25 @@ export interface SaveMarkdownResult {
   path?: string;
 }
 
+export type AppUpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'unavailable'
+  | 'downloading'
+  | 'ready'
+  | 'installing'
+  | 'error';
+
+export interface AppUpdateState {
+  status: AppUpdateStatus;
+  currentVersion: string;
+  latestVersion?: string;
+  notes?: string;
+  percent?: number;
+  error?: string;
+}
+
 /** macOS NSVisualEffectView materials Michi exposes, lightest → densest frost. */
 export type VibrancyMaterial = 'under-window' | 'sidebar' | 'menu' | 'hud';
 
@@ -44,6 +63,11 @@ export interface ElectronBridge {
   setVibrancy?(material: VibrancyMaterial): void;
   /** Relaunch the app after self-update. Optional — absent in older builds. */
   relaunch?(): void;
+  getUpdateState?(): Promise<AppUpdateState>;
+  checkForUpdate?(): Promise<AppUpdateState>;
+  downloadUpdate?(): Promise<AppUpdateState>;
+  installUpdate?(): Promise<AppUpdateState>;
+  onAppUpdate?(listener: (state: AppUpdateState) => void): () => void;
   /** Open a multi-select OS file picker, returns absolute paths. Optional — absent in older builds. */
   chooseFiles?(): Promise<{ canceled: boolean; paths?: string[] }>;
   /** Read a file by absolute path (bypasses backend sandbox). Returns null on failure. Optional — absent in older builds. */
