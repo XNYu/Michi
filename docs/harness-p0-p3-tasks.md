@@ -174,11 +174,60 @@ Recorded during implementation if a package/API is unavailable.
 
 | Task | Blocker | Fallback |
 |---|---|---|
-| T-P2-1 | TBD | Flag + factory + tests prove agent-core path |
-| T-P3-2 | TBD | Flag + spike module + tests prove default off |
+| T-P2-1 | `@earendil-works/pi-coding-agent` is not installed / not resolvable | `MICHI_PI_SESSION_SDK=1` selects the SDK factory; `tryLoadPiCodingAgent()` returns null and `createPiSession()` falls back to `PiSession` |
+| T-P3-2 | `@anthropic-ai/claude-agent-sdk` is not installed | `MICHI_CLAUDE_AGENT_SDK=1` documents the spike; `describeClaudeSdkSpike()` reports `packageLoaded: false` and `replacesClaudeRuntime: false` |
 
 ---
 
 ## Verification log
 
-<!-- appended per task -->
+### T-P0-1 Shared CapabilityDescriptor
+- `cd shared && npx tsc -p tsconfig.json --noEmit` — pass (via `npm run shared:build`)
+- `cd backend && node --require ts-node/register --test test/capabilityDescriptors.test.ts` — 6/6 pass
+
+### T-P0-2 Descriptors on all 7 runtimes + status API
+- `test/capabilityDescriptors.test.ts` — 7 runtimes, Claude/Antigravity invisible steer, Codex native
+- `test/agentStatusRoute.test.ts` — `/agent/status` includes `capabilityDescriptor`
+
+### T-P0-3 HEP v2 events added
+- `test/chatStreamEvents.test.ts` — old events + `cancel_phase` / `steer_accepted`
+- `cd frontend && npm run test:raw -- src/services/chatStreamEvents.test.ts` — every `CHAT_STREAM_EVENTS` value roundtrips
+
+### T-P0-4 harness_events journal + ChatHub provenance
+- `test/harnessJournal.test.ts` — pass
+- `test/chatHubHarness.test.ts` “ChatHub provenance” — stamp + journal dual-write; journal throw continues snapshot
+
+### T-P0-5 Cancel three-phase
+- `test/chatHubHarness.test.ts` “cancel phase” — requested → acknowledged → settled; no ack when runtime silent; disconnect does not settle
+
+### T-P0-6 Honest UI
+- `frontend` `CapabilityBadges.test.ts`, `cancelPhase.test.ts`, `PaneComposerActions.test.tsx` — pass
+
+### T-P1-1 Optional AgentSession methods
+- `test/chatHubHarness.test.ts` “ChatHub optional session methods” — missing steer → `{ accepted: false, reason: 'invisible' }`
+
+### T-P1-2 Codex wire
+- `test/codexEventTranslator.test.ts` — compaction item + `interrupted`
+- `test/codexSession.test.ts` “steer issues turn/steer…” — pass; Michi node id unchanged
+
+### T-P1-3 Pi event honesty
+- `test/piEventMapper.test.ts` — 4/4 pass
+
+### T-P1-4 Frontend queue fork
+- `PaneComposerActions.test.tsx` — Steer vs Send next
+- `shouldSteerInsteadOfQueue` — Claude false, Codex true
+
+### T-P1-5 Permission source labels
+- `PermissionBanner.source.test.tsx` — “Codex approval”
+
+### T-P2-1..4 Pi SDK
+- `test/piSdkSession.test.ts` — flag off = agent-core; package missing fallback; no `navigateTree` on Michi branch
+
+### T-P3-1..4 Claude / ACP / Antigravity
+- `test/claudeSdkSpike.test.ts` — default off, Teams unavailable
+- `test/acpHandshake.test.ts` — Kiro `2025-01-01`, Cursor/Grok `1` locked
+- Antigravity descriptor: steer/compact/permissions=`invisible`
+
+### Related existing suites
+- `chatHubReplayRing.test.ts`, `claudeSession.test.ts`, `piSession.test.ts` — pass
+
