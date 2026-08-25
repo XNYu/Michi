@@ -1,4 +1,5 @@
-export type PaneItemKind = 'file' | 'diff' | 'terminal' | 'browser';
+export type PaneItemKind = 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser';
+export type PaneLauncherChoice = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat';
 
 interface PaneItemBase {
   id: string;
@@ -8,6 +9,20 @@ interface PaneItemBase {
   title: string;
   createdAt: number;
   width?: number;
+}
+
+export interface LauncherPaneItem extends PaneItemBase {
+  kind: 'launcher';
+  /** Chat pane that was focused when the launcher opened. Used by Side chat. */
+  anchorNodeId?: string;
+}
+
+export interface FilesPaneItem extends PaneItemBase {
+  kind: 'files';
+}
+
+export interface ReviewPaneItem extends PaneItemBase {
+  kind: 'review';
 }
 
 export interface FilePaneItem extends PaneItemBase {
@@ -34,9 +49,16 @@ export interface BrowserPaneItem extends PaneItemBase {
   url: string;
 }
 
-export type PaneItem = FilePaneItem | DiffPaneItem | TerminalPaneItem | BrowserPaneItem;
+export type PaneItem =
+  | LauncherPaneItem
+  | FilesPaneItem
+  | ReviewPaneItem
+  | FilePaneItem
+  | DiffPaneItem
+  | TerminalPaneItem
+  | BrowserPaneItem;
 
-const KINDS = new Set<PaneItemKind>(['file', 'diff', 'terminal', 'browser']);
+const KINDS = new Set<PaneItemKind>(['launcher', 'files', 'review', 'file', 'diff', 'terminal', 'browser']);
 
 export function isPaneItem(value: unknown): value is PaneItem {
   if (!value || typeof value !== 'object') return false;
@@ -50,6 +72,8 @@ export function isPaneItem(value: unknown): value is PaneItem {
     typeof item.createdAt !== 'number'
   ) return false;
   if (item.width !== undefined && (typeof item.width !== 'number' || !Number.isFinite(item.width))) return false;
+  if (item.kind === 'launcher') return item.anchorNodeId === undefined || typeof item.anchorNodeId === 'string';
+  if (item.kind === 'files' || item.kind === 'review') return true;
   if (item.kind === 'file') {
     return typeof item.filePath === 'string'
       && (item.viewMode === 'rendered' || item.viewMode === 'source')
@@ -73,7 +97,7 @@ export function singletonPaneId(kind: 'file' | 'diff', projectId: string, filePa
   return `pane:${kind}:${fnv1a(`${projectId}\0${filePath}`)}`;
 }
 
-export function uniquePaneId(kind: 'terminal' | 'browser'): string {
+export function uniquePaneId(kind: 'launcher' | 'terminal' | 'browser'): string {
   const token = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -85,6 +109,9 @@ export function paneItemTitle(item: PaneItem): string {
   if (item.kind === 'file' || item.kind === 'diff') {
     return item.filePath.split('/').filter(Boolean).pop() ?? item.filePath;
   }
+  if (item.kind === 'launcher') return 'New pane';
+  if (item.kind === 'files') return 'Files';
+  if (item.kind === 'review') return 'Review';
   return item.kind === 'terminal' ? 'Terminal' : 'Browser';
 }
 

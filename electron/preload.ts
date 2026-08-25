@@ -26,6 +26,21 @@ interface BrowserSurfaceState {
   error?: string;
 }
 
+interface FileTreeEntry {
+  name: string;
+  path: string;
+  kind: 'file' | 'directory';
+}
+
+interface GitChangeEntry {
+  path: string;
+  status: string;
+}
+
+type FilePreviewResult =
+  | { kind: 'text'; content: string; size: number; modifiedAt: number; extension: string }
+  | { kind: 'image'; dataUrl: string; size: number; modifiedAt: number; extension: string };
+
 const isPackaged: boolean = ipcRenderer.sendSync('app:isPackaged') === true;
 const michiWindowId: string = new URLSearchParams(window.location.search).get('michiWindowId') ?? '';
 const hasVibrancy: boolean = ipcRenderer.sendSync('app:vibrancy') === true;
@@ -126,6 +141,15 @@ contextBridge.exposeInMainWorld('electron', {
   },
   statFile(absPath: string): Promise<{ size: number; modifiedAt: number } | null> {
     return ipcRenderer.invoke('app:statFile', absPath);
+  },
+  listDirectory(absPath: string, allowedRoots: string[]): Promise<FileTreeEntry[]> {
+    return ipcRenderer.invoke('app:listDirectory', absPath, allowedRoots);
+  },
+  readFilePreview(absPath: string): Promise<FilePreviewResult | null> {
+    return ipcRenderer.invoke('app:readFilePreview', absPath);
+  },
+  listGitChanges(cwd: string, allowedRoots: string[]): Promise<GitChangeEntry[]> {
+    return ipcRenderer.invoke('app:listGitChanges', cwd, allowedRoots);
   },
   getPathForFile(file: File): string | null {
     try {

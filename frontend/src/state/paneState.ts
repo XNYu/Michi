@@ -230,6 +230,15 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     });
   }, []);
 
+  const replacePaneItem = useCallback((id: string, item: PaneItem) => {
+    setPaneItems((prev) => {
+      const current = prev[id];
+      if (!current) return prev;
+      const next = { ...item, id, width: item.width ?? current.width } as PaneItem;
+      return { ...prev, [id]: next };
+    });
+  }, []);
+
   const removePaneItem = useCallback((id: string) => {
     setPaneItems((prev) => {
       if (!prev[id]) return prev;
@@ -331,6 +340,7 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     openPane,
     registerPaneItem,
     updatePaneItem,
+    replacePaneItem,
     removePaneItem,
     setPaneItemWidth,
     openPaneInTree,

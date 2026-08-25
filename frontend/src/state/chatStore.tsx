@@ -20,7 +20,7 @@ import { joinMessageParts } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
-import { normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem } from './paneItems';
+import { normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
 import { getElectron } from '../lib/electronBridge';
 import { useNavHistory, type NavEntry } from './navHistory';
 import { navigateToNode } from './navigateToNode';
@@ -298,6 +298,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     openPane,
     registerPaneItem,
     updatePaneItem,
+    replacePaneItem,
     removePaneItem,
     setPaneItemWidth,
     closePane: closePaneState,
@@ -2371,6 +2372,85 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     });
   }, [activeProjectId, revealPane]);
 
+  const openLauncherPane = useCallback((): string => {
+    if (!activeProjectId) throw new Error('No active project');
+    const project = projectsRef.current.find((candidate) => candidate.id === activeProjectId);
+    const id = uniquePaneId('launcher');
+    const focusedId = focusedPaneRef.current;
+    const anchorNodeId = focusedId && nodesRef.current[focusedId]?.projectId === activeProjectId
+      ? focusedId
+      : undefined;
+    return revealPane({
+      id,
+      kind: 'launcher',
+      projectId: activeProjectId,
+      treeId: project?.activeTreeId ?? null,
+      title: 'New pane',
+      createdAt: Date.now(),
+      anchorNodeId,
+    });
+  }, [activeProjectId, revealPane]);
+
+  const activateLauncherPane = useCallback(async (paneId: string, choice: PaneLauncherChoice): Promise<string> => {
+    const launcher = paneItemsRef.current[paneId];
+    if (!launcher || launcher.kind !== 'launcher') throw new Error('Pane launcher is no longer available');
+    const project = projectsRef.current.find((candidate) => candidate.id === launcher.projectId);
+    if (!project) throw new Error('Workspace is no longer available');
+    const base = {
+      id: paneId,
+      projectId: launcher.projectId,
+      treeId: launcher.treeId,
+      createdAt: launcher.createdAt,
+      width: launcher.width,
+    };
+
+    if (choice === 'files') {
+      replacePaneItem(paneId, { ...base, kind: 'files', title: 'Files' });
+      return paneId;
+    }
+    if (choice === 'review') {
+      replacePaneItem(paneId, { ...base, kind: 'review', title: 'Review' });
+      return paneId;
+    }
+    if (choice === 'terminal') {
+      const runtimeId = uniquePaneId('terminal');
+      replacePaneItem(paneId, {
+        ...base,
+        kind: 'terminal',
+        title: 'Terminal',
+        surfaceId: runtimeId.slice('pane:terminal:'.length),
+        cwd: project.cwd ?? project.folders?.[0]?.path ?? '',
+      });
+      return paneId;
+    }
+    if (choice === 'browser') {
+      const runtimeId = uniquePaneId('browser');
+      replacePaneItem(paneId, {
+        ...base,
+        kind: 'browser',
+        title: 'Browser',
+        surfaceId: runtimeId.slice('pane:browser:'.length),
+        url: 'https://www.google.com/',
+      });
+      return paneId;
+    }
+
+    const anchorNodeId = launcher.anchorNodeId && nodesRef.current[launcher.anchorNodeId]
+      ? launcher.anchorNodeId
+      : activeTreeRootNodeId(project);
+    if (!anchorNodeId) throw new Error('No chat is available to branch from');
+    const nodeId = await createBlankChild(anchorNodeId);
+    setOpenPanes((previous) => {
+      const withoutCreated = previous.filter((id) => id !== nodeId);
+      return withoutCreated.map((id) => id === paneId ? nodeId : id);
+    });
+    setFocusedPane(nodeId);
+    setFocusedNodeIdState(nodeId);
+    if (launcher.width !== undefined) setPaneWidth(nodeId, launcher.width);
+    removePaneItem(paneId);
+    return nodeId;
+  }, [createBlankChild, removePaneItem, replacePaneItem, setFocusedPane, setOpenPanes, setPaneWidth]);
+
   // Compatibility name retained for artifact shelf/link callers. New opens
   // are layout-only PaneItems and no longer pollute the conversation graph;
   // persisted legacy artifact nodes remain renderable in Dashboard.
@@ -2782,6 +2862,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setComposerDraft,
       deleteDigest,
       openArtifactPane,
+      openLauncherPane,
+      activateLauncherPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,
@@ -2904,6 +2986,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setComposerDraft,
       deleteDigest,
       openArtifactPane,
+      openLauncherPane,
+      activateLauncherPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,
@@ -3035,6 +3119,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createContext,
       reorderPane,
       openArtifactPane,
+      openLauncherPane,
+      activateLauncherPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,
@@ -3109,6 +3195,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createContext,
       reorderPane,
       openArtifactPane,
+      openLauncherPane,
+      activateLauncherPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,

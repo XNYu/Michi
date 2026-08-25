@@ -5,7 +5,7 @@ import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
 import type { BranchOverviewEntry } from 'michi-shared';
-import type { PaneItem } from './paneItems';
+import type { PaneItem, PaneLauncherChoice } from './paneItems';
 
 export type { AgentStatus } from '../services/api';
 
@@ -935,6 +935,10 @@ export interface ChatContextValue {
   deleteDigest: (nodeId: string) => void;
   /** Compatibility entry point for artifact shelf/link callers. Returns a file PaneItem id. */
   openArtifactPane: (filePath: string) => Promise<string>;
+  /** Open a blank multifunction pane whose content is selected in-place. */
+  openLauncherPane: () => string;
+  /** Transform a blank multifunction pane without changing its layout slot. */
+  activateLauncherPane: (paneId: string, choice: PaneLauncherChoice) => Promise<string>;
   /** Open a standalone file viewer without inserting it into the chat graph. */
   openFilePane: (filePath: string) => string;
   /** Open a workspace-relative working-tree diff. */
@@ -1161,6 +1165,8 @@ export type ChatActionsValue = Pick<
   | 'createContext'
   | 'reorderPane'
   | 'openArtifactPane'
+  | 'openLauncherPane'
+  | 'activateLauncherPane'
   | 'openFilePane'
   | 'openDiffPane'
   | 'openTerminalPane'

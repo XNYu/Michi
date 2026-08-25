@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
 import * as net from 'net';
-import { fork, ChildProcess } from 'child_process';
+import { execFile, fork, ChildProcess } from 'child_process';
 import {
   isStartupTraceLine,
   startupMark,
@@ -16,6 +16,7 @@ import {
   withStartupTraceQuery,
 } from './startupTrace';
 import { isClosePaneShortcut } from './paneShortcuts';
+import { listWorkspaceDirectory, resolveAllowedDirectory } from './workspaceFiles';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -1054,6 +1055,60 @@ ipcMain.handle('app:saveMarkdown', async (_ev, suggestedName: string, content: s
   if (r.canceled || !r.filePath) return { canceled: true };
   await fs.promises.writeFile(r.filePath, content, 'utf8');
   return { canceled: false, path: r.filePath };
+});
+
+ipcMain.handle('app:listDirectory', async (_ev, absPath: unknown, rawRoots: unknown) => {
+  return listWorkspaceDirectory(absPath, rawRoots);
+});
+
+const IMAGE_MIME = new Map<string, string>([
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+]);
+
+ipcMain.handle('app:readFilePreview', async (_ev, absPath: unknown) => {
+  try {
+    if (typeof absPath !== 'string' || !path.isAbsolute(absPath)) return null;
+    const stat = await fs.promises.stat(absPath);
+    if (!stat.isFile() || stat.size > 5 * 1024 * 1024) return null;
+    const extension = path.extname(absPath).slice(1).toLowerCase();
+    const mime = IMAGE_MIME.get(extension);
+    const data = await fs.promises.readFile(absPath);
+    if (mime) {
+      return { kind: 'image', dataUrl: `data:${mime};base64,${data.toString('base64')}`, size: stat.size, modifiedAt: stat.mtimeMs, extension };
+    }
+    if (data.subarray(0, 8192).includes(0)) return null;
+    const content = data.toString('utf8');
+    return { kind: 'text', content, size: stat.size, modifiedAt: stat.mtimeMs, extension };
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('app:listGitChanges', async (_ev, cwd: unknown, rawRoots: unknown) => {
+  const { directory } = await resolveAllowedDirectory(cwd, rawRoots);
+  return new Promise<Array<{ path: string; status: string }>>((resolve) => {
+    execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+      cwd: directory,
+      timeout: 10_000,
+      maxBuffer: 2 * 1024 * 1024,
+    }, (error, stdout) => {
+      if (error && !stdout) {
+        resolve([]);
+        return;
+      }
+      resolve(stdout.split('\n').flatMap((line) => {
+        if (line.length < 4) return [];
+        const status = line.slice(0, 2).trim() || '?';
+        const rawPath = line.slice(3).trim();
+        const filePath = rawPath.includes(' -> ') ? rawPath.slice(rawPath.lastIndexOf(' -> ') + 4) : rawPath;
+        return filePath ? [{ path: filePath.replace(/^"|"$/g, ''), status }] : [];
+      }));
+    });
+  });
 });
 
 // Read a file by absolute path. Used by ArtifactPane to open reference artifacts

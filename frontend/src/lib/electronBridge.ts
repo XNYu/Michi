@@ -57,6 +57,21 @@ export interface TerminalSurfaceSnapshot {
   exitCode?: number;
 }
 
+export interface FileTreeEntry {
+  name: string;
+  path: string;
+  kind: 'file' | 'directory';
+}
+
+export interface GitChangeEntry {
+  path: string;
+  status: string;
+}
+
+export type FilePreviewResult =
+  | { kind: 'text'; content: string; size: number; modifiedAt: number; extension: string }
+  | { kind: 'image'; dataUrl: string; size: number; modifiedAt: number; extension: string };
+
 export interface ElectronBridge {
   /** True only in `electron-builder` packaged builds. Absent in older builds — treat as false. */
   isPackaged?: boolean;
@@ -91,6 +106,12 @@ export interface ElectronBridge {
   readFile?(absPath: string): Promise<{ content: string; size: number; modifiedAt: number } | null>;
   /** Stat a file by absolute path (size check without reading). Returns null on failure. Optional — absent in older builds. */
   statFile?(absPath: string): Promise<{ size: number; modifiedAt: number } | null>;
+  /** List one directory level after constraining the request to registered workspace roots. */
+  listDirectory?(absPath: string, allowedRoots: string[]): Promise<FileTreeEntry[]>;
+  /** Read text or a supported image for the in-pane Files preview. */
+  readFilePreview?(absPath: string): Promise<FilePreviewResult | null>;
+  /** Return git working-tree changes for a registered workspace root. */
+  listGitChanges?(cwd: string, allowedRoots: string[]): Promise<GitChangeEntry[]>;
   /** Resolve absolute path of a File from drag-drop. Returns null if unavailable. Optional — absent in older builds. */
   getPathForFile?(file: File): string | null;
   terminalCreate?(surfaceId: string, cwd: string, cols: number, rows: number): Promise<TerminalSurfaceSnapshot>;

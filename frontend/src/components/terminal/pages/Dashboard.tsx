@@ -18,6 +18,9 @@ const FilePane = lazy(() => import('../FilePane'));
 const DiffPane = lazy(() => import('../DiffPane'));
 const TerminalPane = lazy(() => import('../TerminalPane'));
 const BrowserPane = lazy(() => import('../BrowserPane'));
+const PaneChooser = lazy(() => import('../PaneChooser'));
+const FilesPane = lazy(() => import('../FilesPane'));
+const ReviewPane = lazy(() => import('../ReviewPane'));
 
 /**
  * Center a pane using the coordinates that are actually painted in the
@@ -470,7 +473,10 @@ export default function TerminalDashboard() {
             <PaneErrorBoundary paneId={id}>
               {paneItems[id] ? (
                 <Suspense fallback={<div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 11 }}>loading {paneItems[id].kind}…</div>}>
-                  {paneItems[id].kind === 'file' ? <FilePane item={paneItems[id]} />
+                  {paneItems[id].kind === 'launcher' ? <PaneChooser item={paneItems[id]} />
+                    : paneItems[id].kind === 'files' ? <FilesPane item={paneItems[id]} />
+                    : paneItems[id].kind === 'review' ? <ReviewPane item={paneItems[id]} />
+                    : paneItems[id].kind === 'file' ? <FilePane item={paneItems[id]} />
                     : paneItems[id].kind === 'diff' ? <DiffPane item={paneItems[id]} />
                     : paneItems[id].kind === 'terminal' ? <TerminalPane item={paneItems[id]} />
                     : <BrowserPane item={paneItems[id]} />}

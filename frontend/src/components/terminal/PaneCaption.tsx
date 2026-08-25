@@ -18,7 +18,7 @@ interface Props {
   focused: boolean;
   streaming: boolean;
   error: boolean;
-  kind?: 'chat' | 'digest' | 'artifact' | 'file' | 'diff' | 'terminal' | 'browser';
+  kind?: 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser';
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
   onCloseOthers: (keepId: string) => void;
@@ -48,16 +48,19 @@ export default function PaneCaption({
 
   const isDigest = kind === 'digest';
   const isArtifact = kind === 'artifact';
-  const kindGlyph = kind === 'file' ? '◇'
+  const kindGlyph = kind === 'launcher' ? '+'
+    : kind === 'files' ? '▱'
+    : kind === 'review' ? '±'
+    : kind === 'file' ? '◇'
     : kind === 'diff' ? '±'
     : kind === 'terminal' ? '>_'
     : kind === 'browser' ? '◎'
     : null;
   const dotColor = isDigest
     ? 'var(--term-digest)'
-    : isArtifact || kind === 'file' || kind === 'browser'
+    : isArtifact || kind === 'file' || kind === 'files' || kind === 'browser' || kind === 'launcher'
       ? 'var(--term-accent)'
-      : kind === 'diff' || kind === 'terminal'
+      : kind === 'diff' || kind === 'review' || kind === 'terminal'
         ? 'var(--term-digest)'
       : dotColorFor(streaming, error, focused);
 

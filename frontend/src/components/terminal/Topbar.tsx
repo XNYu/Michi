@@ -561,7 +561,7 @@ export default function TerminalTopbar({
                     focused={focusedPane === id}
                     streaming={status === 'streaming'}
                     error={status === 'error'}
-                    kind={paneKinds[i] as 'chat' | 'digest' | 'artifact' | 'file' | 'diff' | 'terminal' | 'browser'}
+                    kind={paneKinds[i] as 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser'}
                     onFocus={focusPane}
                     onClose={closePane}
                     onCloseOthers={closeOtherPanes}
@@ -765,7 +765,7 @@ export default function TerminalTopbar({
           )}
           {!!activeProject && (
             <>
-              <PaneLauncher project={activeProject} />
+              <PaneLauncher />
               <TopbarIconToggle
                 onClick={() => _onNav('branches')}
                 active={page === 'branches'}

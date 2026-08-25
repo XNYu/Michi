@@ -18,10 +18,21 @@ describe('pane items', () => {
 
   it('accepts only complete serializable descriptors', () => {
     expect(isPaneItem({
+      id: 'pane:launcher:1', kind: 'launcher', projectId: 'p1', treeId: 't1', title: 'New pane', createdAt: 1,
+      anchorNodeId: 'n1',
+    })).toBe(true);
+    expect(isPaneItem({
+      id: 'pane:files:1', kind: 'files', projectId: 'p1', treeId: 't1', title: 'Files', createdAt: 1,
+    })).toBe(true);
+    expect(isPaneItem({
+      id: 'pane:review:1', kind: 'review', projectId: 'p1', treeId: 't1', title: 'Review', createdAt: 1,
+    })).toBe(true);
+    expect(isPaneItem({
       id: 'pane:file:1', kind: 'file', projectId: 'p1', treeId: 't1', title: 'a.md', createdAt: 1,
       filePath: 'a.md', viewMode: 'rendered',
     })).toBe(true);
     expect(isPaneItem({ id: 'pane:terminal:1', kind: 'terminal', projectId: 'p1', treeId: 't1', title: 'Terminal', createdAt: 1 })).toBe(false);
+    expect(isPaneItem({ id: 'pane:launcher:1', kind: 'launcher', projectId: 'p1', treeId: 't1', title: 'New pane', createdAt: 1, anchorNodeId: 42 })).toBe(false);
     expect(isPaneItem({ id: 'pane:file:1', kind: 'unknown', projectId: 'p1', treeId: 't1', title: '', createdAt: 1 })).toBe(false);
   });
 

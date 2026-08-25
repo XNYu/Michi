@@ -42,6 +42,7 @@ const item = {
   kind: 'browser' as const,
   projectId: 'project-1',
   treeId: 'tree-1',
+  createdAt: 1,
   surfaceId: 'surface-browser-1',
   url: 'https://www.google.com/',
   title: 'Browser',

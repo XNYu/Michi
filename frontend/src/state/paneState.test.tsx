@@ -217,6 +217,26 @@ describe('pane state', () => {
     expect(harness.result.current.paneItems['pane:browser:test'].width).toBe(640);
     harness.unmount();
   });
+
+  it('replaces a launcher descriptor in-place and preserves its width', () => {
+    const project = {
+      id: 'p1', name: 'WS', chatIds: ['root'], edges: [], artifacts: [],
+      trees: [{ id: 't1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 1 }],
+      activeTreeId: 't1', createdAt: 1,
+    };
+    const harness = renderHook(() => usePaneState({ projects: [project], activeProjectId: 'p1' }));
+    act(() => harness.result.current.registerPaneItem({
+      id: 'pane:launcher:test', kind: 'launcher', projectId: 'p1', treeId: 't1', title: 'New pane',
+      createdAt: 1, width: 620, anchorNodeId: 'root',
+    }));
+    act(() => harness.result.current.replacePaneItem('pane:launcher:test', {
+      id: 'pane:launcher:test', kind: 'files', projectId: 'p1', treeId: 't1', title: 'Files', createdAt: 1,
+    }));
+    expect(harness.result.current.paneItems['pane:launcher:test']).toMatchObject({
+      id: 'pane:launcher:test', kind: 'files', title: 'Files', width: 620,
+    });
+    harness.unmount();
+  });
 });
 
 describe('prunePaneMaps', () => {
