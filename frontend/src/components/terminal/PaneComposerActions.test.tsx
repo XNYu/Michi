@@ -27,6 +27,12 @@ describe('PaneComposerActions', () => {
     expect(screen.getByRole('button', { name: 'Send (Enter)' })).toBeTruthy();
   });
 
+  it('labels native steer as inject-this-turn', () => {
+    renderActions({ streaming: true, steerNative: true });
+    expect(screen.getByRole('button', { name: 'Steer (inject this turn)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Steer (inject this turn)' }).textContent).toContain('Steer');
+  });
+
   it('labels a streaming submit as Send next and explains its FIFO behavior', () => {
     const { onSend } = renderActions({ streaming: true });
     const button = screen.getByRole('button', {

@@ -259,6 +259,27 @@ export function streamMessage(
   };
 }
 
+export async function steerChat(
+  chatId: string,
+  text: string,
+  ownerToken?: string,
+): Promise<{ accepted: boolean; pending?: boolean; reason?: string }> {
+  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/steer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      ...(ownerToken ? { ownerToken } : {}),
+    }),
+  });
+  const body = await res.json().catch(() => ({ accepted: false }));
+  return {
+    accepted: body.accepted === true,
+    pending: body.pending === true,
+    reason: typeof body.reason === 'string' ? body.reason : undefined,
+  };
+}
+
 export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string): Promise<void> {
   await fetch(`${API_BASE_URL}/chats/${chatId}/cancel`, {
     method: 'POST',

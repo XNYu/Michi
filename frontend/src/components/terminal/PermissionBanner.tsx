@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { permissionSourceLabel } from 'michi-shared';
 import type { PermissionRequest } from '../../state/chatTypes';
 import { KBD } from './primitives';
 import { Button } from '../ui/controls';
@@ -71,6 +72,12 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
         }}
       >
         {permission.title}
+        <div
+          data-testid="permission-source"
+          style={{ fontWeight: 400, color: 'var(--term-muted)', fontSize: 11, marginTop: 4 }}
+        >
+          {permissionSourceLabel(permission.source)}
+        </div>
       </div>
       {permission.detail && (
         <pre

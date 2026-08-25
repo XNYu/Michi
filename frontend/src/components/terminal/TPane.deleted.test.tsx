@@ -51,6 +51,7 @@ vi.mock('../../state/chatStore', async () => {
     removePendingComment: () => {},
     clearPendingComments: () => {},
     queueMessage: () => {},
+    steerMessage: async () => false,
     dequeueMessage: () => {},
     setComposerDraft: () => {},
     deleteContext: () => {},

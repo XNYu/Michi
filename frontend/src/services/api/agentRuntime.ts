@@ -1,3 +1,4 @@
+import type { CapabilityDescriptor } from 'michi-shared';
 import { API_BASE_URL } from '../../config/env';
 
 // === Agent runtime API ===
@@ -58,6 +59,7 @@ export interface AgentStatus {
   /** Per-runtime reasoning overrides set by the user. */
   reasoningByRuntime?: Record<string, AgentReasoning>;
   hasRequiredKey: boolean;
+  capabilityDescriptor?: CapabilityDescriptor;
 }
 
 export interface AgentModelInfo {
