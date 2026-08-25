@@ -22,7 +22,7 @@ import {
   type OpenState,
 } from '../../state/sidebarSelectors';
 
-const THREAD_PREVIEW_LIMIT = 5;
+const THREAD_PREVIEW_LIMIT_FALLBACK = 5;
 const THREAD_PAGE_SIZE = 10;
 
 interface Actions {
@@ -145,14 +145,15 @@ export default function WorkspaceRow({
   const isActiveWorkspaceAway = !chatViewActive && project.id === activeProjectId;
   // Trees whose root is soft-deleted live in Trash, not in the sidebar — they
   // come back here when restoreDeletion clears the flag.
+  const threadPreviewLimit = prefs.sidebarThreadLimit ?? THREAD_PREVIEW_LIMIT_FALLBACK;
   const visibleTrees = sortedTrees.filter((t) => isNodeAlive(t.rootNodeId));
   const liveTrees = visibleTrees.filter((t) => !t.archivedAt);
-  const [threadVisibleLimit, setThreadVisibleLimit] = useState(THREAD_PREVIEW_LIMIT);
+  const [threadVisibleLimit, setThreadVisibleLimit] = useState(threadPreviewLimit);
 
-  // Reset visible limit when workspace is collapsed — re-opening starts fresh at 5
+  // Reset visible limit when workspace is collapsed — re-opening starts fresh
   useEffect(() => {
-    if (!workspaceExpanded) setThreadVisibleLimit(THREAD_PREVIEW_LIMIT);
-  }, [workspaceExpanded]);
+    if (!workspaceExpanded) setThreadVisibleLimit(threadPreviewLimit);
+  }, [workspaceExpanded, threadPreviewLimit]);
 
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -573,7 +574,7 @@ export default function WorkspaceRow({
             <button
               type="button"
               className="sb-flush show-more-toggle"
-              aria-expanded={threadVisibleLimit > THREAD_PREVIEW_LIMIT}
+              aria-expanded={threadVisibleLimit > threadPreviewLimit}
               onClick={() => setThreadVisibleLimit((v) => v + THREAD_PAGE_SIZE)}
               style={{
                 width: '100%',

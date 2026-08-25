@@ -142,6 +142,9 @@ export interface Prefs {
   enableFollowUps: boolean;
   /** When true, auto-approve all tool permission requests without showing the banner. */
   bypassPermissions: boolean;
+  /** Number of unpinned threads to show per workspace before "Show more".
+   *  Must be ≥1. Default 5. */
+  sidebarThreadLimit: number;
   /** Sparse maps of user-toggled expand state. Missing keys fall back to defaults
    *  computed by sidebarSelectors. Persists across sessions via the existing
    *  500ms debounce. */
@@ -198,6 +201,7 @@ export const DEFAULT_PREFS: Prefs = {
   enableFollowUps: true,
   bypassPermissions: false,
   sidebarExpanded: { workspaces: {}, threads: {}, branches: {} },
+  sidebarThreadLimit: 5,
   workspaceOrder: [],
   onboardingCompletedAt: null,
 };

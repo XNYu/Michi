@@ -33,6 +33,12 @@ export interface MenuSection {
    * action icons.
    */
   trailingGlyph?: boolean;
+  /**
+   * When true, the section is always visible regardless of the search filter.
+   * Useful for action rows like "New workspace" that should stay pinned at the
+   * bottom.
+   */
+  pinned?: boolean;
 }
 
 export interface ContextMenuProps {
@@ -47,6 +53,8 @@ export interface ContextMenuProps {
   maxHeight?: number;
   /** Show a filter input at the top. */
   searchable?: boolean;
+  /** Placeholder text for the search input. Defaults to "filter…". */
+  searchPlaceholder?: string;
   /**
    * If set, place the menu so its bottom edge sits at this y coordinate
    * (i.e. anchor the menu ABOVE this y, useful for toolbar chips at the
@@ -71,6 +79,7 @@ export default function ContextMenu({
   width,
   maxHeight,
   searchable,
+  searchPlaceholder,
   anchorBottom,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -192,6 +201,7 @@ export default function ContextMenu({
   const q = filter.toLowerCase();
   const filtered: MenuSection[] = q
     ? sections.map((s) => {
+        if (s.pinned) return s;
         const matched = s.items.filter(
           (it) => it.label.toLowerCase().includes(q) || it.sublabel?.toLowerCase().includes(q),
         );
@@ -224,7 +234,7 @@ export default function ContextMenu({
             ref={searchRef}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="filter…"
+            placeholder={searchPlaceholder ?? 'filter…'}
             style={{
               width: '100%',
               background: 'transparent',
@@ -245,105 +255,205 @@ export default function ContextMenu({
           ...(maxHeight ? { maxHeight, overflowY: 'auto' } : null),
         }}
       >
-        {filtered.map((section, si) => {
-          // Default: glyphs render on the right (state-indicator style). A
-          // section can opt back into leading icons with trailingGlyph: false.
-          const trailing = section.trailingGlyph !== false;
-          return (
-            <React.Fragment key={si}>
-              {si > 0 && (
-                <li
-                  aria-hidden="true"
-                  style={{
-                    height: 1,
-                    background: 'var(--term-line)',
-                    margin: '4px 0',
-                    listStyle: 'none',
-                  }}
-                />
-              )}
-              {section.label && (
-                <li
-                  aria-hidden="true"
-                  style={{
-                    padding: '4px 10px 2px',
-                    fontSize: 9,
-                    letterSpacing: '.16em',
-                    textTransform: 'uppercase',
-                    color: 'var(--term-faint)',
-                    fontFamily: 'var(--ui-font)',
-                    listStyle: 'none',
-                  }}
-                >
-                  {section.label}
-                </li>
-              )}
-              {section.items.map((item) => (
-                <MenuRow
-                  key={item.id}
-                  onClick={() => run(item)}
-                  danger={item.danger}
-                  disabled={item.disabled}
-                  className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
-                >
-                  {!trailing && item.glyph && (
-                    <span
-                      style={{
-                        width: 14,
-                        textAlign: 'center',
-                        color: 'var(--term-mid)',
-                        fontSize: 11,
-                      }}
-                    >
-                      {item.glyph}
-                    </span>
-                  )}
-                  <span
+        {filtered
+          .filter((s) => !s.pinned)
+          .map((section, si) => {
+            // Default: glyphs render on the right (state-indicator style). A
+            // section can opt back into leading icons with trailingGlyph: false.
+            const trailing = section.trailingGlyph !== false;
+            return (
+              <React.Fragment key={si}>
+                {si > 0 && (
+                  <li
+                    aria-hidden="true"
                     style={{
-                      flex: 1,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      height: 1,
+                      background: 'var(--term-line)',
+                      margin: '4px 0',
+                      listStyle: 'none',
+                    }}
+                  />
+                )}
+                {section.label && (
+                  <li
+                    aria-hidden="true"
+                    style={{
+                      padding: '4px 10px 2px',
+                      fontSize: 9,
+                      letterSpacing: '.16em',
+                      textTransform: 'uppercase',
+                      color: 'var(--term-faint)',
+                      fontFamily: 'var(--ui-font)',
+                      listStyle: 'none',
                     }}
                   >
-                    <span style={{ fontWeight: 600 }}>{item.label}</span>
-                    {item.sublabel && (
-                      <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
-                        {item.sublabel}
+                    {section.label}
+                  </li>
+                )}
+                {section.items.map((item) => (
+                  <MenuRow
+                    key={item.id}
+                    onClick={() => run(item)}
+                    danger={item.danger}
+                    disabled={item.disabled}
+                    className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
+                  >
+                    {!trailing && item.glyph && (
+                      <span
+                        style={{
+                          width: 14,
+                          textAlign: 'center',
+                          color: 'var(--term-mid)',
+                          fontSize: 11,
+                        }}
+                      >
+                        {item.glyph}
                       </span>
                     )}
-                  </span>
-                  {item.keys && (
                     <span
                       style={{
-                        fontFamily: 'var(--ui-font)',
-                        fontSize: 11,
-                        color: 'var(--term-faint)',
-                        minWidth: 12,
-                        textAlign: 'right',
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      {item.keys}
+                      <span style={{ fontWeight: 600 }}>{item.label}</span>
+                      {item.sublabel && (
+                        <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
+                          {item.sublabel}
+                        </span>
+                      )}
                     </span>
-                  )}
-                  {trailing && item.glyph && (
-                    <span
-                      style={{
-                        width: 14,
-                        textAlign: 'center',
-                        color: 'var(--term-mid)',
-                        fontSize: 11,
-                      }}
-                    >
-                      {item.glyph}
-                    </span>
-                  )}
-                </MenuRow>
-              ))}
-            </React.Fragment>
-          );
-        })}
+                    {item.keys && (
+                      <span
+                        style={{
+                          fontFamily: 'var(--ui-font)',
+                          fontSize: 11,
+                          color: 'var(--term-faint)',
+                          minWidth: 12,
+                          textAlign: 'right',
+                        }}
+                      >
+                        {item.keys}
+                      </span>
+                    )}
+                    {trailing && item.glyph && (
+                      <span
+                        style={{
+                          width: 14,
+                          textAlign: 'center',
+                          color: 'var(--term-mid)',
+                          fontSize: 11,
+                        }}
+                      >
+                        {item.glyph}
+                      </span>
+                    )}
+                  </MenuRow>
+                ))}
+              </React.Fragment>
+            );
+          })}
       </ul>
+      {filtered.some((s) => s.pinned) && (
+        <ul
+          style={{
+            margin: 0,
+            padding: 0,
+            listStyle: 'none',
+            borderTop: '1px solid var(--term-line)',
+          }}
+        >
+          {filtered
+            .filter((s) => s.pinned)
+            .map((section, si) => {
+              const trailing = section.trailingGlyph !== false;
+              return (
+                <React.Fragment key={`pinned-${si}`}>
+                  {section.label && (
+                    <li
+                      aria-hidden="true"
+                      style={{
+                        padding: '4px 10px 2px',
+                        fontSize: 9,
+                        letterSpacing: '.16em',
+                        textTransform: 'uppercase',
+                        color: 'var(--term-faint)',
+                        fontFamily: 'var(--ui-font)',
+                        listStyle: 'none',
+                      }}
+                    >
+                      {section.label}
+                    </li>
+                  )}
+                  {section.items.map((item) => (
+                    <MenuRow
+                      key={item.id}
+                      onClick={() => run(item)}
+                      danger={item.danger}
+                      disabled={item.disabled}
+                      className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
+                    >
+                      {!trailing && item.glyph && (
+                        <span
+                          style={{
+                            width: 14,
+                            textAlign: 'center',
+                            color: 'var(--term-mid)',
+                            fontSize: 11,
+                          }}
+                        >
+                          {item.glyph}
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          flex: 1,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <span style={{ fontWeight: 600 }}>{item.label}</span>
+                        {item.sublabel && (
+                          <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
+                            {item.sublabel}
+                          </span>
+                        )}
+                      </span>
+                      {item.keys && (
+                        <span
+                          style={{
+                            fontFamily: 'var(--ui-font)',
+                            fontSize: 11,
+                            color: 'var(--term-faint)',
+                            minWidth: 12,
+                            textAlign: 'right',
+                          }}
+                        >
+                          {item.keys}
+                        </span>
+                      )}
+                      {trailing && item.glyph && (
+                        <span
+                          style={{
+                            width: 14,
+                            textAlign: 'center',
+                            color: 'var(--term-mid)',
+                            fontSize: 11,
+                          }}
+                        >
+                          {item.glyph}
+                        </span>
+                      )}
+                    </MenuRow>
+                  ))}
+                </React.Fragment>
+              );
+            })}
+        </ul>
+      )}
     </PopoverSurface>
   );
 }

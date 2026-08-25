@@ -215,6 +215,23 @@ export function AppearancePane() {
         />
       </Row>
 
+      <Row k="theme.sidebarThreadLimit" label="Threads per workspace">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input
+            type="range"
+            min={1}
+            max={30}
+            step={1}
+            value={prefs.sidebarThreadLimit}
+            onChange={(e) => setPref('sidebarThreadLimit', Number(e.target.value))}
+            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+          />
+          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+            {prefs.sidebarThreadLimit}
+          </span>
+        </div>
+      </Row>
+
       <Row k="theme.codeBlock" label="Code block">
         <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
           {CODE_BLOCK_OPTIONS.map((o, i) => {

@@ -24,7 +24,6 @@ export function HomeWorkspaceChip({
 
   const sections: MenuSection[] = [
     {
-      label: 'Workspaces',
       trailingGlyph: true,
       items:
         liveProjects.length === 0
@@ -41,6 +40,7 @@ export function HomeWorkspaceChip({
       // "+" affordance visually aligned with the row text instead of floating
       // on the right where state indicators live.
       trailingGlyph: false,
+      pinned: true,
       items: [
         {
           id: 'new-workspace',
@@ -85,7 +85,9 @@ export function HomeWorkspaceChip({
           y={menu.y}
           anchorBottom={menu.anchorBottom}
           sections={sections}
-          maxHeight={220}
+          maxHeight={148}
+          searchable
+          searchPlaceholder="Search workspaces…"
           onClose={() => setMenu(null)}
         />
       )}
