@@ -133,8 +133,8 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
     fontSize: 10.5,
     fontFamily: 'var(--ui-font)',
     color: 'var(--term-muted)',
-    marginTop: 12,
-    marginBottom: 10,
+    marginTop: 14,
+    marginBottom: 14,
     padding: '3px 0',
   };
 

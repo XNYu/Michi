@@ -304,12 +304,21 @@ function CardToolRow({ t }: { t: ToolCallState }) {
         }}
       >
         <ToolTypeIcon kind={toolBucketKey(t)} color={iconColor} />
+        {/* Name never shrinks (so "Bash" stays whole next to a long detail),
+            so it must not be able to outgrow the card either — long titles
+            (unbucketed MCP tools, synthetic chips) get ellipsised at half
+            the row instead of bleeding past the border. */}
         <span
           style={{
             fontSize: 11,
             fontWeight: 500,
             color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
             flexShrink: 0,
+            maxWidth: '50%',
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
         >
           {cardToolName(t)}
@@ -439,8 +448,8 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
 
   const container: React.CSSProperties = {
     fontFamily: 'var(--ui-font)',
-    marginTop: 12,
-    marginBottom: 10,
+    marginTop: 14,
+    marginBottom: 14,
   };
 
   // Pure subagent groups (the spawn_branches case) render as standalone
@@ -732,8 +741,8 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
 
   const container: React.CSSProperties = {
     fontFamily: 'var(--ui-font)',
-    marginTop: 12,
-    marginBottom: 10,
+    marginTop: 14,
+    marginBottom: 14,
   };
   const headerBtn: React.CSSProperties = {
     display: 'flex',

@@ -1287,11 +1287,17 @@ export function reduceNodes(
           if (i !== arr.length - 1) return m;
           if (m.role !== 'assistant') return m;
           const placement = nextToolBlockPlacement(m);
+          // Keep the chip's *title* short — the card variant renders it in a
+          // non-shrinking column, so a sentence-long title overflows the card.
+          // The branch names ride along as `detail` (one truncated line) and
+          // `output` (the expandable full list).
           const tool = {
             id: `spawn-${Date.now()}-${newlyCreated[0]?.nodeId ?? 'na'}`,
-            title: `Spawned ${newlyCreated.length} branch${newlyCreated.length === 1 ? '' : 'es'}: ${newlyCreated.map((n) => n.title).join(', ')}`,
+            title: `Spawned ${newlyCreated.length} branch${newlyCreated.length === 1 ? '' : 'es'}`,
             status: 'completed',
             kind: 'spawn_branches',
+            detail: newlyCreated.map((n) => n.title).join(', '),
+            output: newlyCreated.map((n) => `→ ${n.title}`).join('\n'),
             textOffset: placement.rawOffset,
           };
           return appendToolBlock({ ...m, toolCalls: [...m.toolCalls, tool] }, tool.id);
