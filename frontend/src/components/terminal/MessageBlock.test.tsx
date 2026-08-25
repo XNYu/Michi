@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react';
 import { MessageBlock, userTextToMarkdown } from './MessageBlock';
+import { AgentBlockStyleOverride } from '../../state/prefs';
 import type { ChatMessage } from '../../state/chatTypes';
 
 const baseMsg = {
@@ -249,6 +250,74 @@ describe('MessageBlock — user message markdown', () => {
     const { container } = renderMessage({ role: 'user', text: '```\nconst x = 1;\n```' });
     const pre = container.querySelector('.terminal-message-user pre');
     expect(pre?.textContent).toContain('const x = 1;');
+  });
+});
+
+describe('MessageBlock — thought activity sync', () => {
+  function renderCardMessage(m: ChatMessage) {
+    return render(
+      <AgentBlockStyleOverride.Provider value="card">
+        <MessageBlock
+          m={m}
+          index={0}
+          isDark={false}
+          onCopy={noop}
+          showThoughts
+          fontFamily="inherit"
+          density="comfortable"
+        />
+      </AgentBlockStyleOverride.Provider>,
+    );
+  }
+
+  it('keeps the latest thought block working during a between-steps gap', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: '',
+      streaming: true,
+      toolCalls: [{
+        id: 't1',
+        title: 'bash',
+        status: 'completed',
+        startedAt: 100,
+        endedAt: 500,
+      }],
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Assessing options', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 17 },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText('Working…')).not.toBeNull();
+    expect(queryByText(/Thought for/)).toBeNull();
+  });
+
+  it('leaves the thought block completed once a visible answer starts streaming', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: 'Here is the answer',
+      streaming: true,
+      toolCalls: [{
+        id: 't1',
+        title: 'bash',
+        status: 'in_progress',
+        startedAt: 100,
+      }],
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Assessing options', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 17 },
+        { id: 'b3', kind: 'answer', rawText: 'Here is the answer', streaming: true },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText(/^Thoughts$/)).not.toBeNull();
+    expect(queryByText('Working…')).toBeNull();
   });
 });
 

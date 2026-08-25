@@ -1061,7 +1061,7 @@ function BlockAssistantBody({
   }, [onSmoothingChange, tailAnswerRunId]);
   return (
     <>
-      {clusters.map((cluster) => {
+      {clusters.map((cluster, clusterIndex) => {
         if (cluster.kind === 'agent') {
           const clusterTools = cluster.runs.flatMap((r) => relevantTools(r.blocks, byId));
           if (!showThoughts) {
@@ -1079,15 +1079,28 @@ function BlockAssistantBody({
               />
             ));
           }
-          // Keep the block live (tail body visible) while any of its tools is
-          // still running during the stream, not just while thought tokens
-          // arrive — otherwise the header collapses mid-work and hides the
-          // running rows. Gated on m.streaming so hydrated turns with stale
-          // non-terminal tool statuses don't shimmer forever.
-          const isThinking = cluster.runs.some((r) => r.id === liveThinkingId);
-          const isTooling = !isThinking && !!m.streaming && clusterTools.some((t) => isRunningStatus(t.status));
-          const active = isThinking || isTooling;
-          const phase: StreamPhase = isThinking ? 'thinking' : isTooling ? 'working' : 'done';
+          // Keep the block live (tail body visible) while thought tokens or
+          // one of its tools are active. Also keep the tail agent cluster live
+          // during a between-steps gap: StreamActivityIndicator reports that
+          // same message-level state as Working, so collapsing this header to
+          // "Thought for …" would make the two liveness signals disagree.
+          // Once a later answer/image run exists, this cluster is no longer the
+          // tail and remains completed.
+          const isTailAgentCluster = clusterIndex === clusters.length - 1;
+          const isThinking =
+            isTailAgentCluster && cluster.runs.some((r) => r.id === liveThinkingId);
+          const isTooling =
+            isTailAgentCluster &&
+            !isThinking &&
+            !!m.streaming &&
+            clusterTools.some((t) => isRunningStatus(t.status));
+          const isBetweenSteps =
+            isTailAgentCluster &&
+            !isThinking &&
+            !isTooling &&
+            !!m.streaming;
+          const active = isThinking || isTooling || isBetweenSteps;
+          const phase: StreamPhase = isThinking ? 'thinking' : active ? 'working' : 'done';
           return (
             <AgentClusterView
               key={cluster.id}

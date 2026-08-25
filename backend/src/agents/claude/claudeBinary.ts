@@ -125,7 +125,7 @@ export function preflightClaudeAuth(configDir?: string): void {
     return;
   }
 
-  // Amazon-internal / toolbox-distributed claude binaries often auto-detect
+  // Some Claude distributions auto-detect
   // Bedrock from AWS_PROFILE / AWS_ACCESS_KEY_ID without requiring
   // CLAUDE_CODE_USE_BEDROCK=1. Accept that signal as evidence of credible auth.
   if (process.env.AWS_PROFILE || process.env.AWS_ACCESS_KEY_ID) return;
