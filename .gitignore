@@ -81,6 +81,9 @@ frontend/.omc/
 # itself first, then re-ignore everything in it, then unignore the
 # specific file.
 docs/
+!docs/
+docs/*
+!docs/harness-p0-p3-tasks.md
 
 # Local-only assets
 AGENTS.md
