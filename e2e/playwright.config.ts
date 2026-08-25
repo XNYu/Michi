@@ -31,7 +31,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(process.env.MICHI_E2E_SYSTEM_CHROME === '1' ? { channel: 'chrome' as const } : {}),
+      },
     },
   ],
 

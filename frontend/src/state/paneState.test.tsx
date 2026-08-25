@@ -74,12 +74,15 @@ vi.mock('../services/api', () => ({
   subscribeChats: () => () => {},
   subscribeBackground: () => () => {},
   cancelChat: () => Promise.resolve(),
+  artifactWatchStreamUrl: () => '/api/watch',
+  postArtifactWatchPaths: () => Promise.resolve({ watching: [] }),
 }));
 
 describe('pane state', () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
+    delete window.electron;
   });
 
   it('opens a pane and focuses it', async () => {
@@ -125,6 +128,34 @@ describe('pane state', () => {
     harness.unmount();
   });
 
+  it('opens artifact files as PaneItems without inserting graph nodes', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('WS'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    const before = harness.result.current.activeProject?.chatIds.slice() ?? [];
+    let paneId = '';
+    await act(async () => { paneId = await harness.result.current.openArtifactPane('docs/brief.md'); });
+    expect(harness.result.current.activeProject?.chatIds).toEqual(before);
+    expect(harness.result.current.paneItems[paneId]).toMatchObject({ kind: 'file', filePath: 'docs/brief.md' });
+    expect(harness.result.current.focusedPane).toBe(paneId);
+    harness.unmount();
+  });
+
+  it('destroys a runtime surface only when its pane is explicitly closed', async () => {
+    const terminalDestroy = vi.fn();
+    window.electron = { terminalDestroy } as unknown as NonNullable<typeof window.electron>;
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('WS'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    let paneId = '';
+    act(() => { paneId = harness.result.current.openTerminalPane('/tmp'); });
+    expect(terminalDestroy).not.toHaveBeenCalled();
+    act(() => harness.result.current.closePane(paneId));
+    expect(terminalDestroy).toHaveBeenCalledTimes(1);
+    expect(harness.result.current.paneItems[paneId]).toBeUndefined();
+    harness.unmount();
+  });
+
   it('setViewMode updates the mode', () => {
     const harness = renderHook(() => useChatStore());
     act(() => {
@@ -148,6 +179,42 @@ describe('pane state', () => {
 
     expect(harness.result.current.openPanes).toEqual(['parent', 'child']);
     expect(harness.result.current.focusedPane).toBe('parent');
+    harness.unmount();
+  });
+
+  it('registers standalone pane descriptors without touching project nodes', () => {
+    const project = {
+      id: 'p1', name: 'WS', chatIds: ['root'], edges: [], artifacts: [],
+      trees: [{ id: 't1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 1 }],
+      activeTreeId: 't1', createdAt: 1,
+    };
+    const harness = renderHook(() => usePaneState({ projects: [project], activeProjectId: 'p1' }));
+    const item = {
+      id: 'pane:terminal:test', kind: 'terminal' as const, projectId: 'p1', treeId: 't1', title: 'Terminal',
+      createdAt: 1, surfaceId: 'test', cwd: '/tmp',
+    };
+    act(() => {
+      harness.result.current.registerPaneItem(item);
+      harness.result.current.openPane(item.id);
+    });
+    expect(harness.result.current.paneItems[item.id]).toEqual(item);
+    expect(harness.result.current.openPanes).toEqual([item.id]);
+    harness.unmount();
+  });
+
+  it('updates synthetic pane widths independently from node state', () => {
+    const project = {
+      id: 'p1', name: 'WS', chatIds: ['root'], edges: [], artifacts: [],
+      trees: [{ id: 't1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 1 }],
+      activeTreeId: 't1', createdAt: 1,
+    };
+    const harness = renderHook(() => usePaneState({ projects: [project], activeProjectId: 'p1' }));
+    act(() => harness.result.current.registerPaneItem({
+      id: 'pane:browser:test', kind: 'browser', projectId: 'p1', treeId: 't1', title: 'Browser',
+      createdAt: 1, surfaceId: 'test', url: 'https://example.com/',
+    }));
+    act(() => harness.result.current.setPaneItemWidth('pane:browser:test', 640));
+    expect(harness.result.current.paneItems['pane:browser:test'].width).toBe(640);
     harness.unmount();
   });
 });

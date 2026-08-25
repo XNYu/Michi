@@ -40,6 +40,23 @@ export interface AppUpdateState {
 /** macOS NSVisualEffectView materials Michi exposes, lightest → densest frost. */
 export type VibrancyMaterial = 'under-window' | 'sidebar' | 'menu' | 'hud';
 
+export interface BrowserSurfaceState {
+  surfaceId: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error?: string;
+}
+
+export interface TerminalSurfaceSnapshot {
+  surfaceId: string;
+  data: string;
+  exited: boolean;
+  exitCode?: number;
+}
+
 export interface ElectronBridge {
   /** True only in `electron-builder` packaged builds. Absent in older builds — treat as false. */
   isPackaged?: boolean;
@@ -76,6 +93,23 @@ export interface ElectronBridge {
   statFile?(absPath: string): Promise<{ size: number; modifiedAt: number } | null>;
   /** Resolve absolute path of a File from drag-drop. Returns null if unavailable. Optional — absent in older builds. */
   getPathForFile?(file: File): string | null;
+  terminalCreate?(surfaceId: string, cwd: string, cols: number, rows: number): Promise<TerminalSurfaceSnapshot>;
+  terminalWrite?(surfaceId: string, data: string): void;
+  terminalResize?(surfaceId: string, cols: number, rows: number): void;
+  terminalDestroy?(surfaceId: string): void;
+  onTerminalData?(handler: (surfaceId: string, data: string) => void): () => void;
+  onTerminalExit?(handler: (surfaceId: string, exitCode: number) => void): () => void;
+  browserCreate?(surfaceId: string, projectId: string, url: string): Promise<BrowserSurfaceState>;
+  browserSetBounds?(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }, visible: boolean): void;
+  browserNavigate?(surfaceId: string, url: string): Promise<BrowserSurfaceState>;
+  browserBack?(surfaceId: string): void;
+  browserForward?(surfaceId: string): void;
+  browserReload?(surfaceId: string): void;
+  browserStop?(surfaceId: string): void;
+  browserDestroy?(surfaceId: string): void;
+  onBrowserState?(handler: (state: BrowserSurfaceState) => void): () => void;
+  onBrowserFocus?(handler: (surfaceId: string) => void): () => void;
+  onBrowserCloseRequest?(handler: (surfaceId: string) => void): () => void;
 }
 
 declare global {

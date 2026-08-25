@@ -14,6 +14,7 @@ import { getElectron } from '../../lib/electronBridge';
 import type { AppUpdateState } from '../../lib/electronBridge';
 import SidebarToggleButton from './SidebarToggleButton';
 import PaneCaption from './PaneCaption';
+import PaneLauncher from './PaneLauncher';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
 import { confirmDialog } from '../ui/ConfirmDialog';
@@ -72,6 +73,7 @@ export default function TerminalTopbar({
     openPanes,
     focusedPane,
     focusedNodeId,
+    paneItems = {},
     canNavBack,
     canNavForward,
   } = useChatProjects();
@@ -109,12 +111,13 @@ export default function TerminalTopbar({
   // Per-pane data we need to render captions: title, status, kind. Uses
   // useStructuralSelector so HIGH_FREQ streaming dispatches don't re-render the topbar.
   const paneTitles = useStructuralSelector(
-    (nodesMap) => openPanes.map((id) => nodesMap[id]?.title ?? ''),
+    (nodesMap) => openPanes.map((id) => paneItems[id]?.title ?? nodesMap[id]?.title ?? ''),
     shallowArrayEqual,
   );
   const paneStatuses = useStructuralSelector(
     (nodesMap) => openPanes.map((id) => {
       const node = nodesMap[id];
+      if (paneItems[id]) return 'idle';
       return node?.status === 'streaming' && node.visibleResponseComplete
         ? 'idle'
         : node?.status ?? 'idle';
@@ -122,13 +125,13 @@ export default function TerminalTopbar({
     shallowArrayEqual,
   );
   const paneKinds = useStructuralSelector(
-    (nodesMap) => openPanes.map((id) => nodesMap[id]?.kind ?? 'chat'),
+    (nodesMap) => openPanes.map((id) => paneItems[id]?.kind ?? nodesMap[id]?.kind ?? 'chat'),
     shallowArrayEqual,
   );
   // Pane widths drive the cell grid template — keep zone-2 cells aligned with
   // the Dashboard's pane columns so caption ↔ pane is a single visual stack.
   const paneWidths = useStructuralSelector(
-    (nodesMap) => openPanes.map((id) => nodesMap[id]?.paneWidth),
+    (nodesMap) => openPanes.map((id) => paneItems[id]?.width ?? nodesMap[id]?.paneWidth),
     shallowArrayEqual,
   );
 
@@ -558,7 +561,7 @@ export default function TerminalTopbar({
                     focused={focusedPane === id}
                     streaming={status === 'streaming'}
                     error={status === 'error'}
-                    kind={paneKinds[i] === 'digest' ? 'digest' : paneKinds[i] === 'artifact' ? 'artifact' : 'chat'}
+                    kind={paneKinds[i] as 'chat' | 'digest' | 'artifact' | 'file' | 'diff' | 'terminal' | 'browser'}
                     onFocus={focusPane}
                     onClose={closePane}
                     onCloseOthers={closeOtherPanes}
@@ -762,6 +765,7 @@ export default function TerminalTopbar({
           )}
           {!!activeProject && (
             <>
+              <PaneLauncher project={activeProject} />
               <TopbarIconToggle
                 onClick={() => _onNav('branches')}
                 active={page === 'branches'}

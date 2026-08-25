@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import { usePrefs } from '../../../state/prefs';
@@ -13,6 +13,11 @@ import { getElectron } from '../../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFileUpload, type UploadProgress } from '../../../services/api';
 import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
+
+const FilePane = lazy(() => import('../FilePane'));
+const DiffPane = lazy(() => import('../DiffPane'));
+const TerminalPane = lazy(() => import('../TerminalPane'));
+const BrowserPane = lazy(() => import('../BrowserPane'));
 
 /**
  * Center a pane using the coordinates that are actually painted in the
@@ -40,13 +45,13 @@ export function centeredPaneScrollLeft({
 }
 
 export default function TerminalDashboard() {
-  const { activeProject, openPanes, focusedPane } = useChatProjects();
+  const { activeProject, openPanes, focusedPane, paneItems = {} } = useChatProjects();
   const { setPaneWidth } = useChatActions();
   const { prefs } = usePrefs();
   const selectPaneWidths = useCallback(
     (nodesMap: Record<string, ChatNodeState>) =>
-      openPanes.map((id) => nodesMap[id]?.paneWidth),
-    [openPanes],
+      openPanes.map((id) => paneItems[id]?.width ?? nodesMap[id]?.paneWidth),
+    [openPanes, paneItems],
   );
   const selectPaneKinds = useCallback(
     (nodesMap: Record<string, ChatNodeState>) =>
@@ -463,7 +468,14 @@ export default function TerminalDashboard() {
             style={wrapStyle}
           >
             <PaneErrorBoundary paneId={id}>
-              {paneKinds[i] === 'digest' ? (
+              {paneItems[id] ? (
+                <Suspense fallback={<div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 11 }}>loading {paneItems[id].kind}…</div>}>
+                  {paneItems[id].kind === 'file' ? <FilePane item={paneItems[id]} />
+                    : paneItems[id].kind === 'diff' ? <DiffPane item={paneItems[id]} />
+                    : paneItems[id].kind === 'terminal' ? <TerminalPane item={paneItems[id]} />
+                    : <BrowserPane item={paneItems[id]} />}
+                </Suspense>
+              ) : paneKinds[i] === 'digest' ? (
                 <DigestPane nodeId={id} contentMaxWidth={effContentWidth} />
               ) : paneKinds[i] === 'artifact' ? (
                 <ArtifactPane nodeId={id} contentMaxWidth={effContentWidth} />

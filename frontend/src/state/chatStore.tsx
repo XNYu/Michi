@@ -20,6 +20,8 @@ import { joinMessageParts } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
+import { normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem } from './paneItems';
+import { getElectron } from '../lib/electronBridge';
 import { useNavHistory, type NavEntry } from './navHistory';
 import { navigateToNode } from './navigateToNode';
 import { useArtifactWatch } from '../hooks/useArtifactWatch';
@@ -289,10 +291,15 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const {
     openPanes,
     focusedPane,
+    paneItems,
     viewMode,
     setOpenPanes,
     setFocusedPane,
     openPane,
+    registerPaneItem,
+    updatePaneItem,
+    removePaneItem,
+    setPaneItemWidth,
     closePane: closePaneState,
     focusPane,
     reorderPane,
@@ -683,15 +690,48 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   useEffect(() => { focusedPaneRef.current = focusedPane; }, [focusedPane]);
   const openPanesRef = useRef(openPanes);
   useEffect(() => { openPanesRef.current = openPanes; }, [openPanes]);
+  const paneItemsRef = useRef(paneItems);
+  paneItemsRef.current = paneItems;
 
-  const closePane = useCallback((nodeId: string) => {
-    const remaining = openPanes.filter((id) => id !== nodeId);
-    const nextFocusedPane = focusedPane === nodeId
+  // Workspace switches intentionally discard the departing workspace's pane
+  // slots. Release matching native runtimes at the same boundary so hidden
+  // PTYs/WebContentsViews cannot become unreachable background processes.
+  useEffect(() => {
+    if (!hydrated || !activeProjectId) return;
+    for (const item of Object.values(paneItemsRef.current)) {
+      if (item.projectId === activeProjectId) continue;
+      if (item.kind === 'terminal') getElectron()?.terminalDestroy?.(item.surfaceId);
+      if (item.kind === 'browser') getElectron()?.browserDestroy?.(item.surfaceId);
+      removePaneItem(item.id);
+    }
+  }, [activeProjectId, hydrated, removePaneItem]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    for (const item of Object.values(paneItemsRef.current)) {
+      const project = projects.find((candidate) => candidate.id === item.projectId);
+      if (project && (item.treeId === null || project.trees.some((tree) => tree.id === item.treeId))) continue;
+      if (item.kind === 'terminal') getElectron()?.terminalDestroy?.(item.surfaceId);
+      if (item.kind === 'browser') getElectron()?.browserDestroy?.(item.surfaceId);
+      removePaneItem(item.id);
+    }
+  }, [hydrated, projects, removePaneItem]);
+
+  const closePane = useCallback((paneId: string) => {
+    const item = paneItemsRef.current[paneId];
+    if (item?.kind === 'terminal') getElectron()?.terminalDestroy?.(item.surfaceId);
+    if (item?.kind === 'browser') getElectron()?.browserDestroy?.(item.surfaceId);
+    if (item) removePaneItem(paneId);
+
+    const remaining = openPanes.filter((id) => id !== paneId);
+    const nextFocusedPane = focusedPane === paneId
       ? remaining[remaining.length - 1] ?? null
       : focusedPane;
-    closePaneState(nodeId);
-    if (focusedNodeId === nodeId) setFocusedNodeIdState(nextFocusedPane);
-  }, [closePaneState, focusedNodeId, focusedPane, openPanes]);
+    closePaneState(paneId);
+    if (focusedNodeId === paneId) {
+      setFocusedNodeIdState(nextFocusedPane && nodesRef.current[nextFocusedPane] ? nextFocusedPane : null);
+    }
+  }, [closePaneState, focusedNodeId, focusedPane, openPanes, removePaneItem]);
 
   // `dispatch` keeps nodesRef.current up-to-date synchronously for the
   // reducer path, and structural setNodes callers must do the same before
@@ -2024,10 +2064,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const setPaneWidth = useCallback(
-    (nodeId: string, width: number | undefined) => {
-      dispatch({ type: 'set-pane-width', nodeId, width });
+    (paneId: string, width: number | undefined) => {
+      setPaneItemWidth(paneId, width);
+      dispatch({ type: 'set-pane-width', nodeId: paneId, width });
     },
-    [dispatch],
+    [dispatch, setPaneItemWidth],
   );
 
   const addPendingComment = useCallback(
@@ -2238,47 +2279,104 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     newNodeId,
   });
 
-  // ---- Artifact pane ----
-  const openArtifactPane = useCallback(
-    async (filePath: string): Promise<string> => {
-      if (!activeProjectId) throw new Error('No active project');
-      if (!filePath || !filePath.trim()) throw new Error('No file path provided');
+  const revealPane = useCallback((item: PaneItem): string => {
+    registerPaneItem(item);
+    openPane(item.id);
+    setFocusedNodeIdState(null);
+    window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+    return item.id;
+  }, [openPane, registerPaneItem]);
 
-      // Backend resolves workspace root for all workspace types (user-picked,
-      // skip-folder scratch dir, upload root fallback).
-
-      // Check if this file is already open as an artifact pane
-      const existing = Object.values(nodesRef.current).find(
-        (n) => n.kind === 'artifact' && n.artifact?.filePath === filePath && n.projectId === activeProjectId,
-      );
-      if (existing) {
-        // Just focus the existing pane
-        openPane(existing.nodeId);
-        // Panes only render on the Dashboard page. If the caller is on Home
-        // (or Map/etc.), route there so the pane is actually visible.
-        window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
-        return existing.nodeId;
-      }
-
-      const nodeId = await newNodeId();
-      dispatch({ type: 'create-artifact', nodeId, projectId: activeProjectId, filePath });
-
-      // Add to project's chatIds so the node is tracked
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.id === activeProjectId
-            ? { ...p, chatIds: [...p.chatIds, nodeId] }
-            : p,
-        ),
-      );
-
-      // Open it as a pane and route to the Dashboard so it's visible even when
-      // the artifact was opened from Home (where no pane strip is rendered).
-      openPane(nodeId);
+  const openFilePane = useCallback((filePath: string): string => {
+    if (!activeProjectId) throw new Error('No active project');
+    const normalized = filePath.trim();
+    if (!normalized) throw new Error('No file path provided');
+    const activeTreeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? 'none';
+    const id = singletonPaneId('file', `${activeProjectId}:${activeTreeId}`, normalized);
+    const existing = paneItemsRef.current[id];
+    if (existing) {
+      openPane(id);
       window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
-      return nodeId;
-    },
-    [activeProjectId, dispatch, newNodeId, nodesRef, openPane, projects, setProjects],
+      return id;
+    }
+    const title = normalized.split('/').filter(Boolean).pop() ?? normalized;
+    return revealPane({
+      id,
+      kind: 'file',
+      projectId: activeProjectId,
+      treeId: activeTreeId === 'none' ? null : activeTreeId,
+      title,
+      createdAt: Date.now(),
+      filePath: normalized,
+      viewMode: /\.(?:md|mdx|markdown)$/i.test(normalized) ? 'rendered' : 'source',
+    });
+  }, [activeProjectId, openPane, revealPane]);
+
+  const openDiffPane = useCallback((filePath: string): string => {
+    if (!activeProjectId) throw new Error('No active project');
+    const normalized = filePath.trim();
+    if (!normalized) throw new Error('No file path provided');
+    const activeTreeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? 'none';
+    const id = singletonPaneId('diff', `${activeProjectId}:${activeTreeId}`, normalized);
+    const existing = paneItemsRef.current[id];
+    if (existing) {
+      openPane(id);
+      window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+      return id;
+    }
+    const basename = normalized.split('/').filter(Boolean).pop() ?? normalized;
+    return revealPane({
+      id,
+      kind: 'diff',
+      projectId: activeProjectId,
+      treeId: activeTreeId === 'none' ? null : activeTreeId,
+      title: `${basename} (diff)`,
+      createdAt: Date.now(),
+      filePath: normalized,
+    });
+  }, [activeProjectId, openPane, revealPane]);
+
+  const openTerminalPane = useCallback((cwd?: string): string => {
+    if (!activeProjectId) throw new Error('No active project');
+    const id = uniquePaneId('terminal');
+    const surfaceId = id.slice('pane:terminal:'.length);
+    const treeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? null;
+    return revealPane({
+      id,
+      kind: 'terminal',
+      projectId: activeProjectId,
+      treeId,
+      title: 'Terminal',
+      createdAt: Date.now(),
+      surfaceId,
+      cwd: cwd?.trim() || projectsRef.current.find((project) => project.id === activeProjectId)?.cwd || '',
+    });
+  }, [activeProjectId, revealPane]);
+
+  const openBrowserPane = useCallback((url = 'https://www.google.com/'): string => {
+    if (!activeProjectId) throw new Error('No active project');
+    const normalized = normalizeBrowserUrl(url) ?? 'https://www.google.com/';
+    const id = uniquePaneId('browser');
+    const surfaceId = id.slice('pane:browser:'.length);
+    const treeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? null;
+    return revealPane({
+      id,
+      kind: 'browser',
+      projectId: activeProjectId,
+      treeId,
+      title: 'Browser',
+      createdAt: Date.now(),
+      surfaceId,
+      url: normalized,
+    });
+  }, [activeProjectId, revealPane]);
+
+  // Compatibility name retained for artifact shelf/link callers. New opens
+  // are layout-only PaneItems and no longer pollute the conversation graph;
+  // persisted legacy artifact nodes remain renderable in Dashboard.
+  const openArtifactPane = useCallback(
+    async (filePath: string): Promise<string> => openFilePane(filePath),
+    [openFilePane],
   );
 
   const {
@@ -2464,8 +2562,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         set.add(n.artifact.filePath);
       }
     }
+    for (const item of Object.values(paneItems)) {
+      if (item.kind === 'file' && item.projectId === activeProjectId && !item.filePath.startsWith('/')) {
+        set.add(item.filePath);
+      }
+    }
     return Array.from(set);
-  }, [activeProject, nodes, activeProjectId]);
+  }, [activeProject, nodes, activeProjectId, paneItems]);
 
   // Stable dispatcher: on a disk change/removal, flip every matching open
   // artifact node in the active workspace. Reads refs so identity never churns
@@ -2485,8 +2588,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           dispatch({ type: removed ? 'artifact-mark-removed' : 'artifact-mark-stale', nodeId: id });
         }
       }
+      for (const item of Object.values(paneItemsRef.current)) {
+        if (item.kind === 'file' && item.projectId === pid && item.filePath === filePath) {
+          updatePaneItem(item.id, { diskState: removed ? 'removed' : 'changed' });
+        }
+      }
     },
-    [dispatch],
+    [dispatch, updatePaneItem],
   );
 
   useArtifactWatch({
@@ -2546,7 +2654,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // so boot-time workspace churn (seed → hydrated) doesn't seed a bogus entry.
   const activeTreeIdForNav = activeProject?.activeTreeId ?? null;
   useEffect(() => {
-    if (!hydrated || !activeProjectId || !activeTreeIdForNav || !focusedPane) return;
+    if (!hydrated || !activeProjectId || !activeTreeIdForNav || !focusedPane || !nodesRef.current[focusedPane]) return;
     recordNav({ nodeId: focusedPane, projectId: activeProjectId, treeId: activeTreeIdForNav });
   }, [hydrated, activeProjectId, activeTreeIdForNav, focusedPane, recordNav]);
 
@@ -2574,6 +2682,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       warmFailedError,
       refreshAgentStatus,
       openPanes,
+      paneItems,
       focusedPane,
       focusedNodeId,
       viewMode,
@@ -2595,6 +2704,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       warmFailedError,
       refreshAgentStatus,
       openPanes,
+      paneItems,
       focusedPane,
       focusedNodeId,
       viewMode,
@@ -2672,6 +2782,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setComposerDraft,
       deleteDigest,
       openArtifactPane,
+      openFilePane,
+      openDiffPane,
+      openTerminalPane,
+      openBrowserPane,
+      updatePaneItem,
+      paneItems,
       openPanes,
       focusedPane,
       focusedNodeId,
@@ -2788,6 +2904,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setComposerDraft,
       deleteDigest,
       openArtifactPane,
+      openFilePane,
+      openDiffPane,
+      openTerminalPane,
+      openBrowserPane,
+      updatePaneItem,
+      paneItems,
       openPanes,
       focusedPane,
       focusedNodeId,
@@ -2913,6 +3035,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createContext,
       reorderPane,
       openArtifactPane,
+      openFilePane,
+      openDiffPane,
+      openTerminalPane,
+      openBrowserPane,
+      updatePaneItem,
       setUnreadFilterOn,
       markAllRead,
       renameNode,
@@ -2982,6 +3109,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createContext,
       reorderPane,
       openArtifactPane,
+      openFilePane,
+      openDiffPane,
+      openTerminalPane,
+      openBrowserPane,
+      updatePaneItem,
       setUnreadFilterOn,
       markAllRead,
       renameNode,

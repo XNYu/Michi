@@ -18,7 +18,7 @@ interface Props {
   focused: boolean;
   streaming: boolean;
   error: boolean;
-  kind?: 'chat' | 'digest' | 'artifact';
+  kind?: 'chat' | 'digest' | 'artifact' | 'file' | 'diff' | 'terminal' | 'browser';
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
   onCloseOthers: (keepId: string) => void;
@@ -48,10 +48,17 @@ export default function PaneCaption({
 
   const isDigest = kind === 'digest';
   const isArtifact = kind === 'artifact';
+  const kindGlyph = kind === 'file' ? '◇'
+    : kind === 'diff' ? '±'
+    : kind === 'terminal' ? '>_'
+    : kind === 'browser' ? '◎'
+    : null;
   const dotColor = isDigest
     ? 'var(--term-digest)'
-    : isArtifact
+    : isArtifact || kind === 'file' || kind === 'browser'
       ? 'var(--term-accent)'
+      : kind === 'diff' || kind === 'terminal'
+        ? 'var(--term-digest)'
       : dotColorFor(streaming, error, focused);
 
   const titleColor = focused ? 'var(--term-fg)' : 'var(--term-mid)';
@@ -98,6 +105,9 @@ export default function PaneCaption({
         } as React.CSSProperties}
       >
         <Dot color={dotColor} size={6} pulse={streaming && !isDigest} />
+        {kindGlyph ? (
+          <span aria-hidden style={{ color: dotColor, fontFamily: 'var(--mono-font)', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{kindGlyph}</span>
+        ) : null}
         {isDigest && (
           <span
             aria-hidden

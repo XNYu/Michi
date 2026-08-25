@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyTurnEvent, createDurableTurn, type ChatStreamEvent } from 'michi-shared';
 import { assistantPersistenceContent } from './assistantBlocks';
 import { reduceNodes } from './chatReducers';
@@ -8,8 +8,12 @@ function event(name: ChatStreamEvent['event'], data: Record<string, unknown>): C
   return { event: name, data } as ChatStreamEvent;
 }
 
+afterEach(() => vi.useRealTimers());
+
 describe('frontend canonical turn projection parity', () => {
   it('matches the shared projector for durable assistant events', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     const assistantId = 'a-node-1-turn-1';
     let nodes: Record<string, ChatNodeState> = {
       'node-1': {

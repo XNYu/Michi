@@ -5,6 +5,7 @@ import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
 import type { BranchOverviewEntry } from 'michi-shared';
+import type { PaneItem } from './paneItems';
 
 export type { AgentStatus } from '../services/api';
 
@@ -898,7 +899,7 @@ export interface ChatContextValue {
    */
   emptyTrashAsync: () => Promise<{ purged: number }>;
   setMinimized: (nodeId: string, minimized: boolean) => void;
-  setPaneWidth: (nodeId: string, width: number | undefined) => void;
+  setPaneWidth: (paneId: string, width: number | undefined) => void;
   setNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
   /** Clears legacy manual positions for every node in the active project. */
   resetLayout: (projectId: string) => void;
@@ -932,9 +933,21 @@ export interface ChatContextValue {
   setComposerDraft: (nodeId: string, draft: ComposerDraft | null) => void;
   /** Delete a digest node (aborts in-flight generation, removes edges + state). */
   deleteDigest: (nodeId: string) => void;
-  /** Open a file as an artifact pane. Returns the artifact node id. */
+  /** Compatibility entry point for artifact shelf/link callers. Returns a file PaneItem id. */
   openArtifactPane: (filePath: string) => Promise<string>;
-  /** Node ids currently open as panes, in tab order. Not persisted. */
+  /** Open a standalone file viewer without inserting it into the chat graph. */
+  openFilePane: (filePath: string) => string;
+  /** Open a workspace-relative working-tree diff. */
+  openDiffPane: (filePath: string) => string;
+  /** Open a persistent PTY surface rooted at cwd (active workspace cwd by default). */
+  openTerminalPane: (cwd?: string) => string;
+  /** Open a secure native browser surface. */
+  openBrowserPane: (url?: string) => string;
+  /** Patch serializable pane metadata such as title, URL, or view mode. */
+  updatePaneItem: (paneId: string, patch: Partial<PaneItem>) => void;
+  /** Non-node pane descriptors, keyed by pane id. Runtime objects never enter React state. */
+  paneItems: Record<string, PaneItem>;
+  /** Pane ids currently open in tab order. Existing ids may still be chat-node ids. */
   openPanes: string[];
   /** Currently-focused pane nodeId. Always one of openPanes if non-empty. */
   focusedPane: string | null;
@@ -1070,6 +1083,7 @@ export type ChatProjectsValue = Pick<
   | 'warmFailedError'
   | 'refreshAgentStatus'
   | 'openPanes'
+  | 'paneItems'
   | 'focusedPane'
   | 'focusedNodeId'
   | 'viewMode'
@@ -1147,6 +1161,11 @@ export type ChatActionsValue = Pick<
   | 'createContext'
   | 'reorderPane'
   | 'openArtifactPane'
+  | 'openFilePane'
+  | 'openDiffPane'
+  | 'openTerminalPane'
+  | 'openBrowserPane'
+  | 'updatePaneItem'
   | 'navBack'
   | 'navForward'
   | 'setUnreadFilterOn'

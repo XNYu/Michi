@@ -27,16 +27,21 @@
     "server": "npm install && npm run build:artifact && node backend/dist/server.js",
     "copy-frontend": "cp -r frontend/build backend/dist/frontend",
     "electron:build-main": "tsc -p electron",
+    "electron:prepare-binary": "node scripts/prepare-electron-binary.mjs",
+    "electron:rebuild-native": "npm run electron:prepare-binary && electron-builder install-app-deps && node scripts/prepare-node-pty.mjs",
     "preelectron:dev": "node scripts/kill-stale-dev.mjs",
-    "electron:dev": "npm run shared:build && concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw\" \"npm run electron:dev-wait\"",
-    "electron:dev-wait": "wait-on http://localhost:3001 && npm run electron:build-main && NODE_OPTIONS= ELECTRON_DEV=1 electron --remote-debugging-port=${ELECTRON_DEBUG_PORT:-9222} electron/dist/main.js",
-    "electron:build": "VITE_API_URL=/api npm run frontend:build && npm run backend:build && npm run electron:build-main && electron-builder --mac --arm64",
+    "electron:dev": "npm run shared:build && MICHI_RENDERER_PORT=$(node scripts/find-open-port.mjs ${MICHI_RENDERER_PORT:-3001}) && export MICHI_RENDERER_PORT && MICHI_RENDERER_URL=http://127.0.0.1:$MICHI_RENDERER_PORT && export MICHI_RENDERER_URL && MICHI_DATA_DIR=${MICHI_DATA_DIR:-$HOME/.michi-dev} && export MICHI_DATA_DIR && MICHI_DEV_INSTANCE_ID=${MICHI_DEV_INSTANCE_ID:-$(basename \"$PWD\")} && export MICHI_DEV_INSTANCE_ID && MICHI_ELECTRON_USER_DATA_DIR=${MICHI_ELECTRON_USER_DATA_DIR:-$MICHI_DATA_DIR/electron-$MICHI_DEV_INSTANCE_ID} && export MICHI_ELECTRON_USER_DATA_DIR && echo '[electron:dev] renderer' $MICHI_RENDERER_URL 'instance' $MICHI_DEV_INSTANCE_ID && concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw -- --host 127.0.0.1 --port $MICHI_RENDERER_PORT\" \"npm run electron:dev-wait\"",
+    "electron:dev-wait": "wait-on ${MICHI_RENDERER_URL:-http://127.0.0.1:3001} && npm run electron:build-main && npm run electron:rebuild-native && NODE_OPTIONS= ELECTRON_DEV=1 electron --remote-debugging-port=${ELECTRON_DEBUG_PORT:-9222} electron/dist/main.js",
+    "electron:build": "VITE_API_URL=/api npm run frontend:build && npm run backend:build && npm run electron:build-main && npm run electron:rebuild-native && electron-builder --mac --arm64",
     "postelectron:build": "node scripts/install-app.mjs",
     "electron:install": "node scripts/install-app.mjs",
     "startup:analyze": "node scripts/analyze-startup.mjs",
     "metrics:analyze": "node scripts/analyze-metrics.mjs",
     "perf:pane": "node scripts/run-pane-perf.mjs",
     "perf:compare": "node scripts/compare-pane-perf.mjs",
+    "test:electron-setup": "node --test scripts/prepare-electron-binary.test.mjs",
+    "test:electron-shortcuts": "npm run electron:build-main && node --test scripts/electron-pane-shortcut.test.mjs && NODE_OPTIONS= ./node_modules/.bin/electron scripts/electron-native-shortcut-smoke.cjs",
+    "test:dev-port": "node --test scripts/find-open-port.test.mjs",
     "test:perf": "node --test scripts/pane-perf-tools.test.mjs",
     "test:electron": "cd backend && node --require ts-node/register --test --test-timeout=30000 test/updateRelease.test.ts",
     "test:e2e": "npm run shared:build && playwright test --config e2e/playwright.config.ts",
@@ -51,7 +56,8 @@
     "wait-on": "^9.0.5"
   },
   "dependencies": {
-    "fix-path": "^5.0.0"
+    "fix-path": "^5.0.0",
+    "node-pty": "^1.1.0"
   },
   "overrides": {
     "kysely": "0.28.17"
@@ -74,6 +80,9 @@
       "package.json"
     ],
     "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
     "mac": {
       "target": {
         "target": "dmg",

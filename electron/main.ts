@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, Notification as ElectronNotification } from 'electron';
+import { app, BrowserWindow, Menu, WebContentsView, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, Notification as ElectronNotification } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
+import * as pty from 'node-pty';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -14,7 +15,7 @@ import {
   startupTraceFileQuery,
   withStartupTraceQuery,
 } from './startupTrace';
-import { checkForUpdate, initAutoUpdate } from './autoUpdate';
+import { isClosePaneShortcut } from './paneShortcuts';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -29,6 +30,14 @@ import { checkForUpdate, initAutoUpdate } from './autoUpdate';
 })();
 
 const isDev = process.env.ELECTRON_DEV === '1';
+
+// Bare Electron uses one global userData directory by default. Without an
+// override, a dev process from another checkout owns the single-instance lock
+// and receives this checkout's second-instance event. Keep each checkout's
+// localStorage/session/lock isolated; packaged Michi retains its normal path.
+if (isDev && process.env.MICHI_ELECTRON_USER_DATA_DIR) {
+  app.setPath('userData', path.resolve(process.env.MICHI_ELECTRON_USER_DATA_DIR));
+}
 
 // True window vibrancy (see-through to desktop / other apps behind Michi) is a
 // native macOS NSVisualEffectView feature. Off on Windows/Linux (no equivalent)
@@ -103,6 +112,268 @@ const windowSlots = new WeakMap<BrowserWindow, number>();
 let nextWindowSlot = 0;
 let backendChild: ChildProcess | null = null;
 let resolvedBackendPort: number | null = null;
+
+const MAX_TERMINAL_REPLAY_CHARS = 1024 * 1024;
+
+interface TerminalSurface {
+  ownerId: number;
+  process: pty.IPty;
+  replay: string;
+  exited: boolean;
+  exitCode?: number;
+  pending: string;
+  flushTimer: NodeJS.Timeout | null;
+}
+
+interface BrowserSurface {
+  ownerId: number;
+  host: BrowserWindow;
+  view: WebContentsView;
+  surfaceId: string;
+  error?: string;
+}
+
+const terminalSurfaces = new Map<string, TerminalSurface>();
+const browserSurfaces = new Map<string, BrowserSurface>();
+
+function surfaceKey(ownerId: number, surfaceId: string): string {
+  return `${ownerId}:${surfaceId}`;
+}
+
+function validSurfaceId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(value);
+}
+
+function normalizeSurfaceUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const candidate = /^[a-z][a-z\d+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function browserState(surface: BrowserSurface) {
+  const contents = surface.view.webContents;
+  return {
+    surfaceId: surface.surfaceId,
+    url: contents.getURL(),
+    title: contents.getTitle(),
+    loading: contents.isLoading(),
+    canGoBack: contents.navigationHistory.canGoBack(),
+    canGoForward: contents.navigationHistory.canGoForward(),
+    ...(surface.error ? { error: surface.error } : {}),
+  };
+}
+
+function emitBrowserState(surface: BrowserSurface): void {
+  if (!surface.host.isDestroyed()) {
+    surface.host.webContents.send('browser:state', browserState(surface));
+  }
+}
+
+function destroyBrowserSurface(key: string): void {
+  const surface = browserSurfaces.get(key);
+  if (!surface) return;
+  browserSurfaces.delete(key);
+  try { surface.host.contentView.removeChildView(surface.view); } catch { /* already detached */ }
+  try { surface.view.webContents.close(); } catch { /* already destroyed */ }
+}
+
+function destroyTerminalSurface(key: string): void {
+  const surface = terminalSurfaces.get(key);
+  if (!surface) return;
+  terminalSurfaces.delete(key);
+  if (surface.flushTimer) clearTimeout(surface.flushTimer);
+  try { surface.process.kill(); } catch { /* already exited */ }
+}
+
+function destroyOwnedSurfaces(ownerId: number): void {
+  for (const [key, surface] of terminalSurfaces) {
+    if (surface.ownerId === ownerId) destroyTerminalSurface(key);
+  }
+  for (const [key, surface] of browserSurfaces) {
+    if (surface.ownerId === ownerId) destroyBrowserSurface(key);
+  }
+}
+
+ipcMain.handle('terminal:create', (event, surfaceId: unknown, cwd: unknown, cols: unknown, rows: unknown) => {
+  if (!validSurfaceId(surfaceId)) throw new Error('Invalid terminal surface id');
+  const key = surfaceKey(event.sender.id, surfaceId);
+  const existing = terminalSurfaces.get(key);
+  if (existing) {
+    return { surfaceId, data: existing.replay, exited: existing.exited, exitCode: existing.exitCode };
+  }
+  const requestedCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? cwd : os.homedir();
+  const safeCwd = (() => {
+    try { return fs.statSync(requestedCwd).isDirectory() ? requestedCwd : os.homedir(); }
+    catch { return os.homedir(); }
+  })();
+  const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  const processHandle = pty.spawn(shellPath, process.platform === 'win32' ? [] : ['-l'], {
+    name: 'xterm-256color',
+    cols: typeof cols === 'number' ? Math.max(2, Math.floor(cols)) : 80,
+    rows: typeof rows === 'number' ? Math.max(1, Math.floor(rows)) : 24,
+    cwd: safeCwd,
+    env: { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+  });
+  const surface: TerminalSurface = {
+    ownerId: event.sender.id,
+    process: processHandle,
+    replay: '',
+    exited: false,
+    pending: '',
+    flushTimer: null,
+  };
+  terminalSurfaces.set(key, surface);
+  processHandle.onData((data) => {
+    surface.replay = (surface.replay + data).slice(-MAX_TERMINAL_REPLAY_CHARS);
+    surface.pending += data;
+    if (surface.flushTimer) return;
+    surface.flushTimer = setTimeout(() => {
+      surface.flushTimer = null;
+      const chunk = surface.pending;
+      surface.pending = '';
+      if (!event.sender.isDestroyed() && chunk) event.sender.send('terminal:data', surfaceId, chunk);
+    }, 8);
+  });
+  processHandle.onExit(({ exitCode }) => {
+    surface.exited = true;
+    surface.exitCode = exitCode;
+    if (!event.sender.isDestroyed()) event.sender.send('terminal:exit', surfaceId, exitCode);
+  });
+  return { surfaceId, data: '', exited: false };
+});
+
+ipcMain.on('terminal:write', (event, surfaceId: unknown, data: unknown) => {
+  if (!validSurfaceId(surfaceId) || typeof data !== 'string') return;
+  const surface = terminalSurfaces.get(surfaceKey(event.sender.id, surfaceId));
+  if (surface && !surface.exited) surface.process.write(data);
+});
+
+ipcMain.on('terminal:resize', (event, surfaceId: unknown, cols: unknown, rows: unknown) => {
+  if (!validSurfaceId(surfaceId) || typeof cols !== 'number' || typeof rows !== 'number') return;
+  const surface = terminalSurfaces.get(surfaceKey(event.sender.id, surfaceId));
+  if (!surface || surface.exited) return;
+  try { surface.process.resize(Math.max(2, Math.floor(cols)), Math.max(1, Math.floor(rows))); } catch { /* process exited */ }
+});
+
+ipcMain.on('terminal:destroy', (event, surfaceId: unknown) => {
+  if (validSurfaceId(surfaceId)) destroyTerminalSurface(surfaceKey(event.sender.id, surfaceId));
+});
+
+ipcMain.handle('browser:create', async (event, surfaceId: unknown, projectId: unknown, rawUrl: unknown) => {
+  if (!validSurfaceId(surfaceId)) throw new Error('Invalid browser surface id');
+  const url = normalizeSurfaceUrl(rawUrl);
+  if (!url) throw new Error('Only HTTP(S) URLs are supported');
+  const host = BrowserWindow.fromWebContents(event.sender);
+  if (!host) throw new Error('Browser host window not found');
+  const key = surfaceKey(event.sender.id, surfaceId);
+  let surface = browserSurfaces.get(key);
+  if (!surface) {
+    const partitionSuffix = String(projectId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'default';
+    const view = new WebContentsView({
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        partition: `persist:michi-browser-${partitionSuffix}`,
+      },
+    });
+    surface = { ownerId: event.sender.id, host, view, surfaceId };
+    browserSurfaces.set(key, surface);
+    host.contentView.addChildView(view);
+    view.setVisible(false);
+    view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    view.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
+      const next = normalizeSurfaceUrl(popupUrl);
+      if (next) void view.webContents.loadURL(next);
+      return { action: 'deny' };
+    });
+    view.webContents.on('will-navigate', (navEvent, target) => {
+      if (!normalizeSurfaceUrl(target)) navEvent.preventDefault();
+    });
+    const syncState = () => {
+      surface!.error = undefined;
+      emitBrowserState(surface!);
+    };
+    view.webContents.on('did-start-loading', syncState);
+    view.webContents.on('did-stop-loading', syncState);
+    view.webContents.on('did-navigate', syncState);
+    view.webContents.on('did-navigate-in-page', syncState);
+    view.webContents.on('page-title-updated', syncState);
+    view.webContents.on('focus', () => {
+      if (!host.isDestroyed()) host.webContents.send('browser:focus', surfaceId);
+    });
+    view.webContents.on('before-input-event', (inputEvent, input) => {
+      if (!isClosePaneShortcut(input)) return;
+      inputEvent.preventDefault();
+      if (!host.isDestroyed()) host.webContents.send('browser:close-request', surfaceId);
+    });
+    view.webContents.on('did-fail-load', (_loadEvent, code, description, failedUrl, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      surface!.error = `${description} (${code})`;
+      emitBrowserState(surface!);
+      elog('WARN', 'browser', 'surface navigation failed', { failedUrl, code, description });
+    });
+  }
+  if (surface.view.webContents.getURL() !== url) await surface.view.webContents.loadURL(url);
+  return browserState(surface);
+});
+
+ipcMain.handle('browser:navigate', async (event, surfaceId: unknown, rawUrl: unknown) => {
+  if (!validSurfaceId(surfaceId)) throw new Error('Invalid browser surface id');
+  const url = normalizeSurfaceUrl(rawUrl);
+  if (!url) throw new Error('Only HTTP(S) URLs are supported');
+  const surface = browserSurfaces.get(surfaceKey(event.sender.id, surfaceId));
+  if (!surface) throw new Error('Browser surface not found');
+  surface.error = undefined;
+  await surface.view.webContents.loadURL(url);
+  return browserState(surface);
+});
+
+ipcMain.on('browser:set-bounds', (event, surfaceId: unknown, value: unknown, visible: unknown) => {
+  if (!validSurfaceId(surfaceId) || !value || typeof value !== 'object') return;
+  const surface = browserSurfaces.get(surfaceKey(event.sender.id, surfaceId));
+  if (!surface) return;
+  const rect = value as Record<string, unknown>;
+  if (![rect.x, rect.y, rect.width, rect.height].every((n) => typeof n === 'number' && Number.isFinite(n))) return;
+  const bounds = {
+    x: Math.round(rect.x as number),
+    y: Math.round(rect.y as number),
+    width: Math.max(1, Math.round(rect.width as number)),
+    height: Math.max(1, Math.round(rect.height as number)),
+  };
+  surface.view.setBounds(bounds);
+  surface.view.setVisible(visible === true && bounds.width > 1 && bounds.height > 1);
+});
+
+for (const [channel, action] of [
+  ['browser:back', 'back'],
+  ['browser:forward', 'forward'],
+  ['browser:reload', 'reload'],
+  ['browser:stop', 'stop'],
+] as const) {
+  ipcMain.on(channel, (event, surfaceId: unknown) => {
+    if (!validSurfaceId(surfaceId)) return;
+    const surface = browserSurfaces.get(surfaceKey(event.sender.id, surfaceId));
+    if (!surface) return;
+    const contents = surface.view.webContents;
+    if (action === 'back' && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+    else if (action === 'forward' && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+    else if (action === 'reload') contents.reload();
+    else if (action === 'stop') contents.stop();
+  });
+}
+
+ipcMain.on('browser:destroy', (event, surfaceId: unknown) => {
+  if (validSurfaceId(surfaceId)) destroyBrowserSurface(surfaceKey(event.sender.id, surfaceId));
+});
 
 function focusedWindow(): BrowserWindow | null {
   return BrowserWindow.getFocusedWindow() ?? windows.values().next().value ?? null;
@@ -598,6 +869,7 @@ async function createWindow(backendPort: number | null): Promise<void> {
   });
   windows.add(win);
   windowSlots.set(win, slot);
+  const ownerWebContentsId = win.webContents.id;
   startupMark('browser_window_created', { backendPort, slot });
 
   if (savedState.isMaximized) {
@@ -617,6 +889,7 @@ async function createWindow(backendPort: number | null): Promise<void> {
   win.webContents.on('did-finish-load', () => {
     startupMark('renderer_did_finish_load', { slot });
   });
+  win.webContents.on('render-process-gone', () => destroyOwnedSurfaces(ownerWebContentsId));
 
   win.webContents.on('console-message', (_event, _level, message) => {
     if (isStartupTraceLine(message)) {
@@ -659,7 +932,10 @@ async function createWindow(backendPort: number | null): Promise<void> {
   };
 
   if (isDev) {
-    const url = withWindowId('http://localhost:3001');
+    // Each worktree may have its own Vite process. The launcher selects an
+    // available port and passes the exact renderer URL so we never attach to
+    // a stale dev server from another checkout.
+    const url = withWindowId(process.env.MICHI_RENDERER_URL || 'http://127.0.0.1:3001');
     startupMark('renderer_load_start', { url, slot });
     await win.loadURL(withStartupTraceQuery(url));
     startupMark('renderer_load_done', { slot });
@@ -686,6 +962,7 @@ async function createWindow(backendPort: number | null): Promise<void> {
   }
 
   win.on('closed', () => {
+    destroyOwnedSurfaces(ownerWebContentsId);
     windows.delete(win);
     windowSlots.delete(win);
   });

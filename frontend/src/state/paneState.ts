@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project, ViewMode } from './chatTypes';
+import { isPaneItem, type PaneItem } from './paneItems';
 export type { ViewMode } from './chatTypes';
 
 type PaneUpdater<T> = T | ((prev: T) => T);
 
 const PANE_OPEN_KEY = 'michi:panes:open';
 const PANE_FOCUS_KEY = 'michi:panes:focus';
+const PANE_ITEMS_KEY = 'michi:panes:items:v1';
 
 function readPaneMap<T>(key: string, fallback: T): T {
   try {
@@ -19,6 +21,15 @@ function writePaneMap(key: string, value: unknown): void {
   try {
     window.sessionStorage.setItem(key, JSON.stringify(value));
   } catch { /* quota or private browsing */ }
+}
+
+function readPaneItems(): Record<string, PaneItem> {
+  const parsed = readPaneMap<Record<string, unknown>>(PANE_ITEMS_KEY, {});
+  const items: Record<string, PaneItem> = {};
+  for (const [id, value] of Object.entries(parsed)) {
+    if (isPaneItem(value) && value.id === id) items[id] = value;
+  }
+  return items;
 }
 
 /**
@@ -84,6 +95,7 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   const [focusedPaneMap, setFocusedPaneMap] = useState<Record<string, string | null>>(
     () => readPaneMap<Record<string, string | null>>(PANE_FOCUS_KEY, {}),
   );
+  const [paneItems, setPaneItems] = useState<Record<string, PaneItem>>(readPaneItems);
   const [viewMode, setViewModeState] = useState<ViewMode>('two');
 
   const activeProjectForPane = useMemo(
@@ -163,14 +175,18 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   openPanesMapRef.current = openPanesMap;
   const focusedPaneMapRef = useRef(focusedPaneMap);
   focusedPaneMapRef.current = focusedPaneMap;
+  const paneItemsRef = useRef(paneItems);
+  paneItemsRef.current = paneItems;
 
   // Persist pane layout to sessionStorage so refresh restores it.
   useEffect(() => { writePaneMap(PANE_OPEN_KEY, openPanesMap); }, [openPanesMap]);
   useEffect(() => { writePaneMap(PANE_FOCUS_KEY, focusedPaneMap); }, [focusedPaneMap]);
+  useEffect(() => { writePaneMap(PANE_ITEMS_KEY, paneItems); }, [paneItems]);
   useEffect(() => {
     const flush = () => {
       writePaneMap(PANE_OPEN_KEY, openPanesMapRef.current);
       writePaneMap(PANE_FOCUS_KEY, focusedPaneMapRef.current);
+      writePaneMap(PANE_ITEMS_KEY, paneItemsRef.current);
     };
     window.addEventListener('beforeunload', flush);
     return () => window.removeEventListener('beforeunload', flush);
@@ -200,6 +216,39 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     },
     [setFocusedPane, setOpenPanes],
   );
+
+  const registerPaneItem = useCallback((item: PaneItem) => {
+    setPaneItems((prev) => prev[item.id] === item ? prev : { ...prev, [item.id]: item });
+  }, []);
+
+  const updatePaneItem = useCallback((id: string, patch: Partial<PaneItem>) => {
+    setPaneItems((prev) => {
+      const current = prev[id];
+      if (!current) return prev;
+      const next = { ...current, ...patch, id: current.id, kind: current.kind } as PaneItem;
+      return { ...prev, [id]: next };
+    });
+  }, []);
+
+  const removePaneItem = useCallback((id: string) => {
+    setPaneItems((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
+  const setPaneItemWidth = useCallback((id: string, width: number | undefined) => {
+    setPaneItems((prev) => {
+      const current = prev[id];
+      if (!current || current.width === width) return prev;
+      const next = { ...current } as PaneItem;
+      if (width === undefined) delete next.width;
+      else next.width = width;
+      return { ...prev, [id]: next };
+    });
+  }, []);
 
   const openPaneInTree = useCallback(
     (projectId: string, treeId: string, nodeId: string) => {
@@ -275,10 +324,15 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   return {
     openPanes,
     focusedPane,
+    paneItems,
     viewMode,
     setOpenPanes,
     setFocusedPane,
     openPane,
+    registerPaneItem,
+    updatePaneItem,
+    removePaneItem,
+    setPaneItemWidth,
     openPaneInTree,
     appendPaneInTree,
     closePane,

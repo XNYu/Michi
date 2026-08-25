@@ -71,6 +71,11 @@ export default function TerminalShell() {
     setPage((current) => (TOGGLE_PAGES.includes(p) && current === p ? 'dashboard' : p));
   }, []);
   const [newWsOpen, setNewWsOpen] = useState(false);
+
+  useEffect(() => {
+    const visible = page === 'dashboard' && !paletteOpen && !settingsOpen && !artifactsOpen && !newWsOpen;
+    window.dispatchEvent(new CustomEvent('michi:native-surfaces-visible', { detail: { visible } }));
+  }, [page, paletteOpen, settingsOpen, artifactsOpen, newWsOpen]);
   const {
     activeProject, openPanes, selection,
     focusedPane,

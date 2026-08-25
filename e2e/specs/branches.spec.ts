@@ -71,7 +71,7 @@ test('Branches renders only the active thread as a heading-based document', asyn
   await seed(page);
   await page.goto('/');
 
-  await page.getByText('Branches', { exact: true }).click();
+  await page.getByRole('button', { name: 'Overview' }).click();
 
   await expect(page.getByRole('heading', { level: 1, name: 'Authentication redesign' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Token refresh model' })).toBeVisible();
@@ -84,7 +84,7 @@ test('Branches directory mirrors the active thread hierarchy and navigates the d
   await seed(page);
   await page.goto('/');
 
-  await page.getByText('Branches', { exact: true }).click();
+  await page.getByRole('button', { name: 'Overview' }).click();
 
   const directory = page.getByRole('navigation', { name: 'Branch directory' });
   await expect(directory.getByRole('treeitem', { name: 'Authentication redesign' })).toHaveAttribute('aria-level', '1');
@@ -107,7 +107,7 @@ test('opening a Branches node centers its focused Dashboard pane', async ({ page
   await seed(page);
   await page.goto('/');
 
-  await page.getByText('Branches', { exact: true }).click();
+  await page.getByRole('button', { name: 'Overview' }).click();
   await page.getByRole('button', { name: `Open ${LONG_BRANCH_TITLE}` }).click();
 
   const landing = await page.locator('.terminal-dashboard').evaluate((strip) => {
