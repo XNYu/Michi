@@ -19,6 +19,8 @@ import {
   findOwningSubagent,
   prettifyToolTitle,
   isHiddenInternalTool,
+  toolPurpose,
+  toolRowDetail,
   type SubagentToolInfo,
 } from './toolCallGrouping';
 
@@ -267,13 +269,15 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
 
   const titleColor = failed ? FAIL_COLOR : running ? 'var(--term-fg)' : 'var(--term-muted)';
   const durMs = toolDurationMs(t);
+  const purpose = toolPurpose(t);
+  const detail = toolRowDetail(t);
 
   return (
     <div style={{ paddingLeft: 14 }}>
       <div
         style={{
           display: 'flex',
-          alignItems: 'baseline',
+          alignItems: purpose ? 'flex-start' : 'baseline',
           gap: 7,
           cursor: hasPayload ? 'pointer' : 'default',
           color: titleColor,
@@ -283,20 +287,30 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
       >
         {hasPayload && !running && !failed ? <Chevron open={open} /> : <StatusDot status={t.status} />}
         <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-          {t.detail || prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
-          {failed && ' · failed'}
-          {t.detail && (
-            <span
-              style={{
-                display: 'block',
-                fontSize: 9.5,
-                color: failed ? FAIL_COLOR : 'var(--term-faint)',
-                opacity: failed ? 0.8 : 1,
-                marginTop: 1,
-              }}
-            >
-              {prettifyToolTitle(t.title)}
-            </span>
+          {purpose ? (
+            <>
+              <span>{purpose}</span>
+              {failed && ' · failed'}
+              {detail && (
+                <span
+                  style={{
+                    display: 'block',
+                    fontSize: 9.5,
+                    fontFamily: 'var(--font-mono)',
+                    color: failed ? FAIL_COLOR : 'var(--term-faint)',
+                    opacity: failed ? 0.8 : 1,
+                    marginTop: 1,
+                  }}
+                >
+                  {detail}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              {detail || prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
+              {failed && ' · failed'}
+            </>
           )}
         </span>
         <DurLabel ms={durMs} />

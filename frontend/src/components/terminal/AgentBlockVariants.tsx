@@ -8,6 +8,7 @@ import {
   isTerminalStatus,
   toolDurationMs,
   toolRowDetail,
+  toolPurpose,
   toolSpanMs,
   formatDurationMs,
   formatToolPayload,
@@ -288,6 +289,7 @@ function CardToolRow({ t }: { t: ToolCallState }) {
   const hasPayload = !!(t.inputJson || t.output);
   const { open, toggle } = usePayloadOpen(failed, hasPayload);
   const durMs = toolDurationMs(t);
+  const purpose = toolPurpose(t);
   const detail = toolRowDetail(t);
   const iconColor = failed ? 'var(--term-danger)' : running ? 'var(--term-accent)' : 'var(--term-muted)';
   return (
@@ -296,47 +298,78 @@ function CardToolRow({ t }: { t: ToolCallState }) {
         onClick={hasPayload ? toggle : undefined}
         style={{
           display: 'flex',
-          alignItems: 'center',
+          alignItems: purpose ? 'flex-start' : 'center',
           gap: 9,
           padding: '6px 11px',
           cursor: hasPayload ? 'pointer' : 'default',
           background: running ? 'color-mix(in srgb, var(--term-accent) 5%, transparent)' : undefined,
         }}
       >
-        <ToolTypeIcon kind={toolBucketKey(t)} color={iconColor} />
-        {/* Name never shrinks (so "Bash" stays whole next to a long detail),
-            so it must not be able to outgrow the card either — long titles
-            (unbucketed MCP tools, synthetic chips) get ellipsised at half
-            the row instead of bleeding past the border. */}
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 500,
-            color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
-            flexShrink: 0,
-            maxWidth: '50%',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {cardToolName(t)}
-        </span>
-        <span
-          style={{
-            fontFamily: MONO,
-            fontSize: 10,
-            color: running ? 'var(--term-mid)' : 'var(--term-muted)',
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {detail ?? ''}
-        </span>
+        <ToolTypeIcon kind={toolBucketKey(t)} color={iconColor} size={13} />
+        {purpose ? (
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span
+              style={{
+                display: 'block',
+                fontSize: 11,
+                color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
+              }}
+            >
+              {purpose}
+            </span>
+            {detail && (
+              <span
+                style={{
+                  display: 'block',
+                  fontFamily: MONO,
+                  fontSize: 9.5,
+                  color: running ? 'var(--term-mid)' : 'var(--term-faint)',
+                  marginTop: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {detail}
+              </span>
+            )}
+          </span>
+        ) : (
+          <>
+            {/* No purpose — use current single-line layout: Name + detail */}
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 500,
+                color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
+                flexShrink: 0,
+                maxWidth: '50%',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {cardToolName(t)}
+            </span>
+            <span
+              style={{
+                fontFamily: MONO,
+                fontSize: 10,
+                color: running ? 'var(--term-mid)' : 'var(--term-muted)',
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {detail ?? ''}
+            </span>
+          </>
+        )}
         {failed ? (
           <FailedBadge label="FAILED" />
         ) : running ? (
@@ -638,6 +671,7 @@ function TermToolRow({ t }: { t: ToolCallState }) {
   const hasPayload = !!(t.inputJson || t.output);
   const { open, toggle } = usePayloadOpen(failed, hasPayload);
   const durMs = toolDurationMs(t);
+  const purpose = toolPurpose(t);
   const detail = toolRowDetail(t);
   const nameColor = failed ? 'var(--term-danger)' : running ? 'var(--term-fg)' : 'var(--term-muted)';
   const detailColor = failed ? 'var(--term-danger)' : running ? 'var(--term-fg)' : 'var(--term-mid)';
@@ -650,7 +684,7 @@ function TermToolRow({ t }: { t: ToolCallState }) {
           display: 'grid',
           gridTemplateColumns: '14px 1fr auto',
           gap: 8,
-          alignItems: 'baseline',
+          alignItems: purpose ? 'start' : 'baseline',
           cursor: hasPayload ? 'pointer' : 'default',
         }}
       >
@@ -661,15 +695,39 @@ function TermToolRow({ t }: { t: ToolCallState }) {
         ) : (
           <span aria-hidden style={{ fontFamily: MONO, fontSize: 10, color: 'var(--term-muted)', textAlign: 'center' }}>✓</span>
         )}
-        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          <span style={{ fontSize: 11, color: nameColor }}>{termToolName(t)}</span>
-          {detail && (
-            <>
-              {' '}
-              <span style={{ fontFamily: MONO, fontSize: 10.5, color: detailColor }}>{detail}</span>
-            </>
-          )}
-        </span>
+        {purpose ? (
+          <span style={{ minWidth: 0 }}>
+            <span style={{ fontSize: 11, color: nameColor, display: 'block', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+              {purpose}
+            </span>
+            {detail && (
+              <span
+                style={{
+                  display: 'block',
+                  fontFamily: MONO,
+                  fontSize: 9.5,
+                  color: failed ? 'var(--term-danger)' : 'var(--term-faint)',
+                  marginTop: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {detail}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 11, color: nameColor }}>{termToolName(t)}</span>
+            {detail && (
+              <>
+                {' '}
+                <span style={{ fontFamily: MONO, fontSize: 10.5, color: detailColor }}>{detail}</span>
+              </>
+            )}
+          </span>
+        )}
         {failed ? (
           <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-danger)' }}>failed</span>
         ) : running ? (

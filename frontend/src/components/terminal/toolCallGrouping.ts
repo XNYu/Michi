@@ -290,13 +290,40 @@ function clampLine(value: string | undefined, max: number): string | undefined {
 }
 
 /**
- * One-line human-readable argument for a tool row ("npm test", a file path,
- * a grep pattern). Sources, in order:
+ * Extract the agent's stated purpose for this tool call — the human-language
+ * intent line (e.g. "Check git status after rebase"). Sources:
+ *   1. `detail` when it's a plain (non-JSON) string — backends fill this from
+ *      `__tool_use_purpose` or a synthesized description;
+ *   2. `__tool_use_purpose` inside `inputJson` (for older persisted data where
+ *      purpose wasn't extracted to `detail` at write time).
+ *
+ * Returns undefined when no purpose is available — callers should fallback to
+ * the command detail in that case.
+ */
+export function toolPurpose(tool: ToolCallState): string | undefined {
+  // detail is a plain purpose string when it doesn't look like JSON
+  const detail = compactWhitespace(tool.detail);
+  if (detail && !/^[[{]/.test(detail)) return clampLine(detail, ROW_DETAIL_MAX);
+
+  // Check inputJson for __tool_use_purpose (fallback for older data)
+  const input = tool.inputJson;
+  if (input?.trim().startsWith('{')) {
+    const purpose = detailField(input, parseDetailObject(input), ['__tool_use_purpose']);
+    if (purpose) return clampLine(purpose, ROW_DETAIL_MAX);
+  }
+  return undefined;
+}
+
+/**
+ * One-line technical argument for a tool row ("npm test", a file path,
+ * a grep pattern) — the machine-level command/operation detail. Sources:
  *   1. the structured input (`inputJson`) — the primary argument key;
- *   2. `detail` when it's a plain purpose string (kiro's __tool_use_purpose);
- *   3. `detail` parsed as JSON — Claude runtime backfills detail with a raw
+ *   2. `detail` parsed as JSON — Claude runtime backfills detail with a raw
  *      input dump, and completed MCP tools overwrite it with result content,
  *      so a raw `detail` is only trusted after extraction, never verbatim.
+ *
+ * This is the secondary line shown below purpose. When purpose is absent,
+ * renderers show this as the only line (preserving current behavior).
  */
 export function toolRowDetail(tool: ToolCallState): string | undefined {
   const input = tool.inputJson;
@@ -304,8 +331,9 @@ export function toolRowDetail(tool: ToolCallState): string | undefined {
     const fromInput = detailField(input, parseDetailObject(input), ROW_DETAIL_KEYS);
     if (fromInput) return clampLine(fromInput, ROW_DETAIL_MAX);
   }
+  // If detail is a plain string, it's been claimed as purpose — don't duplicate it here.
   const detail = compactWhitespace(tool.detail);
-  if (detail && !/^[[{]/.test(detail)) return clampLine(detail, ROW_DETAIL_MAX);
+  if (detail && !/^[[{]/.test(detail)) return undefined;
   if (detail?.startsWith('{')) {
     const fromDetail = detailField(tool.detail, parseDetailObject(tool.detail), ROW_DETAIL_KEYS);
     if (fromDetail) return clampLine(fromDetail, ROW_DETAIL_MAX);
