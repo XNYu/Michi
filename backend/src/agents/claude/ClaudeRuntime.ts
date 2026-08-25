@@ -21,6 +21,8 @@ import { agentConfigEvents, resolveModel, resolveClaudeConfigDir } from '../../s
 import type { ModelChangedEvent } from '../../services/agentConfig';
 import { ClaudeSessionManager, ClaudeConcurrencyError } from './ClaudeSessionManager';
 import { chatHub } from '../chatHub';
+import type { CapabilityDescriptor } from 'michi-shared';
+import { describeRuntimeCapabilities } from '../capabilityDescriptors';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -56,6 +58,7 @@ export class ClaudeRuntime implements AgentRuntime {
   public readonly id: RuntimeId = 'claude';
   public readonly label = 'Claude';
   public readonly capabilities = CLAUDE_CAPABILITIES;
+  public readonly capabilityDescriptor: CapabilityDescriptor = describeRuntimeCapabilities('claude');
 
   private readonly manager: ClaudeSessionManager;
   private readonly modelChangedHandler: (evt: ModelChangedEvent) => void;

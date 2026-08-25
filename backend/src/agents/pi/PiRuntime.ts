@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+import type { CapabilityDescriptor } from "michi-shared";
+import { describeRuntimeCapabilities } from "../capabilityDescriptors";
 import type {
     AgentCapabilities,
     AgentProviderInfo,
@@ -12,6 +14,7 @@ import type {
 } from "../types";
 import type { AgentToolBridge } from "../toolBridge";
 import { PiSession } from "./PiSession";
+import { createPiSession, shouldNavigatePiTreeOnMichiBranch } from "./PiSdkSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble, buildFormatReminder } from "../preamble";
 import {
@@ -59,8 +62,11 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // native-resume advantage and shouldn't pay the extra round-trip.
         nativeResume: false,
     };
+    public get capabilityDescriptor(): CapabilityDescriptor {
+        return describeRuntimeCapabilities("pi");
+    }
 
-    private sessions = new Map<string, PiSession>();
+    private sessions = new Map<string, AgentSession & { destroy(): void }>();
 
     constructor(private readonly bridge: AgentToolBridge) {}
 
@@ -97,7 +103,8 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             mergeContexts: opts.mergeContexts,
         });
 
-        const session = new PiSession(id, {
+        void shouldNavigatePiTreeOnMichiBranch();
+        const session = await createPiSession(id, {
             bridge: this.bridge,
             cwd: opts.cwd,
             enableFollowUps,
@@ -107,7 +114,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             workspaceId: opts.workspaceId ?? null,
             ownerUserId: opts.ownerUserId ?? null,
         });
-        this.sessions.set(id, session);
+        this.sessions.set(id, session as AgentSession & { destroy(): void });
         return session;
     }
 
@@ -159,7 +166,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             ancestors: ancestorChain,
         });
 
-        const session = new PiSession(opts.sessionId, {
+        const session = await createPiSession(opts.sessionId, {
             bridge: this.bridge,
             cwd: opts.cwd,
             enableFollowUps: true,
@@ -169,7 +176,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             workspaceId,
             ownerUserId: opts.ownerUserId ?? null,
         });
-        this.sessions.set(opts.sessionId, session);
+        this.sessions.set(opts.sessionId, session as AgentSession & { destroy(): void });
         return session;
     }
 

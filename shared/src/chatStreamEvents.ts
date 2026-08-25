@@ -93,6 +93,14 @@ export const CHAT_STREAM_EVENTS = {
   error: "error",
   turnStart: "turn_start",
   image: "image",
+  cancelPhase: "cancel_phase",
+  queueUpdate: "queue_update",
+  steerAccepted: "steer_accepted",
+  compactionStart: "compaction_start",
+  compactionEnd: "compaction_end",
+  retryStart: "retry_start",
+  retryEnd: "retry_end",
+  harnessLifecycle: "harness_lifecycle",
 } as const;
 
 export type ChatStreamEventName =
@@ -119,13 +127,31 @@ export interface ChatStreamPayloads {
     title: string;
     detail?: string;
     options: PermissionOption[];
+    source?: string;
   };
   user_input_request: UserInputRequestPayload;
   user_input_resolved: { requestId: number; answers: UserInputAnswer[] };
   subagent_list_update: { subagents: SubagentInfo[] };
   subagent_tool_activity: { subagentSessionId: string; title: string; status: string };
   context_usage: { contextUsagePercentage: number };
-  usage_summary: { contextUsagePercentage: number; totalCredits: number; turnDurationMs: number };
+  usage_summary: {
+    contextUsagePercentage: number;
+    totalCredits: number;
+    turnDurationMs: number;
+    source?: string;
+  };
+  cancel_phase: { phase: "requested" | "acknowledged" | "settled" };
+  queue_update: { steering: string[]; followUp: string[] };
+  steer_accepted: { text: string; pending?: boolean };
+  compaction_start: { detail?: string };
+  compaction_end: { detail?: string };
+  retry_start: { detail?: string };
+  retry_end: { detail?: string };
+  harness_lifecycle: {
+    level: "run" | "turn" | "item";
+    phase: "start" | "delta" | "completed" | "failed" | "cancelled";
+    nativeType?: string;
+  };
   mcp_server_error: { serverName: string; error: string };
   done: { stopReason?: string; persisted?: boolean; completedAt?: number };
   error: { message: string; code?: string; recoverable?: boolean; completedAt?: number };
@@ -141,6 +167,9 @@ export interface ChatStreamEnvelope {
   turnId?: string;
   seq?: number;
   assistantId?: string;
+  source?: string;
+  confidence?: string;
+  nativeMethod?: string;
 }
 
 export type ChatStreamEvent = {
@@ -284,6 +313,7 @@ const parsers = {
       title: stringOrEmpty(data.title),
       detail: optionalString(data.detail),
       options,
+      source: optionalString(data.source),
     };
   },
   user_input_request: (data) => {
@@ -336,6 +366,7 @@ const parsers = {
     contextUsagePercentage: optionalFiniteNumber(data.contextUsagePercentage) ?? 0,
     totalCredits: optionalFiniteNumber(data.totalCredits) ?? 0,
     turnDurationMs: optionalFiniteNumber(data.turnDurationMs) ?? 0,
+    source: optionalString(data.source),
   }),
   mcp_server_error: (data) => ({
     serverName: stringOrEmpty(data.serverName),
@@ -366,6 +397,32 @@ const parsers = {
     mimeType: stringOrEmpty(d.mimeType),
     size: optionalFiniteNumber(d.size) ?? 0,
   }),
+  cancel_phase: (data) => {
+    const raw = typeof data.phase === "string" ? data.phase : "";
+    const phase: "requested" | "acknowledged" | "settled" =
+      raw === "acknowledged" || raw === "settled" ? raw : "requested";
+    return { phase };
+  },
+  queue_update: (data) => ({
+    steering: parseStringList(data.steering),
+    followUp: parseStringList(data.followUp),
+  }),
+  steer_accepted: (data) => ({
+    text: stringOrEmpty(data.text),
+    ...(data.pending === true ? { pending: true } : {}),
+  }),
+  compaction_start: (data) => ({ detail: optionalString(data.detail) }),
+  compaction_end: (data) => ({ detail: optionalString(data.detail) }),
+  retry_start: (data) => ({ detail: optionalString(data.detail) }),
+  retry_end: (data) => ({ detail: optionalString(data.detail) }),
+  harness_lifecycle: (data) => {
+    const level = data.level === "run" || data.level === "item" ? data.level : "turn";
+    const phase =
+      data.phase === "delta" || data.phase === "completed" || data.phase === "failed" || data.phase === "cancelled"
+        ? data.phase
+        : "start";
+    return { level, phase, nativeType: optionalString(data.nativeType) };
+  },
 } satisfies ParserMap;
 
 function isChatStreamEventName(event: string): event is ChatStreamEventName {
@@ -389,6 +446,9 @@ export function parseChatStreamEvent(event: string, rawData: string): ChatStream
   if (typeof raw.turnId === "string") data.turnId = raw.turnId;
   if (typeof raw.seq === "number" && Number.isFinite(raw.seq)) data.seq = raw.seq;
   if (typeof raw.assistantId === "string") data.assistantId = raw.assistantId;
+  if (typeof raw.source === "string") data.source = raw.source;
+  if (typeof raw.confidence === "string") data.confidence = raw.confidence;
+  if (typeof raw.nativeMethod === "string") data.nativeMethod = raw.nativeMethod;
   return { event, data } as ChatStreamEvent;
 }
 

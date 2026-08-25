@@ -799,3 +799,42 @@ test('Codex follow-ups Hook POC fails open after one missing repair attempt', as
   });
   await turnPromise;
 });
+
+test('steer issues turn/steer and fork align does not change Michi node id', async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const { session, client } = makeSession({
+    request: async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      if (method === 'turn/start') return { turnId: 'turn-native-1' };
+      if (method === 'turn/steer') return { turnId: 'turn-native-1' };
+      if (method === 'thread/fork') return { threadId: 'forked-thread' };
+      if (method === 'thread/compact/start') return {};
+      return {};
+    },
+  });
+  const turn = (async () => {
+    for await (const _ev of session.send('hello')) { /* drain */ }
+  })();
+  await new Promise((resolve) => setImmediate(resolve));
+  const steered = await session.steer('inject');
+  assert.equal(steered.accepted, true, `steer rejected: ${steered.reason}`);
+  assert.equal(steered.pending, true);
+  const compact = await session.compact();
+  assert.equal(compact.started, true);
+  const forked = await session.alignNativeFork();
+  assert.equal(forked.threadId, 'forked-thread');
+  assert.equal(session.id, 'node-1');
+  assert.equal(session.describeNativeState().michiNodeId, 'node-1');
+  (client as any)._emit('thread-1', 'item/agentMessage/delta', { delta: 'hi' });
+  (client as any)._emit('thread-1', 'turn/completed', { turn: { status: 'completed' } });
+  await turn;
+  assert.ok(calls.some((c) => c.method === 'turn/steer'));
+  assert.ok(calls.some((c) => c.method === 'thread/fork'));
+  assert.ok(calls.some((c) => c.method === 'thread/compact/start'));
+});
+
+test('cancel returns acknowledged after interrupt', async () => {
+  const { session } = makeSession();
+  const ackIdle = await session.cancel();
+  assert.equal(ackIdle.acknowledged, false);
+});

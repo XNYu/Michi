@@ -1,3 +1,4 @@
+import type { CapabilityDescriptor } from "michi-shared";
 import type { NormalizedEvent } from "../services/chatEvents";
 
 export type RuntimeId = string;
@@ -162,6 +163,7 @@ export interface AgentStatus {
   /** Per-runtime reasoning overrides set by the user. */
   reasoningByRuntime?: Record<string, AgentReasoning>;
   hasRequiredKey: boolean;
+  capabilityDescriptor?: CapabilityDescriptor;
 }
 
 export interface AgentSession {
@@ -181,7 +183,12 @@ export interface AgentSession {
   /** Mid-stream partial assistant text for an in-progress turn (auto-branch case). Returns undefined when not streaming. */
   getPendingAssistant(): string | undefined;
   send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent>;
-  cancel(): Promise<void> | void;
+  cancel(): Promise<CancelAck | void> | CancelAck | void;
+  steer?(text: string): Promise<SteerResult>;
+  followUp?(text: string): Promise<SteerResult>;
+  clearQueue?(): Promise<void> | void;
+  compact?(instructions?: string): Promise<CompactResult>;
+  describeNativeState?(): Record<string, unknown>;
   setMode?(modeId: string): Promise<void>;
   setModel?(modelId: string): Promise<void>;
   respondToPermission?(requestId: number, optionId: string): void;
@@ -190,10 +197,26 @@ export interface AgentSession {
   skipUserInput?(requestId: number): void;
 }
 
+export interface CancelAck {
+  acknowledged: boolean;
+}
+
+export interface SteerResult {
+  accepted: boolean;
+  turnId?: string;
+  pending?: boolean;
+  reason?: string;
+}
+
+export interface CompactResult {
+  started: boolean;
+}
+
 export interface AgentRuntime {
   id: RuntimeId;
   label: string;
   capabilities: AgentCapabilities;
+  capabilityDescriptor?: CapabilityDescriptor;
 
   warm(cwd: string, opts?: { model?: string | null }): Promise<void>;
   newSession(opts: NewAgentSessionOptions): Promise<AgentSession>;

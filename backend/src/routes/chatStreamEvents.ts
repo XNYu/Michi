@@ -80,6 +80,7 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
                     title: ev.title,
                     detail: ev.detail,
                     options: ev.options,
+                    ...(ev.source ? { source: ev.source } : {}),
                 },
             };
         case "user_input_request":
@@ -99,7 +100,34 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
         case "context_usage":
             return { event: CHAT_STREAM_EVENTS.contextUsage, data: { contextUsagePercentage: ev.contextUsagePercentage } };
         case "usage_summary":
-            return { event: CHAT_STREAM_EVENTS.usageSummary, data: { contextUsagePercentage: ev.contextUsagePercentage, totalCredits: ev.totalCredits, turnDurationMs: ev.turnDurationMs } };
+            return {
+                event: CHAT_STREAM_EVENTS.usageSummary,
+                data: {
+                    contextUsagePercentage: ev.contextUsagePercentage,
+                    totalCredits: ev.totalCredits,
+                    turnDurationMs: ev.turnDurationMs,
+                    ...(ev.source ? { source: ev.source } : {}),
+                },
+            };
+        case "cancel_phase":
+            return { event: CHAT_STREAM_EVENTS.cancelPhase, data: { phase: ev.phase } };
+        case "queue_update":
+            return { event: CHAT_STREAM_EVENTS.queueUpdate, data: { steering: ev.steering, followUp: ev.followUp } };
+        case "steer_accepted":
+            return { event: CHAT_STREAM_EVENTS.steerAccepted, data: { text: ev.text, pending: ev.pending } };
+        case "compaction_start":
+            return { event: CHAT_STREAM_EVENTS.compactionStart, data: { detail: ev.detail } };
+        case "compaction_end":
+            return { event: CHAT_STREAM_EVENTS.compactionEnd, data: { detail: ev.detail } };
+        case "retry_start":
+            return { event: CHAT_STREAM_EVENTS.retryStart, data: { detail: ev.detail } };
+        case "retry_end":
+            return { event: CHAT_STREAM_EVENTS.retryEnd, data: { detail: ev.detail } };
+        case "harness_lifecycle":
+            return {
+                event: CHAT_STREAM_EVENTS.harnessLifecycle,
+                data: { level: ev.level, phase: ev.phase, nativeType: ev.nativeType },
+            };
         case "mcp_server_error":
             return { event: CHAT_STREAM_EVENTS.mcpServerError, data: { serverName: ev.serverName, error: ev.error } };
         case "runtime_error":
