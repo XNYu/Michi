@@ -89,8 +89,8 @@ export interface ElectronBridge {
   openPath?(absPath: string): Promise<{ ok: boolean; error?: string }>;
   /** Send an OS-level notification via Electron. Optional — absent in older builds. */
   showNotification?(title: string, body: string): void;
-  /** Sync the native vibrancy material light/dark to the palette. Absent in older builds / web. */
-  setDarkMaterial?(dark: boolean): void;
+  /** Sync native chrome and Browser panes to the active palette. Absent in older builds / web. */
+  setDarkMaterial?(dark: boolean, backgroundColor?: string): void;
   /** Switch the sidebar's native vibrancy material (desktop see-through density). Absent in older builds / web. */
   setVibrancy?(material: VibrancyMaterial): void;
   /** Relaunch the app after self-update. Optional — absent in older builds. */

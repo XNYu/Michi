@@ -104,9 +104,9 @@ contextBridge.exposeInMainWorld('electron', {
   showNotification(title: string, body: string): void {
     ipcRenderer.send('app:showNotification', title, body);
   },
-  /** Match the native vibrancy material's light/dark to the active palette. */
-  setDarkMaterial(dark: boolean): void {
-    ipcRenderer.send('app:setDarkMaterial', dark);
+  /** Match native chrome and Browser panes to the active palette. */
+  setDarkMaterial(dark: boolean, backgroundColor?: string): void {
+    ipcRenderer.send('app:setDarkMaterial', dark, backgroundColor);
   },
   /** Switch the sidebar's native vibrancy material (desktop see-through density). */
   setVibrancy(material: string): void {

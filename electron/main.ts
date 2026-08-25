@@ -17,6 +17,7 @@ import {
 } from './startupTrace';
 import { isClosePaneShortcut } from './paneShortcuts';
 import { listWorkspaceDirectory, resolveAllowedDirectory } from './workspaceFiles';
+import { applyBrowserTheme, normalizeBrowserTheme, type BrowserTheme } from './browserTheme';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -136,6 +137,7 @@ interface BrowserSurface {
 
 const terminalSurfaces = new Map<string, TerminalSurface>();
 const browserSurfaces = new Map<string, BrowserSurface>();
+let currentBrowserTheme: BrowserTheme = normalizeBrowserTheme(nativeTheme.shouldUseDarkColors, undefined);
 
 function surfaceKey(ownerId: number, surfaceId: string): string {
   return `${ownerId}:${surfaceId}`;
@@ -174,6 +176,18 @@ function browserState(surface: BrowserSurface) {
 function emitBrowserState(surface: BrowserSurface): void {
   if (!surface.host.isDestroyed()) {
     surface.host.webContents.send('browser:state', browserState(surface));
+  }
+}
+
+async function syncBrowserTheme(surface: BrowserSurface): Promise<void> {
+  try {
+    await applyBrowserTheme(surface.view, currentBrowserTheme);
+  } catch (error) {
+    elog('WARN', 'browser', 'failed to apply browser color scheme', {
+      surfaceId: surface.surfaceId,
+      colorScheme: currentBrowserTheme.colorScheme,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -290,6 +304,12 @@ ipcMain.handle('browser:create', async (event, surfaceId: unknown, projectId: un
     browserSurfaces.set(key, surface);
     host.contentView.addChildView(view);
     view.setVisible(false);
+    // A brand-new WebContentsView does not have a fully initialized CDP target
+    // until its first navigation. Prime it before registering state listeners
+    // so the internal about:blank never leaks into renderer pane metadata.
+    view.setBackgroundColor(currentBrowserTheme.backgroundColor);
+    await view.webContents.loadURL('about:blank');
+    await syncBrowserTheme(surface);
     view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     view.webContents.setWindowOpenHandler(({ url: popupUrl }) => {
       const next = normalizeSurfaceUrl(popupUrl);
@@ -1167,16 +1187,13 @@ ipcMain.on('app:vibrancy', (ev) => {
   ev.returnValue = VIBRANCY_ENABLED;
 });
 
-// The NSVisualEffectView material's light/dark is chosen by the OS window
-// appearance, NOT by Michi's CSS palette. So a dark palette (monokai/gruvbox)
-// would otherwise get a LIGHT frost and read wrong. The renderer reports its
-// palette darkness here; we set themeSource so the material matches. Safe:
-// the frontend has zero `prefers-color-scheme` rules, so forcing the OS theme
-// source only affects the native chrome (traffic lights + vibrancy), not the
-// palette-token-driven UI. No-op off macOS.
-ipcMain.on('app:setDarkMaterial', (_ev, dark: boolean) => {
-  if (!VIBRANCY_ENABLED) return;
-  nativeTheme.themeSource = dark ? 'dark' : 'light';
+// Keep native chrome, vibrancy, and Browser WebContentsViews aligned with the
+// active Michi palette. Browser views receive a Chromium preferred-color-scheme
+// emulation, so sites with native dark CSS update without destructive filters.
+ipcMain.on('app:setDarkMaterial', (_ev, dark: boolean, backgroundColor?: string) => {
+  currentBrowserTheme = normalizeBrowserTheme(dark, backgroundColor);
+  nativeTheme.themeSource = currentBrowserTheme.colorScheme;
+  for (const surface of browserSurfaces.values()) void syncBrowserTheme(surface);
 });
 
 // Runtime-switch the sidebar's NSVisualEffectView material so users can pick how
