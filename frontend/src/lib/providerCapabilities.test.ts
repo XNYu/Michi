@@ -3,6 +3,7 @@ import {
   providerRequiresUserKey,
   providerModelLocked,
   providerOptionSuffix,
+  shouldPromptForProviderKey,
 } from './providerCapabilities';
 
 describe('provider capability helpers', () => {
@@ -38,5 +39,26 @@ describe('provider capability helpers', () => {
     expect(providerRequiresUserKey(provider)).toBe(true);
     expect(providerModelLocked(provider)).toBe(false);
     expect(providerOptionSuffix(provider)).toBe(' - key saved');
+    expect(shouldPromptForProviderKey(provider)).toBe(false);
+  });
+
+  it('prompts for a key when a user-key provider has none saved', () => {
+    const provider = {
+      id: 'cerebras',
+      label: 'Cerebras',
+      hasKey: false,
+    };
+
+    expect(providerRequiresUserKey(provider)).toBe(true);
+    expect(providerOptionSuffix(provider)).toBe(' - no key');
+    expect(shouldPromptForProviderKey(provider)).toBe(true);
+  });
+
+  it('does not prompt for built-in providers', () => {
+    expect(shouldPromptForProviderKey({
+      id: 'openrouter-free',
+      requiresUserKey: false,
+      hasKey: false,
+    })).toBe(false);
   });
 });

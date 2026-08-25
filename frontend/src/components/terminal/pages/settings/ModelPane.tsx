@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '../../../../state/chatStore';
 import { usePrefs } from '../../../../state/prefs';
 import {
@@ -18,9 +18,11 @@ import {
   providerModelLocked,
   providerOptionSuffix,
   providerRequiresUserKey,
+  shouldPromptForProviderKey,
 } from '../../../../lib/providerCapabilities';
 import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
 import { API_BASE_URL } from '../../../../config/env';
+import { filterModelCatalog } from './modelCatalogFilter';
 
 export function ModelPane({
   activeProjectId,
@@ -189,11 +191,10 @@ function ProviderPicker({
           });
           setSaving(false);
           if (!result.ok) setError(result.error);
-          // Refresh silently — if the new provider has no API key, we don't
-          // want the global ApiKeyGate modal to slam over Settings. The
-          // inline ProviderKeyControls below already shows a "(missing)"
-          // reminder and a key input for the active provider.
-          if (typeof window !== 'undefined') {
+          // Missing-key providers reopen ApiKeyGate so the user gets the
+          // setup window. Providers that already have a key refresh silently
+          // so the modal does not cover Settings for a no-op switch.
+          if (typeof window !== 'undefined' && !shouldPromptForProviderKey(provider)) {
             window.dispatchEvent(
               new CustomEvent('michi:reload-agent-status', { detail: { silent: true } }),
             );
@@ -233,6 +234,7 @@ function ProviderModelPicker({
 }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState('');
   const activeProvider = (status.providers ?? []).find((p) => p.id === status.provider);
   const locked = activeProvider ? providerModelLocked(activeProvider) : false;
   const { models, loading, error: loadError, retry } = useAgentModelCatalog({
@@ -240,10 +242,53 @@ function ProviderModelPicker({
     runtime: status.runtime,
     provider: status.provider,
   });
+  const showFilter = status.runtime === 'pi' && !locked && models.length > 0;
+  const filteredModels = useMemo(
+    () => filterModelCatalog(models, filterQuery),
+    [filterQuery, models],
+  );
+  const selectedModel = status.model
+    ? models.find((model) => model.id === status.model)
+    : undefined;
+  const selectedIsFilteredOut = !!selectedModel
+    && !filteredModels.some((model) => model.id === selectedModel.id);
+  const visibleModels = selectedIsFilteredOut
+    ? [selectedModel, ...filteredModels]
+    : filteredModels;
+  const activeModelMissing = !!status.model
+    && !models.some((model) => model.id === status.model);
+
+  useEffect(() => {
+    setFilterQuery('');
+  }, [status.provider, status.runtime]);
 
   return (
     <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
       <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>model</div>
+      {showFilter && (
+        <input
+          type="search"
+          aria-label="Filter models"
+          autoComplete="off"
+          spellCheck={false}
+          value={filterQuery}
+          onChange={(event) => setFilterQuery(event.target.value)}
+          placeholder="Filter by name or ID…"
+          style={{
+            display: 'block',
+            width: 320,
+            boxSizing: 'border-box',
+            fontFamily: 'var(--ui-font)',
+            fontSize: 12,
+            padding: '6px 8px',
+            marginBottom: 6,
+            border: '1px solid var(--term-line)',
+            background: 'var(--term-surface-glass)',
+            color: 'var(--term-fg)',
+            outlineColor: 'var(--term-accent)',
+          }}
+        />
+      )}
       <select
         value={status.model ?? ''}
         disabled={saving || loading || locked}
@@ -266,16 +311,30 @@ function ProviderModelPicker({
         }}
       >
         {/* Render the active model as its own option even if not in the list (rare race). */}
-        {models.length === 0 && status.model && (
+        {(models.length === 0 || activeModelMissing) && status.model && (
           <option value={status.model}>{status.model}</option>
         )}
         {models.length === 0 && !status.model && (
           <option value="">{loading ? 'Loading models…' : 'No models available'}</option>
         )}
-        {models.map((m) => (
+        {visibleModels.map((m) => (
           <option key={m.id} value={m.id}>{m.label || m.id}</option>
         ))}
       </select>
+      {showFilter && filterQuery.trim() && (
+        <div
+          role="status"
+          style={{
+            fontSize: 10.5,
+            color: filteredModels.length === 0 ? 'var(--term-danger)' : 'var(--term-muted)',
+            marginTop: 6,
+          }}
+        >
+          {filteredModels.length === 0
+            ? `No models match “${filterQuery.trim()}”.`
+            : `${filteredModels.length} of ${models.length} models`}
+        </div>
+      )}
       {loading && (
         <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6 }}>Loading models…</div>
       )}

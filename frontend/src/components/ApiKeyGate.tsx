@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchAgentStatus, saveAgentOptions, saveProviderKey, verifyProviderKey } from '../services/api';
 import type { AgentStatus, VerifyProviderKeyResult } from '../services/api';
-import { providerOptionSuffix, providerRequiresUserKey } from '../lib/providerCapabilities';
+import { providerOptionSuffix, providerRequiresUserKey, shouldPromptForProviderKey } from '../lib/providerCapabilities';
 import { ModalShell } from './ui/ModalShell';
 import { Button } from './ui/controls';
 import { usePrefs } from '../state/prefs';
@@ -65,10 +65,10 @@ export default function ApiKeyGate() {
   useEffect(() => {
     void load();
     // Allow other parts of the app (chatStreamRunner on auth errors, the
-    // Settings "Change API Key" button, FirstRunSetup's "Set up key" action)
-    // to force the gate to re-show. `detail.silent: true` refreshes status
-    // without re-opening the modal — used by the in-Settings provider picker
-    // so switching to a key-less provider just surfaces the inline reminder.
+    // Settings provider picker, FirstRunSetup's "Set up key" action) to force
+    // the gate to re-show. `detail.silent: true` refreshes status without
+    // re-opening the modal — used when Settings switches to a provider that
+    // already has a saved key.
     const handler = (e: Event) => {
       const silent = (e as CustomEvent).detail?.silent === true;
       if (silent) setDismissed(true);
@@ -79,17 +79,19 @@ export default function ApiKeyGate() {
     return () => window.removeEventListener('michi:reload-agent-status', handler);
   }, []);
 
-  // Sync the local provider picker with whatever the backend currently has
-  // selected. If providers exist and we don't have one yet, default to the
-  // backend's choice or the first provider.
+  // Follow the backend's active provider when it changes (Settings switched
+  // to Cerebras). Depend on provider id only so a status refetch does not
+  // clobber a different provider the user picked inside this form.
   useEffect(() => {
     if (!status) return;
     const providers = (status.providers ?? []).filter(providerRequiresUserKey);
     if (providers.length === 0) return;
-    if (!selectedProvider) {
-      setSelectedProvider(status.provider ?? providers[0]!.id);
+    if (status.provider && providers.some((p) => p.id === status.provider)) {
+      setSelectedProvider(status.provider);
+      return;
     }
-  }, [status, selectedProvider]);
+    setSelectedProvider((current) => current || providers[0]!.id);
+  }, [status?.provider]);
 
   // Backend persistently unreachable — a hard-blocking notice with a retry.
   // Not gated on onboarding: it's useful cold-start feedback either way.
@@ -116,13 +118,17 @@ export default function ApiKeyGate() {
     );
   }
 
-  // Not ready yet, runtime doesn't need an API key, key already present,
-  // dismissed, or onboarding still owns the flow — render nothing.
+  // Not ready yet, runtime doesn't need an API key, dismissed, or
+  // onboarding still owns the flow — render nothing.
+  // Show when the *active* provider needs a key, even if hasRequiredKey is
+  // true because some other provider (e.g. DeepSeek) already has one.
   if (loading || !status) return null;
   if (prefs.onboardingCompletedAt == null) return null;
   if (!status.capabilities.apiKeys) return null;
-  if (status.hasRequiredKey) return null;
   if (dismissed) return null;
+  const activeProvider = (status.providers ?? []).find((p) => p.id === status.provider);
+  const activeNeedsKey = !!activeProvider && shouldPromptForProviderKey(activeProvider);
+  if (status.hasRequiredKey && !activeNeedsKey) return null;
 
   const providers = (status.providers ?? []).filter(providerRequiresUserKey);
   const selectedProviderInfo =
