@@ -3,6 +3,7 @@ import React from 'react';
 import { render, fireEvent } from '@testing-library/react';
 import { ToolCallGroup } from './ToolCallGroup';
 import type { ToolCallState } from '../../state/chatTypes';
+import { AgentBlockStyleOverride } from '../../state/prefs';
 
 function tool(id: string, title: string, status = 'running', kind?: string): ToolCallState {
   return { id, title, status, kind };
@@ -54,6 +55,54 @@ describe('ToolCallGroup — expanded state', () => {
     );
     expect(getByText('Read a')).toBeTruthy();
     expect(getByText('Read b')).toBeTruthy();
+  });
+
+  it('shows each tool purpose on expanded multi-tool rows (card + plain)', () => {
+    const tools: ToolCallState[] = [
+      {
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        inputJson: JSON.stringify({
+          __tool_use_purpose: 'Inspect the workspace root',
+          operations: [{ mode: 'Line', path: '/workspace/example-app' }],
+        }),
+      },
+      {
+        id: '2',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        detail: '/workspace/example-app/package.json',
+        inputJson: JSON.stringify({
+          __tool_use_purpose: 'Check the project manifest to understand the package definition',
+          operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
+        }),
+      },
+      {
+        id: '3',
+        title: 'Bash',
+        status: 'completed',
+        kind: 'bash',
+        inputJson: JSON.stringify({
+          __tool_use_purpose: 'Find packageInfo files',
+          command: 'find /workspace/example-app -maxdepth 2 -name package.json',
+        }),
+      },
+    ];
+
+    for (const style of ['plain', 'card', 'terminal'] as const) {
+      const { getByText, unmount } = render(
+        <AgentBlockStyleOverride.Provider value={style}>
+          <ToolCallGroup tools={tools} defaultExpanded />
+        </AgentBlockStyleOverride.Provider>,
+      );
+      expect(getByText('Inspect the workspace root')).toBeTruthy();
+      expect(getByText('Check the project manifest to understand the package definition')).toBeTruthy();
+      expect(getByText('Find packageInfo files')).toBeTruthy();
+      unmount();
+    }
   });
 
   it('clicking the expanded header collapses the group', () => {

@@ -1,3 +1,4 @@
+import { extractToolUsePurpose } from 'michi-shared';
 import { NormalizedEvent, SubagentInfo } from '../../services/chatEvents';
 import { ClaudeEnvelope } from './claudeEnvelopeParser';
 import { getClaudeModelEntry } from './claudeModelCatalog';
@@ -44,15 +45,17 @@ function truncatePayload(value: unknown): string | undefined {
   return str.length > MAX_TOOL_PAYLOAD ? str.slice(0, MAX_TOOL_PAYLOAD) : str;
 }
 
-function extractPurpose(toolName: string, input: Record<string, unknown>): string | undefined {
-  if (typeof input.__tool_use_purpose === 'string') return input.__tool_use_purpose;
+/** Subagent "Now:" label — path/pattern are useful there; they are not UI purpose. */
+function toolActivityTitle(toolName: string, input: Record<string, unknown>): string {
+  const purpose = extractToolUsePurpose(input);
+  if (purpose) return purpose;
   if (typeof input.description === 'string') return input.description;
   if (typeof input.file_path === 'string') return `${toolName}: ${input.file_path}`;
   if (typeof input.pattern === 'string') {
     const path = typeof input.path === 'string' ? ` in ${input.path}` : '';
     return `grep: ${input.pattern}${path}`;
   }
-  return undefined;
+  return toolName;
 }
 
 export interface TranslatorHandle {
@@ -170,7 +173,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
       if (btype === 'tool_use') {
         const name = (b['name'] as string | undefined) ?? '';
         const input = (b['input'] ?? {}) as Record<string, unknown>;
-        const title = extractPurpose(name, input) ?? name;
+        const title = toolActivityTitle(name, input);
         emit({
           kind: 'subagent_tool_activity',
           subagentSessionId: parentId,
@@ -294,7 +297,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
           const id = (b['id'] as string | undefined) ?? '';
           const name = (b['name'] as string | undefined) ?? '';
           const input = (b['input'] ?? {}) as Record<string, unknown>;
-          const detail = extractPurpose(name, input)
+          const detail = extractToolUsePurpose(input)
             ?? Array.from(JSON.stringify(input)).slice(0, 200).join('');
           const inputJson = truncatePayload(input);
 

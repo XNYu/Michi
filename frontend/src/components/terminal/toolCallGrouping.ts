@@ -1,3 +1,4 @@
+import { extractToolUsePurpose } from 'michi-shared';
 import type { ToolCallState, SubagentInfo } from '../../state/chatTypes';
 
 const RUNNING_STATUSES = new Set(['running', 'in_progress', 'pending']);
@@ -282,8 +283,6 @@ const ROW_DETAIL_KEYS = [
   'path',
   'query',
   'url',
-  'prompt',
-  'description',
 ];
 
 const ROW_DETAIL_MAX = 200;
@@ -293,29 +292,24 @@ function clampLine(value: string | undefined, max: number): string | undefined {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
+/** Paths and "Read: /foo" labels are command detail, not the agent's why. */
+function looksLikeToolArg(value: string): boolean {
+  if (/^(\/|\.\/|\.\.\/|[A-Za-z]:[\\/])/.test(value)) return true;
+  if (/^(Read|Write|Edit|Bash|Grep|Glob|List|Search)\b[:\s]/i.test(value)) return true;
+  return false;
+}
+
 /**
- * Extract the agent's stated purpose for this tool call — the human-language
- * intent line (e.g. "Check git status after rebase"). Sources:
- *   1. `detail` when it's a plain (non-JSON) string — backends fill this from
- *      `__tool_use_purpose` or a synthesized description;
- *   2. `__tool_use_purpose` inside `inputJson` (for older persisted data where
- *      purpose wasn't extracted to `detail` at write time).
- *
- * Returns undefined when no purpose is available — callers should fallback to
- * the command detail in that case.
+ * Agent's stated why-string for a tool row. Only `__tool_use_purpose` counts —
+ * `detail` is overloaded (path, command dump, stdout, result JSON) and must
+ * not be treated as purpose. Returns undefined when the field is absent so
+ * renderers fall back to name + command detail.
  */
 export function toolPurpose(tool: ToolCallState): string | undefined {
-  // detail is a plain purpose string when it doesn't look like JSON
-  const detail = compactWhitespace(tool.detail);
-  if (detail && !/^[[{]/.test(detail)) return clampLine(detail, ROW_DETAIL_MAX);
-
-  // Check inputJson for __tool_use_purpose (fallback for older data)
-  const input = tool.inputJson;
-  if (input?.trim().startsWith('{')) {
-    const purpose = detailField(input, parseDetailObject(input), ['__tool_use_purpose']);
-    if (purpose) return clampLine(purpose, ROW_DETAIL_MAX);
-  }
-  return undefined;
+  return clampLine(
+    extractToolUsePurpose(tool.inputJson) ?? extractToolUsePurpose(tool.detail),
+    ROW_DETAIL_MAX,
+  );
 }
 
 /**
@@ -335,9 +329,11 @@ export function toolRowDetail(tool: ToolCallState): string | undefined {
     const fromInput = detailField(input, parseDetailObject(input), ROW_DETAIL_KEYS);
     if (fromInput) return clampLine(fromInput, ROW_DETAIL_MAX);
   }
-  // If detail is a plain string, it's been claimed as purpose — don't duplicate it here.
   const detail = compactWhitespace(tool.detail);
-  if (detail && !/^[[{]/.test(detail)) return undefined;
+  if (detail && !/^[[{]/.test(detail)) {
+    // Human purpose lives on the primary line; a path/title is the row argument.
+    return looksLikeToolArg(detail) ? clampLine(detail, ROW_DETAIL_MAX) : undefined;
+  }
   if (detail?.startsWith('{')) {
     const fromDetail = detailField(tool.detail, parseDetailObject(tool.detail), ROW_DETAIL_KEYS);
     if (fromDetail) return clampLine(fromDetail, ROW_DETAIL_MAX);

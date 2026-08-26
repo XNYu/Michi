@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { extractToolUsePurpose } from 'michi-shared';
 import {
   isRunningStatus,
   isTerminalStatus,
@@ -6,6 +7,8 @@ import {
   isHiddenInternalTool,
   subagentToolInfo,
   prettifyToolTitle,
+  toolPurpose,
+  toolRowDetail,
 } from './toolCallGrouping';
 import type { ToolCallState } from '../../state/chatTypes';
 
@@ -359,5 +362,175 @@ describe('summarizeTools — MCP tool (regression)', () => {
         { id: '1', title: 'mcp__michi-tools__list_threads', status: 'completed', kind: 'tool', detail },
       ]),
     ).toBe('list_threads');
+  });
+});
+
+describe('toolPurpose', () => {
+  const kiroReadInput = {
+    __tool_use_purpose: 'Check the project manifest to understand the package definition',
+    operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
+  };
+
+  it('reads __tool_use_purpose from Kiro operations-style inputJson', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        inputJson: JSON.stringify(kiroReadInput),
+      }),
+    ).toBe('Check the project manifest to understand the package definition');
+  });
+
+  it('prefers __tool_use_purpose over a path-like detail (Kiro completion overwrite)', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        detail: '/workspace/example-app/package.json',
+        inputJson: JSON.stringify(kiroReadInput),
+      }),
+    ).toBe('Check the project manifest to understand the package definition');
+  });
+
+  it('prefers __tool_use_purpose over a synthesized Read: path detail', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        detail: 'Read: /workspace/example-app/package.json',
+        inputJson: JSON.stringify(kiroReadInput),
+      }),
+    ).toBe('Check the project manifest to understand the package definition');
+  });
+
+  it('does not treat a bare path detail as purpose when inputJson has no purpose field', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        detail: '/workspace/example-app/package.json',
+        inputJson: JSON.stringify({ operations: [{ path: '/workspace/example-app/package.json' }] }),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not treat a human detail string as purpose without __tool_use_purpose', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Bash',
+        status: 'completed',
+        kind: 'bash',
+        detail: 'Check git status after rebase',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not treat Codex/Claude command dumps or stdout in detail as purpose', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Shell',
+        status: 'in_progress',
+        kind: 'bash',
+        detail: 'head -n 5 package.json',
+        inputJson: JSON.stringify({ type: 'commandExecution', command: 'head -n 5 package.json' }),
+      }),
+    ).toBeUndefined();
+    expect(
+      toolPurpose({
+        id: '2',
+        title: 'bash',
+        status: 'completed',
+        kind: 'tool',
+        detail: '{"cmd":"ls"}',
+        inputJson: JSON.stringify({ cmd: 'ls' }),
+      }),
+    ).toBeUndefined();
+  });
+
+  it('finds a nested __tool_use_purpose under arguments', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        inputJson: JSON.stringify({
+          arguments: {
+            __tool_use_purpose: 'Inspect workspace root',
+            path: '/workspace/example-app',
+          },
+        }),
+      }),
+    ).toBe('Inspect workspace root');
+  });
+
+  it('reads Pi/Claude top-level __tool_use_purpose from inputJson', () => {
+    expect(
+      toolPurpose({
+        id: '1',
+        title: 'Bash',
+        status: 'completed',
+        kind: 'bash',
+        inputJson: JSON.stringify({
+          __tool_use_purpose: 'Run the frontend unit tests',
+          command: 'npm test -- ToolCallGroup',
+        }),
+      }),
+    ).toBe('Run the frontend unit tests');
+  });
+});
+
+describe('extractToolUsePurpose', () => {
+  it('reads the field from an object, a JSON string, and a truncated JSON string', () => {
+    const obj = { __tool_use_purpose: 'Inspect workspace root', path: '/tmp' };
+    expect(extractToolUsePurpose(obj)).toBe('Inspect workspace root');
+    expect(extractToolUsePurpose(JSON.stringify(obj))).toBe('Inspect workspace root');
+    expect(extractToolUsePurpose('{"__tool_use_purpose":"Inspect workspace root","path":"/tm')).toBe(
+      'Inspect workspace root',
+    );
+  });
+
+  it('returns undefined for commands, paths, and result dumps', () => {
+    expect(extractToolUsePurpose({ command: 'npm test' })).toBeUndefined();
+    expect(extractToolUsePurpose({ file_path: '/tmp/a.ts' })).toBeUndefined();
+    expect(extractToolUsePurpose('{"data":"file contents"}')).toBeUndefined();
+  });
+});
+
+describe('toolRowDetail — Kiro operations', () => {
+  it('pulls the path out of an operations array', () => {
+    expect(
+      toolRowDetail({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        inputJson: JSON.stringify({
+          __tool_use_purpose: 'Check the Config file',
+          operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
+        }),
+      }),
+    ).toBe('/workspace/example-app/package.json');
+  });
+
+  it('uses a path-like detail as the row argument when inputJson is missing', () => {
+    expect(
+      toolRowDetail({
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        detail: '/workspace/example-app/package.json',
+      }),
+    ).toBe('/workspace/example-app/package.json');
   });
 });

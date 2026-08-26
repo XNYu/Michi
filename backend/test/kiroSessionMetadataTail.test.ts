@@ -85,4 +85,42 @@ describe('KiroSession metadata completion tail', () => {
         assert.equal(toolUpdate.output?.includes('[MICHI_METADATA_DONE]'), false);
         assert.equal(toolUpdate.output?.includes('Branch overview updated.'), true);
     });
+
+    it('extracts __tool_use_purpose from object and stringified rawInput', async () => {
+        const purpose = 'Check the project manifest to understand the package definition';
+        const rawInput = {
+            __tool_use_purpose: purpose,
+            operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
+        };
+        const session = new KiroSession('node-4', 'session-4', runtimeWithUpdates([
+            {
+                sessionUpdate: 'tool_call',
+                toolCallId: 'read-1',
+                title: 'Read',
+                kind: 'read',
+                status: 'pending',
+                rawInput,
+            },
+            {
+                sessionUpdate: 'tool_call',
+                toolCallId: 'read-2',
+                title: 'Read',
+                kind: 'read',
+                status: 'pending',
+                rawInput: JSON.stringify(rawInput),
+            },
+            { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
+        ]), '/tmp');
+
+        const events = [];
+        for await (const event of session.send('hello')) events.push(event);
+        const tools = events.filter((event) => event.kind === 'tool_call');
+        assert.equal(tools.length, 2);
+        assert.equal(tools[0]?.kind === 'tool_call' && tools[0].detail, purpose);
+        assert.equal(tools[1]?.kind === 'tool_call' && tools[1].detail, purpose);
+        assert.equal(
+            tools[0]?.kind === 'tool_call' && JSON.parse(tools[0].inputJson ?? '{}').__tool_use_purpose,
+            purpose,
+        );
+    });
 });

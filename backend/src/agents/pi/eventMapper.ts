@@ -1,3 +1,4 @@
+import { extractToolUsePurpose } from "michi-shared";
 import type { NormalizedEvent } from "../../services/chatEvents";
 import type { SpawnedBranch } from "../toolBridge";
 
@@ -77,11 +78,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
 
         case "tool_execution_start": {
             const args = event.args;
-            const purpose = typeof args?.__tool_use_purpose === "string"
-                ? args.__tool_use_purpose
-                : typeof args?.description === "string"
-                    ? args.description
-                    : undefined;
+            const purpose = extractToolUsePurpose(args);
             yield {
                 kind: "tool_call",
                 toolCallId: event.toolCallId,

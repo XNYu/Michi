@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { extractToolUsePurpose } from "michi-shared";
 import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
@@ -315,7 +316,29 @@ export class KiroSession implements AgentSession {
                     })),
                 };
             } else if (kind === "tool_call" || kind === "tool_call_update") {
-                yield toToolEvent(kind, update);
+                const rawInput = update.rawInput;
+                const toolTitle = update.title || "";
+                const purpose = extractToolUsePurpose(rawInput);
+                const inputStr = rawInput != null
+                    ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
+                    : undefined;
+                const rawOutputStr = update.rawOutput != null
+                    ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
+                    : undefined;
+                const outputStr = rawOutputStr
+                    ? stripMetadataCompletionInstruction(rawOutputStr)
+                    : undefined;
+                const MAX_PAYLOAD = 16 * 1024;
+                yield {
+                    kind,
+                    toolCallId: update.toolCallId || "",
+                    title: toolTitle,
+                    status: update.status || "",
+                    kindType: update.kind || undefined,
+                    detail: purpose,
+                    inputJson: inputStr && inputStr.length > MAX_PAYLOAD ? inputStr.slice(0, MAX_PAYLOAD) : inputStr,
+                    output: outputStr && outputStr.length > MAX_PAYLOAD ? outputStr.slice(0, MAX_PAYLOAD) : outputStr,
+                };
             } else if (kind === "__heartbeat__") {
                 yield { kind: "heartbeat", idleMs: update.idleMs || 0 };
             } else if (kind === "spawn_branches") {
