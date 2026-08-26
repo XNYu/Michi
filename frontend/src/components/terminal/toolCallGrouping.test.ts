@@ -240,16 +240,17 @@ describe('findOwningSubagent', () => {
 });
 
 describe('filterSubagentRelayedTools', () => {
-  it('removes non-SubAgent tools (Bash, Glob, Read) when ANY subagent is active', () => {
+  it('removes still-running non-SubAgent tools when ANY subagent is active, but keeps completed ones', () => {
     const subagents = [sub({ agentName: 'Explore' })];
     const tools: ToolCallState[] = [
       subagentTool('t1'),
-      bashTool('t2'),
+      bashTool('t2', 'running'),
       { id: 't3', title: 'Glob *.ts', status: 'completed', kind: 'glob' },
       { id: 't4', title: 'Read package.json', status: 'completed', kind: 'read' },
     ];
     const result = filterSubagentRelayedTools(tools, subagents);
-    expect(result.map((t) => t.id)).toEqual(['t1']);
+    // SubAgent card kept, running bash hidden, completed glob+read kept
+    expect(result.map((t) => t.id)).toEqual(['t1', 't3', 't4']);
   });
 
   it('keeps non-SubAgent tools when subagents is empty', () => {

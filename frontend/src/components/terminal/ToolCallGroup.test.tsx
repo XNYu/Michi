@@ -186,12 +186,13 @@ function subInfo(partial: Partial<SubagentInfo> = {}): SubagentInfo {
 }
 
 describe('ToolCallGroup — relayed-tool filter', () => {
-  it('hides Bash/Glob peers when an owning subagent is active', () => {
+  it('hides running Bash/Glob peers when an owning subagent is active, keeps completed ones', () => {
     const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
     const tools: ToolCallState[] = [
       { id: 't1', title: 'Agent', status: 'in_progress', kind: 'tool', detail },
-      { id: 't2', title: 'Bash ls', status: 'completed', kind: 'bash' },
-      { id: 't3', title: 'Glob **/*.ts', status: 'completed', kind: 'glob' },
+      { id: 't2', title: 'Bash ls', status: 'running', kind: 'bash' },
+      { id: 't3', title: 'Glob **/*.ts', status: 'running', kind: 'glob' },
+      { id: 't4', title: 'Read src/index.ts', status: 'completed', kind: 'read' },
     ];
     const subagents = [subInfo({ agentName: 'Explore', initialQuery: 'Explore Michi' })];
     const { queryByText, getByText } = render(
@@ -199,6 +200,7 @@ describe('ToolCallGroup — relayed-tool filter', () => {
     );
     expect(queryByText('Bash ls')).toBeNull();
     expect(queryByText('Glob **/*.ts')).toBeNull();
+    expect(getByText(/Read src\/index\.ts/)).toBeTruthy();
     expect(getByText(/SubAgent · Explore/)).toBeTruthy();
   });
 

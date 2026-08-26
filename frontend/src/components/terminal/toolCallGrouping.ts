@@ -261,8 +261,12 @@ export function filterSubagentRelayedTools(
   return tools.filter((tool) => {
     // Always keep SubAgent tool-calls; they ARE the card.
     if (subagentToolInfo(tool)) return true;
-    // Drop everything else while a subagent is working. The peer rows
-    // are forwarded subagent activity surfaced via the card's Now: line.
+    // Keep tool-calls that already reached a terminal status — these are
+    // the parent agent's own completed work (build, read, grep, etc.)
+    // done before the subagent was spawned.  Only hide still-running
+    // calls which are relayed subagent activity shown via the card's
+    // Now: line.
+    if (isTerminalStatus(tool.status)) return true;
     return false;
   });
 }
