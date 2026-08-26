@@ -428,6 +428,53 @@ describe('codexEventTranslator', () => {
     );
   });
 
+  test('turn/completed carries the last native Codex token breakdown into usage_summary', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+
+    startTurn();
+    feed('thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: {
+          totalTokens: 50_000,
+          inputTokens: 42_000,
+          cachedInputTokens: 30_000,
+          outputTokens: 8_000,
+          reasoningOutputTokens: 2_000,
+        },
+        last: {
+          totalTokens: 1_534,
+          inputTokens: 1_234,
+          cachedInputTokens: 800,
+          outputTokens: 300,
+          reasoningOutputTokens: 120,
+        },
+        modelContextWindow: 200_000,
+      },
+    });
+    feed('turn/completed', { turn: { status: 'completed' } });
+
+    const summary = emitted.find((event) => event.kind === 'usage_summary');
+    assert.deepEqual(summary && {
+      kind: summary.kind,
+      source: summary.source,
+      contextUsagePercentage: summary.contextUsagePercentage,
+      totalTokens: summary.totalTokens,
+      inputTokens: summary.inputTokens,
+      cachedInputTokens: summary.cachedInputTokens,
+      outputTokens: summary.outputTokens,
+      reasoningOutputTokens: summary.reasoningOutputTokens,
+    }, {
+      kind: 'usage_summary',
+      source: 'native',
+      contextUsagePercentage: 25,
+      totalTokens: 1534,
+      inputTokens: 1234,
+      cachedInputTokens: 800,
+      outputTokens: 300,
+      reasoningOutputTokens: 120,
+    });
+  });
+
   test('thread/tokenUsage/updated with zero modelContextWindow emits nothing', () => {
     const { emitted, feed } = makeTranslator();
 

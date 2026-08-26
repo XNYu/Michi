@@ -41,6 +41,31 @@ function stringField(obj: Record<string, unknown>, key: string): string | undefi
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
+function numberField(obj: Record<string, unknown>, key: string): number | undefined {
+  const value = obj[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+interface CodexTokenUsageSnapshot {
+  totalTokens?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+}
+
+function tokenUsageSnapshot(value: unknown): CodexTokenUsageSnapshot | undefined {
+  if (!isRecord(value)) return undefined;
+  const snapshot: CodexTokenUsageSnapshot = {
+    totalTokens: numberField(value, 'totalTokens'),
+    inputTokens: numberField(value, 'inputTokens'),
+    cachedInputTokens: numberField(value, 'cachedInputTokens'),
+    outputTokens: numberField(value, 'outputTokens'),
+    reasoningOutputTokens: numberField(value, 'reasoningOutputTokens'),
+  };
+  return Object.values(snapshot).some((field) => field !== undefined) ? snapshot : undefined;
+}
+
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value);
@@ -226,6 +251,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
   // context window is cumulative — a turn with no token update should still
   // report the last known fill.
   let lastContextUsagePercentage = 0;
+  let lastTurnTokenUsage: CodexTokenUsageSnapshot | undefined;
   const outputBuffers = new Map<string, string>();
   const toolPresentations = new Map<string, ToolPresentation>();
 
@@ -233,6 +259,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
     turnStartMs = Date.now();
     lastRuntimeError = undefined;
     lastReasoningSummaryPartKey = undefined;
+    lastTurnTokenUsage = undefined;
     outputBuffers.clear();
     toolPresentations.clear();
   }
@@ -373,8 +400,19 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
       // ── Token / context usage ───────────────────────────────────────────────
 
       case N.tokenUsageUpdated: {
-        const total = (p['total'] ?? p) as Record<string, unknown>;
-        const window = p['modelContextWindow'];
+        const tokenUsage = isRecord(p['tokenUsage']) ? p['tokenUsage'] : p;
+        const total = isRecord(tokenUsage['total'])
+          ? tokenUsage['total']
+          : isRecord(p['total'])
+            ? p['total']
+            : tokenUsage;
+        const last = isRecord(tokenUsage['last'])
+          ? tokenUsage['last']
+          : isRecord(p['last'])
+            ? p['last']
+            : undefined;
+        lastTurnTokenUsage = tokenUsageSnapshot(last ?? total);
+        const window = tokenUsage['modelContextWindow'] ?? p['modelContextWindow'];
         const modelContextWindow = typeof window === 'number' ? window : 0;
         if (modelContextWindow > 0) {
           const totalTokens =
@@ -404,6 +442,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           totalCredits: 0,
           turnDurationMs,
           source: 'native',
+          ...lastTurnTokenUsage,
         });
         if (stopReason === 'failed') {
           emit({

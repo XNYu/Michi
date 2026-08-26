@@ -1345,6 +1345,11 @@ export function reduceNodes(
           totalCredits: action.totalCredits,
           turnDurationMs: action.turnDurationMs,
           source: action.source,
+          totalTokens: action.totalTokens,
+          inputTokens: action.inputTokens,
+          cachedInputTokens: action.cachedInputTokens,
+          outputTokens: action.outputTokens,
+          reasoningOutputTokens: action.reasoningOutputTokens,
         },
       } };
     }

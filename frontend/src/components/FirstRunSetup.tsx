@@ -5,6 +5,7 @@ import { useChatStore } from '../state/chatStore';
 import { usePrefs } from '../state/prefs';
 import { saveAgentOptions } from '../services/api';
 import { useAgentModelCatalog } from '../hooks/useAgentModelCatalog';
+import { filterVisibleRuntimes } from '../lib/runtimeVisibility';
 
 /**
  * First-run runtime/model setup — the "Variant A" single confirmation card.
@@ -113,9 +114,9 @@ export default function FirstRunSetup() {
   const open = hydrated && !completed && projects.length === 0 && !!status;
   if (!open || !status) return null;
 
-  const runtimes = status.availableRuntimes ?? [];
+  const runtimes = filterVisibleRuntimes(status.availableRuntimes ?? []);
   const activeLabel =
-    runtimes.find((r) => r.id === status.runtime)?.label ?? status.label ?? status.runtime;
+    runtimes.find((r) => r.id === status.runtime)?.label ?? 'selected runtime';
 
   // Mark onboarding done. If the chosen runtime still needs a key, the reload
   // wakes the (now un-gated) ApiKeyGate, which surfaces the unified key window.

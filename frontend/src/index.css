@@ -1757,12 +1757,15 @@ html[data-vibrancy="on"],
   color: var(--term-muted);
   font-family: var(--ui-font);
   font-size: 11px;
-  padding: 0 6px;
-  height: 18px;
+  padding: 0;
+  width: 24px;
+  height: 20px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  margin-top: 2px;
   border-radius: 2px;
   transition: color var(--t-quick) var(--t-ease),
               border-color var(--t-quick) var(--t-ease);
@@ -1770,6 +1773,45 @@ html[data-vibrancy="on"],
 .t-pre-block-x:hover {
   color: var(--term-danger);
   border-color: var(--term-danger);
+}
+
+.t-pre-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.t-pre-block-steer {
+  height: 20px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--term-fg) 38%, var(--term-line));
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--term-fg) 4%, transparent);
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease),
+              background var(--t-quick) var(--t-ease);
+}
+
+.t-pre-block-steer:hover:not(:disabled) {
+  color: var(--term-accent);
+  border-color: var(--term-accent);
+  background: color-mix(in srgb, var(--term-accent) 8%, transparent);
+}
+
+.t-pre-block-steer:disabled {
+  cursor: wait;
+  opacity: .55;
 }
 
 /* Static in-message variant — QuoteChip / CommentChips reuse the pre-block

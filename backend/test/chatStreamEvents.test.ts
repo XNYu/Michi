@@ -41,6 +41,34 @@ describe('chatStreamEvents route mapping', () => {
       },
       {
         input: {
+          kind: 'usage_summary',
+          contextUsagePercentage: 12.5,
+          totalCredits: 0,
+          turnDurationMs: 9700,
+          source: 'native',
+          totalTokens: 1534,
+          inputTokens: 1234,
+          cachedInputTokens: 800,
+          outputTokens: 300,
+          reasoningOutputTokens: 120,
+        },
+        expected: {
+          event: CHAT_STREAM_EVENTS.usageSummary,
+          data: {
+            contextUsagePercentage: 12.5,
+            totalCredits: 0,
+            turnDurationMs: 9700,
+            source: 'native',
+            totalTokens: 1534,
+            inputTokens: 1234,
+            cachedInputTokens: 800,
+            outputTokens: 300,
+            reasoningOutputTokens: 120,
+          },
+        },
+      },
+      {
+        input: {
           kind: 'permission_request',
           requestId: 9,
           toolCallId: 'tc_1',

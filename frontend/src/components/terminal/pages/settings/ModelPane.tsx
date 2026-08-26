@@ -23,6 +23,7 @@ import {
 import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
 import { API_BASE_URL } from '../../../../config/env';
 import { filterModelCatalog } from './modelCatalogFilter';
+import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 
 export function ModelPane({
   activeProjectId,
@@ -39,7 +40,11 @@ export function ModelPane({
   }, [refreshAgentStatus]);
 
   const caps = agentStatus?.capabilities;
-  const showRuntimePicker = (agentStatus?.availableRuntimes.length ?? 0) > 1;
+  const visibleRuntimes = useMemo(
+    () => filterVisibleRuntimes(agentStatus?.availableRuntimes ?? []),
+    [agentStatus?.availableRuntimes],
+  );
+  const showRuntimePicker = visibleRuntimes.length > 1;
   const showProviderPicker = (agentStatus?.providers?.length ?? 0) > 0;
   const showProviderModels = !!caps?.models;
   const showReasoning = !!caps?.reasoning;
@@ -63,6 +68,7 @@ export function ModelPane({
       {showRuntimePicker && agentStatus && (
         <RuntimePicker
           status={agentStatus}
+          runtimes={visibleRuntimes}
           onChanged={refreshAgentStatus}
         />
       )}
@@ -114,18 +120,23 @@ export function ModelPane({
 
 function RuntimePicker({
   status,
+  runtimes,
   onChanged,
 }: {
   status: AgentStatus;
+  runtimes: AgentStatus['availableRuntimes'];
   onChanged: () => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedRuntime = runtimes.some((runtime) => runtime.id === status.runtime)
+    ? status.runtime
+    : '';
   return (
     <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
       <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>runtime</div>
       <select
-        value={status.runtime}
+        value={selectedRuntime}
         disabled={saving}
         onChange={async (e) => {
           const next = e.target.value;
@@ -146,7 +157,10 @@ function RuntimePicker({
           minWidth: 320,
         }}
       >
-        {status.availableRuntimes.map((r) => (
+        {selectedRuntime === '' && (
+          <option value="" disabled>Select an approved runtime</option>
+        )}
+        {runtimes.map((r) => (
           <option key={r.id} value={r.id} disabled={!r.available}>
             {r.label}{!r.available ? ' (unavailable)' : ''}
           </option>

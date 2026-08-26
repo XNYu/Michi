@@ -224,6 +224,12 @@ function PaneMessageListInner({
                       : {
                           durationMs: node.usageSummary.turnDurationMs,
                           credits: node.usageSummary.totalCredits,
+                          totalTokens: node.usageSummary.totalTokens,
+                          inputTokens: node.usageSummary.inputTokens,
+                          cachedInputTokens: node.usageSummary.cachedInputTokens,
+                          outputTokens: node.usageSummary.outputTokens,
+                          reasoningOutputTokens: node.usageSummary.reasoningOutputTokens,
+                          contextUsagePercentage: node.contextUsagePercentage,
                         }
                     : undefined
                 }

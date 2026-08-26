@@ -8,7 +8,6 @@ interface PaneComposerActionsProps {
   sendMode: PaneComposerSendMode;
   streaming: boolean;
   sendDisabled: boolean;
-  steerNative?: boolean;
   onBranch: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -20,7 +19,6 @@ export function PaneComposerActions({
   sendMode,
   streaming,
   sendDisabled,
-  steerNative = false,
   onBranch,
   onSend,
   onStop,
@@ -79,12 +77,10 @@ export function PaneComposerActions({
         aria-label={
           sendMode === 'stop'
             ? 'Stop stream'
-            : sendMode === 'retry'
+          : sendMode === 'retry'
               ? 'Retry last turn'
               : streaming
-                ? steerNative
-                  ? 'Steer (inject this turn)'
-                  : 'Send next (Enter) — sends after the current response'
+                ? 'Send next (Enter). Sends after the current response'
                 : 'Send (Enter)'
         }
       >
@@ -130,7 +126,7 @@ export function PaneComposerActions({
             ? 'Stop'
             : sendMode === 'retry'
               ? 'Retry'
-              : <>{streaming ? (steerNative ? 'Steer' : 'Send next') : 'Send'} <span className="t-action-kbd-key">{kbd('enter')}</span></>
+              : <>{streaming ? 'Send next' : 'Send'} <span className="t-action-kbd-key">{kbd('enter')}</span></>
           }
         </span>
       </button>

@@ -19,3 +19,9 @@ export const PROFILE_PAGE_ENABLED = readFlag(
   import.meta.env.VITE_MICHI_PROFILE_PAGE,
   false,
 );
+
+/** Restrict runtime choices to the Restricted allowlist. Default off. */
+export const RESTRICTED_RUNTIME_BUILD = readFlag(
+  import.meta.env.VITE_MICHI_RESTRICTED_RUNTIMES,
+  false,
+);

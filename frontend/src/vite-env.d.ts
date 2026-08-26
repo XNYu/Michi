@@ -13,6 +13,8 @@ interface ImportMetaEnv {
   /** When '1' / 'true', mount the design-system Profile page (sidebar
    *  entry, ⌘P shortcut, command-palette command). Default off. */
   readonly VITE_MICHI_PROFILE_PAGE?: string;
+  /** When enabled, only allowlisted runtimes are shown in UI pickers. */
+  readonly VITE_MICHI_RESTRICTED_RUNTIMES?: string;
 }
 
 interface ImportMeta {

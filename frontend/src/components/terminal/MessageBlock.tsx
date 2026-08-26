@@ -72,6 +72,58 @@ function formatMessageTime(ms: number | undefined): string {
   return `${hh}:${mm}`;
 }
 
+export interface TurnUsageInfo {
+  durationMs: number;
+  credits: number;
+  unverifiable?: boolean;
+  totalTokens?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+  contextUsagePercentage?: number;
+}
+
+function formatTokenCount(value: number): string {
+  if (value < 1_000) return Math.round(value).toLocaleString('en-US');
+  if (value < 1_000_000) {
+    const compact = value / 1_000;
+    return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, '')}k`;
+  }
+  const compact = value / 1_000_000;
+  return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, '')}m`;
+}
+
+function usageLabel(usage: TurnUsageInfo): string {
+  const duration = `${(usage.durationMs / 1000).toFixed(1)}s`;
+  if (usage.unverifiable) return `usage unverifiable · ${duration}`;
+  if (usage.totalTokens !== undefined) {
+    const breakdown = usage.inputTokens !== undefined || usage.outputTokens !== undefined
+      ? ` (${formatTokenCount(usage.inputTokens ?? 0)} in / ${formatTokenCount(usage.outputTokens ?? 0)} out)`
+      : '';
+    return `usage ${formatTokenCount(usage.totalTokens)} tokens${breakdown} · ${duration}`;
+  }
+  if (usage.credits > 0) return `usage ${usage.credits.toFixed(2)} credits · ${duration}`;
+  return `usage · ${duration}`;
+}
+
+function usageTitle(usage: TurnUsageInfo): string {
+  const details = [`Duration ${(usage.durationMs / 1000).toFixed(1)} seconds`];
+  if (usage.totalTokens !== undefined) details.push(`${Math.round(usage.totalTokens).toLocaleString('en-US')} total tokens`);
+  if (usage.inputTokens !== undefined) details.push(`${Math.round(usage.inputTokens).toLocaleString('en-US')} input tokens`);
+  if (usage.cachedInputTokens !== undefined && usage.cachedInputTokens > 0) {
+    details.push(`${Math.round(usage.cachedInputTokens).toLocaleString('en-US')} cached input tokens`);
+  }
+  if (usage.outputTokens !== undefined) details.push(`${Math.round(usage.outputTokens).toLocaleString('en-US')} output tokens`);
+  if (usage.reasoningOutputTokens !== undefined && usage.reasoningOutputTokens > 0) {
+    details.push(`${Math.round(usage.reasoningOutputTokens).toLocaleString('en-US')} reasoning tokens`);
+  }
+  if (usage.contextUsagePercentage !== undefined) {
+    details.push(`${usage.contextUsagePercentage.toFixed(1)}% context used`);
+  }
+  return details.join(', ');
+}
+
 function MessageActions({
   visible,
   time,
@@ -87,7 +139,7 @@ function MessageActions({
   onRetry?: () => void;
   onEdit?: () => void;
   onBranch?: () => void;
-  usageInfo?: { durationMs: number; credits: number; unverifiable?: boolean } | null;
+  usageInfo?: TurnUsageInfo | null;
 }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
@@ -179,11 +231,12 @@ function MessageActions({
         )}
       </div>
       {hasUsage && (
-        <span style={{ fontSize: 10, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
-          {(usageInfo.durationMs / 1000).toFixed(1)}s
-          {usageInfo.unverifiable
-            ? ' · unverifiable'
-            : usageInfo.credits > 0 && ` · ${usageInfo.credits.toFixed(2)} credits`}
+        <span
+          data-testid="turn-usage"
+          title={usageTitle(usageInfo)}
+          style={{ fontSize: 10, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}
+        >
+          {usageLabel(usageInfo)}
         </span>
       )}
     </div>
@@ -1397,7 +1450,7 @@ interface MessageBlockProps {
   showThoughts: boolean;
   fontFamily: string;
   density: TerminalDensity;
-  usageInfo?: { durationMs: number; credits: number; unverifiable?: boolean } | null;
+  usageInfo?: TurnUsageInfo | null;
   isErrorTail?: boolean;
   errorMessage?: string;
   /** Error classification from the Kiro runtime: 'connection' | 'auth' |
@@ -1729,7 +1782,15 @@ function usageEqual(
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
-  return a.durationMs === b.durationMs && a.credits === b.credits && a.unverifiable === b.unverifiable;
+  return a.durationMs === b.durationMs
+    && a.credits === b.credits
+    && a.unverifiable === b.unverifiable
+    && a.totalTokens === b.totalTokens
+    && a.inputTokens === b.inputTokens
+    && a.cachedInputTokens === b.cachedInputTokens
+    && a.outputTokens === b.outputTokens
+    && a.reasoningOutputTokens === b.reasoningOutputTokens
+    && a.contextUsagePercentage === b.contextUsagePercentage;
 }
 
 function childAnchorsEqual(

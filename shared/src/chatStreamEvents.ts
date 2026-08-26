@@ -139,6 +139,11 @@ export interface ChatStreamPayloads {
     totalCredits: number;
     turnDurationMs: number;
     source?: string;
+    totalTokens?: number;
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    reasoningOutputTokens?: number;
   };
   cancel_phase: { phase: "requested" | "acknowledged" | "settled" };
   queue_update: { steering: string[]; followUp: string[] };
@@ -367,6 +372,11 @@ const parsers = {
     totalCredits: optionalFiniteNumber(data.totalCredits) ?? 0,
     turnDurationMs: optionalFiniteNumber(data.turnDurationMs) ?? 0,
     source: optionalString(data.source),
+    totalTokens: optionalFiniteNumber(data.totalTokens),
+    inputTokens: optionalFiniteNumber(data.inputTokens),
+    cachedInputTokens: optionalFiniteNumber(data.cachedInputTokens),
+    outputTokens: optionalFiniteNumber(data.outputTokens),
+    reasoningOutputTokens: optionalFiniteNumber(data.reasoningOutputTokens),
   }),
   mcp_server_error: (data) => ({
     serverName: stringOrEmpty(data.serverName),

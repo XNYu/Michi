@@ -4,9 +4,16 @@ import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import { frontendManualChunk } from './viteChunks';
 
+function restrictedRuntimeBuildFlag(): string {
+  return process.env.VITE_MICHI_RESTRICTED_RUNTIMES ?? '0';
+}
+
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   base: './',
+  define: {
+    'import.meta.env.VITE_MICHI_RESTRICTED_RUNTIMES': JSON.stringify(restrictedRuntimeBuildFlag()),
+  },
   resolve: {
     // This is a linked workspace package, not an immutable npm dependency.
     // Resolve its source directly so new exports cannot be hidden behind a

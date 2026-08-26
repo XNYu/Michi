@@ -195,6 +195,11 @@ export interface UsageSummary {
   totalCredits: number;
   turnDurationMs: number;
   source?: string;
+  totalTokens?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
 }
 
 export interface ComposerMention {
@@ -728,7 +733,19 @@ export type ChatAction =
   | { type: 'subagent-list-update'; nodeId: string; subagents: SubagentInfo[] }
   | { type: 'subagent-tool-activity'; nodeId: string; subagentSessionId: string; title: string; status: string }
   | { type: 'context-usage'; nodeId: string; contextUsagePercentage: number }
-  | { type: 'usage-summary'; nodeId: string; contextUsagePercentage: number; totalCredits: number; turnDurationMs: number; source?: string }
+  | {
+      type: 'usage-summary';
+      nodeId: string;
+      contextUsagePercentage: number;
+      totalCredits: number;
+      turnDurationMs: number;
+      source?: string;
+      totalTokens?: number;
+      inputTokens?: number;
+      cachedInputTokens?: number;
+      outputTokens?: number;
+      reasoningOutputTokens?: number;
+    }
   | { type: 'cancel-phase'; nodeId: string; phase: 'requested' | 'acknowledged' | 'settled' }
   | { type: 'compaction'; nodeId: string; active: boolean }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }

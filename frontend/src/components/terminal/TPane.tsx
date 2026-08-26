@@ -17,7 +17,7 @@ import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
-import { saveAgentOptions, checkRuntimeHealth, steerChat } from '../../services/api';
+import { saveAgentOptions, checkRuntimeHealth } from '../../services/api';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
 import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
@@ -383,6 +383,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // immediately between disabled / Send / Send next / Stop. Updating this
   // boolean only on empty↔non-empty transitions avoids per-keystroke renders.
   const [draftHasText, setDraftHasText] = useState(() => draft.value.trim().length > 0);
+  const [steeringQueueId, setSteeringQueueId] = useState<string | null>(null);
   useLayoutEffect(() => {
     // Sync only when the committed store draft changes. An unrelated render
     // can happen before the RAF-coalesced draft commit; copying render-time
@@ -1693,6 +1694,29 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     ? availableModes.find((m) => m.id === n.currentModeId)
     : undefined;
 
+  const steerQueuedEntry = async (queueId: string) => {
+    const entry = (nLatestRef.current?.pendingQueued ?? []).find((queued) => queued.id === queueId);
+    if (!entry || steeringQueueId !== null) return;
+    setSteeringQueueId(queueId);
+    const expandedValue = expandMentions(entry.value, entry.mentions);
+    const finalText = appendAttachmentsSentinel(
+      joinMessageParts(entry.commentBlock ?? null, entry.quotedText ?? null, expandedValue),
+      entry.attachments,
+    );
+    try {
+      const accepted = await steerMessage(nodeId, finalText);
+      if (accepted) {
+        dequeueMessage(nodeId, queueId);
+      } else {
+        toast.error('Steer was not accepted. The message remains queued.');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Steer failed. The message remains queued.');
+    } finally {
+      setSteeringQueueId(null);
+    }
+  };
+
   const onSubmit = async (forceBranch = false) => {
     if (observing) return;
     const submitDraft = latestDraftRef.current;
@@ -1755,13 +1779,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       !slashBranched &&
       (text || attachmentsForSend.length > 0 || pending.length > 0)
     ) {
-      if (shouldSteerInsteadOfQueue(agentStatus?.capabilityDescriptor) && text) {
-        const baseFinal = joinMessageParts(commentBlock, queuedQuote, text);
-        const finalText = appendAttachmentsSentinel(baseFinal, attachmentsForSend);
-        if (pending.length > 0) clearPendingComments(nodeId);
-        const accepted = await steerMessage(nodeId, finalText);
-        if (accepted) return;
-      }
       queueMessage(nodeId, {
         id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         value: submitDraft.value,           // literal text (chip labels intact)
@@ -2088,6 +2105,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               quoteMaxLines={prefs.quoteMaxLines}
               quotedText={quotedText}
               pendingAttachments={pendingAttachments}
+              canSteerQueued={streaming && shouldSteerInsteadOfQueue(agentStatus?.capabilityDescriptor)}
+              steeringQueueId={steeringQueueId}
+              onSteerQueued={(queueId) => { void steerQueuedEntry(queueId); }}
               onRestoreQueued={(queueId) => {
                 // Restore the entry to the composer so the user can edit or
                 // branch it. Order: read entry, splice from queue, populate draft.
@@ -2160,7 +2180,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             sendMode={sendMode}
             streaming={streaming}
             sendDisabled={sendDisabled}
-            steerNative={shouldSteerInsteadOfQueue(agentStatus?.capabilityDescriptor)}
             onBranch={() => void onSubmit(true)}
             onSend={() => void onSubmit()}
             onStop={() => cancelStream(nodeId)}

@@ -32,7 +32,18 @@ export type NormalizedEvent =
     | { kind: "subagent_list_update"; subagents: SubagentInfo[] }
     | { kind: "subagent_tool_activity"; subagentSessionId: string; title: string; status: string }
     | { kind: "context_usage"; contextUsagePercentage: number }
-    | { kind: "usage_summary"; contextUsagePercentage: number; totalCredits: number; turnDurationMs: number; source?: string }
+    | {
+          kind: "usage_summary";
+          contextUsagePercentage: number;
+          totalCredits: number;
+          turnDurationMs: number;
+          source?: string;
+          totalTokens?: number;
+          inputTokens?: number;
+          cachedInputTokens?: number;
+          outputTokens?: number;
+          reasoningOutputTokens?: number;
+      }
     | { kind: "cancel_phase"; phase: "requested" | "acknowledged" | "settled" }
     | { kind: "queue_update"; steering: string[]; followUp: string[] }
     | { kind: "steer_accepted"; text: string; pending?: boolean }

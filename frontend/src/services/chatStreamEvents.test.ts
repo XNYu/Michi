@@ -92,7 +92,17 @@ const sampleEvents: ChatStreamEvent[] = [
   { event: CHAT_STREAM_EVENTS.contextUsage, data: { contextUsagePercentage: 33 } },
   {
     event: CHAT_STREAM_EVENTS.usageSummary,
-    data: { contextUsagePercentage: 44, totalCredits: 12, turnDurationMs: 3456 },
+    data: {
+      contextUsagePercentage: 44,
+      totalCredits: 12,
+      turnDurationMs: 3456,
+      source: 'native',
+      totalTokens: 1534,
+      inputTokens: 1234,
+      cachedInputTokens: 800,
+      outputTokens: 300,
+      reasoningOutputTokens: 120,
+    },
   },
   {
     event: CHAT_STREAM_EVENTS.mcpServerError,

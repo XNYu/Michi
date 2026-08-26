@@ -107,6 +107,11 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
                     totalCredits: ev.totalCredits,
                     turnDurationMs: ev.turnDurationMs,
                     ...(ev.source ? { source: ev.source } : {}),
+                    ...(ev.totalTokens !== undefined ? { totalTokens: ev.totalTokens } : {}),
+                    ...(ev.inputTokens !== undefined ? { inputTokens: ev.inputTokens } : {}),
+                    ...(ev.cachedInputTokens !== undefined ? { cachedInputTokens: ev.cachedInputTokens } : {}),
+                    ...(ev.outputTokens !== undefined ? { outputTokens: ev.outputTokens } : {}),
+                    ...(ev.reasoningOutputTokens !== undefined ? { reasoningOutputTokens: ev.reasoningOutputTokens } : {}),
                 },
             };
         case "cancel_phase":

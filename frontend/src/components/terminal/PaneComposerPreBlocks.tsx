@@ -16,6 +16,9 @@ interface PaneComposerPreBlocksProps {
   quoteMaxLines: number;
   quotedText: string | null;
   pendingAttachments: readonly PanePendingAttachment[];
+  canSteerQueued: boolean;
+  steeringQueueId: string | null;
+  onSteerQueued: (queueId: string) => void;
   onRestoreQueued: (queueId: string) => void;
   onEditPendingComment: (commentId: string, body: string) => void;
   onRemovePendingComment: (commentId: string) => void;
@@ -49,26 +52,24 @@ export function PaneComposerPreBlocks({
   quoteMaxLines,
   quotedText,
   pendingAttachments,
+  canSteerQueued,
+  steeringQueueId,
+  onSteerQueued,
   onRestoreQueued,
   onEditPendingComment,
   onRemovePendingComment,
   onDismissQuote,
   onRemovePendingAttachment,
 }: PaneComposerPreBlocksProps) {
-  let workspaceId: string | undefined;
-  try {
-    const { activeProject } = useChatProjects();
-    workspaceId = activeProject?.id;
-  } catch {
-    // No ChatProvider (test environment) — thumbnails degrade to pills
-  }
+  const { activeProject } = useChatProjects();
+  const workspaceId = activeProject?.id;
   return (
     <>
       {(node.pendingQueued ?? []).map((q, i) => {
         const isErrored = !!node.queueErrored;
         const tone = isErrored ? 'tone-danger' : 'tone-select';
         const captionSuffix = i === 0
-          ? (isErrored ? ' · paused — review and send manually' : ' · sends when stream ends')
+          ? (isErrored ? ' · paused, review and send manually' : ' · sends when stream ends')
           : '';
         return (
           <div key={q.id} className={`t-pre-block ${tone}`}>
@@ -80,14 +81,26 @@ export function PaneComposerPreBlocks({
                 {q.value.replace(/\s+/g, ' ').trim()}
               </div>
             </div>
-            <button
-              type="button"
-              aria-label="Dequeue message"
-              className="t-pre-block-x"
-              onClick={() => onRestoreQueued(q.id)}
-            >
-              ×
-            </button>
+            <div className="t-pre-block-actions">
+              {canSteerQueued && !isErrored && (
+                <button
+                  type="button"
+                  className="t-pre-block-steer"
+                  disabled={steeringQueueId !== null}
+                  onClick={() => onSteerQueued(q.id)}
+                >
+                  {steeringQueueId === q.id ? 'Steering…' : 'Steer now'}
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label="Dequeue message"
+                className="t-pre-block-x"
+                onClick={() => onRestoreQueued(q.id)}
+              >
+                ×
+              </button>
+            </div>
           </div>
         );
       })}

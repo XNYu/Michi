@@ -23,7 +23,12 @@ const noop = () => {};
 
 function renderMessage(
   overrides: Partial<ChatMessage>,
-  extraProps?: { isErrorTail?: boolean; onRetry?: () => void; errorMessage?: string },
+  extraProps?: {
+    isErrorTail?: boolean;
+    onRetry?: () => void;
+    errorMessage?: string;
+    usageInfo?: React.ComponentProps<typeof MessageBlock>['usageInfo'];
+  },
 ) {
   return render(
     <MessageBlock
@@ -39,7 +44,7 @@ function renderMessage(
       showThoughts={false}
       fontFamily={'inherit'}
       density={'comfortable'}
-      usageInfo={undefined}
+      usageInfo={extraProps?.usageInfo}
       isErrorTail={extraProps?.isErrorTail}
       errorMessage={extraProps?.errorMessage}
     />,
@@ -57,6 +62,30 @@ describe('MessageBlock — role styling', () => {
     // The outer "$ you" sibling that the baseline bubble used is gone.
     const outerSibling = block.parentElement?.previousElementSibling as HTMLElement | null;
     expect(outerSibling?.textContent ?? '').not.toMatch(/^\$ you/);
+  });
+});
+
+describe('MessageBlock — turn usage', () => {
+  it('shows native Codex token usage beside the completed assistant turn', () => {
+    const { getByTestId } = renderMessage(
+      { role: 'assistant', text: 'done', streaming: false },
+      {
+        usageInfo: {
+          durationMs: 9_700,
+          credits: 0,
+          totalTokens: 1_534,
+          inputTokens: 1_234,
+          cachedInputTokens: 800,
+          outputTokens: 300,
+          reasoningOutputTokens: 120,
+          contextUsagePercentage: 12.5,
+        },
+      },
+    );
+    const usage = getByTestId('turn-usage');
+    expect(usage.textContent).toBe('usage 1.5k tokens (1.2k in / 300 out) · 9.7s');
+    expect(usage.getAttribute('title')).toContain('800 cached input tokens');
+    expect(usage.getAttribute('title')).toContain('12.5% context used');
   });
 });
 

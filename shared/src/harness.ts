@@ -80,7 +80,7 @@ export function permissionSourceLabel(source?: string): string {
 }
 
 export function usageIsUnverifiable(
-  source: EventConfidence | EventSource | undefined,
+  source: EventConfidence | EventSource | string | undefined,
   credits: number | undefined,
 ): boolean {
   if (source === 'unverifiable' || source === 'unknown') return true;
