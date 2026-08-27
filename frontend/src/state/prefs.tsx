@@ -2,6 +2,9 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { PALETTES } from '../components/terminal/tokens';
 import { fetchPrefs, savePrefs } from '../services/api';
 import type { VibrancyMaterial } from '../lib/electronBridge';
+import { SIDEBAR_ROW_STYLES, type SidebarRowStyle } from '../components/terminal/sidebarRowStyle';
+
+export type { SidebarRowStyle };
 
 export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
@@ -91,8 +94,15 @@ export interface Prefs {
   sidebarDensity: SidebarDensity;
   /** Horizontal gutter (px) between the sidebar's content and its left/right
    *  edges. Added on top of each row's own padding via the `--sb-inset` CSS
-   *  var (0 = current flush look). */
+   *  var (0 = current flush look). Honoured by `sidebarRowStyle: 'classic'`
+   *  only — the three card modes pin their own inset so switching between
+   *  them is a controlled comparison of the corners alone. */
   sidebarInset: number;
+  /** Shape of the sidebar's thread/branch rows. `classic` is the historical
+   *  full-bleed row with a left accent bar; the other three are the "direction
+   *  B" card treatment (state lives on the container, not the text) and differ
+   *  only in corner radius + fill width. See sidebarRowStyle.ts. */
+  sidebarRowStyle: SidebarRowStyle;
   /** When true, show the relative "last active" timestamp (e.g. "3h", "2d")
    *  on each thread row in the sidebar. Default off to keep rows uncluttered. */
   showSidebarTimestamps: boolean;
@@ -182,6 +192,7 @@ export const DEFAULT_PREFS: Prefs = {
   terminalSidebarWidth: 280,
   sidebarDensity: 'comfortable',
   sidebarInset: 2,
+  sidebarRowStyle: 'classic',
   showSidebarTimestamps: false,
   sidebarTranslucency: 60,
   glassBlur: 10,
@@ -306,6 +317,9 @@ function readInitial(): Prefs {
     }
     if (typeof merged.sidebarInset !== 'number' || merged.sidebarInset < 0 || merged.sidebarInset > 24) {
       merged.sidebarInset = DEFAULT_PREFS.sidebarInset;
+    }
+    if (!SIDEBAR_ROW_STYLES.includes(merged.sidebarRowStyle)) {
+      merged.sidebarRowStyle = DEFAULT_PREFS.sidebarRowStyle;
     }
     if (typeof merged.showSidebarTimestamps !== 'boolean') {
       merged.showSidebarTimestamps = DEFAULT_PREFS.showSidebarTimestamps;

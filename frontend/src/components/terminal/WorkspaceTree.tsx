@@ -17,6 +17,7 @@ import { buildTreeContextMenu } from '../../lib/treeContextMenu';
 import { buildTree, descendants, findTreeIdForNode, type TreeNode } from '../../state/tree';
 import { Row } from './primitives';
 import { Chevron } from './ThreadRow';
+import { rowGeom, spinePadding } from './sidebarRowStyle';
 import type { Project, ChatNodeState } from '../../state/chatTypes';
 
 const MERGED_PREVIEW_LIMIT = 5;
@@ -893,23 +894,30 @@ export default function WorkspaceTree({
  *  Style matches ActivityView's time-label: uppercase, 11px, faint color,
  *  aligned to WorkspaceRow folder-icon left edge (6 + inset from sidebar). */
 function SectionLabel({ label }: { label: string }) {
+  const { prefs } = usePrefs();
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   return (
     <div
       data-testid={`section-label-${label.toLowerCase()}`}
       style={{
         display: 'flex',
         alignItems: 'center',
-        fontSize: 11,
+        // Card modes: the workspace row is itself a sentence-case group header,
+        // so this outer section stays UPPERCASE and a notch smaller to keep the
+        // two tiers apart instead of reading as two labels of the same rank.
+        fontSize: geom.isCard ? 10.5 : 11,
         fontWeight: 600,
-        letterSpacing: '0.03em',
+        letterSpacing: geom.isCard ? '0.06em' : '0.03em',
         textTransform: 'uppercase',
         color: 'var(--term-faint)',
-        // Match ActivityView time-label exactly: same padding, same left
-        // offset (6px inside container inset → aligns with folder icon edge).
-        padding: 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
-        // Match ActivityView exactly: 8px marginTop on all labels so that
-        // "Projects" and "Today" sit at the same vertical position.
-        marginTop: 8,
+        // Classic: match ActivityView's time-label exactly — same padding, same
+        // left offset (6px inside the container inset → aligns with the folder
+        // icon edge), same 8px marginTop so "Projects" and "Today" sit at the
+        // same vertical position when the user toggles sidebarView.
+        padding: geom.isCard
+          ? `0 ${spinePadding(geom, geom.rightGap)} 5px ${spinePadding(geom, geom.titleX)}`
+          : 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
+        marginTop: geom.isCard ? 18 : 8,
         fontFamily: 'var(--ui-font)',
       }}
     >

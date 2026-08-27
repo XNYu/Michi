@@ -2,6 +2,10 @@ import { usePrefs, TerminalPalette, CodeBlockStyle, AgentBlockStyle } from '../.
 import { Row as ClickableRow } from '../../primitives';
 import { resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
+import {
+  SIDEBAR_ROW_STYLES,
+  SIDEBAR_ROW_STYLE_LABELS,
+} from '../../sidebarRowStyle';
 
 const CODE_BLOCK_OPTIONS: Array<{ value: CodeBlockStyle; label: string; desc: string }> = [
   {
@@ -181,6 +185,30 @@ export function AppearancePane() {
           depth + native Sidebar material) are intentionally hidden — the defaults
           in prefs.tsx are the tuned look. The prefs + effects still drive the
           glass; re-add these Rows to expose them again. */}
+
+      <Row k="theme.sidebarRowStyle" label="Sidebar row style">
+        <Radio
+          opts={[...SIDEBAR_ROW_STYLES]}
+          value={prefs.sidebarRowStyle}
+          onChange={(v) => setPref('sidebarRowStyle', v as any)}
+        />
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            lineHeight: 1.6,
+            color: 'var(--term-faint)',
+            fontFamily: 'var(--ui-font)',
+          }}
+        >
+          {SIDEBAR_ROW_STYLE_LABELS[prefs.sidebarRowStyle]}
+          <br />
+          The three card modes share one text spine (20 / 36 / 52) and differ
+          only in corner radius and fill width, so switching between them is a
+          clean comparison of the corners. They pin their own edge padding —
+          the slider below applies to <code>classic</code> only.
+        </div>
+      </Row>
 
       <Row k="theme.sidebarDensity" label="Sidebar density">
         <Radio

@@ -3,7 +3,8 @@ import { Row } from './primitives';
 import { usePrefs } from '../../state/prefs';
 import WorkspaceIcon, { modeForPalette } from './WorkspaceIcon';
 import { workspaceAccent } from './workspaceAccent';
-import ThreadRow, { Chevron } from './ThreadRow';
+import ThreadRow, { Chevron, CARD_FILL } from './ThreadRow';
+import { rowGeom, spinePadding, branchBlockGap, type RowGeom } from './sidebarRowStyle';
 import BranchRow from './BranchRow';
 import ContextMenu, { type MenuSection } from '../ContextMenu';
 import { buildTree } from '../../state/tree';
@@ -139,6 +140,7 @@ export default function WorkspaceRow({
   onRenameEnd,
 }: Props) {
   const { prefs } = usePrefs();
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const accent = workspaceAccent(project.id);
   // When chat view is hidden (Map/Digest/etc.), surface a subtle marker on the
   // active workspace row so the user knows which workspace context they're in.
@@ -348,22 +350,69 @@ export default function WorkspaceRow({
           //   glyph lands at x[6,21] — centered between the sidebar edge and
           //   the text.
           gap: 6,
-          // +--sb-inset on both sides indents the folder glyph + name; the row
-          // box stays full-bleed (negative margin cancels the tree container
-          // inset) so the isActiveWorkspaceAway borderLeft hugs the true edge.
-          padding: 'var(--sb-row-py, 5px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(4px + var(--sb-inset, 0px))',
+          // Classic: +--sb-inset on both sides indents the folder glyph + name;
+          // the row box stays full-bleed (negative margin cancels the tree
+          // container inset) so the isActiveWorkspaceAway borderLeft hugs the
+          // true edge.
+          //
+          // Card modes turn this row into a quiet GROUP HEADER — same shape as
+          // Activity's Today/Yesterday label — so a workspace no longer looks
+          // like a peer of the threads beneath it. It stays a real button
+          // (onClick / onContextMenu / draggable are untouched); only the paint
+          // changes. Identity moves to the gutter chip below.
+          ...(geom.workspaceAsHeader
+            ? {
+                // Vertical padding must be SYMMETRIC. It used to be `0` top /
+                // `6px` bottom, which sat the text flush against the top of the
+                // row box — and since the accent rail spans that box
+                // top-to-bottom, the name read as riding high inside its own
+                // rail. marginTop drops by the 3px now spent on paddingTop, so
+                // the space above the name is still 17px; the space below
+                // tightens from 6 to 3, which binds the header to the threads
+                // it heads.
+                padding: `3px ${spinePadding(geom, geom.rightGap)} 3px ${spinePadding(geom, geom.titleX)}`,
+                marginTop: 14,
+                // Same size as the thread titles it heads — at 11.5px it read as
+                // a different tier of thing entirely. Weight + faint colour and
+                // the accent rail are what keep it distinct from a thread.
+                fontSize: 'var(--sb-fs, 13.5px)',
+                fontWeight: 600,
+                color: 'var(--term-faint)',
+                // Translucent so it tints the sidebar glass instead of covering it.
+                background: menu ? CARD_FILL : undefined,
+              }
+            : {
+                padding: 'var(--sb-row-py, 5px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(4px + var(--sb-inset, 0px))',
+                background: menu ? 'var(--term-alt)' : undefined,
+                borderLeft: isActiveWorkspaceAway
+                  ? `2px solid ${accent}`
+                  : '2px solid transparent',
+              }),
           fontFamily: 'var(--ui-font)',
-          background: menu ? 'var(--term-alt)' : undefined,
-          borderLeft: isActiveWorkspaceAway
-            ? `2px solid ${accent}`
-            : '2px solid transparent',
         }}
       >
-        <WorkspaceIcon
-          project={project}
-          mode={modeForPalette(prefs.terminalPalette)}
-          active={project.id === activeProjectId}
-        />
+        {/* Card modes: accent rail running the full height of the HEADER row
+            (not the whole workspace block) — a short chip beside the name read
+            as an unrelated dot. Absolute so it costs no layout and the name
+            stays on the shared text spine. */}
+        {geom.workspaceAsHeader && (
+          <span
+            aria-hidden
+            className="sb-ws-rail"
+            style={{
+              background: accent,
+              opacity: project.id === activeProjectId ? 1 : 0.4,
+              borderRadius: 'var(--sb-radius, 0px)',
+            }}
+          />
+        )}
+        {!geom.workspaceAsHeader && (
+          <WorkspaceIcon
+            project={project}
+            mode={modeForPalette(prefs.terminalPalette)}
+            active={project.id === activeProjectId}
+          />
+        )}
         {renaming ? (
           <input
             ref={renameRef}
@@ -406,9 +455,14 @@ export default function WorkspaceRow({
             >
               <span
                 style={{
-                  fontSize: 'var(--sb-fs, 13.5px)',
-                  fontWeight: wsUnread ? 900 : 450,
-                  color: 'var(--term-fg)',
+                  // Card modes inherit the header's quiet 11.5px faint; unread
+                  // still bumps the weight, same idea as classic (600 → 900
+                  // rather than 450 → 900, since the header rests heavier).
+                  fontSize: geom.workspaceAsHeader ? 'inherit' : 'var(--sb-fs, 13.5px)',
+                  fontWeight: geom.workspaceAsHeader
+                    ? (wsUnread ? 900 : 600)
+                    : (wsUnread ? 900 : 450),
+                  color: geom.workspaceAsHeader ? 'inherit' : 'var(--term-fg)',
                   fontFamily: 'var(--ui-font)',
                   overflow: 'hidden',
                   whiteSpace: 'nowrap',
@@ -542,7 +596,7 @@ export default function WorkspaceRow({
               style={{
                 fontSize: 11.5,
                 color: 'var(--term-muted)',
-                padding: '4px 8px',
+                padding: geom.isCard ? `4px ${spinePadding(geom, geom.titleX)}` : '4px 8px',
               }}
             >
               — no threads —
@@ -568,6 +622,7 @@ export default function WorkspaceRow({
               renamingNodeId,
               onRenameNode,
               onRenameEnd,
+              geom,
             }),
           )}
           {!forceExpand && unpinnedTrees.length > threadVisibleLimit && (
@@ -581,7 +636,12 @@ export default function WorkspaceRow({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 4,
-                padding: '5px 8px 5px 25px',
+                // `.sb-flush` rides the container inset (no negative margin), so
+                // spinePadding lands it on the same spine as the thread titles
+                // it pages in.
+                padding: geom.isCard
+                  ? `5px ${spinePadding(geom, geom.rightGap)} 5px ${spinePadding(geom, geom.titleX)}`
+                  : '5px 8px 5px 25px',
                 background: 'transparent',
                 border: 0,
                 textAlign: 'left',
@@ -624,8 +684,10 @@ function renderThread(args: {
   renamingNodeId?: string | null;
   onRenameNode?: (nodeId: string, title: string) => void;
   onRenameEnd?: () => void;
+  geom: RowGeom;
 }) {
   const {
+    geom,
     tree,
     project,
     activeProjectId,
@@ -694,7 +756,7 @@ function renderThread(args: {
         moveTargets={moveTargets}
       />
       {threadOpen && hasBranches && (
-        <div style={{ marginTop: 1 }}>
+        <div style={{ marginTop: branchBlockGap(geom) }}>
           {root.children.map((child) => (
             <BranchRow
               key={child.nodeId}

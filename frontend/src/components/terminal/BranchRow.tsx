@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useChatNode, useChatProjects } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
-import { Chevron } from './ThreadRow';
+import { Chevron, CARD_FILL, CARD_FILL_SELECT } from './ThreadRow';
+import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
 import type { TreeNode } from '../../state/tree';
 import { isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
 import { relativeTime } from '../../lib/relativeTime';
@@ -72,6 +73,7 @@ export default function BranchRow({
   const menuOpen = !!isMenuTarget?.(node.nodeId);
   const { focusedNodeId } = useChatProjects();
   const unread = !!n && isNodeUnread(n, focusedNodeId);
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
 
   const renaming = renamingNodeId === node.nodeId;
   const [draftName, setDraftName] = useState('');
@@ -145,36 +147,55 @@ export default function BranchRow({
           alignItems: 'center',
           gap: 6,
           paddingTop: 'var(--sb-row-py, 4px)',
-          // +--sb-inset on both sides indents the text while the full-bleed row
-          // box (negative margin cancels the container inset) keeps the borderLeft
-          // indicator + streaming bar flush to the sidebar edge. See index.css.
-          paddingRight: 'calc(10px + var(--sb-inset, 0px))',
+          // Classic: +--sb-inset on both sides indents the text while the
+          // full-bleed row box (negative margin cancels the container inset)
+          // keeps the borderLeft indicator + streaming bar flush to the sidebar
+          // edge. See index.css.
+          //
+          // Card modes reuse rowPadding with a per-depth indent, which means the
+          // row BOX is identical to a thread row's — only the text steps in. A
+          // selected branch therefore fills the full row width instead of
+          // showing an inset notch.
+          paddingRight: geom.isCard
+            ? rowPadding(geom).paddingRight
+            : 'calc(10px + var(--sb-inset, 0px))',
           paddingBottom: 'var(--sb-row-py, 4px)',
-          paddingLeft: `calc(${8 + depth * 10}px + var(--sb-inset, 0px))`,
+          paddingLeft: geom.isCard
+            ? rowPadding(geom, depth * geom.indentStep).paddingLeft
+            : `calc(${8 + depth * 10}px + var(--sb-inset, 0px))`,
+          // Translucent in card modes so a selected branch keeps the sidebar's
+          // glass — see CARD_FILL in ThreadRow.
           background: selected
-            ? 'var(--term-select-f)'
-            : focused ? 'var(--term-alt)'
-            : menuOpen ? 'var(--term-alt)'
-            : undefined,
-          borderLeft: selected
-            ? '2px solid var(--term-select)'
-            : focused ? '2px solid var(--term-accent)'
-            : '2px solid transparent',
+            ? (geom.isCard ? CARD_FILL_SELECT : 'var(--term-select-f)')
+            : (focused || menuOpen)
+              ? (geom.isCard ? CARD_FILL : 'var(--term-alt)')
+              : undefined,
+          ...(geom.isCard
+            ? { borderRadius: 'var(--sb-radius, 0px)' }
+            : {
+                borderLeft: selected
+                  ? '2px solid var(--term-select)'
+                  : focused ? '2px solid var(--term-accent)'
+                  : '2px solid transparent',
+              }),
+          // Same weight/color ladder as classic — one flat weight read too black.
           color: focused || selected || menuOpen ? 'var(--term-fg)' : 'var(--term-mid)',
           fontWeight: unread ? 900 : (focused || selected ? 600 : 450),
           fontSize: 'var(--sb-fs, 13.5px)',
           fontFamily: 'var(--ui-font)',
         }}
       >
-        <Chevron
-          expanded={expanded}
-          visible={hasChildren}
-          onClick={(e) => {
-            if (!hasChildren) return;
-            e.stopPropagation();
-            onToggle(node.nodeId);
-          }}
-        />
+        {geom.chevronLeading && (
+          <Chevron
+            expanded={expanded}
+            visible={hasChildren}
+            onClick={(e) => {
+              if (!hasChildren) return;
+              e.stopPropagation();
+              onToggle(node.nodeId);
+            }}
+          />
+        )}
         {renaming ? (
           <input
             ref={renameRef}
@@ -203,13 +224,38 @@ export default function BranchRow({
           <span
             style={{
               flex: 1,
+              // Card modes only: lets the title shrink past its content so the
+              // trailing marks/caret can't push the row wider. Classic is left
+              // exactly as it was.
+              ...(geom.isCard ? { minWidth: 0 } : {}),
               overflow: 'hidden',
               whiteSpace: 'nowrap',
-              maskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
-              WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 14px), transparent)',
+              maskImage: `linear-gradient(to right, black calc(100% - ${geom.isCard ? 26 : 14}px), transparent)`,
+              WebkitMaskImage: `linear-gradient(to right, black calc(100% - ${geom.isCard ? 26 : 14}px), transparent)`,
             }}
           >
             {title}
+          </span>
+        )}
+        {geom.isCard && hasChildren && (
+          <span
+            aria-hidden
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(node.nodeId);
+            }}
+            style={{
+              flexShrink: 0,
+              width: 9,
+              // Keeps clear of the hover-revealed ⋯ — see caretKebabClearance.
+              marginRight: caretKebabClearance(geom),
+              textAlign: 'center',
+              fontSize: 10,
+              color: 'var(--term-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            {expanded ? '⌄' : '›'}
           </span>
         )}
         {prefs.showSidebarTimestamps && nodeUpdatedAt > 0 && (
@@ -232,17 +278,20 @@ export default function BranchRow({
             aria-hidden
             style={{
               position: 'absolute',
-              right: 2,
+              // Right edge in every mode — see ThreadRow.
+              right: geom.isCard ? 3 : 2,
               top: 5,
               bottom: 5,
               width: 2,
               borderRadius: 1,
-              // Brand accent for both states; the streaming pulse + glow (below)
-              // distinguish "live" from a static idle-open pane. `color` is set so
-              // the glow's currentColor matches the bar instead of inheriting the
-              // row's neutral text color.
+              // Classic paints both states accent and leans on pulse + glow to
+              // tell them apart; card modes give idle a neutral rail so accent
+              // always means something is actually running.
               color: 'var(--term-accent)',
-              background: 'var(--term-accent)',
+              background:
+                openState === 'streaming'
+                  ? 'var(--term-accent)'
+                  : (geom.isCard ? 'var(--term-line-s)' : 'var(--term-accent)'),
               boxShadow:
                 openState === 'streaming'
                   ? '0 0 6px 0 currentColor'

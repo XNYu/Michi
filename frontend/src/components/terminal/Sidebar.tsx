@@ -6,6 +6,7 @@ import WorkspaceTree from './WorkspaceTree';
 import ActivityView from './ActivityView';
 import TreeSelectionBar from './TreeSelectionBar';
 import ResizeHandle from '../ResizeHandle';
+import { rowGeom, rowPadding, type RowGeom } from './sidebarRowStyle';
 import {
   HomeIcon,
   WorkspacesIcon,
@@ -97,6 +98,7 @@ export default function TerminalSidebar({
   const collapsed = !narrowMode && prefs.sidebarCollapsed;
 
   const d = SIDEBAR_DENSITY[prefs.sidebarDensity];
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const densityVars = {
     '--sb-fs': `${d.fs}px`,
     '--sb-row-py': `${d.rowPy}px`,
@@ -106,13 +108,22 @@ export default function TerminalSidebar({
     // Horizontal gutter between sidebar content and its edges. Applied as
     // padding on the scrollable tree + bottom nav (below), so it stacks on
     // top of each row's own left/right padding. 0 = flush (original look).
-    '--sb-inset': `${prefs.sidebarInset}px`,
+    // Comes from `geom` so the card modes can pin their own value.
+    '--sb-inset': `${geom.inset}px`,
+    // How far each row's box is pulled back OUT past that gutter. `classic`
+    // cancels it entirely (full-bleed, so its left accent bar hugs the true
+    // edge); the card modes keep rows inside the gutter. index.css's
+    // `.terminal-sidebar .t-row-hover` negative margin reads this, NOT
+    // --sb-inset — that's what makes one rule serve both looks.
+    '--sb-bleed': `${geom.bleed}px`,
+    '--sb-radius': `${geom.radius}px`,
   } as React.CSSProperties;
 
   const aside = (
     <aside
       ref={asideRef}
       className="terminal-sidebar"
+      data-row-style={geom.style}
       aria-hidden={collapsed || undefined}
       style={{
         ...densityVars,
@@ -167,7 +178,7 @@ export default function TerminalSidebar({
           chatViewActive={activePage === 'dashboard'}
         />
       )}
-      <BottomNav activePage={activePage} onNav={onNav} />
+      <BottomNav activePage={activePage} onNav={onNav} geom={geom} />
       {!collapsed && !overlayMode && (
         <ResizeHandle
           paneRef={asideRef}
@@ -215,9 +226,11 @@ export default function TerminalSidebar({
 function BottomNav({
   activePage,
   onNav,
+  geom,
 }: {
   activePage: PageId;
   onNav: (p: PageId) => void;
+  geom: RowGeom;
 }) {
   const Item = ({
     id,
@@ -244,14 +257,19 @@ function BottomNav({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 11,
-          // Text/icons indent by --sb-inset; the row box stays full-bleed (its
-          // negative margin cancels the BottomNav container padding) so the
-          // active background still reads as a full-width highlight. See index.css.
-          padding: 'var(--sb-nav-py, 6px) calc(12px + var(--sb-inset, 0px))',
+          gap: geom.isCard ? 9 : 11,
+          // Classic: text/icons indent by --sb-inset while the row box stays
+          // full-bleed (its negative margin cancels the container padding), so
+          // the active background reads as a full-width highlight. See index.css.
+          // Card modes: geometry comes from rowGeom so the glyph lands on the
+          // same icon column the thread rows use.
+          padding: geom.isCard
+            ? `var(--sb-nav-py, 6px) ${rowPadding(geom).paddingRight} var(--sb-nav-py, 6px) ${rowPadding(geom).paddingLeft}`
+            : 'var(--sb-nav-py, 6px) calc(12px + var(--sb-inset, 0px))',
           color: active ? 'var(--term-fg)' : 'var(--term-mid)',
           background: active ? 'var(--term-alt)' : 'transparent',
-          fontSize: 14,
+          fontSize: geom.isCard ? 'var(--sb-fs, 13.5px)' : 14,
+          fontWeight: geom.isCard ? 500 : undefined,
           fontFamily: 'var(--ui-font)',
         }}
       >

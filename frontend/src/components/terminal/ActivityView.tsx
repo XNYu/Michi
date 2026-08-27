@@ -7,6 +7,7 @@ import ThreadRow from './ThreadRow';
 import BranchRow from './BranchRow';
 import ContextMenu from '../ContextMenu';
 import { buildTreeContextMenu } from '../../lib/treeContextMenu';
+import { rowGeom, spinePadding, branchBlockGap } from './sidebarRowStyle';
 import {
   isThreadExpanded,
   isBranchExpanded as isBranchExpandedFn,
@@ -135,6 +136,7 @@ export default function ActivityView({
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
   const nodes = useChatNodesSnapshot();
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
 
   const [menu, setMenu] = useState<
     { x: number; y: number; targetId: string; project: Project } | null
@@ -374,13 +376,17 @@ export default function ActivityView({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                fontSize: 11,
+                fontSize: geom.isCard ? 'var(--sb-ts-fs, 11.5px)' : 11,
                 fontWeight: 600,
-                letterSpacing: '0.03em',
-                textTransform: 'uppercase',
+                letterSpacing: geom.isCard ? '0.01em' : '0.03em',
+                textTransform: geom.isCard ? 'none' : 'uppercase',
                 color: 'var(--term-faint)',
-                padding: 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
-                marginTop: 8,
+                // Card modes drop the label onto the same text spine as the
+                // thread titles below it, sentence-case at one shared size.
+                padding: geom.isCard
+                  ? `0 ${spinePadding(geom, geom.rightGap)} 6px ${spinePadding(geom, geom.titleX)}`
+                  : 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
+                marginTop: geom.isCard ? 17 : 8,
               }}
             >
               {bucket === 'now' && (
@@ -518,6 +524,8 @@ function ActivityTreeEntry({
   onRenameNode: (nodeId: string, title: string) => void;
   onRenameEnd: () => void;
 }) {
+  const { prefs } = usePrefs();
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const { tree, project } = item;
   const root = buildTree(tree.rootNodeId, project.edges, isAlive);
   const hasBranches = root.children.length > 0;
@@ -562,8 +570,12 @@ function ActivityTreeEntry({
           },
         }}
         moveTargets={moveTargets}
+        subtitle={project.name}
       />
-      {/* Workspace name — shown below root, before branches */}
+      {/* Workspace name. Card modes render it INSIDE the row (see ThreadRow's
+          `subtitle`) so the focus fill covers both lines; classic keeps it as a
+          sibling below. */}
+      {!geom.subtitleInRow && (
       <div
         style={{
           fontSize: 11,
@@ -583,9 +595,18 @@ function ActivityTreeEntry({
       >
         {project.name}
       </div>
+      )}
       {/* Branches — same as Structure view */}
       {threadOpen && hasBranches && (
-        <div style={{ marginTop: 1 }}>
+        <div
+          style={{
+            // No horizontal offset — branch rows keep the full row width and
+            // carry the indent in their own padding, so a selected branch fills
+            // edge to edge. And no vertical gap in card modes, or a selected
+            // thread + selected first branch show a slot between them.
+            marginTop: branchBlockGap(geom),
+          }}
+        >
           {root.children.map((child) => (
             <BranchRow
               key={child.nodeId}

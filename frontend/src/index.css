@@ -851,10 +851,74 @@ body {
    padding (ThreadRow / BranchRow / WorkspaceRow / merge rows / BottomNav), so
    the text stays indented while the box stays full-bleed. Net: bars flush,
    text indented. Elements with .sb-flush opt out and simply ride the container
-   inset (e.g. mark-all-read / show-more toggles that have no edge indicator). */
+   inset (e.g. mark-all-read / show-more toggles that have no edge indicator).
+
+   The pull-out amount is --sb-bleed, NOT --sb-inset. `sidebarRowStyle: classic`
+   sets bleed == inset (the historical full-bleed behaviour above); the card
+   modes set bleed = 0 so rows stay inside the gutter and their fill reads as a
+   contained block. One rule, both looks — see sidebarRowStyle.ts. */
 .terminal-sidebar .t-row-hover:not(.sb-flush) {
-  margin-left: calc(-1 * var(--sb-inset, 0px));
-  margin-right: calc(-1 * var(--sb-inset, 0px));
+  margin-left: calc(-1 * var(--sb-bleed, var(--sb-inset, 0px)));
+  margin-right: calc(-1 * var(--sb-bleed, var(--sb-inset, 0px)));
+  border-radius: var(--sb-radius, 0px);
+}
+
+/* ── Card-mode row fills ───────────────────────────────────────────────────
+   A selected row must TINT whatever is behind the sidebar, not cover it.
+
+   The first attempt used `--term-alt` at 62% and still read as opaque, because
+   painting a light colour over a translucent surface is additive: the sidebar
+   is already a thin tint (under macOS vibrancy it's `--term-vibrancy-tint` over
+   the *native* window material, with CSS backdrop-filter switched off), so a
+   second light layer on top only pushes the composite toward solid. The row
+   ends up more opaque than its neighbours — exactly the "loses its frost" look.
+
+   Instead these are low-alpha overlays of the FOREGROUND colour. They darken
+   (or, on dark palettes where --term-fg is near-white, lighten) whatever shows
+   through, so the frost survives at any translucency and on both the native
+   material and the CSS-glass path. Kept as vars so the components can stay
+   declarative and vibrancy can dial them down further below. */
+:root {
+  --sb-card-hover: color-mix(in srgb, var(--term-fg) 6%, transparent);
+  --sb-card-fill: color-mix(in srgb, var(--term-fg) 11%, transparent);
+  --sb-card-fill-select: color-mix(in srgb, var(--term-select) 22%, transparent);
+}
+/* Native vibrancy: the material is doing all the work and the web layer above
+   it is very thin, so the same alphas read heavier here. Ease off. */
+html[data-vibrancy='on'] {
+  --sb-card-hover: color-mix(in srgb, var(--term-fg) 4%, transparent);
+  --sb-card-fill: color-mix(in srgb, var(--term-fg) 8%, transparent);
+  --sb-card-fill-select: color-mix(in srgb, var(--term-select) 16%, transparent);
+}
+
+/* The generic row hover lives in shared CSS that classic also uses, so it's
+   overridden per-mode here rather than edited in place. */
+.terminal-sidebar[data-row-style]:not([data-row-style='classic']) .t-row-hover:not(.is-active):hover {
+  background: var(--sb-card-hover) !important;
+}
+/* Card modes drop the kebab's fade-to-solid strip entirely. Its job was to mask
+   title text running under the ⋯ button, but the title already fades out over
+   its last 28px, so the gradient only added a darkening wedge at the right edge
+   on hover — the row should just not change there.
+
+   The right padding also shrinks from 10 to 6 so the caret + ⋯ cluster at the
+   row end stays compact. That number feeds `KEBAB_FOOTPRINT` in
+   sidebarRowStyle.ts, which sizes the caret's clearance — keep them in sync. */
+.terminal-sidebar[data-row-style]:not([data-row-style='classic']) .row-kebab {
+  background: none !important;
+  padding-right: 6px !important;
+}
+
+/* Card modes: the accent rail marking a workspace in Structure view. Spans the
+   full height of the HEADER row, so it reads as a title-bar marker rather than
+   a stray dot next to the name. */
+.sb-ws-rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  pointer-events: none;
 }
 
 /* Respect users who ask the OS to reduce transparency: fall back to the solid
