@@ -20,6 +20,7 @@ import { setupFilesRoutes } from './routes/files';
 import { setupArtifactRoutes } from './routes/artifacts';
 import { closeAllArtifactWatchers } from './services/artifactWatcher';
 import { setupDiffRoutes } from './routes/diff';
+import { setupBackendConnectionRoutes } from './routes/backendConnections';
 import { ChatManager } from './services/chatManager';
 import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
 import { requireAdmin } from './routes/middleware/admin';
@@ -42,6 +43,14 @@ import { configureRuntimeDeps } from './agents/runtimeDeps';
 import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns, updateNodeResumeBinding, upsertAgentContextMetadata } from './services/dbRepository';
 import { ensureDurableGraphNode, rollbackProvisionalSpawnNode } from './services/graphCommands';
 import { getMichiDataDir } from './services/dataDir';
+import {
+  createRemoteAccessMiddleware,
+  remoteAccessEnabled,
+  remoteServerId,
+  resolveListenHost,
+  validateRemoteAccessConfiguration,
+} from './services/remoteAccess';
+import { sshTunnelManager } from './services/sshTunnelManager';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
 import { FileRuntimeModelCache } from './agents/runtimeModelCache';
 import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
@@ -83,6 +92,7 @@ function resolveDefaultCwd(): string {
 }
 
 const defaultCwd = resolveDefaultCwd();
+validateRemoteAccessConfiguration();
 
 function shouldBootWarm(cwd: string): boolean {
   // Finder-launched packaged apps often inherit "/" as cwd. Warming the
@@ -322,7 +332,7 @@ if (REQUIRE_AUTH) {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }));
 
   // Better-Auth handler must be mounted BEFORE express.json() — its
@@ -397,12 +407,16 @@ if (REQUIRE_AUTH) {
   app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }));
   log.info('auth', 'MICHI_REQUIRE_AUTH not set — auth middleware disabled');
 }
 
 app.use(express.json({ limit: '50mb' }));
+
+// A server explicitly launched for remote control is protected by a shared
+// bearer token. Desktop/dev remain unchanged unless MICHI_REMOTE_ACCESS=1.
+app.use('/api', createRemoteAccessMiddleware());
 
 if (REQUIRE_AUTH) {
   // requireSession — every /api/* path that is NOT /api/health or
@@ -461,7 +475,12 @@ app.use((req, res, next) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'healthy' });
+  res.status(200).json({
+    status: 'healthy',
+    service: 'michi-backend',
+    connectionProtocol: 1,
+    serverId: remoteServerId(),
+  });
 });
 
 // Auth-config probe — frontend hits this on boot to decide whether to
@@ -499,6 +518,12 @@ mountMcp(mcpRouter, mcpRegistry);
 app.use('/api', mcpRouter);
 
 app.use('/api', setupAgentRoutes());
+// Connection credentials belong to the local desktop gateway. A remotely
+// exposed execution backend never needs to manage or replay another server's
+// saved token, so keep this surface unavailable in remote mode.
+if (!remoteAccessEnabled()) {
+  app.use('/api', setupBackendConnectionRoutes());
+}
 if (REQUIRE_AUTH) {
   // BYOK provider key routes — only mounted in cloud mode. Local dev /
   // Electron continue to use the disk-based shared provider key store
@@ -536,9 +561,10 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   res.status(500).json({ error: 'Something broke!' });
 });
 
-startupMark('express_listen_start', { port: Number(port) });
-const server = app.listen(port, () => {
-  log.info('boot', 'listening', { port: Number(port) });
+const listenHost = resolveListenHost();
+startupMark('express_listen_start', { port: Number(port), host: listenHost });
+const server = app.listen(Number(port), listenHost, () => {
+  log.info('boot', 'listening', { port: Number(port), host: listenHost });
   startupMark('express_listen_ready', { port: Number(port) });
   printEnvInfo(Number(port));
 
@@ -567,6 +593,7 @@ const gracefulShutdown = async (): Promise<void> => {
   // keep POSTing to /api/mcp/:slotId on the old port and the next backend
   // instance 404s them ("unknown mcp slot").
   await Promise.allSettled(listRuntimes().map((runtime) => runtime.shutdown()));
+  sshTunnelManager.shutdown();
   closeAllArtifactWatchers();
   closeDb();
   closeAuditDb();

@@ -762,7 +762,12 @@ async function startBackend(): Promise<number | null> {
     PORT: String(port),
     MICHI_LOG_DIR: LOG_DIR,
     MICHI_LAUNCH_CWD: LAUNCH_CWD,
+    // The child bundled with the desktop app is always the loopback gateway.
+    // Ignore remote-server flags inherited from a shell or ~/.michi/.env.
+    MICHI_REMOTE_ACCESS: '0',
+    MICHI_BIND_HOST: '127.0.0.1',
   };
+  delete env.MICHI_REMOTE_TOKEN;
   if (startupTraceEnabled()) {
     env.MICHI_STARTUP_TRACE = '1';
     env.MICHI_STARTUP_RUN_ID = startupRunId();

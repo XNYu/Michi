@@ -13,6 +13,7 @@ import {
 } from "../agents/builtinTools";
 import type { BridgeContextResult } from "../agents/toolBridge";
 import { log } from "./logger";
+import { isLoopbackAddress } from "./remoteAccess";
 
 function paramToZod(spec: ParamSpec): z.ZodTypeAny {
     if (spec === "string") return z.string();
@@ -525,13 +526,6 @@ export function validateCodexStopHookForSlot(
     return slot.onValidateFollowUps();
 }
 
-function isLoopbackAddress(address: string | undefined): boolean {
-    if (!address) return false;
-    return address === "127.0.0.1"
-        || address === "::1"
-        || address === "::ffff:127.0.0.1";
-}
-
 /**
  * Mount the MCP HTTP endpoint under /mcp/:slotId on the provided Express router.
  *
@@ -576,6 +570,14 @@ export function mountMcp(
 
     const handlePost = async (req: Request<{ slotId: string }>, res: Response) => {
         const slotId = req.params.slotId;
+        if (!isLoopbackAddress(req.socket.remoteAddress)) {
+            log.warn("mcp", "mcp slot rejected non-loopback request", {
+                slotId,
+                remoteAddress: req.socket.remoteAddress,
+            });
+            res.status(403).json({ error: "internal mcp is loopback-only" });
+            return;
+        }
         const slot = registry.get(slotId);
         if (!slot) {
             // Almost always an orphaned child from a previous backend instance
