@@ -399,14 +399,18 @@ export function TermThoughtBlock({
     }
   };
 
-  // "thought for 12s" when a duration is known, bare "thoughts" otherwise.
-  // Suffix: embedded tool-call count, or Codex reasoning step count.
+  // Pure reasoning → "thought for 12s". Any tool activity → "worked for".
+  // Duration is the live cluster timer (thinking + tools) when this block
+  // streamed, or the tool-span for hydrated turns.
+  const hasTools = (toolCount ?? 0) > 0;
   const dur = liveElapsed ?? durationMs;
   const codexStepCount = runtimeId === 'codex'
     ? text.split('\n').filter((s) => s.trim().length > 0).length
     : 0;
-  const base = dur != null ? `thought for ${formatDurationMs(dur)}` : 'thoughts';
-  const suffix = toolCount && toolCount > 0
+  const base = dur != null
+    ? `${hasTools ? 'worked' : 'thought'} for ${formatDurationMs(dur)}`
+    : (hasTools ? 'worked' : 'thoughts');
+  const suffix = hasTools
     ? ` · ${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`
     : codexStepCount > 0
       ? ` · ${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
@@ -475,7 +479,9 @@ export function TermThoughtBlock({
   // ── 1b · card chrome: hairline square-corner card, spinner/sparkle header,
   //    hairline-divided serif body. ──
   if (variant === 'card') {
-    const cardBase = dur != null ? `Thought for ${formatDurationMs(dur)}` : 'Thoughts';
+    const cardBase = dur != null
+      ? `${hasTools ? 'Worked' : 'Thought'} for ${formatDurationMs(dur)}`
+      : (hasTools ? 'Worked' : 'Thoughts');
     const cardSuffix = toolCount && toolCount > 0
       ? `· ${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`
       : codexStepCount > 0
@@ -563,7 +569,7 @@ export function TermThoughtBlock({
               {mode === 'expanded' ? '▾' : '▸'}
             </span>
             <span style={{ fontSize: 9, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
-              thinking
+              {hasTools ? 'working' : 'thinking'}
             </span>
             <span aria-hidden style={{ flex: 1, borderTop: '1px dotted var(--term-line)', transform: 'translateY(1px)' }} />
             {rightMeta && (
@@ -890,11 +896,20 @@ function ThinkingRunViewInner({ blocks, tools, streaming, subagents, runtimeId }
   const text = useMemo(() => thinkingRunRawText(blocks), [blocks]);
   const groups = useMemo(() => thinkingToolGroups(blocks, toolsById), [blocks, toolsById]);
   const toolCount = useMemo(() => groups.reduce((n, g) => n + g.length, 0), [groups]);
+  const toolsActive = tools.some((t) => isRunningStatus(t.status));
   // Hydrated turns have no live thinking timer; the run's tool-call span is
-  // the best available duration approximation.
+  // the best available duration approximation. Keep the block live while
+  // tools still run so the timer covers thinking + tool work, not thought only.
   const spanMs = useMemo(() => toolSpanMs(tools), [tools]);
   return (
-    <TermThoughtBlock text={text} streaming={streaming} toolCount={toolCount} runtimeId={runtimeId} durationMs={spanMs}>
+    <TermThoughtBlock
+      text={text}
+      streaming={streaming || toolsActive}
+      phase={streaming ? 'thinking' : toolsActive ? 'working' : 'done'}
+      toolCount={toolCount}
+      runtimeId={runtimeId}
+      durationMs={spanMs}
+    >
       {groups.length > 0
         ? groups.map((group) => (
             <ToolCallGroup

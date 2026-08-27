@@ -219,7 +219,9 @@ function SpecimenPanel({ palette, label }: { palette: TerminalPalette; label: st
       <div className="terminal-message terminal-message-assistant" data-density="dense">
         <SectionLabel first>streaming · thinking</SectionLabel>
         <TermThoughtBlock text={THOUGHT_TEXT} streaming />
-        <SectionLabel>done · collapsed</SectionLabel>
+        <SectionLabel>done · thought only</SectionLabel>
+        <TermThoughtBlock text={THOUGHT_TEXT} durationMs={7_000} />
+        <SectionLabel>done · thought + tools</SectionLabel>
         <TermThoughtBlock text={THOUGHT_TEXT} toolCount={3} durationMs={12_000} />
         <SectionLabel>merged agent block · thinking + tools interleaved</SectionLabel>
         <TermThoughtBlock

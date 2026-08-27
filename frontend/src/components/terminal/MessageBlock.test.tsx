@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react';
-import { MessageBlock, userTextToMarkdown } from './MessageBlock';
+import { MessageBlock, TermThoughtBlock, userTextToMarkdown } from './MessageBlock';
 import { AgentBlockStyleOverride } from '../../state/prefs';
 import type { ChatMessage } from '../../state/chatTypes';
 
@@ -345,8 +345,61 @@ describe('MessageBlock — thought activity sync', () => {
 
     const { getByText, queryByText } = renderCardMessage(m);
 
-    expect(getByText(/^Thoughts$/)).not.toBeNull();
+    expect(getByText(/^Worked$/)).not.toBeNull();
     expect(queryByText('Working…')).toBeNull();
+  });
+
+  it('keeps Thought for when a duration is known but there were no tools', () => {
+    const { getByText, queryByText } = render(
+      <AgentBlockStyleOverride.Provider value="card">
+        <TermThoughtBlock text="Just reasoning" durationMs={7_000} />
+      </AgentBlockStyleOverride.Provider>,
+    );
+    expect(getByText('Thought for 7.0s')).not.toBeNull();
+    expect(queryByText(/Worked/)).toBeNull();
+  });
+
+  it('labels a completed thought-only block as Thoughts when duration is unknown', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: '',
+      streaming: false,
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Just reasoning', streaming: false },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText(/^Thoughts$/)).not.toBeNull();
+    expect(queryByText(/Worked/)).toBeNull();
+  });
+
+  it('labels a completed thought+tools block as Worked for the tool span', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: '',
+      streaming: false,
+      toolCalls: [{
+        id: 't1',
+        title: 'bash',
+        status: 'completed',
+        startedAt: 1_000,
+        endedAt: 8_000,
+      }],
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Assessing options', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 17 },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText('Worked for 7.0s')).not.toBeNull();
+    expect(getByText(/1 tool call/)).not.toBeNull();
+    expect(queryByText(/Thought for/)).toBeNull();
   });
 });
 
