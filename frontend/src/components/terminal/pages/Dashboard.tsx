@@ -245,7 +245,7 @@ export default function TerminalDashboard() {
     for (const [fileIndex, file] of files.entries()) {
       const path = electron?.getPathForFile?.(file) ?? null;
       try {
-        if (path) {
+        if (path && !activeProject?.backendConnectionId) {
           absPaths.push(path);
           continue;
         }

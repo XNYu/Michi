@@ -18,6 +18,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRef, useState } from 'react';
 import type { ChatNodeState, Project } from './chatTypes';
+import type { BackendConnectionSummary } from '../config/backendConnections';
 
 const apiMocks = vi.hoisted(() => ({
   fetchPersistenceCapabilities: vi.fn(),
@@ -26,6 +27,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchWorkspaces: vi.fn(),
   fetchWorkspace: vi.fn(),
   applyWorkspaceCommands: vi.fn(async () => {}),
+  listBackendConnections: vi.fn(async (): Promise<BackendConnectionSummary[]> => []),
 }));
 
 vi.mock('../services/api', () => ({
@@ -35,6 +37,7 @@ vi.mock('../services/api', () => ({
   fetchWorkspaces: apiMocks.fetchWorkspaces,
   fetchWorkspace: apiMocks.fetchWorkspace,
   applyWorkspaceCommands: apiMocks.applyWorkspaceCommands,
+  listBackendConnections: apiMocks.listBackendConnections,
 }));
 
 import { useWorkspacePersistence } from './workspacePersistence';
@@ -81,7 +84,7 @@ function useHarness() {
     projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
   });
-  return { hydrated, projectsCount: projects.length };
+  return { hydrated, projects, projectsCount: projects.length };
 }
 
 describe('cold-start hydration barrier', () => {
@@ -92,6 +95,7 @@ describe('cold-start hydration barrier', () => {
     apiMocks.fetchAllWorkspacesMeta.mockReset();
     apiMocks.fetchTreeMessages.mockResolvedValue([]);
     apiMocks.fetchWorkspaces.mockResolvedValue([]);
+    apiMocks.listBackendConnections.mockReset().mockResolvedValue([]);
     Object.defineProperty(window, 'requestIdleCallback', { configurable: true, value: undefined });
   });
 
@@ -127,6 +131,74 @@ describe('cold-start hydration barrier', () => {
     // Recovery: hydration completes with the DB's real contents, not empty.
     expect(result.current.hydrated).toBe(true);
     expect(result.current.projectsCount).toBe(1);
+  });
+
+  it('hydrates local and remote workspaces together without changing their backend ownership', async () => {
+    const remoteWorkspace = {
+      ...backendWorkspaceRow,
+      workspace: { id: 'ws-remote', name: 'Remote', created_at: 2 },
+      nodes: [{ id: 'n-remote', created_at: 2 }],
+    };
+    apiMocks.listBackendConnections.mockResolvedValue([{
+      id: 'remote-1', name: 'Build', transport: 'direct', apiUrl: 'https://build.example.com/api', hasToken: true, createdAt: 1, updatedAt: 1,
+    }]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
+      connectionId === 'remote-1' ? [remoteWorkspace] : [backendWorkspaceRow]
+    ));
+
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.projects).toHaveLength(2);
+    expect(result.current.projects.find((project) => project.id === 'ws-1')?.backendConnectionId).toBeUndefined();
+    expect(result.current.projects.find((project) => project.id === 'ws-remote')?.backendConnectionId).toBe('remote-1');
+  });
+
+  it('keeps local workspaces available when a saved remote backend is offline', async () => {
+    apiMocks.listBackendConnections.mockResolvedValue([{
+      id: 'remote-offline', name: 'Offline', transport: 'direct', apiUrl: 'https://offline.example.com/api', hasToken: true, createdAt: 1, updatedAt: 1,
+    }]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => {
+      if (connectionId === 'remote-offline') throw new Error('ECONNREFUSED');
+      return [backendWorkspaceRow];
+    });
+
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1']);
+  });
+
+  it('hydrates an initially-offline remote backend after it reconnects without reloading the app', async () => {
+    const remoteWorkspace = {
+      ...backendWorkspaceRow,
+      workspace: { id: 'ws-remote-late', name: 'Remote recovered', created_at: 3 },
+      nodes: [{ id: 'n-remote-late', created_at: 3 }],
+    };
+    apiMocks.listBackendConnections.mockResolvedValue([{
+      id: 'remote-late', name: 'Late remote', transport: 'direct', apiUrl: 'https://late.example.com/api', hasToken: true, createdAt: 1, updatedAt: 1,
+    }]);
+    let remoteAttempts = 0;
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => {
+      if (connectionId !== 'remote-late') return [backendWorkspaceRow];
+      remoteAttempts += 1;
+      if (remoteAttempts === 1) throw new Error('ECONNREFUSED');
+      return [remoteWorkspace];
+    });
+
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1']);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+    expect(remoteAttempts).toBeGreaterThanOrEqual(2);
+    expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', 'ws-remote-late']);
+    expect(result.current.projects.find((project) => project.id === 'ws-remote-late')?.backendConnectionId).toBe('remote-late');
   });
 
   it('still finalizes an empty DB when the backend answers with []', async () => {

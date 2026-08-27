@@ -18,7 +18,7 @@ import { ComposerShell } from '../ComposerShell';
 import { PaneComposerToolbarLeft, type PaneMenuAnchor } from '../PaneComposerToolbarLeft';
 import { PaneAgentMenus } from '../PaneAgentMenus';
 import { PaneComposerActions } from '../PaneComposerActions';
-import { API_BASE_URL } from '../../../config/env';
+import { workspaceBackendApiBase } from '../../../config/backendConnections';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 
 type ComposerDraft = { value: string; mentions: MentionRecord[] };
@@ -66,7 +66,7 @@ interface Props {
 function pendingThumbSrc(p: PendingAttachment, workspaceId?: string): string | null {
   if (workspaceId && p.relPath) {
     const encoded = p.relPath.split('/').map(encodeURIComponent).join('/');
-    return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
   }
   if (workspaceId && p.absPath) {
     const marker = '/.attachments/';
@@ -74,7 +74,7 @@ function pendingThumbSrc(p: PendingAttachment, workspaceId?: string): string | n
     if (idx !== -1) {
       const rel = '.attachments/' + p.absPath.slice(idx + marker.length);
       const encoded = rel.split('/').map(encodeURIComponent).join('/');
-      return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
     }
   }
   return null;
@@ -207,7 +207,7 @@ export default function ManageComposer({
 
   const onPickFile = useCallback(async () => {
     const electron = getElectron();
-    if (electron?.chooseFiles) {
+    if (electron?.chooseFiles && !project?.backendConnectionId) {
       const res = await electron.chooseFiles();
       if (res.canceled || !res.paths) return;
       addPendingPaths(res.paths);
@@ -288,7 +288,7 @@ export default function ManageComposer({
       for (const [fileIndex, file] of items.entries()) {
         const path = electron?.getPathForFile?.(file) ?? null;
         try {
-          if (path) {
+        if (path && !project?.backendConnectionId) {
             pendingItems.push(path);
             continue;
           }
@@ -374,7 +374,7 @@ export default function ManageComposer({
       for (const [fileIndex, file] of files.entries()) {
         const path = electron?.getPathForFile?.(file) ?? null;
         try {
-          if (path) {
+        if (path && !project?.backendConnectionId) {
             absPaths.push(path);
             continue;
           }

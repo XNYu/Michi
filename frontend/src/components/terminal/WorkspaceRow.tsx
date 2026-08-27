@@ -22,6 +22,7 @@ import {
   treeHasUnread,
   type OpenState,
 } from '../../state/sidebarSelectors';
+import { getKnownBackendConnections } from '../../config/backendConnections';
 
 const THREAD_PREVIEW_LIMIT_FALLBACK = 5;
 const THREAD_PAGE_SIZE = 10;
@@ -471,6 +472,23 @@ export default function WorkspaceRow({
               >
                 {project.name}
               </span>
+              {project.backendConnectionId && (
+                <span
+                  title={`Remote backend: ${getKnownBackendConnections().find((connection) => connection.id === project.backendConnectionId)?.name ?? project.backendConnectionId}`}
+                  style={{
+                    fontSize: 8.5,
+                    color: 'var(--term-accent)',
+                    fontFamily: 'var(--ui-font)',
+                    flexShrink: 0,
+                    padding: '0 4px',
+                    border: '1px solid color-mix(in srgb, var(--term-accent) 45%, var(--term-line))',
+                    lineHeight: '13px',
+                    letterSpacing: '.04em',
+                  }}
+                >
+                  REMOTE
+                </span>
+              )}
               {(project.folders?.length ?? 0) > 1 && (
                 <span
                   title={`${project.folders!.length} folders`}

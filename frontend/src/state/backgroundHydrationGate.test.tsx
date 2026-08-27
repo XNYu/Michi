@@ -13,6 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   allocateNodeIds: vi.fn(async () => ['node-created']),
   ensureSession: vi.fn(),
   streamMessage: vi.fn(() => () => {}),
+  listBackendConnections: vi.fn(async () => []),
 }));
 
 vi.mock('../services/api', () => ({
@@ -52,6 +53,7 @@ vi.mock('../services/api', () => ({
   skipUserInput: vi.fn(async () => ({ ok: true })),
   ensureSession: apiMocks.ensureSession,
   streamMessage: apiMocks.streamMessage,
+  listBackendConnections: apiMocks.listBackendConnections,
 }));
 
 import { ChatProvider, useChatActions, useChatNodesSnapshot, useChatStore } from './chatStore';

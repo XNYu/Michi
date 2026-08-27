@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { MessageAttachment } from '../../state/chatTypes';
 import { useChatProjects } from '../../state/chatStore';
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 import { Lightbox } from './Lightbox';
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
@@ -17,7 +17,7 @@ function isImageAttachment(a: MessageAttachment): boolean {
 function imageUrl(a: MessageAttachment, workspaceId: string | undefined): string | null {
   if (workspaceId && a.relPath) {
     const encodedPath = a.relPath.split('/').map(encodeURIComponent).join('/');
-    return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encodedPath}`;
+    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encodedPath}`;
   }
   // Fallback: derive relPath from absPath if it contains .attachments/
   if (workspaceId && a.absPath) {
@@ -26,7 +26,7 @@ function imageUrl(a: MessageAttachment, workspaceId: string | undefined): string
     if (idx !== -1) {
       const rel = '.attachments/' + a.absPath.slice(idx + marker.length);
       const encodedPath = rel.split('/').map(encodeURIComponent).join('/');
-      return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encodedPath}`;
+      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encodedPath}`;
     }
   }
   return null;

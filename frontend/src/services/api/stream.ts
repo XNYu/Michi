@@ -5,7 +5,7 @@ import {
 } from '../chatStreamEvents';
 import type { StreamHandlers } from '../chatStreamEvents';
 import { startupMark } from '../startupTrace';
-import { API_BASE_URL } from '../../config/env';
+import { backendApiBase, nodeBackendApiBase } from '../../config/backendConnections';
 import { SseHttpError, readSseStream } from './sseParser';
 
 let cachedStreamProbeEnabled: boolean | null = null;
@@ -167,7 +167,7 @@ export function streamMessage(
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
       const startedAt = Date.now();
       startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });
-      const res = await fetch(`${API_BASE_URL}/chats/${nodeId}/message`, {
+      const res = await fetch(`${nodeBackendApiBase(nodeId)}/chats/${nodeId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -264,7 +264,7 @@ export async function steerChat(
   text: string,
   ownerToken?: string,
 ): Promise<{ accepted: boolean; pending?: boolean; reason?: string }> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/steer`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/steer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -281,7 +281,7 @@ export async function steerChat(
 }
 
 export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string): Promise<void> {
-  await fetch(`${API_BASE_URL}/chats/${chatId}/cancel`, {
+  await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -328,7 +328,7 @@ export function subscribeChat(
       const query = new URLSearchParams();
       query.set('fromSeq', String(from.seq ?? 0));
       if (from.turnId) query.set('fromTurnId', from.turnId);
-      const res = await fetch(`${API_BASE_URL}/chats/${chatId}/stream?${query.toString()}`, {
+      const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/stream?${query.toString()}`, {
         signal: controller.signal,
       });
       if (!res.ok) throw new SseHttpError(res.status);
@@ -400,6 +400,7 @@ function observerDisconnectFor(error: Error): BackgroundDisconnect {
 export function subscribeBackground(
   handlersForChat: (chatId: string, nodeId?: string) => StreamHandlers,
   opts: SubscribeBackgroundOptions = {},
+  connectionId?: string,
 ): () => void {
   const controller = new AbortController();
   let stopped = false;
@@ -417,7 +418,7 @@ export function subscribeBackground(
   (async () => {
     let disconnect: BackgroundDisconnect = { retryable: true };
     try {
-      const res = await fetch(`${API_BASE_URL}/chats/background/subscribe`, {
+      const res = await fetch(`${backendApiBase(connectionId)}/chats/background/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cursors: opts.cursors ?? {} }),

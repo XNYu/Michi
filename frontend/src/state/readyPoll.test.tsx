@@ -35,6 +35,7 @@ vi.mock('../services/api', () => ({
   deleteWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   fetchPrefs: vi.fn().mockResolvedValue(null),
   savePrefs: vi.fn().mockResolvedValue(undefined),
+  listBackendConnections: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../services/notifications', () => ({ notify: vi.fn() }));

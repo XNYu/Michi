@@ -1,4 +1,9 @@
-import { API_BASE_URL } from '../../config/env';
+import {
+  activeBackendApiBase,
+  backendApiBase,
+  nodeBackendApiBase,
+  workspaceBackendApiBase,
+} from '../../config/backendConnections';
 import { startupMark } from '../startupTrace';
 import type { RuntimeId, AgentReasoning } from './agentRuntime';
 
@@ -11,7 +16,7 @@ export interface ModelInfo {
 
 export async function listModels(): Promise<{ models: ModelInfo[]; defaultModel: string | null }> {
   try {
-    const res = await fetch(`${API_BASE_URL}/models`);
+    const res = await fetch(`${activeBackendApiBase()}/models`);
     if (!res.ok) throw new Error(`status ${res.status}`);
     const body = await res.json();
     return { models: body.models || [], defaultModel: body.default_model ?? null };
@@ -27,7 +32,7 @@ export interface SessionMode {
 }
 
 export async function listAgentModes(): Promise<SessionMode[]> {
-  const res = await fetch(`${API_BASE_URL}/modes`);
+  const res = await fetch(`${activeBackendApiBase()}/modes`);
   if (!res.ok) throw new Error(`listAgentModes failed: ${res.status}`);
   const body = await res.json();
   return Array.isArray(body.availableModes) ? body.availableModes : [];
@@ -47,12 +52,12 @@ export async function listAgentModes(): Promise<SessionMode[]> {
  * a prerequisite. If it fails, first chat just falls through the old
  * slow path instead of the fast pool-hit path.
  */
-export async function warmCwd(cwd: string): Promise<void> {
+export async function warmCwd(cwd: string, connectionId?: string): Promise<void> {
   const startedAt = Date.now();
   startupMark('warm_request_start', { cwd });
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}/warm`, {
+    res = await fetch(`${backendApiBase(connectionId)}/warm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cwd }),
@@ -80,7 +85,8 @@ export async function checkRuntimeHealth(
 ): Promise<{ ok: boolean; detail?: string }> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}/runtime/health`, {
+    const base = target.workspaceId ? workspaceBackendApiBase(target.workspaceId) : activeBackendApiBase();
+    res = await fetch(`${base}/runtime/health`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(target),
@@ -134,8 +140,9 @@ export interface EnsureSessionResult {
   resumeReason?: string;
 }
 
-export async function allocateNodeIds(count = 1): Promise<string[]> {
-  const res = await fetch(`${API_BASE_URL}/node-ids/allocate`, {
+export async function allocateNodeIds(count = 1, connectionId?: string): Promise<string[]> {
+  const base = connectionId ? backendApiBase(connectionId) : activeBackendApiBase();
+  const res = await fetch(`${base}/node-ids/allocate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ count }),
@@ -170,7 +177,8 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.resumeFingerprint) body.resumeFingerprint = opts.resumeFingerprint;
   if (opts.graphPrerequisite) body.graphPrerequisite = opts.graphPrerequisite;
 
-  const res = await fetch(`${API_BASE_URL}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
+  const base = opts.workspaceId ? workspaceBackendApiBase(opts.workspaceId) : nodeBackendApiBase(opts.nodeId);
+  const res = await fetch(`${base}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -213,7 +221,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
 }
 
 export async function setChatMode(chatId: string, modeId: string): Promise<string> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/set-mode`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/set-mode`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ modeId }),

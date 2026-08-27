@@ -6,6 +6,7 @@ import type { FolderEntry } from '../../../state/chatTypes';
 interface Props {
   folders: FolderEntry[];
   projectId: string;
+  remote?: boolean;
   onAddFolder: (projectId: string, path: string, label?: string) => void;
   onRemoveFolder: (projectId: string, folderId: string) => void;
   onUpdateLabel: (projectId: string, folderId: string, label: string) => void;
@@ -20,16 +21,28 @@ function basename(p: string): string {
 export default function FolderList({
   folders,
   projectId,
+  remote = false,
   onAddFolder,
   onRemoveFolder,
   onUpdateLabel,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [remotePath, setRemotePath] = useState('');
 
   const handleAdd = async () => {
     if (folders.length >= MAX_FOLDERS) {
       toast.error(`Maximum ${MAX_FOLDERS} folders reached`);
+      return;
+    }
+    if (remote) {
+      const path = remotePath.trim();
+      if (!path) {
+        toast.error('Enter an absolute path on the remote server');
+        return;
+      }
+      onAddFolder(projectId, path, basename(path));
+      setRemotePath('');
       return;
     }
     const electron = getElectron();
@@ -96,6 +109,20 @@ export default function FolderList({
 
   return (
     <div style={{ marginTop: 10 }}>
+      {remote && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <input
+            value={remotePath}
+            onChange={(e) => setRemotePath(e.target.value)}
+            placeholder="/remote/path"
+            aria-label="Remote folder path"
+            style={{ flex: 1, minWidth: 0, border: '1px solid var(--term-line)', background: 'var(--term-alt)', color: 'var(--term-fg)', padding: '5px 7px', fontFamily: 'var(--mono-font)', fontSize: 10.5 }}
+          />
+          <button type="button" onClick={() => { void handleAdd(); }} style={{ border: '1px solid var(--term-line)', background: 'transparent', color: 'var(--term-mid)', padding: '4px 8px', cursor: 'pointer', fontSize: 10.5 }}>
+            add server path
+          </button>
+        </div>
+      )}
       {folders.map((f, idx) => (
         <div
           key={f.id}
@@ -207,7 +234,7 @@ export default function FolderList({
       ))}
 
       {/* Add folder button */}
-      <button
+      {!remote && <button
         type="button"
         onClick={() => { void handleAdd(); }}
         disabled={folders.length >= MAX_FOLDERS}
@@ -225,7 +252,7 @@ export default function FolderList({
         }}
       >
         + Add folder{folders.length >= MAX_FOLDERS ? ` (limit: ${MAX_FOLDERS})` : ''}
-      </button>
+      </button>}
     </div>
   );
 }

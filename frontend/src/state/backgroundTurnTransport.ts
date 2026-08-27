@@ -9,6 +9,7 @@ import type { StreamHandlers } from '../services/chatStreamEvents';
  * panes.
  */
 export function createBackgroundTurnTransport(opts: {
+  connectionId?: string;
   handlersForChat: (chatId: string, nodeId?: string) => StreamHandlers;
   cursorSnapshot?: () => Record<string, { turnId: string; seq: number }>;
   onReplayGap?: (
@@ -48,7 +49,7 @@ export function createBackgroundTurnTransport(opts: {
         const delay = Math.min(max, base * (2 ** attempt++));
         timer = setTimeout(connect, Math.round(delay * (0.75 + random() * 0.5)));
       },
-    });
+    }, opts.connectionId);
   };
 
   return {

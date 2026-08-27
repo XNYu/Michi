@@ -244,6 +244,10 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
 
   const changeFolder = React.useCallback(async (projectId: string) => {
+    if (projects.find((project) => project.id === projectId)?.backendConnectionId) {
+      toast.info('Remote workspace paths are edited as server paths from Workspace Manage.');
+      return;
+    }
     const electron = getElectron();
     if (!electron) {
       toast.info('Linking a local folder requires the desktop app.');
@@ -257,7 +261,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
     } catch (error) {
       toast.error(`Could not update folder: ${(error as Error).message}`);
     }
-  }, [setProjectCwd]);
+  }, [projects, setProjectCwd]);
 
   const menuSections = React.useMemo<MenuSection[]>(() => {
     if (!menu) return [];

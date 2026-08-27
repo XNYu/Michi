@@ -4,6 +4,7 @@ import type { ArtifactEntry } from '../../state/chatTypes';
 import { sanitizeContextName } from '../../lib/sanitizeContextName';
 import { getElectron } from '../../lib/electronBridge';
 import { importWorkspaceFile, linkWorkspaceFile } from '../../services/api';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 import { relativeTime } from '../../lib/relativeTime';
 import { Lightbox } from './Lightbox';
 import { manageFileType, MANAGE_COLORS } from './manage/tokens';
@@ -211,7 +212,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
         // image route, which resolves within cwd.
         if (activeProject?.id) {
           const rel = c.filePath.replace(/^\/+/, '');
-          setLightbox({ src: `/api/files/${activeProject.id}/${rel}`, name: c.name });
+          setLightbox({ src: `${workspaceBackendApiBase(activeProject.id)}/files/${activeProject.id}/${rel}`, name: c.name });
         }
         return;
       }
@@ -291,6 +292,11 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
   // Mirrors the old Contexts "+" behavior; on web there's no native picker so
   // the button falls back to just toggling the paste bar.
   const handlePickFile = useCallback(async () => {
+    if (activeProject?.backendConnectionId) {
+      setPasteErr('Remote workspaces cannot link local paths. Drag the file into a chat to upload it to the remote server.');
+      setAdding(true);
+      return;
+    }
     const electron = getElectron();
     if (!electron?.chooseFiles) {
       setAdding((v) => !v);
@@ -333,7 +339,7 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     } catch (err) {
       setPasteErr((err as Error).message);
     }
-  }, [artifacts, createContext, activeProject?.id, cwd]);
+  }, [artifacts, createContext, activeProject?.backendConnectionId, activeProject?.id, cwd]);
 
   if (!open) return null;
 

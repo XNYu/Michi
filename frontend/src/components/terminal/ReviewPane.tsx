@@ -3,7 +3,7 @@ import type { ReviewPaneItem } from '../../state/paneItems';
 import { useChatActions, useChatProjects } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { getElectron, type GitChangeEntry } from '../../lib/electronBridge';
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 import { workspaceRoots } from './FilesPane';
 
 type ChangesState =
@@ -58,7 +58,7 @@ export default function ReviewPane({ item }: { item: ReviewPaneItem }) {
     }
     const controller = new AbortController();
     setDiff({ phase: 'loading' });
-    fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(item.projectId)}/diff?path=${encodeURIComponent(selectedPath)}`, { signal: controller.signal })
+    fetch(`${workspaceBackendApiBase(item.projectId)}/workspaces/${encodeURIComponent(item.projectId)}/diff?path=${encodeURIComponent(selectedPath)}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(response.status === 404 ? 'No diff is available for this file' : `Request failed (${response.status})`);
         return response.json() as Promise<{ diff: string; truncated?: boolean }>;

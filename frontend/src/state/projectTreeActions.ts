@@ -9,6 +9,7 @@ import { reduceProject } from './chatReducers';
 import { descendants } from './tree';
 import type { ChatAction, ChatNodeState, FolderEntry, Project } from './chatTypes';
 import type { Prefs } from './prefs';
+import { LOCAL_BACKEND_CONNECTION_ID } from '../config/backendConnections';
 
 type PaneUpdater<T> = T | ((prev: T) => T);
 type PaneSetter<T> = (updater: PaneUpdater<T>) => void;
@@ -33,13 +34,14 @@ export function useProjectActions({
   setNodes,
 }: UseProjectActionsArgs) {
   const createProject = useCallback(
-    async (name?: string, cwd?: string, initFolders?: FolderEntry[]) => {
+    async (name?: string, cwd?: string, initFolders?: FolderEntry[], backendConnectionId?: string) => {
       const projectId = `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const finalName = (name && name.trim()) || nextUntitledName(projects);
       const now = Date.now();
 
       let resolvedCwd = cwd;
-      if (!resolvedCwd) {
+      const connectionId = backendConnectionId || LOCAL_BACKEND_CONNECTION_ID;
+      if (!resolvedCwd && connectionId === LOCAL_BACKEND_CONNECTION_ID) {
         const electron = getElectron();
         if (electron?.resolveSkipCwd) {
           try {
@@ -61,6 +63,7 @@ export function useProjectActions({
       const project: Project = {
         id: projectId,
         name: finalName,
+        backendConnectionId: connectionId === LOCAL_BACKEND_CONNECTION_ID ? undefined : connectionId,
         cwd: resolvedCwd,
         folders,
         chatIds: [],
@@ -563,6 +566,10 @@ export function useTreeActions({
       const target = projects.find((p) => p.id === targetProjectId);
       if (!target) {
         toast.error('Target workspace not found.');
+        return;
+      }
+      if ((source.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID) !== (target.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID)) {
+        toast.error('Threads cannot be moved between local and remote backends.');
         return;
       }
       if (isTreeStreaming(source, treeId)) {

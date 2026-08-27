@@ -1,5 +1,5 @@
 import type { CapabilityDescriptor } from 'michi-shared';
-import { API_BASE_URL } from '../../config/env';
+import { activeBackendApiBase } from '../../config/backendConnections';
 
 // === Agent runtime API ===
 
@@ -77,7 +77,7 @@ export interface VerifyProviderKeyResult {
 }
 
 export async function fetchAgentStatus(): Promise<AgentStatus> {
-  const res = await fetch(`${API_BASE_URL}/agent/status`);
+  const res = await fetch(`${activeBackendApiBase()}/agent/status`);
   if (!res.ok) throw new Error(`fetchAgentStatus failed: ${res.status}`);
   return res.json();
 }
@@ -90,7 +90,7 @@ export interface ReadyResponse {
 }
 
 export async function fetchReady(): Promise<ReadyResponse> {
-  const res = await fetch(`${API_BASE_URL}/ready`);
+  const res = await fetch(`${activeBackendApiBase()}/ready`);
   if (!res.ok) throw new Error(`fetchReady failed: ${res.status}`);
   const body = await res.json();
   return {
@@ -110,7 +110,7 @@ export interface AgentOptionsPatch {
 export async function saveAgentOptions(
   patch: AgentOptionsPatch,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${API_BASE_URL}/agent/options`, {
+  const res = await fetch(`${activeBackendApiBase()}/agent/options`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -128,7 +128,7 @@ export interface AgentModelsResponse {
 }
 
 export async function listAgentModels(opts?: { provider?: string }): Promise<AgentModelsResponse> {
-  const url = new URL(`${API_BASE_URL}/agent/models`, window.location.href);
+  const url = new URL(`${activeBackendApiBase()}/agent/models`, window.location.href);
   if (opts?.provider) url.searchParams.set('provider', opts.provider);
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`listAgentModels failed: ${res.status}`);
@@ -143,7 +143,7 @@ export async function saveProviderKey(
   provider: string,
   key: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${API_BASE_URL}/agent/provider-key`, {
+  const res = await fetch(`${activeBackendApiBase()}/agent/provider-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, key }),
@@ -159,7 +159,7 @@ export async function clearProviderKey(
   provider: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const res = await fetch(
-    `${API_BASE_URL}/agent/provider-key/${encodeURIComponent(provider)}`,
+    `${activeBackendApiBase()}/agent/provider-key/${encodeURIComponent(provider)}`,
     { method: 'DELETE' },
   );
   if (!res.ok) {
@@ -173,7 +173,7 @@ export async function verifyProviderKey(
   provider: string,
   opts?: { key?: string; model?: string },
 ): Promise<VerifyProviderKeyResult> {
-  const res = await fetch(`${API_BASE_URL}/agent/provider-key/verify`, {
+  const res = await fetch(`${activeBackendApiBase()}/agent/provider-key/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, key: opts?.key, model: opts?.model }),

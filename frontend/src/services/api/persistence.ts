@@ -1,16 +1,19 @@
-import { API_BASE_URL } from '../../config/env';
+import {
+  backendApiBase,
+  workspaceBackendApiBase,
+} from '../../config/backendConnections';
 
 // ── Persistence API ──
 
-export async function fetchWorkspaces(): Promise<unknown[]> {
-  const res = await fetch(`${API_BASE_URL}/workspaces`);
+export async function fetchWorkspaces(connectionId?: string): Promise<unknown[]> {
+  const res = await fetch(`${backendApiBase(connectionId)}/workspaces`);
   if (!res.ok) throw new Error(`fetchWorkspaces failed: ${res.status}`);
   const body = await res.json();
   return body.workspaces ?? body;
 }
 
-export async function fetchAllWorkspaces(): Promise<unknown[]> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/all`);
+export async function fetchAllWorkspaces(connectionId?: string): Promise<unknown[]> {
+  const res = await fetch(`${backendApiBase(connectionId)}/workspaces/all`);
   if (!res.ok) throw new Error(`fetchAllWorkspaces failed: ${res.status}`);
   const body = await res.json();
   return body.workspaces ?? [];
@@ -22,17 +25,17 @@ export async function fetchAllWorkspaces(): Promise<unknown[]> {
  * via {@link fetchTreeMessages}. Throws on unreachability (same as
  * fetchAllWorkspaces) so the hydration barrier can retry.
  */
-export async function fetchAllWorkspacesMeta(): Promise<unknown[]> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/all?meta=1`);
+export async function fetchAllWorkspacesMeta(connectionId?: string, signal?: AbortSignal): Promise<unknown[]> {
+  const res = await fetch(`${backendApiBase(connectionId)}/workspaces/all?meta=1`, { signal });
   if (!res.ok) throw new Error(`fetchAllWorkspacesMeta failed: ${res.status}`);
   const body = await res.json();
   return body.workspaces ?? [];
 }
 
 /** Lazy-load: all message-body rows for one tree. Backend orders by (node, seq). */
-export async function fetchTreeMessages(workspaceId: string, treeId: string): Promise<unknown[]> {
+export async function fetchTreeMessages(workspaceId: string, treeId: string, connectionId?: string): Promise<unknown[]> {
   const res = await fetch(
-    `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/trees/${encodeURIComponent(treeId)}/messages`,
+    `${connectionId ? backendApiBase(connectionId) : workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/trees/${encodeURIComponent(treeId)}/messages`,
   );
   if (!res.ok) throw new Error(`fetchTreeMessages failed: ${res.status}`);
   const body = await res.json();
@@ -40,7 +43,7 @@ export async function fetchTreeMessages(workspaceId: string, treeId: string): Pr
 }
 
 export async function fetchWorkspace(id: string, signal?: AbortSignal): Promise<unknown> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(id)}`, { signal });
+  const res = await fetch(`${workspaceBackendApiBase(id)}/workspaces/${encodeURIComponent(id)}`, { signal });
   if (!res.ok) throw new Error(`fetchWorkspace failed: ${res.status}`);
   return res.json();
 }
@@ -54,8 +57,8 @@ export interface PersistenceCapabilities {
   legacySyncAccepted: boolean;
 }
 
-export async function fetchPersistenceCapabilities(): Promise<PersistenceCapabilities> {
-  const res = await fetch(`${API_BASE_URL}/persistence/capabilities`);
+export async function fetchPersistenceCapabilities(connectionId?: string): Promise<PersistenceCapabilities> {
+  const res = await fetch(`${backendApiBase(connectionId)}/persistence/capabilities`);
   if (!res.ok) throw new Error(`fetchPersistenceCapabilities failed: ${res.status}`);
   return res.json();
 }
@@ -72,7 +75,7 @@ export async function applyWorkspaceCommands(
   commands: readonly WorkspaceCommand[],
 ): Promise<void> {
   if (commands.length === 0) return;
-  const res = await fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/commands`, {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/commands`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ operationId, commands }),
@@ -84,7 +87,7 @@ export async function applyWorkspaceCommands(
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${id}`, { method: 'DELETE' });
+  const res = await fetch(`${workspaceBackendApiBase(id)}/workspaces/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`deleteWorkspace failed: ${res.status}`);
 }
 
@@ -94,7 +97,7 @@ export async function deleteWorkspace(id: string): Promise<void> {
  * actually removed.
  */
 export async function emptyWorkspaceTrash(workspaceId: string): Promise<{ ok: boolean; purged: number }> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/trash/empty`, {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/${workspaceId}/trash/empty`, {
     method: 'POST',
   });
   if (!res.ok) throw new Error(`emptyWorkspaceTrash failed: ${res.status}`);
@@ -109,7 +112,7 @@ export async function purgeWorkspaceNodes(
   workspaceId: string,
   nodeIds: string[],
 ): Promise<{ ok: boolean; purged: number }> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/nodes`, {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/${workspaceId}/nodes`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nodeIds }),
@@ -123,7 +126,7 @@ export async function moveTreeToWorkspace(
   fromWorkspaceId: string,
   toWorkspaceId: string,
 ): Promise<{ movedNodes: number; movedEdges: number; droppedEdges: number }> {
-  const res = await fetch(`${API_BASE_URL}/trees/${encodeURIComponent(treeId)}/move`, {
+  const res = await fetch(`${workspaceBackendApiBase(fromWorkspaceId)}/trees/${encodeURIComponent(treeId)}/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fromWorkspaceId, toWorkspaceId }),

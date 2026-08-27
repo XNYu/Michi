@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { DiffPaneItem } from '../../state/paneItems';
 import { useChatActions } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 type DiffState =
   | { phase: 'loading' }
@@ -26,7 +26,7 @@ export default function DiffPane({ item }: { item: DiffPaneItem }) {
   useEffect(() => {
     const controller = new AbortController();
     setState({ phase: 'loading' });
-    fetch(`${API_BASE_URL}/workspaces/${encodeURIComponent(item.projectId)}/diff?path=${encodeURIComponent(item.filePath)}`, { signal: controller.signal })
+    fetch(`${workspaceBackendApiBase(item.projectId)}/workspaces/${encodeURIComponent(item.projectId)}/diff?path=${encodeURIComponent(item.filePath)}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(response.status === 404 ? 'No working-tree diff for this file' : `Request failed (${response.status})`);
         return response.json() as Promise<{ diff: string; truncated?: boolean }>;

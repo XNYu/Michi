@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 export type UploadPhase = 'preparing' | 'uploading';
 
@@ -76,13 +76,14 @@ function readFileAsArrayBuffer(
 }
 
 function postJsonWithUploadProgress<T>(
+  workspaceId: string,
   path: string,
   payload: unknown,
   options?: UploadProgressOptions,
 ): Promise<T> {
   const body = JSON.stringify(payload);
   if (!options?.onProgress) {
-    return fetch(`${API_BASE_URL}${path}`, {
+    return fetch(`${workspaceBackendApiBase(workspaceId)}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
@@ -97,7 +98,7 @@ function postJsonWithUploadProgress<T>(
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_BASE_URL}${path}`);
+    xhr.open('POST', `${workspaceBackendApiBase(workspaceId)}${path}`);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.upload.onprogress = (event) => {
       const total = event.lengthComputable ? event.total : null;
@@ -144,7 +145,7 @@ const webCwdCache = new Map<string, string>();
 export async function getWebUploadCwd(workspaceId: string): Promise<string> {
   const cached = webCwdCache.get(workspaceId);
   if (cached) return cached;
-  const res = await fetch(`${API_BASE_URL}/uploads/web-cwd`, {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/uploads/web-cwd`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId }),
@@ -173,6 +174,7 @@ export async function importWorkspaceFile(
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
   try {
     return await postJsonWithUploadProgress(
+      workspaceId,
       '/workspaces/import-file',
       { workspaceId, cwd, originalName, content, subdir: options?.subdir },
       options,
@@ -200,6 +202,7 @@ export async function importWorkspaceFileBinary(
   const contentBase64 = btoa(binary);
   try {
     return await postJsonWithUploadProgress(
+      workspaceId,
       '/workspaces/import-file',
       { workspaceId, cwd, originalName, contentBase64, subdir: options?.subdir },
       options,
@@ -240,7 +243,7 @@ export async function linkWorkspaceFile(
   cwd: string,
   sourcePath: string,
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
-  const res = await fetch(`${API_BASE_URL}/workspaces/link-file`, {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/link-file`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId, cwd, sourcePath }),

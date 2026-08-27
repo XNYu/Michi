@@ -566,7 +566,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     for (const [fileIndex, file] of files.entries()) {
       const path = electron?.getPathForFile?.(file) ?? null;
       try {
-        if (path) {
+        if (path && !activeProject?.backendConnectionId) {
           items.push(path);
           continue;
         }
@@ -654,7 +654,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     for (const [fileIndex, file] of items.entries()) {
       const path = electron?.getPathForFile?.(file) ?? null;
       try {
-        if (path) {
+        if (path && !activeProject?.backendConnectionId) {
           pendingItems.push(path);
           continue;
         }
@@ -707,7 +707,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   const onPickFile = useCallback(async () => {
     const electron = getElectron();
-    if (electron?.chooseFiles) {
+    if (electron?.chooseFiles && !activeProject?.backendConnectionId) {
       const res = await electron.chooseFiles();
       if (res.canceled || !res.paths) return;
       addPendingPaths(res.paths);
@@ -2086,7 +2086,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           e.stopPropagation();
           setDragHover(false);
           const electron = getElectron();
-          if (!electron?.getPathForFile) {
+          if (!electron?.getPathForFile || activeProject?.backendConnectionId) {
             void handleDrop(e);
             return;
           }

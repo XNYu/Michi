@@ -25,6 +25,7 @@ vi.mock('../../services/api', async (importOriginal) => {
     fetchWorkspace: vi.fn().mockResolvedValue(null),
     fetchPersistenceCapabilities: vi.fn().mockRejectedValue('not available'),
     warmCwd: vi.fn().mockResolvedValue(undefined),
+    listBackendConnections: vi.fn().mockResolvedValue([]),
   };
 });
 

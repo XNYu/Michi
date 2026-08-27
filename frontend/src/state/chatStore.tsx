@@ -39,7 +39,12 @@ import { useContextActions } from './contextActions';
 import { useProjectActions, useTreeActions } from './projectTreeActions';
 import { useTrashActions } from './trashActions';
 import { notify } from '../services/notifications';
-import { API_BASE_URL } from '../config/env';
+import {
+  indexBackendProjects,
+  LOCAL_BACKEND_CONNECTION_ID,
+  nodeBackendApiBase,
+  setActiveBackendConnectionId,
+} from '../config/backendConnections';
 import { toast } from 'sonner';
 import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, ChatProjectsValue, ComposerDraft, MessageAttachment, PendingQueuedMessage, Project, ProjectEdge, Theme, UserSendMeta } from './chatTypes';
 import { computeSurvivingMessageIds, cleanupOrphanedAnchors } from './branchAnchors';
@@ -274,6 +279,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       ? (update as (prev: Project[]) => Project[])(projectsRef.current)
       : update;
     projectsRef.current = next;
+    indexBackendProjects(next);
     setProjectsState(next);
   }, []);
   const activeProjectBaseKey = userId ? buildStateKey(userId) : LEGACY_STATE_KEY;
@@ -288,6 +294,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       readInitialHydrated(userId).activeProjectId,
     ),
   );
+  const activeBackendConnectionId = projects.find((project) => project.id === activeProjectId)?.backendConnectionId
+    ?? LOCAL_BACKEND_CONNECTION_ID;
+  setActiveBackendConnectionId(activeBackendConnectionId);
   const {
     openPanes,
     focusedPane,
@@ -342,6 +351,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const [warmFailedError, setWarmFailedError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
+    setAgentStatus(null);
+    setAvailableModes([]);
+    setWarmFailedError(null);
     let statusLoaded = false;
     let modesLoaded = false;
     let statusRequestSeq = 0;
@@ -455,7 +467,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelled = true;
       window.removeEventListener('michi:reload-agent-status', handler);
     };
-  }, []);
+  }, [activeBackendConnectionId]);
   const refreshAgentStatus = useCallback(() => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
@@ -583,7 +595,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const ownerStateRef = useRef<OwnerStateMap>({});
   const ownerClaimsRef = useRef<Record<string, { chatId: string }>>({});
   const claimInFlightRef = useRef<Set<string>>(new Set());
-  const backgroundTransportRef = useRef<ReturnType<typeof createBackgroundTurnTransport> | null>(null);
+  const backgroundTransportRef = useRef<Map<string, ReturnType<typeof createBackgroundTurnTransport>>>(new Map());
   // Direct replay streams installed after a renderer reload. Kept separate
   // from normal prompt cancel fns so re-rendering cannot open duplicate SSE
   // consumers for the same hydrated foreground turn.
@@ -803,7 +815,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const projectId = p.id;
     const runtime = agentStatus.runtime;
     const model = agentStatus.model ?? '';
-    const warmTarget = `${runtime}\u0000${model}\u0000${cwd}`;
+    const warmTarget = `${p.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID}\u0000${runtime}\u0000${model}\u0000${cwd}`;
     const previousTarget = activeWarmTargetRef.current;
     if (previousTarget !== warmTarget) {
       activeWarmTargetRef.current = warmTarget;
@@ -825,7 +837,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         while (!retryState.cancelled && attempts < maxAttempts) {
           attempts += 1;
           try {
-            await warmCwd(cwd);
+            if (p.backendConnectionId) await warmCwd(cwd, p.backendConnectionId);
+            else await warmCwd(cwd);
             if (retryState.cancelled) return;
             if (activeWarmTargetRef.current === warmTarget) {
               warmedTargetsRef.current.add(warmTarget);
@@ -994,55 +1007,76 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return reconciliation;
   }, [setProjects]);
 
+  const backgroundConnectionIdsKey = useMemo(
+    () => Array.from(new Set([
+      LOCAL_BACKEND_CONNECTION_ID,
+      ...projects.map((project) => project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID),
+    ])).sort().join('|'),
+    [projects],
+  );
+
   useEffect(() => {
     if (!hydrated) return;
-    const bindings = new Map<string, { nodeId: string; handlers: StreamHandlers }>();
-    const transport = createBackgroundTurnTransport({
-      cursorSnapshot: () => {
-        const cursors: Record<string, { turnId: string; seq: number }> = {};
-        for (const node of Object.values(nodesRef.current)) {
-          if (!node.chatId || !node.lastAppliedBackgroundTurnId || typeof node.lastAppliedBackgroundSeq !== 'number') continue;
-          cursors[node.chatId] = { turnId: node.lastAppliedBackgroundTurnId, seq: node.lastAppliedBackgroundSeq };
-        }
-        return cursors;
-      },
-      onReplayGap: reconcileBackgroundGap,
-      handlersForChat: (chatId, envelopeNodeId) => {
-        const byEnvelope = envelopeNodeId ? nodesRef.current[envelopeNodeId] : undefined;
-        const node = byEnvelope?.chatId === chatId
-          ? byEnvelope
-          : Object.values(nodesRef.current).find((candidate) => candidate.chatId === chatId);
-        if (!node) return {};
-        const nodeId = node.nodeId;
-        const cached = bindings.get(chatId);
-        if (cached?.nodeId === nodeId) return cached.handlers;
-        const handlers = createBackgroundTurnBinding({
-          chatId,
-          nodeId,
-          dispatch,
-          lastTurnRef: {
-            get current() { return nodesRef.current[nodeId]?.lastAppliedBackgroundTurnId ?? ''; },
-            set current(_value: string) {},
-          },
-          lastSeqRef: {
-            get current() { return nodesRef.current[nodeId]?.lastAppliedBackgroundSeq ?? -1; },
-            set current(_value: number) {},
-          },
-          extraHandlers: sharedStreamHandlersRef.current(nodeId),
-          onTurnEnd: (reason, endedNodeId) => turnEndHandlerRef.current(reason, endedNodeId),
-          onStreamComplete: () => streamCompleteHandlerRef.current(nodeId),
-        }).createHandlers();
-        bindings.set(chatId, { nodeId, handlers });
-        return handlers;
-      },
-    });
-    backgroundTransportRef.current = transport;
-    transport.start();
+    const connectionIds = backgroundConnectionIdsKey ? backgroundConnectionIdsKey.split('|') : [];
+    for (const connectionId of connectionIds) {
+      const bindings = new Map<string, { nodeId: string; handlers: StreamHandlers }>();
+      const belongsToConnection = (node: ChatNodeState): boolean => {
+        const project = projectsRef.current.find((candidate) => candidate.id === node.projectId);
+        return (project?.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID) === connectionId;
+      };
+      const transport = createBackgroundTurnTransport({
+        connectionId,
+        cursorSnapshot: () => {
+          const cursors: Record<string, { turnId: string; seq: number }> = {};
+          for (const node of Object.values(nodesRef.current)) {
+            if (!belongsToConnection(node)) continue;
+            if (!node.chatId || !node.lastAppliedBackgroundTurnId || typeof node.lastAppliedBackgroundSeq !== 'number') continue;
+            cursors[node.chatId] = { turnId: node.lastAppliedBackgroundTurnId, seq: node.lastAppliedBackgroundSeq };
+          }
+          return cursors;
+        },
+        onReplayGap: reconcileBackgroundGap,
+        handlersForChat: (chatId, envelopeNodeId) => {
+          const byEnvelope = envelopeNodeId ? nodesRef.current[envelopeNodeId] : undefined;
+          const node = byEnvelope?.chatId === chatId && belongsToConnection(byEnvelope)
+            ? byEnvelope
+            : Object.values(nodesRef.current).find(
+                (candidate) => candidate.chatId === chatId && belongsToConnection(candidate),
+              );
+          if (!node) return {};
+          const nodeId = node.nodeId;
+          const cached = bindings.get(chatId);
+          if (cached?.nodeId === nodeId) return cached.handlers;
+          const handlers = createBackgroundTurnBinding({
+            chatId,
+            nodeId,
+            dispatch,
+            lastTurnRef: {
+              get current() { return nodesRef.current[nodeId]?.lastAppliedBackgroundTurnId ?? ''; },
+              set current(_value: string) {},
+            },
+            lastSeqRef: {
+              get current() { return nodesRef.current[nodeId]?.lastAppliedBackgroundSeq ?? -1; },
+              set current(_value: number) {},
+            },
+            extraHandlers: sharedStreamHandlersRef.current(nodeId),
+            onTurnEnd: (reason, endedNodeId) => turnEndHandlerRef.current(reason, endedNodeId),
+            onStreamComplete: () => streamCompleteHandlerRef.current(nodeId),
+          }).createHandlers();
+          bindings.set(chatId, { nodeId, handlers });
+          return handlers;
+        },
+      });
+      backgroundTransportRef.current.set(connectionId, transport);
+      transport.start();
+    }
     return () => {
-      transport.stop();
-      if (backgroundTransportRef.current === transport) backgroundTransportRef.current = null;
+      for (const connectionId of connectionIds) {
+        backgroundTransportRef.current.get(connectionId)?.stop();
+        backgroundTransportRef.current.delete(connectionId);
+      }
     };
-  }, [dispatch, hydrated, reconcileBackgroundGap]);
+  }, [backgroundConnectionIdsKey, dispatch, hydrated, reconcileBackgroundGap]);
 
   // A reload can happen while a user-owned foreground turn is still active.
   // Reattach to its per-chat replay stream exactly once. A 410 is deliberately
@@ -1229,7 +1263,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const releaseAll = () => {
       for (const [nodeId, claim] of Object.entries(ownerClaimsRef.current)) {
         const body = JSON.stringify({ ownerToken: ownerTokenRef.current });
-        const url = `${API_BASE_URL}/chats/${claim.chatId}/release`;
+        const url = `${nodeBackendApiBase(claim.chatId)}/chats/${claim.chatId}/release`;
         if (navigator.sendBeacon) {
           const blob = new Blob([body], { type: 'application/json' });
           navigator.sendBeacon(url, blob);
@@ -2349,6 +2383,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   const openTerminalPane = useCallback((cwd?: string): string => {
     if (!activeProjectId) throw new Error('No active project');
+    const project = projectsRef.current.find((candidate) => candidate.id === activeProjectId);
+    if (project?.backendConnectionId) {
+      throw new Error('The native terminal runs locally and is unavailable for remote workspaces. Use the remote agent shell tools instead.');
+    }
     const id = uniquePaneId('terminal');
     const surfaceId = id.slice('pane:terminal:'.length);
     const treeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? null;
@@ -2415,6 +2453,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     };
 
     if (choice === 'files') {
+      if (project.backendConnectionId) {
+        throw new Error('Native folder browsing is unavailable for remote workspaces. Open files produced by the agent from chat artifacts instead.');
+      }
       replacePaneItem(paneId, { ...base, kind: 'files', title: 'Files' });
       return paneId;
     }
@@ -2423,6 +2464,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       return paneId;
     }
     if (choice === 'terminal') {
+      if (project.backendConnectionId) {
+        throw new Error('The native terminal is local-only. Use the remote agent shell tools for this workspace.');
+      }
       const runtimeId = uniquePaneId('terminal');
       replacePaneItem(paneId, {
         ...base,

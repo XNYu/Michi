@@ -10,8 +10,9 @@ import { ModelPane } from './settings/ModelPane';
 import { NotificationsPane } from './settings/NotificationsPane';
 import { ShortcutsPane } from './settings/ShortcutsPane';
 import { AccountPane } from './settings/AccountPane';
+import { ConnectionsPane } from './settings/ConnectionsPane';
 
-type Section = 'model' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
+type Section = 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
 
 export default function TerminalSettings({
   onNav,
@@ -47,6 +48,7 @@ export default function TerminalSettings({
 
   const sections: Array<[Section, string]> = [
     ['model', 'Model'],
+    ['connections', 'Connections'],
     ['appearance', 'Appearance'],
     ['notifications', 'Notifications'],
     ['shortcuts', 'Shortcuts'],
@@ -181,6 +183,7 @@ export default function TerminalSettings({
         {section === 'model' && (
           <ModelPane activeProjectId={activeProject?.id ?? null} />
         )}
+        {section === 'connections' && <ConnectionsPane projects={projects} />}
         {section === 'notifications' && <NotificationsPane />}
         {section === 'shortcuts' && <ShortcutsPane />}
         {section === 'account' && signedIn && <AccountPane user={session.data!.user} />}

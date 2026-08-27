@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 export interface DiffModalProps {
   /** Workspace whose cwd the diff is resolved against. */
@@ -58,7 +58,7 @@ export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
     (async () => {
       try {
         const res = await fetch(
-          `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/diff?path=${encodeURIComponent(filePath)}`,
+          `${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/diff?path=${encodeURIComponent(filePath)}`,
           { signal: controller.signal },
         );
         if (cancelled) return;

@@ -57,7 +57,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
   const handleAddContext = React.useCallback(async () => {
     if (importing || !project) return;
     const electron = getElectron();
-    if (electron?.chooseFiles) {
+    if (electron?.chooseFiles && !project.backendConnectionId) {
       setImporting(true);
       try {
         const r = await electron.chooseFiles();
@@ -102,7 +102,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
       const existing = (project.artifacts ?? []).map((c) => c.name);
       for (const [fileIndex, file] of files.entries()) {
         const electronPath = electron?.getPathForFile?.(file) ?? null;
-        if (electronPath) {
+        if (electronPath && !project.backendConnectionId) {
           const base = electronPath.split('/').pop() ?? electronPath;
           const name = sanitizeContextName(base, existing);
           existing.push(name);

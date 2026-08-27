@@ -4,6 +4,7 @@ import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import MarkdownContent from '../MarkdownContent';
 import SelectionActions from '../SelectionActions';
 import { fetchArtifactContent } from '../../services/api';
+import { backendConnectionIdForWorkspace, LOCAL_BACKEND_CONNECTION_ID } from '../../config/backendConnections';
 import { getElectron } from '../../lib/electronBridge';
 import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
 
@@ -151,7 +152,11 @@ export default function ArtifactPane({
     // For absolute paths (reference/symlink artifacts), use Electron's readFile
     // IPC which bypasses the backend's cwd sandbox. Falls back to HTTP API for
     // relative paths or when Electron is unavailable.
-    if (isAbsolute && electron?.readFile) {
+    if (
+      isAbsolute
+      && electron?.readFile
+      && backendConnectionIdForWorkspace(workspaceId) === LOCAL_BACKEND_CONNECTION_ID
+    ) {
       // Size gate: stat first, reject files >5MB (should open externally)
       const doRead = () => {
         electron.readFile!(filePath)

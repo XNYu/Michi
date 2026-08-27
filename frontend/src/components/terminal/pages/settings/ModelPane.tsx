@@ -21,7 +21,7 @@ import {
   shouldPromptForProviderKey,
 } from '../../../../lib/providerCapabilities';
 import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
-import { API_BASE_URL } from '../../../../config/env';
+import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { filterModelCatalog } from './modelCatalogFilter';
 import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 
@@ -734,7 +734,7 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
 
   const load = React.useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/workspaces/${projectId}/permission-grants`);
+      const res = await fetch(`${workspaceBackendApiBase(projectId)}/workspaces/${projectId}/permission-grants`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { grants: PermissionGrant[] };
       setGrants(data.grants ?? []);
@@ -751,7 +751,7 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
     setBusy(toolName);
     try {
       await fetch(
-        `${API_BASE_URL}/workspaces/${projectId}/permission-grants/${encodeURIComponent(toolName)}`,
+        `${workspaceBackendApiBase(projectId)}/workspaces/${projectId}/permission-grants/${encodeURIComponent(toolName)}`,
         { method: 'DELETE' },
       );
       await load();

@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../../config/env';
+import { activeBackendApiBase, workspaceBackendApiBase } from '../../config/backendConnections';
 
 // ── Search API ──
 
@@ -22,7 +22,8 @@ export async function searchMessages(
 ): Promise<{ results: SearchResult[]; total: number }> {
   const params = new URLSearchParams({ q: query, mode, limit: String(limit) });
   if (workspaceId) params.set('workspaceId', workspaceId);
-  const res = await fetch(`${API_BASE_URL}/search?${params}`);
+  const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
+  const res = await fetch(`${base}/search?${params}`);
   if (!res.ok) throw new Error(`searchMessages failed: ${res.status}`);
   return res.json();
 }

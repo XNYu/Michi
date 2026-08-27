@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import type { ChatNodeState } from '../../state/chatTypes';
 import { useChatProjects } from '../../state/chatStore';
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 export interface PanePendingAttachment {
   id: string;
@@ -32,7 +32,7 @@ interface PaneComposerPreBlocksProps {
 function pendingThumbSrc(p: PanePendingAttachment, workspaceId?: string): string | null {
   if (workspaceId && p.relPath) {
     const encoded = p.relPath.split('/').map(encodeURIComponent).join('/');
-    return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
   }
   // Fallback: derive relPath from absPath if it contains .attachments/
   if (workspaceId && p.absPath) {
@@ -41,7 +41,7 @@ function pendingThumbSrc(p: PanePendingAttachment, workspaceId?: string): string
     if (idx !== -1) {
       const rel = '.attachments/' + p.absPath.slice(idx + marker.length);
       const encoded = rel.split('/').map(encodeURIComponent).join('/');
-      return `${API_BASE_URL}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
     }
   }
   return null;

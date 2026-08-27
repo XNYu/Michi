@@ -41,6 +41,9 @@ export function workspaceRoots(project: Project | undefined): string[] {
 
 export function resolveArtifactSelection(artifact: ArtifactEntry, project: Project | undefined): FileSelection | null {
   if (!artifact.filePath || artifact.type === 'link') return null;
+  if (project?.backendConnectionId) {
+    return { id: `artifact:${artifact.id}`, label: artifact.name, artifactPath: artifact.filePath };
+  }
   if (artifact.filePath.startsWith('/')) {
     return { id: `artifact:${artifact.id}`, label: artifact.name, absolutePath: artifact.filePath };
   }

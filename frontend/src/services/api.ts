@@ -20,3 +20,4 @@ export * from './api/search';
 export * from './api/version';
 export * from './api/agentRuntime';
 export * from './api/artifacts';
+export * from './api/backendConnections';

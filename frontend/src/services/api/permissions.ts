@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../../config/env';
+import { nodeBackendApiBase } from '../../config/backendConnections';
 
 // ── Permission Response API ──
 
@@ -7,7 +7,7 @@ export async function respondToPermission(
   requestId: number,
   optionId: string,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/permission-response`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/permission-response`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId, optionId }),
@@ -19,7 +19,7 @@ export async function cancelPermission(
   chatId: string,
   requestId: number,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/permission-response`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/permission-response`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId, cancel: true }),
@@ -34,7 +34,7 @@ export async function respondToUserInput(
   requestId: number,
   answers: Array<{ question: string; answer: string }>,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/user-input-response`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/user-input-response`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId, answers }),
@@ -46,7 +46,7 @@ export async function skipUserInput(
   chatId: string,
   requestId: number,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/user-input-response`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/user-input-response`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId, skip: true }),

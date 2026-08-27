@@ -591,6 +591,8 @@ export interface FolderEntry {
 export interface Project {
   id: string;
   name: string;
+  /** Execution backend for this workspace. Undefined/'local' keeps legacy local behavior. */
+  backendConnectionId?: string;
   /** Absolute path the backend runs the agent in. Undefined = default cwd. */
   cwd?: string;
   /** Registered folders for this workspace. folders[0].path is the immutable cwd.
@@ -811,7 +813,7 @@ export interface ChatContextValue {
   edges: ProjectEdge[];
   theme: Theme;
   toggleTheme: () => void;
-  createProject: (name?: string, cwd?: string, folders?: FolderEntry[]) => Promise<string>;
+  createProject: (name?: string, cwd?: string, folders?: FolderEntry[], backendConnectionId?: string) => Promise<string>;
   /**
    * Activate the singleton "Chats" workspace, lazily creating it (and a root
    * thread) on first call. The Skip path of the new-workspace dialog and

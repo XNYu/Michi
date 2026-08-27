@@ -162,6 +162,7 @@ export default function ManageSidebar({
         <FolderList
           folders={workspace.folders ?? []}
           projectId={workspace.id}
+          remote={!!workspace.backendConnectionId}
           onAddFolder={onAddFolder}
           onRemoveFolder={onRemoveFolder}
           onUpdateLabel={onUpdateFolderLabel}

@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../../config/env';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 // ----- Artifact file reader -----
 
@@ -15,7 +15,7 @@ export async function fetchArtifactContent(
   workspaceId: string,
   filePath: string,
 ): Promise<ArtifactReadResult> {
-  const url = `${API_BASE_URL}/artifacts/${encodeURIComponent(workspaceId)}/read?path=${encodeURIComponent(filePath)}`;
+  const url = `${workspaceBackendApiBase(workspaceId)}/artifacts/${encodeURIComponent(workspaceId)}/read?path=${encodeURIComponent(filePath)}`;
   const res = await fetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
@@ -33,7 +33,7 @@ export async function fetchArtifactContent(
 
 /** Persistent SSE endpoint for a workspace's artifact-change notifications. */
 export function artifactWatchStreamUrl(workspaceId: string): string {
-  return `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/watch/stream`;
+  return `${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/watch/stream`;
 }
 
 /**
@@ -45,7 +45,7 @@ export async function postArtifactWatchPaths(
   workspaceId: string,
   paths: string[],
 ): Promise<string[]> {
-  const url = `${API_BASE_URL}/workspaces/${encodeURIComponent(workspaceId)}/watch`;
+  const url = `${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/watch`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

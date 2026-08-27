@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import NewWorkspaceDialog from './NewWorkspaceDialog';
+import { setKnownBackendConnections } from '../config/backendConnections';
 
 let mockElectron: {
   chooseFolder: () => Promise<{ canceled: boolean; path?: string; name?: string }>;
@@ -9,6 +10,10 @@ let mockElectron: {
 
 vi.mock('../lib/electronBridge', () => ({
   getElectron: () => mockElectron,
+}));
+
+vi.mock('../services/api', () => ({
+  listBackendConnections: vi.fn().mockResolvedValue([]),
 }));
 
 function renderDialog(overrides: Partial<React.ComponentProps<typeof NewWorkspaceDialog>> = {}) {
@@ -26,6 +31,7 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof NewWorkspac
 describe('NewWorkspaceDialog multi-folder', () => {
   afterEach(() => {
     mockElectron = null;
+    setKnownBackendConnections([]);
     delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker;
   });
 
@@ -176,6 +182,29 @@ describe('NewWorkspaceDialog multi-folder', () => {
     const props = renderDialog();
     fireEvent.click(screen.getByRole('button', { name: /open quick chat/i }));
     expect(props.onSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a workspace against a remote backend path', async () => {
+    setKnownBackendConnections([{
+      id: 'remote-1',
+      name: 'Build server',
+      transport: 'direct',
+      apiUrl: 'https://build.example.com/api',
+      hasToken: true,
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+    const props = renderDialog();
+    fireEvent.change(screen.getByLabelText('Backend connection'), { target: { value: 'remote-1' } });
+    fireEvent.change(screen.getByPlaceholderText('/home/you/project'), { target: { value: '/srv/project' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+    expect(props.onCreate).toHaveBeenCalledWith(
+      'project',
+      '/srv/project',
+      [expect.objectContaining({ path: '/srv/project' })],
+      'remote-1',
+    );
+    expect(screen.queryByRole('button', { name: /open quick chat/i })).toBeNull();
   });
 
   it('shows browser fallback notice when using showDirectoryPicker', async () => {

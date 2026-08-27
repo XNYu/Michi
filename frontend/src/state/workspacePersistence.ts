@@ -6,6 +6,7 @@ import {
   fetchWorkspace,
   fetchWorkspaces,
   applyWorkspaceCommands,
+  listBackendConnections,
 } from '../services/api';
 import type { WorkspaceCommand } from '../services/api';
 import { findTreeIdForNode } from './tree';
@@ -28,7 +29,12 @@ import { serializeBranchOverviewEntries } from 'michi-shared';
 import type { ChatNodeState, Project } from './chatTypes';
 import { startupMarkOnce } from '../services/startupTrace';
 import { WorkspaceSyncQueue } from './workspaceSyncQueue';
-import { API_BASE_URL } from '../config/env';
+import {
+  LOCAL_BACKEND_CONNECTION_ID,
+  setKnownBackendConnections,
+  workspaceBackendApiBase,
+  type BackendConnectionSummary,
+} from '../config/backendConnections';
 
 // Note: the inbound load path for `Project.aiGlobalContext` lives in
 // `chatHydration.ts` (which actually maps backend workspace rows to Project
@@ -195,6 +201,9 @@ const EMPTY_HYDRATED: HydratedState = { projects: [], activeProjectId: null, nod
  * binds; the loop only runs while every probe is rejecting.
  */
 export const HYDRATION_RETRY_DELAY_MS = 250;
+export const REMOTE_HYDRATION_RETRY_INITIAL_MS = 1_000;
+export const REMOTE_HYDRATION_RETRY_MAX_MS = 15_000;
+const REMOTE_HYDRATION_TIMEOUT_MS = 8_000;
 
 /**
  * Read the raw (pre-hydration) SavedState from localStorage. Prefers the new
@@ -930,6 +939,7 @@ export function useWorkspacePersistence({
     }
   }, [userId]);
   const projectsRef = useRef(projects);
+  const activeProjectIdRef = useRef(activeProjectId);
   const hydratedRef = useRef(hydrated);
   const dirtyRef = useRef(false);
   const dirtyProjectIdsRef = useRef(new Set<string>());
@@ -951,6 +961,7 @@ export function useWorkspacePersistence({
   const prevProjectsRef = useRef<Project[]>(projects);
   const prevNodesRef = useRef<Record<string, ChatNodeState>>(nodes);
   projectsRef.current = projects;
+  activeProjectIdRef.current = activeProjectId;
   hydratedRef.current = hydrated;
 
   // Mark dirty only at structural cadence (and when projects themselves
@@ -1137,7 +1148,7 @@ export function useWorkspacePersistence({
           commands: batch.commands,
         });
         navigator.sendBeacon(
-          `${API_BASE_URL}/workspaces/${encodeURIComponent(projectId)}/commands`,
+          `${workspaceBackendApiBase(projectId)}/workspaces/${encodeURIComponent(projectId)}/commands`,
           new Blob([payload], { type: 'application/json' }),
         );
       }
@@ -1166,7 +1177,75 @@ export function useWorkspacePersistence({
     // database. A RESOLVED value (even []) means the backend answered → proceed
     // and finalize. This is what keeps a startup race from wiping the UI to
     // empty over a DB that holds every workspace.
-    const awaitBackendSnapshot = async (): Promise<unknown[] | null> => {
+    type BackendSnapshot = { connectionId: string; workspaces: unknown[] };
+    const appendBackendSnapshot = (state: HydratedState, snapshot: BackendSnapshot): number => {
+      const rawBackend = snapshot.workspaces.filter(
+        (workspace): workspace is Record<string, unknown> => !!workspace && typeof workspace === 'object',
+      );
+      const hydratedSnapshot = hydrateBackendWorkspaces(rawBackend, null);
+      const seenProjectIds = new Set(state.projects.map((project) => project.id));
+      const seenNodeIds = new Set(Object.keys(state.nodes));
+      let addedProjects = 0;
+
+      for (const project of hydratedSnapshot.projects) {
+        if (seenProjectIds.has(project.id)) {
+          console.warn(`workspace id collision across backends; skipping ${project.id} from ${snapshot.connectionId}`);
+          continue;
+        }
+        const duplicateNode = project.chatIds.find((nodeId) => seenNodeIds.has(nodeId));
+        if (duplicateNode) {
+          console.warn(`node id collision across backends; skipping workspace ${project.id} (${duplicateNode})`);
+          continue;
+        }
+        const taggedProject = snapshot.connectionId === LOCAL_BACKEND_CONNECTION_ID
+          ? project
+          : { ...project, backendConnectionId: snapshot.connectionId };
+        state.projects.push(taggedProject);
+        addedProjects += 1;
+        seenProjectIds.add(project.id);
+        for (const nodeId of project.chatIds) {
+          seenNodeIds.add(nodeId);
+          const node = hydratedSnapshot.nodes[nodeId];
+          if (node) state.nodes[nodeId] = node;
+        }
+      }
+      return addedProjects;
+    };
+    const replaceBackendSnapshot = (state: HydratedState, snapshot: BackendSnapshot): number => {
+      const retainedProjects: Project[] = [];
+      let removedProjects = 0;
+      for (const project of state.projects) {
+        const connectionId = project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID;
+        if (connectionId !== snapshot.connectionId) {
+          retainedProjects.push(project);
+          continue;
+        }
+        removedProjects += 1;
+        for (const nodeId of project.chatIds) delete state.nodes[nodeId];
+      }
+      state.projects = retainedProjects;
+      return removedProjects + appendBackendSnapshot(state, snapshot);
+    };
+    const fetchRemoteSnapshot = async (
+      connection: BackendConnectionSummary,
+      logFailure = true,
+    ): Promise<BackendSnapshot | null> => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), REMOTE_HYDRATION_TIMEOUT_MS);
+      try {
+        const workspaces = await fetchAllWorkspacesMeta(connection.id, controller.signal);
+        return { connectionId: connection.id, workspaces };
+      } catch (err) {
+        if (logFailure) console.warn(`remote backend unavailable (${connection.name}):`, err);
+        return null;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    };
+    const awaitBackendSnapshots = async (): Promise<{
+      snapshots: BackendSnapshot[];
+      unavailableConnections: BackendConnectionSummary[];
+    } | null> => {
       for (;;) {
         if (cancelled) return null;
         try {
@@ -1197,7 +1276,28 @@ export function useWorkspacePersistence({
           // for the active tree are eager-loaded below; other trees load on
           // demand when opened. This is what shrinks the boot payload from the
           // whole-forest 13MB to a ~structural fraction.
-          return await fetchAllWorkspacesMeta();
+          const [localWorkspaces, connections] = await Promise.all([
+            fetchAllWorkspacesMeta(LOCAL_BACKEND_CONNECTION_ID),
+            typeof listBackendConnections === 'function'
+              ? listBackendConnections().catch(() => [])
+              : Promise.resolve([]),
+          ]);
+          setKnownBackendConnections(connections);
+          const remoteResults = await Promise.all(connections.map(async (connection) => ({
+            connection,
+            snapshot: await fetchRemoteSnapshot(connection),
+          })));
+          return {
+            snapshots: [
+              { connectionId: LOCAL_BACKEND_CONNECTION_ID, workspaces: localWorkspaces },
+              ...remoteResults
+                .map((result) => result.snapshot)
+                .filter((snapshot): snapshot is BackendSnapshot => snapshot !== null),
+            ],
+            unavailableConnections: remoteResults
+              .filter((result) => result.snapshot === null)
+              .map((result) => result.connection),
+          };
         } catch {
           if (cancelled) return null;
           // Connection-level failure: the backend is still starting. Wait and
@@ -1206,19 +1306,57 @@ export function useWorkspacePersistence({
         }
       }
     };
+    const retryRemoteHydration = async (connection: BackendConnectionSummary): Promise<void> => {
+      let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
+      while (!cancelled) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelay));
+        if (cancelled) return;
+
+        const snapshot = await fetchRemoteSnapshot(connection, false);
+        if (cancelled) return;
+        if (!snapshot) {
+          retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
+          continue;
+        }
+
+        const nextState: HydratedState = {
+          projects: [...projectsRef.current],
+          activeProjectId: activeProjectIdRef.current,
+          nodes: { ...nodesRef.current },
+        };
+        const changedProjects = replaceBackendSnapshot(nextState, snapshot);
+        if (changedProjects > 0) {
+          const activeStillExists = nextState.projects.some(
+            (project) => project.id === nextState.activeProjectId,
+          );
+          if (!activeStillExists) {
+            const preferred = nextState.projects.find(
+              (project) => project.id === initialActiveProjectIdRef.current,
+            );
+            nextState.activeProjectId = preferred?.id ?? nextState.projects[0]?.id ?? null;
+          }
+          projectsRef.current = nextState.projects;
+          activeProjectIdRef.current = nextState.activeProjectId;
+          setProjects(nextState.projects);
+          setActiveProjectId(nextState.activeProjectId);
+          installNodes(nextState.nodes);
+        }
+        console.info(`remote backend reconnected (${connection.name}); reconciled ${changedProjects} workspace(s)`);
+        return;
+      }
+    };
     (async () => {
       try {
-        const fullWorkspaces = await awaitBackendSnapshot();
-        if (cancelled || fullWorkspaces === null) return;
-        if (Array.isArray(fullWorkspaces) && fullWorkspaces.length > 0) {
-          const rawBackend = fullWorkspaces.filter(
-            (w): w is Record<string, unknown> => !!w && typeof w === 'object',
-          );
-          const backendState = hydrateBackendWorkspaces(
-            rawBackend,
-            initialActiveProjectIdRef.current,
-          );
-          if (backendState.projects.length > 0) {
+        const snapshotResult = await awaitBackendSnapshots();
+        if (cancelled || snapshotResult === null) return;
+        const backendState: HydratedState = { projects: [], activeProjectId: null, nodes: {} };
+        for (const snapshot of snapshotResult.snapshots) {
+          appendBackendSnapshot(backendState, snapshot);
+        }
+        backendState.activeProjectId = backendState.projects.some(
+          (project) => project.id === initialActiveProjectIdRef.current,
+        ) ? initialActiveProjectIdRef.current : backendState.projects[0]?.id ?? null;
+        if (backendState.projects.length > 0) {
             // Eager-load the active workspace's active tree so first paint shows
             // real messages, not placeholders. Best-effort: a failure here just
             // leaves that tree to the on-demand path (it does not block boot).
@@ -1227,7 +1365,11 @@ export function useWorkspacePersistence({
             let nodes = backendState.nodes;
             if (activeProject?.activeTreeId) {
               try {
-                const rows = await fetchTreeMessages(activeProject.id, activeProject.activeTreeId);
+                const rows = await fetchTreeMessages(
+                  activeProject.id,
+                  activeProject.activeTreeId,
+                  activeProject.backendConnectionId,
+                );
                 if (cancelled) return;
                 const byNode = buildMessagesByNode(rows);
                 nodes = applyTreeMessages(nodes, byNode);
@@ -1236,11 +1378,12 @@ export function useWorkspacePersistence({
               }
             }
             setProjects(backendState.projects);
+            projectsRef.current = backendState.projects;
             setActiveProjectId(resolvedActiveId);
+            activeProjectIdRef.current = resolvedActiveId;
             installNodes(nodes);
             clearDurableLocalStorageMirror(storageKeyRef.current);
-          }
-          finishHydration('backend');
+            finishHydration('backend');
         } else {
           // Backend has no workspaces for this user. Michi has always shipped
           // with the SQLite backend, so there is no pre-SQLite localStorage
@@ -1251,16 +1394,24 @@ export function useWorkspacePersistence({
           if (lsState.projects.length > 0) {
             if (cancelled) return;
             setProjects(lsState.projects);
+            projectsRef.current = lsState.projects;
             setActiveProjectId(resolveActiveProjectForWindow(lsState.activeProjectId));
+            activeProjectIdRef.current = resolveActiveProjectForWindow(lsState.activeProjectId);
             installNodes(lsState.nodes);
           }
           if (!cancelled) finishHydration(lsState.projects.length > 0 ? 'localStorage' : 'empty');
+        }
+        for (const connection of snapshotResult.unavailableConnections) {
+          void retryRemoteHydration(connection);
         }
       } catch {
         if (!cancelled) {
           const lsState = readLocalStorageState(userId);
           setProjects(lsState.projects);
-          setActiveProjectId(resolveActiveProjectForWindow(lsState.activeProjectId));
+          projectsRef.current = lsState.projects;
+          const resolvedActiveId = resolveActiveProjectForWindow(lsState.activeProjectId);
+          setActiveProjectId(resolvedActiveId);
+          activeProjectIdRef.current = resolvedActiveId;
           installNodes(lsState.nodes);
           finishHydration('fallbackLocalStorage');
         }

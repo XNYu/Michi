@@ -36,7 +36,7 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
     const load = async (): Promise<LoadState> => {
       try {
         const electron = getElectron();
-        if (item.filePath.startsWith('/') && electron?.readFile) {
+        if (item.filePath.startsWith('/') && electron?.readFile && !project?.backendConnectionId) {
           const stat = await electron.statFile?.(item.filePath);
           if (stat && stat.size > MAX_FILE_BYTES) throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
           const result = await electron.readFile(item.filePath);
@@ -64,16 +64,17 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
       if (next.phase === 'loaded' && diskStateRef.current) updatePaneItem(item.id, { diskState: undefined });
     });
     return () => { active = false; };
-  }, [item.filePath, item.id, item.projectId, reloadKey, updatePaneItem]);
+  }, [item.filePath, item.id, item.projectId, project?.backendConnectionId, reloadKey, updatePaneItem]);
 
   const extension = state.phase === 'loaded'
     ? state.extension
     : (basename(item.filePath).split('.').pop()?.toLowerCase() ?? '');
   const isMarkdown = MARKDOWN_EXTS.has(extension);
   const absolutePath = useMemo(() => {
+    if (project?.backendConnectionId) return null;
     if (item.filePath.startsWith('/')) return item.filePath;
     return project?.cwd ? `${project.cwd.replace(/\/$/, '')}/${item.filePath}` : null;
-  }, [item.filePath, project?.cwd]);
+  }, [item.filePath, project?.backendConnectionId, project?.cwd]);
 
   const openExternal = useCallback(() => {
     if (absolutePath) void getElectron()?.openPath?.(absolutePath);

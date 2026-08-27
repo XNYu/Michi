@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '../../config/env';
+import { nodeBackendApiBase } from '../../config/backendConnections';
 
 export interface ClaimResult {
   owner: boolean;
@@ -6,7 +6,7 @@ export interface ClaimResult {
 }
 
 export async function claimPane(chatId: string, ownerToken: string, windowId: string): Promise<ClaimResult> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/claim`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/claim`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ownerToken, windowId }),
@@ -16,7 +16,7 @@ export async function claimPane(chatId: string, ownerToken: string, windowId: st
 }
 
 export async function heartbeatPane(chatId: string, ownerToken: string): Promise<boolean> {
-  const res = await fetch(`${API_BASE_URL}/chats/${chatId}/heartbeat`, {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/heartbeat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ownerToken }),
@@ -25,7 +25,7 @@ export async function heartbeatPane(chatId: string, ownerToken: string): Promise
 }
 
 export async function releasePane(chatId: string, ownerToken: string): Promise<void> {
-  await fetch(`${API_BASE_URL}/chats/${chatId}/release`, {
+  await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/release`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ownerToken }),

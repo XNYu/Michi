@@ -53,7 +53,7 @@ export function useDigestOrchestration({
             if (ctl.signal.aborted) return;
             dispatch({ type: 'digest-chunk', nodeId, text });
           },
-        });
+        }, project.backendConnectionId);
         if (ctl.signal.aborted) return;
         const fps: Record<string, string> = {};
         for (const sid of sources) {
