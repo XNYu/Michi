@@ -81,6 +81,10 @@ frontend/.omc/
 # itself first, then re-ignore everything in it, then unignore the
 # specific file.
 docs/
+!docs/
+docs/*
+!docs/harness-p0-p3-tasks.md
+!docs/remote-backend.md
 
 # Local-only assets
 AGENTS.md
@@ -130,6 +134,9 @@ cfn-template.json
 extension/
 feasibility-of-background-execution-during-sleep-*.md
 mocks/
+
+# Stitch design snapshots and metadata
+/.stitch/
 
 # Large assets and temporary experiments
 /videos/
