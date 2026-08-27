@@ -1,7 +1,13 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { assertCwdAllowed, getUserSandboxRoot, deriveSandboxCwd, NotFoundError } from "../agents/tools/pathSandbox";
+import {
+    assertCwdAllowed,
+    getUserSandboxRoot,
+    deriveSandboxCwd,
+    normalizeWorkspaceCwd,
+    NotFoundError,
+} from "../agents/tools/pathSandbox";
 import { ChatManager, ExtraContext } from "../services/chatManager";
 import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
@@ -762,7 +768,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             }
 
             const session = await runtime.newSession({
-                cwd: cwd ?? process.cwd(),
+                cwd: normalizeWorkspaceCwd(cwd ?? process.cwd()),
                 parentChatId,
                 mergeContexts: validatedMergeContexts,
                 extraContexts: validatedExtraContexts,
@@ -855,7 +861,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const session = await runtime.loadSession({
                 sessionId: resolvedNodeId,
                 nodeId: resolvedNodeId,
-                cwd,
+                cwd: normalizeWorkspaceCwd(cwd),
                 model: model as string | undefined,
                 workspaceId,
                 ownerUserId: req.user?.id ?? null,
@@ -940,6 +946,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 cwd = cwdRaw;
             }
         }
+        cwd = normalizeWorkspaceCwd(cwd);
 
         const existingChatId = normalizeSignaturePart(body.chatId);
         const parentChatId = normalizeSignaturePart(body.parentChatId) ?? undefined;

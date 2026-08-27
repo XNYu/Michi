@@ -8,12 +8,13 @@ import { getRuntimeDeps } from "../runtimeDeps";
 import { getProviderInfo } from "./piProviders";
 import { getModelAttemptIds, getUpstreamProviderId, resolvePiModel } from "./piProviders";
 import { loadPiAi, loadPiAgentCore } from "./piAi";
-import { buildPiTools } from "./piTools";
+import { buildPiTools, piToolResultErrorOverride } from "./piTools";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
 import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
 import { resolvePolicy } from "../permissionPolicy";
 import { followUpReminder } from "../preamble";
+import { normalizeWorkspaceCwd } from "../tools/pathSandbox";
 
 export interface PiSessionDeps {
     bridge: AgentToolBridge;
@@ -147,7 +148,7 @@ export class PiSession implements AgentSession {
 
     constructor(id: string, deps: PiSessionDeps) {
         this.id = id;
-        this.cwd = deps.cwd;
+        this.cwd = normalizeWorkspaceCwd(deps.cwd);
         this.bridge = deps.bridge;
         this.preamble = deps.preamble;
         this.firstUserGlue = deps.firstUserGlue ?? "";
@@ -302,6 +303,7 @@ export class PiSession implements AgentSession {
                     }
                     return undefined;
                 },
+                afterToolCall: piToolResultErrorOverride,
             });
 
             // Seed prior history (rehydrate).

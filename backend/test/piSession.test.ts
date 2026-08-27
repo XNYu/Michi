@@ -35,6 +35,7 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
   let reasoningRuntime: string | undefined;
   let modelId: string | undefined;
   let thinkingLevel: string | undefined;
+  let afterToolCall: ((context: { result: unknown; isError: boolean }) => unknown) | undefined;
 
   // Replaces the former agentConfig/secrets monkey-patches. Mirrors the exact
   // stub values the patches used to return, including the recording closures
@@ -85,6 +86,7 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
 
       constructor(opts: any) {
         thinkingLevel = opts.initialState.thinkingLevel;
+        afterToolCall = opts.afterToolCall;
       }
 
       subscribe(fn: (event: any) => void) {
@@ -118,4 +120,6 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
   assert.equal(reasoningRuntime, 'pi');
   assert.equal(modelId, 'pi-model');
   assert.equal(thinkingLevel, 'low');
+  assert.equal(typeof afterToolCall, 'function');
+  assert.deepEqual(afterToolCall?.({ result: { isError: true }, isError: false }), { isError: true });
 });

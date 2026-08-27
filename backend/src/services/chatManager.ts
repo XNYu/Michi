@@ -2,6 +2,7 @@ import type { NormalizedEvent } from "./chatEvents";
 import type { KiroRuntime } from "../agents/kiro/KiroRuntime";
 import type { AgentSession, ChatMessage, ExtraContext } from "../agents/types";
 import * as sessionRegistry from "../agents/sessionRegistry";
+import { normalizeWorkspaceCwd } from "../agents/tools/pathSandbox";
 
 export type { ChatMessage, ExtraContext };
 
@@ -40,7 +41,7 @@ export class ChatManager {
             throw new Error("ChatManager.newChat: Kiro runtime not registered");
         }
         const session = await this.runtime.newSession({
-            cwd: cwd ?? this.defaultCwd,
+            cwd: normalizeWorkspaceCwd(cwd ?? this.defaultCwd),
             parentChatId,
             mergeContexts,
             extraContexts,

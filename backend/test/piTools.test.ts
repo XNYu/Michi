@@ -2,7 +2,7 @@
 import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { configureRuntimeDeps, __resetRuntimeDeps } from "../src/agents/runtimeDeps";
-import { buildPiTools } from "../src/agents/pi/piTools";
+import { buildPiTools, piToolResultErrorOverride } from "../src/agents/pi/piTools";
 
 const baseCfg = { getAgentConfig: () => ({ runtime: "pi", provider: "x", modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => "", resolveReasoning: () => undefined };
 const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} };
@@ -27,5 +27,19 @@ describe("buildPiTools global-context gating", () => {
       globalContext: { listThreads: () => ({ status: "ok", text: "" }), searchMessages: () => ({ status: "ok", text: "" }), readNode: () => ({ status: "ok", text: "" }) } });
     const names = buildPiTools(opts() as any).map((t: any) => t.name);
     for (const n of ["list_threads", "search_messages", "read_node"]) assert.ok(names.includes(n), `${n} should be present`);
+  });
+});
+
+describe("Pi tool result error propagation", () => {
+  test("marks Michi errorResult payloads as failed for pi-agent-core", () => {
+    assert.deepEqual(piToolResultErrorOverride({
+      result: { content: [{ type: "text", text: "access denied" }], isError: true },
+      isError: false,
+    }), { isError: true });
+  });
+
+  test("does not override successful or already-failed tool executions", () => {
+    assert.equal(piToolResultErrorOverride({ result: { isError: false }, isError: false }), undefined);
+    assert.equal(piToolResultErrorOverride({ result: { isError: true }, isError: true }), undefined);
   });
 });

@@ -60,6 +60,27 @@ export interface BuildPiToolsOpts {
     emitImage?: (ev: NormalizedEvent) => void;
 }
 
+/**
+ * pi-agent-core treats a resolved execute() promise as success unless its
+ * afterToolCall hook explicitly overrides the error flag. Michi's built-in
+ * tools return `{ isError: true }` for expected failures (sandbox rejection,
+ * missing file, non-zero bash exit), so bridge that contract here.
+ */
+export function piToolResultErrorOverride(context: {
+    result: unknown;
+    isError: boolean;
+}): { isError: true } | undefined {
+    if (context.isError) return undefined;
+    if (
+        context.result
+        && typeof context.result === "object"
+        && (context.result as { isError?: unknown }).isError === true
+    ) {
+        return { isError: true };
+    }
+    return undefined;
+}
+
 function paramToTypebox(spec: ParamSpec, Type: any): any {
     if (spec === "string") return Type.String();
     if (spec === "number") return Type.Number();
@@ -197,6 +218,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                             return {
                                 content: [{ type: "text", text: `Error: ${r.error}` }],
                                 details: { error: r.error },
+                                isError: true,
                             };
                         }
                         const caption = typeof args?.caption === "string" ? args.caption : undefined;

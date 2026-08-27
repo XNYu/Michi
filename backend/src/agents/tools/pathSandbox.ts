@@ -52,6 +52,63 @@ export function resolveToCwd(filePath: string, cwd: string): string {
     return resolvePath(cwd, expanded);
 }
 
+/**
+ * Canonical cwd used when a session is accepted. `path.resolve` removes
+ * trailing separators; realpath collapses host-specific aliases such as
+ * /home/user -> /local/home/user. The fallback keeps this helper safe for
+ * callers that validate existence separately.
+ */
+export function normalizeWorkspaceCwd(cwd: string): string {
+    const resolved = path.resolve(cwd);
+    try {
+        return fs.realpathSync.native(resolved);
+    } catch {
+        return resolved;
+    }
+}
+
+function isWithinRoot(candidate: string, root: string): boolean {
+    const relative = path.relative(root, candidate);
+    return relative === ""
+        || (relative !== ".." && !relative.startsWith(`..${sep}`) && !path.isAbsolute(relative));
+}
+
+/** Resolve symlinks in the longest existing prefix, preserving a missing tail. */
+function canonicalizePathForComparison(inputPath: string): string {
+    const resolved = path.resolve(inputPath);
+    let cursor = resolved;
+    const missingTail: string[] = [];
+
+    for (;;) {
+        try {
+            const realPrefix = fs.realpathSync.native(cursor);
+            return path.join(realPrefix, ...missingTail.reverse());
+        } catch {
+            const parent = path.dirname(cursor);
+            if (parent === cursor) return resolved;
+            missingTail.push(path.basename(cursor));
+            cursor = parent;
+        }
+    }
+}
+
+function isAllowedByRoot(absolutePath: string, cwd: string): boolean {
+    const resolvedPath = path.resolve(absolutePath);
+    const resolvedCwd = path.resolve(cwd);
+
+    // Keep the existing lexical contract first: a symlink deliberately placed
+    // inside a workspace remains usable even if its target is outside.
+    if (isWithinRoot(resolvedPath, resolvedCwd)) return true;
+
+    const canonicalCwd = canonicalizePathForComparison(resolvedCwd);
+    // Common alias case: the agent emitted the canonical spelling while cwd
+    // retained the host alias (for example /local/home vs /home).
+    if (isWithinRoot(resolvedPath, canonicalCwd)) return true;
+
+    const canonicalPath = canonicalizePathForComparison(resolvedPath);
+    return isWithinRoot(canonicalPath, canonicalCwd);
+}
+
 export class PathSandboxError extends Error {
     constructor(
         public readonly attemptedPath: string,
@@ -73,8 +130,7 @@ export class PathSandboxError extends Error {
  * caller wants a stricter realpath check, layer it on top.
  */
 export function assertWithinCwd(absolutePath: string, cwd: string): void {
-    if (absolutePath === cwd) return;
-    if (absolutePath.startsWith(cwd + sep)) return;
+    if (isAllowedByRoot(absolutePath, cwd)) return;
     throw new PathSandboxError(absolutePath, cwd);
 }
 
@@ -95,11 +151,7 @@ export function assertPathAllowed(
         throw new PathSandboxError(absolutePath, '(no workspace directory)');
     }
 
-    const resolved = path.resolve(absolutePath);
-    const allowed = allowlist.some(dir => {
-        const resolvedDir = path.resolve(dir);
-        return resolved === resolvedDir || resolved.startsWith(resolvedDir + sep);
-    });
+    const allowed = allowlist.some(dir => isAllowedByRoot(absolutePath, dir));
     if (!allowed) {
         throw new PathSandboxError(absolutePath, allowlist[0]);
     }
