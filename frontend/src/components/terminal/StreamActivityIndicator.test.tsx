@@ -81,24 +81,24 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(node({ messages: [userMsg] }))?.label).toBe('Working');
   });
 
-  it('names the running tool', () => {
+  it('returns null while a visible tool is running because its chip owns the status', () => {
     const n = node({
       messages: [assistant({
         blocks: [{ id: 'b0', kind: 'answer', rawText: 'sure', streaming: false }],
         toolCalls: [tool('t1', 'bash', 'in_progress')],
       })],
     });
-    expect(deriveStreamActivity(n)?.label).toBe('Running bash');
+    expect(deriveStreamActivity(n)).toBeNull();
   });
 
-  it('prefers the running tool over a streaming thinking tail', () => {
+  it('returns null for a running tool even while a thinking block streams', () => {
     const n = node({
       messages: [assistant({
         blocks: [{ id: 'b0', kind: 'thinking', rawText: 'hmm', streaming: true }],
         toolCalls: [tool('t1', 'grep', 'running')],
       })],
     });
-    expect(deriveStreamActivity(n)?.label).toBe('Running grep');
+    expect(deriveStreamActivity(n)).toBeNull();
   });
 
   it('stays quiet while visible answer text streams (cursor conveys liveness)', () => {
@@ -175,18 +175,14 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(n)?.label).toBe('Thinking');
   });
 
-  it('truncates very long tool titles', () => {
-    const longTitle = 'x'.repeat(80);
+  it('returns null for a running tool with a long title', () => {
     const n = node({
       messages: [assistant({
         blocks: [{ id: 'b0', kind: 'answer', rawText: 'ok', streaming: false }],
-        toolCalls: [tool('t1', longTitle, 'running')],
+        toolCalls: [tool('t1', 'x'.repeat(80), 'running')],
       })],
     });
-    const label = deriveStreamActivity(n)?.label ?? '';
-    expect(label.startsWith('Running ')).toBe(true);
-    expect(label.endsWith('…')).toBe(true);
-    expect(label.length).toBeLessThan('Running '.length + 80);
+    expect(deriveStreamActivity(n)).toBeNull();
   });
 });
 
@@ -218,7 +214,7 @@ describe('deriveStreamActivity — Kiro plan steps', () => {
     expect(deriveStreamActivity(n)?.detail).toBe('Step 1/1');
   });
 
-  it('lets a running tool outrank the plan step', () => {
+  it('suppresses the plan row while a visible tool chip is running', () => {
     const n = node({
       messages: [assistant({
         blocks: [{ id: 'b0', kind: 'answer', rawText: 'ok', streaming: false }],
@@ -226,9 +222,7 @@ describe('deriveStreamActivity — Kiro plan steps', () => {
         plan: [planEntry('step one', 'in_progress')],
       })],
     });
-    const a = deriveStreamActivity(n);
-    expect(a?.label).toBe('Running bash');
-    expect(a?.detail).toBeUndefined();
+    expect(deriveStreamActivity(n)).toBeNull();
   });
 
   it('stays quiet for plan progress while visible answer text streams', () => {

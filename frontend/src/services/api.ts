@@ -21,3 +21,5 @@ export * from './api/version';
 export * from './api/agentRuntime';
 export * from './api/artifacts';
 export * from './api/backendConnections';
+export * from './api/agents';
+export * from './api/agentRuns';

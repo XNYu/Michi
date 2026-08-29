@@ -1,6 +1,21 @@
 import fs from "fs";
 import path from "path";
 import { log } from "../services/logger";
+import type { AgentRunToolInvoker } from "./runToolBridge";
+import type { RuntimeSessionOwner } from "./types";
+
+export interface AgentRunToolSessionBinding {
+    runtimeId: string;
+    sessionId: string;
+    owner: RuntimeSessionOwner;
+    ownerUserId: string | null;
+    workspaceId: string | null;
+    nodeId: string | null;
+}
+
+export type AgentRunToolInvokerFactory = (
+    binding: Readonly<AgentRunToolSessionBinding>,
+) => AgentRunToolInvoker | null | undefined;
 
 /**
  * Shared business-effect handlers for the four internal "tools" any agent
@@ -69,6 +84,13 @@ export interface AgentToolBridge {
     spawnBranches(args: BridgeSpawnBranchesArgs): Promise<SpawnedBranch[]>;
     saveContext(args: BridgeSaveContextArgs): BridgeSaveContextResult | null;
     updateContext(args: BridgeUpdateContextArgs): BridgeUpdateContextResult | null;
+    /** Optional session-bound generic Agent Run tools. T16 supplies the
+     * production binding; absence keeps existing chat tools unchanged. */
+    agentRuns?: AgentRunToolInvoker;
+    /** Production path: bind orchestration tools to one immutable runtime
+     * session identity. A factory avoids cross-session caller leakage when
+     * several chats/Run Attempts execute concurrently. */
+    agentRunToolsForSession?: AgentRunToolInvokerFactory;
 }
 
 /**
@@ -99,6 +121,8 @@ export interface AgentToolBridgeDeps {
         filePath: string;
         size: number;
     }) => string | false | null | void;
+    agentRuns?: AgentRunToolInvoker;
+    agentRunToolsForSession?: AgentRunToolInvokerFactory;
 }
 
 function isValidContextName(name: unknown): name is string {
@@ -128,6 +152,8 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
         }
     };
     return {
+        ...(deps.agentRuns ? { agentRuns: deps.agentRuns } : {}),
+        ...(deps.agentRunToolsForSession ? { agentRunToolsForSession: deps.agentRunToolsForSession } : {}),
         async spawnBranches(args: BridgeSpawnBranchesArgs): Promise<SpawnedBranch[]> {
             const capped = args.topics.slice(0, 5);
             const result: SpawnedBranch[] = [];
@@ -185,4 +211,20 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
             return { ...result, ...(contextId ? { id: contextId } : {}) };
         },
     };
+}
+
+export function resolveAgentRunToolsForSession(
+    bridge: AgentToolBridge,
+    binding: AgentRunToolSessionBinding,
+): AgentRunToolInvoker | null {
+    if (bridge.agentRunToolsForSession) {
+        const immutable = Object.freeze({
+            ...binding,
+            owner: Object.freeze({ ...binding.owner }) as RuntimeSessionOwner,
+        });
+        return bridge.agentRunToolsForSession(immutable) ?? null;
+    }
+    // Compatibility for isolated T13 callers. Production assembly should use
+    // the session factory so a singleton invoker is never shared concurrently.
+    return bridge.agentRuns ?? null;
 }

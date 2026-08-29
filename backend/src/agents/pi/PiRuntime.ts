@@ -9,6 +9,7 @@ import type {
     LoadAgentSessionOptions,
     ModelInfo,
     NewAgentSessionOptions,
+    RuntimeSessionOwner,
     VerifyProviderKeyOptions,
     VerifyProviderKeyResult,
 } from "../types";
@@ -78,7 +79,13 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // Adopt the caller-supplied id when present so chatId === nodeId
         // (Pi runtime convention; Kiro must server-mint per ACP). When
         // absent (legacy callers), fall back to a UUID.
-        const id = opts.sessionId ?? randomUUID();
+        const owner = resolveSessionOwner(opts.owner, opts.sessionId);
+        const id = owner.kind === "agent_run" ? owner.attemptId : (opts.sessionId ?? owner.nodeId);
+        const existing = this.sessions.get(id);
+        if (existing) {
+            assertCompatibleSession(existing, owner, opts.profileHash ?? null);
+            return existing;
+        }
         const enableFollowUps = opts.enableFollowUps !== false;
 
         // Walk the parent's chain (parent's own ancestors + parent itself).
@@ -86,7 +93,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // cold path where the user branches from a parent that hasn't been
         // re-opened since backend restart.
         const ancestorChain: AgentSession[] = [];
-        if (opts.parentChatId) {
+        if (owner.kind === "chat_node" && opts.parentChatId) {
             await this.ensureChainLoaded(opts.parentChatId, opts.cwd);
             const parent = sessionRegistry.getSession(opts.parentChatId);
             if (parent) {
@@ -102,19 +109,39 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             ancestors: ancestorChain,
             mergeContexts: opts.mergeContexts,
         });
+        const effectivePreamble = [preamble, opts.bootstrapInstructions].filter(Boolean).join("\n\n");
+        const initialMessages = opts.replayHistory
+            ? rowsToAgentMessages(opts.replayHistory.map((message) => ({
+                role: message.role,
+                content: message.content,
+                created_at: Date.now(),
+            })))
+            : undefined;
 
         void shouldNavigatePiTreeOnMichiBranch();
-        const session = await createPiSession(id, {
+        const sessionDeps = {
             bridge: this.bridge,
             cwd: opts.cwd,
             enableFollowUps,
-            preamble,
+            preamble: effectivePreamble,
             firstUserGlue: buildFormatReminder(enableFollowUps),
-            parentChatId: opts.parentChatId,
+            parentChatId: owner.kind === "chat_node" ? opts.parentChatId : undefined,
             workspaceId: opts.workspaceId ?? null,
             ownerUserId: opts.ownerUserId ?? null,
-        });
+            owner,
+            profileHash: opts.profileHash ?? null,
+            toolProfile: opts.toolProfile,
+            permissionBroker: opts.permissionBroker,
+            requestedProvider: opts.provider ?? null,
+            requestedModel: opts.model ?? null,
+            requestedReasoning: opts.reasoning ?? null,
+            initialMessages,
+        };
+        const session = owner.kind === "agent_run"
+            ? new PiSession(id, sessionDeps)
+            : await createPiSession(id, sessionDeps);
         this.sessions.set(id, session as AgentSession & { destroy(): void });
+        sessionRegistry.registerSession(session, opts.ownerUserId ?? null, owner);
         return session;
     }
 
@@ -136,12 +163,24 @@ export class PiRuntime implements AgentRuntimeWithProviders {
      * whatever the original turn had glued in.
      */
     async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
+        const owner = resolveSessionOwner(opts.owner, opts.sessionId);
+        const existing = this.sessions.get(opts.sessionId);
+        if (existing) {
+            assertCompatibleSession(existing, owner, opts.profileHash ?? null);
+            return existing;
+        }
         let initialMessages: ReturnType<typeof rowsToAgentMessages> = [];
         let parentChatId: string | undefined;
         // Caller-supplied workspaceId wins — covers the cold-start window where the
         // node row hasn't been synced from the frontend yet.
         let workspaceId: string | null = opts.workspaceId ?? null;
-        try {
+        if (owner.kind === "agent_run") {
+            initialMessages = rowsToAgentMessages((opts.replayHistory ?? []).map((message) => ({
+                role: message.role,
+                content: message.content,
+                created_at: Date.now(),
+            })));
+        } else try {
             const row = getRuntimeDeps().historyStore.getNode(opts.sessionId);
             parentChatId = row?.parent_node_id ?? undefined;
             if (!workspaceId) workspaceId = row?.workspace_id ?? null;
@@ -165,18 +204,30 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             cwd: opts.cwd,
             ancestors: ancestorChain,
         });
+        const effectivePreamble = [preamble, opts.bootstrapInstructions].filter(Boolean).join("\n\n");
 
-        const session = await createPiSession(opts.sessionId, {
+        const sessionDeps = {
             bridge: this.bridge,
             cwd: opts.cwd,
             enableFollowUps: true,
-            preamble,
+            preamble: effectivePreamble,
             initialMessages,
             parentChatId,
             workspaceId,
             ownerUserId: opts.ownerUserId ?? null,
-        });
+            owner,
+            profileHash: opts.profileHash ?? null,
+            toolProfile: opts.toolProfile,
+            permissionBroker: opts.permissionBroker,
+            requestedProvider: opts.provider ?? null,
+            requestedModel: opts.model ?? null,
+            requestedReasoning: opts.reasoning ?? null,
+        };
+        const session = owner.kind === "agent_run"
+            ? new PiSession(opts.sessionId, sessionDeps)
+            : await createPiSession(opts.sessionId, sessionDeps);
         this.sessions.set(opts.sessionId, session as AgentSession & { destroy(): void });
+        sessionRegistry.registerSession(session, opts.ownerUserId ?? null, owner);
         return session;
     }
 
@@ -258,7 +309,10 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         }
     }
 
-    releaseSession(id: string): void {
+    releaseSession(id: string, expectedOwner?: RuntimeSessionOwner): void {
+        const session = this.sessions.get(id);
+        const actualOwner = session?.owner ?? (session ? { kind: "chat_node" as const, nodeId: session.id } : undefined);
+        if (expectedOwner && (!actualOwner || !sameRuntimeOwner(actualOwner, expectedOwner))) return;
         this.dropSession(id);
         sessionRegistry.dropSession(id);
     }
@@ -272,5 +326,37 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             }
         }
         this.sessions.clear();
+    }
+}
+
+function resolveSessionOwner(owner: RuntimeSessionOwner | undefined, sessionId?: string): RuntimeSessionOwner {
+    if (owner) {
+        if (owner.kind === "agent_run" && sessionId && sessionId !== owner.attemptId) {
+            throw new Error("Agent Run public session id must equal attemptId");
+        }
+        return owner;
+    }
+    return { kind: "chat_node", nodeId: sessionId ?? randomUUID() };
+}
+
+function sameRuntimeOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
+    if (left.kind !== right.kind) return false;
+    return left.kind === "chat_node"
+        ? left.nodeId === (right as Extract<RuntimeSessionOwner, { kind: "chat_node" }>).nodeId
+        : left.runId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).runId
+            && left.attemptId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).attemptId;
+}
+
+function assertCompatibleSession(
+    session: AgentSession,
+    owner: RuntimeSessionOwner,
+    profileHash: string | null,
+): void {
+    const actualOwner = session.owner ?? { kind: "chat_node" as const, nodeId: session.id };
+    if (!sameRuntimeOwner(actualOwner, owner)) {
+        throw new Error(`session ${session.id} is already bound to a different owner`);
+    }
+    if ((session.runtimeProfileHash ?? null) !== profileHash) {
+        throw new Error(`session ${session.id} runtime profile hash mismatch`);
     }
 }

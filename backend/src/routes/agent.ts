@@ -209,6 +209,22 @@ export function setupAgentRoutes(): Router {
     res.json({ ok: true });
   });
 
+  // Runtime-scoped catalog for the Agent editor: providers and models for ANY
+  // registered runtime, independent of the currently active chat runtime
+  // (/agent/status and /agent/models are both active-runtime-bound).
+  router.get("/agent/runtime-catalog", async (req: Request, res: Response) => {
+    const runtimeId = typeof req.query.runtime === "string" ? req.query.runtime.trim() : "";
+    const runtime = runtimeId ? getRuntime(runtimeId) : null;
+    if (!runtime) {
+      res.json({ providers: [], models: [] });
+      return;
+    }
+    const provider = typeof req.query.provider === "string" ? req.query.provider : undefined;
+    const providers = hasProviders(runtime) ? await runtime.listProviders() : [];
+    const models = runtime.listModels ? await runtime.listModels({ provider }) : [];
+    res.json({ providers, models });
+  });
+
   router.get("/agent/models", async (req: Request, res: Response) => {
     const userId = req.user?.id as string | undefined;
     const cfg = getAgentConfig(userId);

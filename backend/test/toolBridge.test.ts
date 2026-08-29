@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createAgentToolBridge } from '../src/agents/toolBridge';
+import { createAgentToolBridge, resolveAgentRunToolsForSession } from '../src/agents/toolBridge';
 
 const tmpDirs: string[] = [];
 
@@ -123,5 +123,40 @@ describe('AgentToolBridge spawned identity', () => {
       title: 'Durable child title',
       prompt: 'Durable child prompt',
     });
+  });
+});
+
+describe('AgentToolBridge session-bound Agent Run tools', () => {
+  test('creates isolated invokers from immutable runtime ownership bindings', () => {
+    const bindings: any[] = [];
+    const bridge = createAgentToolBridge({
+      createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }),
+      agentRunToolsForSession: (binding) => {
+        bindings.push(binding);
+        return { invoke: async () => ({ sessionId: binding.sessionId }) } as any;
+      },
+    });
+    const first = resolveAgentRunToolsForSession(bridge, {
+      runtimeId: 'pi', sessionId: 'session-a', owner: { kind: 'chat_node', nodeId: 'node-a' },
+      ownerUserId: 'owner-a', workspaceId: 'ws-a', nodeId: 'node-a',
+    });
+    const second = resolveAgentRunToolsForSession(bridge, {
+      runtimeId: 'pi', sessionId: 'attempt-b', owner: { kind: 'agent_run', runId: 'run-b', attemptId: 'attempt-b' },
+      ownerUserId: 'owner-a', workspaceId: 'ws-a', nodeId: null,
+    });
+    assert.notEqual(first, second);
+    assert.deepEqual(bindings.map((binding) => [binding.sessionId, binding.owner.kind]), [
+      ['session-a', 'chat_node'], ['attempt-b', 'agent_run'],
+    ]);
+    assert.equal(Object.isFrozen(bindings[0]), true);
+    assert.equal(Object.isFrozen(bindings[0].owner), true);
+  });
+
+  test('feature-off bridge resolves no Agent Run invoker', () => {
+    const bridge = createAgentToolBridge({ createChild: async () => ({ chatId: 'child-1', nodeId: 'node-1' }) });
+    assert.equal(resolveAgentRunToolsForSession(bridge, {
+      runtimeId: 'pi', sessionId: 'session-a', owner: { kind: 'chat_node', nodeId: 'node-a' },
+      ownerUserId: null, workspaceId: null, nodeId: 'node-a',
+    }), null);
   });
 });

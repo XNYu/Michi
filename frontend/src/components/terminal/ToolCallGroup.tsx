@@ -346,6 +346,7 @@ function PayloadBlock({ inputJson, output }: { inputJson?: string; output?: stri
     color: 'var(--term-mid)',
     padding: '2px 10px 8px',
     margin: 0,
+    fontVariantLigatures: 'none',
   };
   return (
     <div

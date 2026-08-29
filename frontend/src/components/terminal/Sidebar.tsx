@@ -327,6 +327,7 @@ function BottomNav({
       }}
     >
       <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
+      <Item id="agents" glyph={<span aria-hidden style={{ fontFamily: 'var(--mono-font)', fontSize: 15 }}>◇</span>} label="Agents" />
       <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
       <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />
       {PROFILE_PAGE_ENABLED && (

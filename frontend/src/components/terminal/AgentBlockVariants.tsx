@@ -257,6 +257,7 @@ function CardPayload({ t }: { t: ToolCallState }) {
     color: 'var(--term-mid)',
     padding: '0 11px 7px',
     margin: 0,
+    fontVariantLigatures: 'none',
   };
   return (
     <div

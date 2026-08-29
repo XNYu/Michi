@@ -1,9 +1,11 @@
 import {
   activeBackendApiBase,
   backendApiBase,
+  backendConnectionIdForWorkspace,
   nodeBackendApiBase,
   workspaceBackendApiBase,
 } from '../../config/backendConnections';
+import { parseAgentDefinitionDtoV1, type AgentDefinitionDtoV1 } from 'michi-shared';
 import { startupMark } from '../startupTrace';
 import type { RuntimeId, AgentReasoning } from './agentRuntime';
 
@@ -126,6 +128,61 @@ export interface EnsureSessionOptions {
   modeId?: string | null;
   resumeFingerprint?: string | null;
   graphPrerequisite?: Record<string, unknown>;
+  agentDefinitionId?: string;
+}
+
+export interface PrimaryAgentDefinitionOption {
+  backendConnectionId: string;
+  definition: AgentDefinitionDtoV1;
+}
+
+interface PendingPrimaryAgentBinding {
+  workspaceId: string;
+  backendConnectionId: string;
+  definitionId: string;
+}
+
+const pendingPrimaryAgents = new Map<string, PendingPrimaryAgentBinding>();
+
+/** Bind a Home/new-thread selection to exactly the first ensure-session call. */
+export function bindPendingPrimaryAgent(
+  nodeId: string,
+  binding: PendingPrimaryAgentBinding,
+): void {
+  const ownerBackend = backendConnectionIdForWorkspace(binding.workspaceId);
+  if (binding.backendConnectionId !== ownerBackend) {
+    throw new Error('The selected Agent belongs to a different Backend than this Workspace.');
+  }
+  pendingPrimaryAgents.set(nodeId, binding);
+}
+
+export function clearPendingPrimaryAgent(nodeId: string): void {
+  pendingPrimaryAgents.delete(nodeId);
+}
+
+export async function listPrimaryAgentDefinitions(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<PrimaryAgentDefinitionOption[]> {
+  const backendConnectionId = backendConnectionIdForWorkspace(workspaceId);
+  const response = await fetch(
+    `${workspaceBackendApiBase(workspaceId)}/agents?workspaceId=${encodeURIComponent(workspaceId)}&discover=enabled`,
+    { signal },
+  );
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+      ? payload.error
+      : `listPrimaryAgentDefinitions failed: ${response.status}`;
+    throw new Error(message);
+  }
+  const definitions = payload && typeof payload === 'object' && 'definitions' in payload && Array.isArray(payload.definitions)
+    ? payload.definitions
+    : [];
+  return definitions.map((definition, index) => ({
+    backendConnectionId,
+    definition: parseAgentDefinitionDtoV1(definition, `definitions[${index}]`),
+  }));
 }
 
 export interface EnsureSessionResult {
@@ -176,6 +233,18 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.reasoning) body.reasoning = opts.reasoning;
   if (opts.resumeFingerprint) body.resumeFingerprint = opts.resumeFingerprint;
   if (opts.graphPrerequisite) body.graphPrerequisite = opts.graphPrerequisite;
+  const pendingPrimary = pendingPrimaryAgents.get(opts.nodeId);
+  if (pendingPrimary) {
+    if (opts.workspaceId !== pendingPrimary.workspaceId) {
+      throw new Error('The selected primary Agent no longer matches this Workspace.');
+    }
+    if (backendConnectionIdForWorkspace(pendingPrimary.workspaceId) !== pendingPrimary.backendConnectionId) {
+      throw new Error('The selected primary Agent no longer matches this Workspace Backend.');
+    }
+    body.agentDefinitionId = pendingPrimary.definitionId;
+  } else if (opts.agentDefinitionId) {
+    body.agentDefinitionId = opts.agentDefinitionId;
+  }
 
   const base = opts.workspaceId ? workspaceBackendApiBase(opts.workspaceId) : nodeBackendApiBase(opts.nodeId);
   const res = await fetch(`${base}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
@@ -201,6 +270,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
     throw new Error(payload?.error || `ensureSession failed: ${res.status} ${raw}`);
   }
   const json = await res.json();
+  if (pendingPrimary) pendingPrimaryAgents.delete(opts.nodeId);
   startupMark('ensure_session_done', {
     nodeId: opts.nodeId,
     chatId: json.chatId,

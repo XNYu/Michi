@@ -7,7 +7,9 @@ import type {
   ModelInfo,
   NewAgentSessionOptions,
   RuntimeId,
+  RuntimeSessionOwner,
 } from '../types';
+import { assertReleaseOwnership } from '../runs/runtimeRunAdapter';
 import { describeRuntimeCapabilities } from '../capabilityDescriptors';
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
@@ -189,8 +191,13 @@ export class CodexRuntime implements AgentRuntime {
   async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
     const nodeId = opts.sessionId ?? (() => { throw new Error('sessionId is required for CodexRuntime'); })();
 
+    // Resolve product owner. For agent_run owners, the public session id is
+    // the attemptId. For chat sessions, it is the nodeId.
+    const owner: RuntimeSessionOwner = opts.owner ?? { kind: 'chat_node', nodeId };
+    const publicId = owner.kind === 'agent_run' ? owner.attemptId : nodeId;
+
     // Double-load guard
-    const existing = this.sessions.get(nodeId);
+    const existing = this.sessions.get(publicId);
     if (existing) return existing;
 
     // Concurrency cap
@@ -210,9 +217,9 @@ export class CodexRuntime implements AgentRuntime {
       modelId = def?.id ?? '';
     }
 
-    // Ancestor chain for preamble
+    // Ancestor chain for preamble (chat sessions only)
     const ancestorChain: AgentSession[] = [];
-    if (opts.parentChatId) {
+    if (owner.kind === 'chat_node' && opts.parentChatId) {
       sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
@@ -224,14 +231,18 @@ export class CodexRuntime implements AgentRuntime {
       ? getWorkspaceInstructions(opts.workspaceId)
       : null;
 
-    const firstTurnPrefix = buildFirstTurnPrefix({
-      cwd: opts.cwd,
-      contextManifest: opts.contextManifest,
-      extraContexts: opts.extraContexts,
-      ancestors: ancestorChain,
-      mergeContexts: opts.mergeContexts,
-      workspaceInstructions,
-    });
+    // For agent_run, bootstrapInstructions come from the Executor; for chat,
+    // build from ancestor chain and context.
+    const firstTurnPrefix = owner.kind === 'agent_run'
+      ? (opts.bootstrapInstructions ?? '')
+      : buildFirstTurnPrefix({
+          cwd: opts.cwd,
+          contextManifest: opts.contextManifest,
+          extraContexts: opts.extraContexts,
+          ancestors: ancestorChain,
+          mergeContexts: opts.mergeContexts,
+          workspaceInstructions,
+        });
 
     const effort = opts.reasoning ?? resolveReasoning('codex') ?? null;
     const enableFollowUps = opts.enableFollowUps !== false;
@@ -239,11 +250,11 @@ export class CodexRuntime implements AgentRuntime {
     // Create MCP slot (session pre-wires the callbacks but MCP slot created here)
     // We construct the session first so it can own the slot.
     const session = new CodexSession({
-      nodeId,
+      nodeId: publicId,
       threadId: '', // will be set below after thread/start
       cwd: opts.cwd,
       workspaceId: opts.workspaceId ?? null,
-      parentChatId: opts.parentChatId,
+      parentChatId: owner.kind === 'chat_node' ? opts.parentChatId : undefined,
       client: this.client,
       mcpRegistry: this.mcpRegistry,
       bridge: this.bridge,
@@ -252,10 +263,14 @@ export class CodexRuntime implements AgentRuntime {
       firstTurnPrefix,
       effort: effort ? String(effort) : null,
       model: modelId || null,
-      generateTitleOnFirstTurn: true,
+      generateTitleOnFirstTurn: owner.kind === 'chat_node',
       enableFollowUps,
       followUpsHookPocEnabled: this.followUpsHookPocEnabled,
       followUpsExperimentMode: this.followUpsExperimentMode,
+      owner,
+      profileHash: opts.profileHash,
+      toolProfile: opts.toolProfile,
+      permissionBroker: opts.permissionBroker,
     });
 
     const slotId = session.createMcpSlot();
@@ -287,20 +302,26 @@ export class CodexRuntime implements AgentRuntime {
 
     // Rebind session's threadId (the session was constructed with '' as placeholder)
     (session as any).threadId = threadId;
+    // Update nativeSessionId after threadId is known
+    (session as any).nativeSessionId = threadId;
 
     // Wire notifications before registering
     session.wireNotifications();
 
-    // Persist threadId so loadSession can resume
-    try {
-      setNodeExternalSessionId(nodeId, threadId);
-    } catch (err) {
-      console.warn('[CodexRuntime] setNodeExternalSessionId failed:', err);
+    // Persist threadId so loadSession can resume — chat sessions only.
+    // Agent Run sessions store the native token through the Executor's
+    // checkpoint path and never read nodes.external_session_id.
+    if (owner.kind === 'chat_node') {
+      try {
+        setNodeExternalSessionId(publicId, threadId);
+      } catch (err) {
+        console.warn('[CodexRuntime] setNodeExternalSessionId failed:', err);
+      }
     }
 
-    this.sessions.set(nodeId, session);
+    this.sessions.set(publicId, session);
     this.threadToSession.set(threadId, session);
-    sessionRegistry.registerSession(session, opts.ownerUserId);
+    sessionRegistry.registerSession(session, opts.ownerUserId, owner);
 
     return session;
   }
@@ -308,18 +329,34 @@ export class CodexRuntime implements AgentRuntime {
   // ---- loadSession ---------------------------------------------------------
 
   async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
-    const nodeId = opts.sessionId;
+    const owner: RuntimeSessionOwner = opts.owner ?? { kind: 'chat_node', nodeId: opts.sessionId };
+    const publicId = owner.kind === 'agent_run' ? owner.attemptId : opts.sessionId;
 
     // Double-load guard
-    const existing = this.sessions.get(nodeId);
+    const existing = this.sessions.get(publicId);
     if (existing) return existing;
 
-    const node = getNode(nodeId);
-    const threadId = node?.external_session_id ?? null;
-    if (!threadId) {
-      throw new CodexSessionNotResumableError(
-        `Node ${nodeId} has no external_session_id — cannot resume codex session`,
-      );
+    // Resolve the native thread id.
+    // Agent Run: from nativeResumeToken — NEVER read nodes.external_session_id.
+    // Chat: from the node row (existing behavior).
+    let threadId: string | null = null;
+    let nodeWorkspaceId: string | null = null;
+    if (owner.kind === 'agent_run') {
+      threadId = typeof opts.nativeResumeToken === 'string' ? opts.nativeResumeToken : null;
+      if (!threadId) {
+        throw new CodexSessionNotResumableError(
+          `Attempt ${publicId} has no nativeResumeToken — cannot resume codex agent_run session`,
+        );
+      }
+    } else {
+      const node = getNode(publicId);
+      threadId = node?.external_session_id ?? null;
+      nodeWorkspaceId = node?.workspace_id ?? null;
+      if (!threadId) {
+        throw new CodexSessionNotResumableError(
+          `Node ${publicId} has no external_session_id — cannot resume codex session`,
+        );
+      }
     }
 
     await this.client.ensureStarted();
@@ -334,10 +371,10 @@ export class CodexRuntime implements AgentRuntime {
     const effort = resolveReasoning('codex') ?? null;
 
     const session = new CodexSession({
-      nodeId,
+      nodeId: publicId,
       threadId,
       cwd: opts.cwd,
-      workspaceId: opts.workspaceId ?? node?.workspace_id ?? null,
+      workspaceId: opts.workspaceId ?? nodeWorkspaceId ?? null,
       client: this.client,
       mcpRegistry: this.mcpRegistry,
       bridge: this.bridge,
@@ -347,6 +384,10 @@ export class CodexRuntime implements AgentRuntime {
       model: modelId || null,
       followUpsHookPocEnabled: this.followUpsHookPocEnabled,
       followUpsExperimentMode: this.followUpsExperimentMode,
+      owner,
+      profileHash: opts.profileHash,
+      toolProfile: opts.toolProfile,
+      permissionBroker: opts.permissionBroker,
     });
 
     const slotId = session.createMcpSlot();
@@ -389,9 +430,9 @@ export class CodexRuntime implements AgentRuntime {
 
     session.wireNotifications();
 
-    this.sessions.set(nodeId, session);
+    this.sessions.set(publicId, session);
     this.threadToSession.set(threadId, session);
-    sessionRegistry.registerSession(session, opts.ownerUserId);
+    sessionRegistry.registerSession(session, opts.ownerUserId, owner);
 
     return session;
   }
@@ -407,9 +448,20 @@ export class CodexRuntime implements AgentRuntime {
 
   // ---- releaseSession ------------------------------------------------------
 
-  async releaseSession(sessionId: string): Promise<void> {
+  /**
+   * Release a live Codex session. When `expectedOwner` is provided, ownership
+   * is verified first — a stale Attempt cannot release a session that has been
+   * rebound to a different owner.
+   */
+  async releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+
+    // Ownership guard: reject if expectedOwner doesn't match.
+    if (expectedOwner) {
+      assertReleaseOwnership(session.owner, expectedOwner);
+    }
+
     const threadId = session.threadId;
     this.sessions.delete(sessionId);
     if (threadId) this.threadToSession.delete(threadId);
@@ -507,6 +559,14 @@ export class CodexRuntime implements AgentRuntime {
     const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
     const session = threadId ? this.threadToSession.get(threadId) : null;
 
+    // Agent Run owner: delegate directly to the session's permission broker.
+    // MUST NOT call resolvePolicy() or grantPermission().
+    if (session?.owner?.kind === 'agent_run') {
+      void session.askPermission(method, params, respond);
+      return;
+    }
+
+    // Chat session: existing workspace policy and grant behavior.
     // Look up the canonical tool name for policy checks.
     // CRITICAL: only methods in CODEX_APPROVAL_ALIASES may consult resolvePolicy.
     // Unknown methods (not in the map) always ask the user — never trust the default.

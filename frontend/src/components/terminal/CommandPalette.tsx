@@ -7,6 +7,7 @@ import { useServerSearch } from '../../state/useServerSearch';
 import { requestDigest } from '../../lib/digestPrompt';
 import { navigateToNode } from '../../state/navigateToNode';
 import { ModalShell } from '../ui/ModalShell';
+import { kbd } from '../../lib/platform';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
   const [s, e] = range;
@@ -300,21 +301,37 @@ export default function CommandPalette({
     el?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
-  const runActiveRow = useCallback(() => {
-    if (active < visible.length) {
-      const c = visible[active];
-      if (c) {
-        c.run();
-        onClose();
+  const runRowAtIndex = useCallback(
+    (idx: number) => {
+      if (idx < 0 || idx >= totalRows) return;
+      if (idx < visible.length) {
+        const c = visible[idx];
+        if (c) {
+          c.run();
+          onClose();
+        }
+        return;
       }
-      return;
-    }
-    const matchIdx = active - visible.length;
-    const m = searchMatches[matchIdx];
-    if (m) navigateToResult(m);
-  }, [active, visible, searchMatches, onClose, navigateToResult]);
+      const matchIdx = idx - visible.length;
+      const m = searchMatches[matchIdx];
+      if (m) navigateToResult(m);
+    },
+    [visible, searchMatches, totalRows, onClose, navigateToResult],
+  );
+
+  const runActiveRow = useCallback(() => {
+    runRowAtIndex(active);
+  }, [runRowAtIndex, active]);
 
   const onKey = (e: React.KeyboardEvent) => {
+    const isModifier = e.metaKey || e.ctrlKey;
+    if (!showRecents && isModifier && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      const targetIdx = parseInt(e.key, 10) - 1;
+      runRowAtIndex(targetIdx);
+      return;
+    }
+
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -376,6 +393,7 @@ export default function CommandPalette({
                 {rows.map((c) => {
                   const idx = visible.indexOf(c);
                   const isActive = idx === active;
+                  const quickKey = !showRecents && idx < 9 ? kbd('mod', String(idx + 1)) : null;
                   return (
                     <div
                       key={c.id}
@@ -386,7 +404,23 @@ export default function CommandPalette({
                     >
                       <span style={ROW_GLYPH(isActive)}>{c.glyph}</span>
                       <span style={ROW_LABEL(isActive)}>{c.label}</span>
-                      {c.keys && (
+                      {quickKey ? (
+                        <kbd
+                          style={{
+                            fontFamily: 'var(--mono-font, ui-monospace, monospace)',
+                            fontSize: 10.5,
+                            color: isActive ? 'var(--term-fg)' : 'var(--term-muted)',
+                            background: isActive ? 'var(--term-subtle)' : 'var(--term-alt)',
+                            border: '1px solid var(--term-line)',
+                            borderRadius: 3,
+                            padding: '1px 5px',
+                            letterSpacing: '.04em',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {quickKey}
+                        </kbd>
+                      ) : c.keys ? (
                         <span
                           style={{
                             fontFamily: 'var(--mono-font, ui-monospace, monospace)',
@@ -397,7 +431,7 @@ export default function CommandPalette({
                         >
                           {c.keys}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                   );
                 })}
@@ -418,6 +452,7 @@ export default function CommandPalette({
               {searchMatches.map((m, mi) => {
                 const rowIdx = visible.length + mi;
                 const isActive = rowIdx === active;
+                const quickKey = !showRecents && rowIdx < 9 ? kbd('mod', String(rowIdx + 1)) : null;
                 return (
                   <div
                     key={`${m.nodeId}-${m.messageIdx}`}
@@ -436,6 +471,24 @@ export default function CommandPalette({
                       </div>
                       <div style={{ fontSize: 9.5, color: 'var(--term-muted)' }}>{m.workspaceName}</div>
                     </div>
+                    {quickKey && (
+                      <kbd
+                        style={{
+                          fontFamily: 'var(--mono-font, ui-monospace, monospace)',
+                          fontSize: 10.5,
+                          color: isActive ? 'var(--term-fg)' : 'var(--term-muted)',
+                          background: isActive ? 'var(--term-subtle)' : 'var(--term-alt)',
+                          border: '1px solid var(--term-line)',
+                          borderRadius: 3,
+                          padding: '1px 5px',
+                          letterSpacing: '.04em',
+                          flexShrink: 0,
+                          alignSelf: 'center',
+                        }}
+                      >
+                        {quickKey}
+                      </kbd>
+                    )}
                   </div>
                 );
               })}

@@ -1364,21 +1364,23 @@ export function finalizeTurn(snapshot: DurableTurnSnapshot): TurnRow {
 }
 
 /** Mark checkpointed turns left active by a previous process as interrupted. */
-export function recoverInterruptedTurns(now = Date.now()): number {
+export function recoverInterruptedTurns(now = Date.now(), preserveTurnIds: ReadonlySet<string> = new Set()): number {
   return runInTransaction(() => {
     const active = prepareCached("SELECT turn_id, node_id FROM turns WHERE status = 'active'")
       .all() as Array<{ turn_id: string; node_id: string }>;
-    if (active.length === 0) return 0;
-    prepareCached(`
-      UPDATE turns
+    const interrupted = active.filter((turn) => !preserveTurnIds.has(turn.turn_id));
+    if (interrupted.length === 0) return 0;
+    const updateTurn = prepareCached(`UPDATE turns
       SET status = 'error', error = 'backend_restarted', completed_at = ?, updated_at = ?
-      WHERE status = 'active'
-    `).run(now, now);
+      WHERE turn_id = ? AND status = 'active'`);
     const updateNode = prepareCached(`
       UPDATE nodes SET status = 'error' WHERE id = ? AND status = 'streaming'
     `);
-    for (const turn of active) updateNode.run(turn.node_id);
-    return active.length;
+    for (const turn of interrupted) {
+      updateTurn.run(now, now, turn.turn_id);
+      updateNode.run(turn.node_id);
+    }
+    return interrupted.length;
   });
 }
 

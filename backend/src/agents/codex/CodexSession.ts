@@ -1,6 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentSession, AgentTurnInput, CancelAck, ChatMessage, CompactResult, SteerResult } from '../types';
+import type {
+  AgentSession,
+  AgentTurnInput,
+  CancelAck,
+  ChatMessage,
+  CompactResult,
+  RuntimePermissionBroker,
+  RuntimeSessionOwner,
+  RuntimeToolProfile,
+  SteerResult,
+} from '../types';
 import type { NormalizedEvent, PermissionOption, UserInputQuestion } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
@@ -18,6 +28,7 @@ import {
   type FollowUpsExperimentMode,
 } from '../followUpsExperiment';
 import { fallbackCodexTitle, generateCodexTitle } from './codexTitleGenerator';
+import { buildRunMcpSlotCallbacks } from '../runs/runMcpSlot';
 
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
 
@@ -82,12 +93,29 @@ export interface CodexSessionDeps {
   followUpsExperimentMode?: FollowUpsExperimentMode;
   /** Default true. When false, the per-turn follow-up reminder is suppressed. */
   enableFollowUps?: boolean;
+  /** Explicit product owner. When omitted, a chat_node owner is inferred from nodeId. */
+  owner?: RuntimeSessionOwner;
+  /** Immutable hash of the effective runtime profile/capabilities for this session. */
+  profileHash?: string | null;
+  /** Tool profile for Agent Runs — carries allowed tool names and result collector hook. */
+  toolProfile?: RuntimeToolProfile;
+  /** Durable permission broker for Agent Runs. Chat sessions omit this. */
+  permissionBroker?: RuntimePermissionBroker;
 }
 
 export class CodexSession implements AgentSession {
   public readonly id: string;
   public readonly runtimeId = 'codex';
   public readonly parentChatId: string | undefined;
+  /** Explicit product owner. Chat sessions default to `{ kind: 'chat_node', nodeId }`. */
+  public readonly owner: RuntimeSessionOwner;
+  /** Immutable profile hash used to reject unsafe session reuse. */
+  public readonly runtimeProfileHash: string | null;
+  /**
+   * Runtime-owned resume/transport id (the Codex thread id). Distinct from the
+   * Michi public session id for Agent Runs where `id === attemptId`.
+   */
+  public readonly nativeSessionId: string | null;
   public currentModeId: string | null = null;
   public currentModelId: string | null;
   /** Assistant text accumulated during the in-flight turn, exposed via
@@ -108,6 +136,10 @@ export class CodexSession implements AgentSession {
   private readonly followUpsHookPocEnabled: boolean;
   private readonly followUpsExperimentMode: FollowUpsExperimentMode;
   private readonly enableFollowUps: boolean;
+  /** Tool profile for Agent Runs. Undefined for chat sessions. */
+  private readonly toolProfile: RuntimeToolProfile | undefined;
+  /** Durable permission broker for Agent Runs. Undefined for chat sessions. */
+  private readonly permissionBroker: RuntimePermissionBroker | undefined;
 
   private state: SessionState = 'idle';
   private slotId: string | null = null;
@@ -179,6 +211,13 @@ export class CodexSession implements AgentSession {
     this.firstTurnPrefix = deps.firstTurnPrefix ?? '';
     this.effort = deps.effort ?? null;
     this.currentModelId = deps.model ?? null;
+
+    // Run-specific fields
+    this.owner = deps.owner ?? { kind: 'chat_node', nodeId: deps.nodeId };
+    this.runtimeProfileHash = deps.profileHash ?? null;
+    this.nativeSessionId = deps.threadId || null;
+    this.toolProfile = deps.toolProfile;
+    this.permissionBroker = deps.permissionBroker;
 
     this.queue = new EventQueue((idleMs) => {
       if (this.state === 'in_turn') {
@@ -575,12 +614,71 @@ export class CodexSession implements AgentSession {
 
   // ---- Approval handling (called by CodexRuntime) ---------------------------
 
+  /**
+   * Handle an approval request for this session. For agent_run owners, the
+   * request is delegated to the Run permission broker — never to the
+   * workspace policy resolver or grant persistence. Chat sessions retain
+   * the existing user-facing permission request flow.
+   */
   async askPermission(
     method: string,
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
   ): Promise<void> {
     const toolName = canonicalToolNameFromMethod(method);
+
+    // Agent Run owner: delegate to the immutable Run permission broker.
+    // MUST NOT call resolvePolicy() or grantPermission().
+    if (this.owner.kind === 'agent_run' && this.permissionBroker) {
+      const decision = await this.permissionBroker.requestPermission({
+        owner: this.owner,
+        ownerUserId: this.ownerUserId,
+        workspaceId: this.workspaceId,
+        toolName: canonicalPermissionToolName(toolName),
+        input: params,
+      });
+
+      switch (decision) {
+        case 'allow_once':
+          respond({ decision: 'accept' });
+          return;
+        case 'allow_always':
+          // Attempt-scoped allow → acceptForSession, but NEVER call grantPermission.
+          respond({ decision: 'acceptForSession' });
+          return;
+        case 'deny':
+          respond({ decision: 'decline' });
+          return;
+        case 'ask':
+        default: {
+          // Broker said "ask" → present as a user-facing permission request
+          // using the standard approval flow (which routes through Run
+          // interactions), but still never persist a grant.
+          const requestId = ++this.nextRequestId;
+          const options: PermissionOption[] = [
+            { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
+          ];
+          this.queue.push({
+            kind: 'permission_request',
+            requestId,
+            title: `Approve ${toolName}?`,
+            detail: formatCodexPermissionDetail(method, params),
+            options,
+            source: 'codex_approval',
+          });
+          const result = await this.awaitPermission(requestId);
+          if (result !== null && result.startsWith('allow')) {
+            respond({ decision: 'accept' });
+            return;
+          }
+          respond({ decision: 'decline' });
+          return;
+        }
+      }
+    }
+
+    // Chat session: existing user-facing permission request flow.
     const requestId = ++this.nextRequestId;
 
     const options: PermissionOption[] = [
@@ -843,72 +941,108 @@ export class CodexSession implements AgentSession {
     this.followUpsSilentOverviewTail = false;
   }
 
+  /**
+   * Create an MCP slot for this session. For agent_run owners, uses the
+   * owner-aware `buildRunMcpSlotCallbacks` factory so the slot carries the
+   * immutable owner identity, exposed tool allow-list, and
+   * `submit_agent_result` hook. Chat sessions use the existing callback path.
+   */
   createMcpSlot(): string {
+    const chatCallbacks = {
+      onSpawnBranches: async (topics: Array<{ title: string; prompt: string }>) => {
+        const result = await this.bridge.spawnBranches({
+          parentChatId: this.id,
+          cwd: this.cwd,
+          enableFollowUps: true,
+          ownerUserId: this.ownerUserId,
+          topics,
+        });
+        this.queue.push({ kind: 'spawn_branches', topics: result });
+        return result;
+      },
+      onSaveArtifact: (name: string, body: string) => {
+        const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
+        if (saved) {
+          this.queue.push({
+            kind: 'artifact_saved',
+            contextId: saved.id,
+            name: saved.name,
+            filePath: saved.filePath,
+            size: saved.size,
+          });
+        }
+        return saved;
+      },
+      onUpdateArtifact: (name: string, body: string) => {
+        const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
+        if (updated) {
+          this.queue.push({
+            kind: 'artifact_updated',
+            contextId: updated.id,
+            name: updated.name,
+            filePath: updated.filePath,
+            size: updated.size,
+          });
+        }
+        return updated;
+      },
+      onShowImage: (inputPath: string, caption?: string) => {
+        const r = resolveShowImage(this.cwd, inputPath);
+        if (!r.ok) return { error: r.error };
+        this.queue.push({
+          kind: 'image',
+          path: r.relPath,
+          caption,
+          mimeType: r.mimeType,
+          size: r.size,
+        });
+        return { relPath: r.relPath, mimeType: r.mimeType, size: r.size };
+      },
+      onAskUser: async (questions: Array<{
+        question: string;
+        header?: string;
+        options: Array<{ label: string; description?: string }>;
+        multiSelect: boolean;
+      }>) => {
+        const answers = await this.requestUserInput(questions);
+        if (!answers) return null;
+        const result: Record<string, string> = {};
+        for (const answer of answers) {
+          result[answer.question] = answer.answer;
+        }
+        return result;
+      },
+      ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
+    };
+
+    // Agent Run owner: use the Run MCP slot factory with owner metadata,
+    // exposed tool allow-list, and submit_agent_result hook.
+    if (this.owner.kind === 'agent_run' && this.toolProfile) {
+      const runCallbacks = buildRunMcpSlotCallbacks({
+        owner: this.owner as RuntimeSessionOwner & { kind: 'agent_run' },
+        workspaceId: this.workspaceId,
+        ownerUserId: this.ownerUserId,
+        toolProfile: this.toolProfile,
+        chatCallbacks,
+      });
+
+      const slot = this.mcpRegistry.create(
+        this.id,
+        this.cwd,
+        this.ownerUserId,
+        runCallbacks,
+        { nodeId: null, workspaceId: this.workspaceId },
+      );
+      this.slotId = slot.slotId;
+      return slot.slotId;
+    }
+
+    // Chat session: existing MCP slot creation path.
     const slot = this.mcpRegistry.create(
       this.id,
       this.cwd,
       this.ownerUserId,
-      {
-        onSpawnBranches: async (topics) => {
-          const result = await this.bridge.spawnBranches({
-            parentChatId: this.id,
-            cwd: this.cwd,
-            enableFollowUps: true,
-            ownerUserId: this.ownerUserId,
-            topics,
-          });
-          this.queue.push({ kind: 'spawn_branches', topics: result });
-          return result;
-        },
-        onSaveArtifact: (name, body) => {
-          const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
-          if (saved) {
-            this.queue.push({
-              kind: 'artifact_saved',
-              contextId: saved.id,
-              name: saved.name,
-              filePath: saved.filePath,
-              size: saved.size,
-            });
-          }
-          return saved;
-        },
-        onUpdateArtifact: (name, body) => {
-          const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
-          if (updated) {
-            this.queue.push({
-              kind: 'artifact_updated',
-              contextId: updated.id,
-              name: updated.name,
-              filePath: updated.filePath,
-              size: updated.size,
-            });
-          }
-          return updated;
-        },
-        onShowImage: (inputPath, caption) => {
-          const r = resolveShowImage(this.cwd, inputPath);
-          if (!r.ok) return { error: r.error };
-          this.queue.push({
-            kind: 'image',
-            path: r.relPath,
-            caption,
-            mimeType: r.mimeType,
-            size: r.size,
-          });
-          return { relPath: r.relPath, mimeType: r.mimeType, size: r.size };
-        },
-        onAskUser: async (questions) => {
-          const answers = await this.requestUserInput(questions);
-          if (!answers) return null;
-          const result: Record<string, string> = {};
-          for (const answer of answers) {
-            result[answer.question] = answer.answer;
-          }
-          return result;
-        },
-        ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
-      },
+      chatCallbacks,
       { nodeId: this.id, workspaceId: this.workspaceId },
     );
     this.slotId = slot.slotId;

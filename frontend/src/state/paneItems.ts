@@ -1,4 +1,4 @@
-export type PaneItemKind = 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser';
+export type PaneItemKind = 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser' | 'agent-run';
 export type PaneLauncherChoice = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat';
 
 interface PaneItemBase {
@@ -49,6 +49,12 @@ export interface BrowserPaneItem extends PaneItemBase {
   url: string;
 }
 
+export interface AgentRunPaneItem extends PaneItemBase {
+  kind: 'agent-run';
+  backendConnectionId: string;
+  runId: string;
+}
+
 export type PaneItem =
   | LauncherPaneItem
   | FilesPaneItem
@@ -56,9 +62,10 @@ export type PaneItem =
   | FilePaneItem
   | DiffPaneItem
   | TerminalPaneItem
-  | BrowserPaneItem;
+  | BrowserPaneItem
+  | AgentRunPaneItem;
 
-const KINDS = new Set<PaneItemKind>(['launcher', 'files', 'review', 'file', 'diff', 'terminal', 'browser']);
+const KINDS = new Set<PaneItemKind>(['launcher', 'files', 'review', 'file', 'diff', 'terminal', 'browser', 'agent-run']);
 
 export function isPaneItem(value: unknown): value is PaneItem {
   if (!value || typeof value !== 'object') return false;
@@ -81,7 +88,8 @@ export function isPaneItem(value: unknown): value is PaneItem {
   }
   if (item.kind === 'diff') return typeof item.filePath === 'string';
   if (item.kind === 'terminal') return typeof item.surfaceId === 'string' && typeof item.cwd === 'string';
-  return typeof item.surfaceId === 'string' && typeof item.url === 'string';
+  if (item.kind === 'browser') return typeof item.surfaceId === 'string' && typeof item.url === 'string';
+  return typeof item.backendConnectionId === 'string' && typeof item.runId === 'string';
 }
 
 function fnv1a(value: string): string {
@@ -95,6 +103,11 @@ function fnv1a(value: string): string {
 
 export function singletonPaneId(kind: 'file' | 'diff', projectId: string, filePath: string): string {
   return `pane:${kind}:${fnv1a(`${projectId}\0${filePath}`)}`;
+}
+
+/** Stable per-window pane identity for a durable Run on a specific Backend. */
+export function agentRunPaneId(backendConnectionId: string, runId: string): string {
+  return `pane:agent-run:${encodeURIComponent(backendConnectionId)}:${encodeURIComponent(runId)}`;
 }
 
 export function uniquePaneId(kind: 'launcher' | 'terminal' | 'browser'): string {
@@ -112,6 +125,7 @@ export function paneItemTitle(item: PaneItem): string {
   if (item.kind === 'launcher') return 'New pane';
   if (item.kind === 'files') return 'Files';
   if (item.kind === 'review') return 'Review';
+  if (item.kind === 'agent-run') return 'Agent Run';
   return item.kind === 'terminal' ? 'Terminal' : 'Browser';
 }
 

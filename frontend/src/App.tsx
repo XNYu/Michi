@@ -10,6 +10,7 @@ import DigestPromptDialog from './components/DigestPromptDialog';
 import type { ExportPanelState } from './components/ExportPanel';
 import { ChatProvider, useChatStore, useChatNodesSnapshot, activeTreeRootNodeId, chatLabel } from './state/chatStore';
 import { PrefsProvider, usePrefs } from './state/prefs';
+import { AgentDomainProvider } from './state/agentDomain';
 import { DARK_PALETTES } from './components/terminal/tokens';
 import {
   runTranscript,
@@ -280,12 +281,14 @@ function App() {
     <PrefsProvider>
       <AppToaster />
       <AuthGate>
-        <ShellSwitcher />
-        <FirstRunSetup />
-        <ApiKeyGate />
-        <DigestPromptListener />
-        <ExportPanelManager />
-        <ConfirmDialogHost />
+        <AgentDomainProvider>
+          <ShellSwitcher />
+          <FirstRunSetup />
+          <ApiKeyGate />
+          <DigestPromptListener />
+          <ExportPanelManager />
+          <ConfirmDialogHost />
+        </AgentDomainProvider>
       </AuthGate>
     </PrefsProvider>
   );

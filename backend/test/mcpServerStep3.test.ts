@@ -200,6 +200,37 @@ describe('McpSlotRegistry', () => {
         assert.ok(registered['validate_follow_ups']);
         assert.ok(registered['validate_turn_metadata']);
     });
+
+    test('registers submit_agent_result only for a Run-owned slot callback', async () => {
+        const submitted: unknown[] = [];
+        const runSlot = registry.create('attempt-a', '/tmp', 'owner-a', {
+            ...makeCallbacks(),
+            owner: { kind: 'agent_run', runId: 'run-a', attemptId: 'attempt-a' },
+            onSubmitAgentResult: (payload: unknown) => {
+                submitted.push(payload);
+                return payload as never;
+            },
+        } as never);
+        const chatSlot = registry.create('chat-a', '/tmp', 'owner-a', makeCallbacks() as never);
+        const runTools = (buildMcpServerForSlot(runSlot) as any)._registeredTools;
+        const chatTools = (buildMcpServerForSlot(chatSlot) as any)._registeredTools;
+        assert.ok(runTools['submit_agent_result']);
+        assert.equal(chatTools['submit_agent_result'], undefined);
+        await runTools['submit_agent_result'].handler({ version: 1, status: 'completed' });
+        assert.deepEqual(submitted, [{ version: 1, status: 'completed' }]);
+    });
+
+    test('generic Agent tools honor the session capability allow-list', () => {
+        const slot = registry.create('attempt-tools', '/tmp', 'owner-a', {
+            ...makeCallbacks(),
+            agentRuns: { invoke: async () => ({ ok: true }) },
+            agentRunToolNames: ['spawn_agent'],
+        } as never);
+        const tools = (buildMcpServerForSlot(slot) as any)._registeredTools;
+        assert.ok(tools['spawn_agent']);
+        assert.equal(tools['list_agents'], undefined);
+        assert.equal(tools['wait_agent'], undefined);
+    });
 });
 
 describe('Claude follow-up POC MCP tools', () => {

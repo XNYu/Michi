@@ -8,7 +8,7 @@ import {
     normalizeWorkspaceCwd,
     NotFoundError,
 } from "../agents/tools/pathSandbox";
-import { ChatManager, ExtraContext } from "../services/chatManager";
+import { ChatManager, ExtraContext, PrimaryAgentBindingError, primaryAgentSessionOptions } from "../services/chatManager";
 import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
 import { getRuntime } from "../agents/registry";
@@ -22,6 +22,7 @@ import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
 // getSessionForUser enforces ownership in cloud mode; getSession is for internal callers.
 const { getSessionForUser } = sessionRegistry;
 import type { AgentSession } from "../agents/types";
+import { LOCAL_AGENT_OWNER_ID } from "../services/agentOwner";
 import {
     getNode,
     getNodeSessionBinding,
@@ -41,6 +42,7 @@ import {
     chooseResumeStrategy,
     computeTranscriptFingerprint,
     normalizeResumeSignature,
+    normalizeReasoning,
     normalizeSignaturePart,
     type ResumeSignature,
     type ResumeStrategy,
@@ -199,6 +201,10 @@ function isConcurrencyError(err: unknown): boolean {
 }
 
 function sendAgentRouteError(res: express.Response, err: unknown): void {
+    if (err instanceof PrimaryAgentBindingError) {
+        res.status(400).json({ code: "PRIMARY_AGENT_INVALID", error: err.message });
+        return;
+    }
     if (isConcurrencyError(err)) {
         // Keep the historical code string — the frontend gates its
         // "sessions busy, retry" UX on exactly CLAUDE_SESSIONS_BUSY. It now
@@ -955,6 +961,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (modelRaw !== undefined && typeof modelRaw !== "string") {
             return res.status(400).json({ error: "model must be a string" });
         }
+        if (body.agentDefinitionId !== undefined && (typeof body.agentDefinitionId !== "string" || !body.agentDefinitionId.trim())) {
+            return res.status(400).json({ error: "agentDefinitionId must be a non-empty string" });
+        }
+        const requestedDefinitionId = normalizeSignaturePart(body.agentDefinitionId);
 
         // Desired agent/mode for a brand-new thread (e.g. Home composer pre-pick).
         // Applied after a fresh session is created so the first prompt runs under it.
@@ -1025,15 +1035,31 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         try {
             const michiUserId: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
             const cfg = getAgentConfig(michiUserId);
-            const runtime = getRuntime(cfg.runtime);
+            const primaryAgent = await chatManager.resolvePrimaryAgentBinding({
+                ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
+                workspaceId,
+                nodeId,
+                definitionId: requestedDefinitionId,
+            });
+            const primaryProfile = primaryAgent?.effectiveDefinition.runtimeProfile;
+            const requestedModeId = normalizeSignaturePart(primaryProfile?.modeId) ?? desiredModeId;
+            const runtimeId = primaryProfile?.runtimeId ?? cfg.runtime;
+            const runtime = getRuntime(runtimeId);
             if (!runtime) {
-                return res.status(500).json({ error: `Unknown agent runtime: ${cfg.runtime}` });
+                return res.status(500).json({ error: `Unknown agent runtime: ${runtimeId}` });
             }
-            const targetSignature = buildTargetResumeSignature(
-                cfg,
-                runtime,
-                typeof modelRaw === "string" ? modelRaw : undefined,
-            );
+            const targetSignature: ResumeSignature = primaryProfile
+                ? {
+                    runtimeId,
+                    providerId: normalizeSignaturePart(primaryProfile.providerId),
+                    modelId: normalizeSignaturePart(primaryProfile.modelId),
+                    reasoning: normalizeReasoning(primaryProfile.reasoning),
+                }
+                : buildTargetResumeSignature(
+                    cfg,
+                    runtime,
+                    typeof modelRaw === "string" ? modelRaw : undefined,
+                );
             const row = getNode(nodeId);
             const transcript = readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
             const currentFingerprint = computeTranscriptFingerprint(transcript);
@@ -1077,8 +1103,11 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                         nodeId,
                         cwd,
                         model: targetSignature.modelId,
+                        provider: targetSignature.providerId,
+                        reasoning: targetSignature.reasoning,
                         workspaceId,
                         ownerUserId: req.user?.id ?? null,
+                        ...primaryAgentSessionOptions(primaryAgent),
                     });
                     sessionRegistry.registerSession(session, req.user?.id ?? null);
                 } catch (err) {
@@ -1147,6 +1176,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     sessionId: nodeId,
                     workspaceId,
                     ownerUserId: req.user?.id ?? null,
+                    ...primaryAgentSessionOptions(primaryAgent),
                 });
                 sessionRegistry.registerSession(session, req.user?.id ?? null);
 
@@ -1155,15 +1185,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 // session; live/exact resumes returned above are untouched.
                 // A bad/unsupported mode must not fail session creation.
                 if (
-                    desiredModeId &&
+                    requestedModeId &&
                     session.setMode &&
-                    session.currentModeId !== desiredModeId
+                    session.currentModeId !== requestedModeId
                 ) {
                     try {
-                        await session.setMode(desiredModeId);
+                        await session.setMode(requestedModeId);
                     } catch (err) {
                         console.warn(
-                            `Failed to apply desired mode ${desiredModeId} on ${session.id}:`,
+                            `Failed to apply desired mode ${requestedModeId} on ${session.id}:`,
                             err,
                         );
                     }

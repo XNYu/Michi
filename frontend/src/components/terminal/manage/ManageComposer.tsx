@@ -8,6 +8,9 @@ import {
   getWebUploadCwd,
   importWorkspaceFileUpload,
   saveAgentOptions,
+  bindPendingPrimaryAgent,
+  listPrimaryAgentDefinitions,
+  type PrimaryAgentDefinitionOption,
   type AgentReasoning,
   type UploadProgress,
 } from '../../../services/api';
@@ -39,10 +42,12 @@ let manageDraft: ComposerDraft = { value: '', mentions: [] };
 // you send and come back. A stale id (e.g. after a runtime switch) is dropped at
 // render time once the mode list is known.
 let manageStickyModeId: string | undefined;
+const manageStickyPrimaryAgent = new Map<string, PrimaryAgentDefinitionOption>();
 
 export function __resetManageComposerSessionStateForTests() {
   manageDraft = { value: '', mentions: [] };
   manageStickyModeId = undefined;
+  manageStickyPrimaryAgent.clear();
 }
 
 interface Props {
@@ -129,6 +134,44 @@ export default function ManageComposer({
     manageStickyModeId = id;
     setPendingModeIdState(id);
   }, []);
+  const [primaryAgents, setPrimaryAgents] = useState<PrimaryAgentDefinitionOption[]>([]);
+  const [primaryAgentsLoading, setPrimaryAgentsLoading] = useState(false);
+  const [primaryAgentsError, setPrimaryAgentsError] = useState<string | null>(null);
+  const [pendingPrimaryAgent, setPendingPrimaryAgentState] = useState<PrimaryAgentDefinitionOption | undefined>(
+    () => workspaceId ? manageStickyPrimaryAgent.get(workspaceId) : undefined,
+  );
+  const setPendingPrimaryAgent = useCallback((agent: PrimaryAgentDefinitionOption | undefined) => {
+    if (workspaceId) {
+      if (agent) manageStickyPrimaryAgent.set(workspaceId, agent);
+      else manageStickyPrimaryAgent.delete(workspaceId);
+    }
+    setPendingPrimaryAgentState(agent);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    setPendingPrimaryAgentState(workspaceId ? manageStickyPrimaryAgent.get(workspaceId) : undefined);
+    if (!enableAgentSelect || !workspaceId) {
+      setPrimaryAgents([]);
+      return;
+    }
+    const controller = new AbortController();
+    setPrimaryAgentsLoading(true);
+    setPrimaryAgentsError(null);
+    void listPrimaryAgentDefinitions(workspaceId, controller.signal)
+      .then((definitions) => {
+        setPrimaryAgents(definitions);
+        const sticky = manageStickyPrimaryAgent.get(workspaceId);
+        if (sticky && !definitions.some((candidate) => candidate.definition.id === sticky.definition.id && candidate.backendConnectionId === sticky.backendConnectionId)) {
+          manageStickyPrimaryAgent.delete(workspaceId);
+          setPendingPrimaryAgentState(undefined);
+        }
+      })
+      .catch((error) => {
+        if ((error as Error).name !== 'AbortError') setPrimaryAgentsError((error as Error).message);
+      })
+      .finally(() => { if (!controller.signal.aborted) setPrimaryAgentsLoading(false); });
+    return () => controller.abort();
+  }, [enableAgentSelect, workspaceId]);
   const shouldLoadModels = !!modelMenu && !!(
     agentStatus?.capabilities.providerModels || agentStatus?.capabilities.models === true
   );
@@ -431,12 +474,24 @@ export default function ManageComposer({
 
     let nodeId: string | null;
     try {
-      nodeId = await createThread(currentModeId);
+      nodeId = await createThread(pendingPrimaryAgent ? undefined : currentModeId);
     } catch {
       // The store already surfaced the allocation failure.
       return;
     }
     if (!nodeId) return;
+    if (pendingPrimaryAgent) {
+      try {
+        bindPendingPrimaryAgent(nodeId, {
+          workspaceId,
+          backendConnectionId: pendingPrimaryAgent.backendConnectionId,
+          definitionId: pendingPrimaryAgent.definition.id,
+        });
+      } catch (error) {
+        toast.error('Could not select primary Agent', { description: (error as Error).message });
+        return;
+      }
+    }
     const finalText = appendAttachmentsSentinel(raw, attachmentsForSend);
     const mentionsForMeta = draft.mentions.length > 0
       ? draft.mentions.map(m => ({ kind: m.kind, refId: m.refId, label: m.label }))
@@ -468,6 +523,7 @@ export default function ManageComposer({
   const currentMode = currentModeId
     ? availableModes.find((m) => m.id === currentModeId)
     : undefined;
+  const selectedAgentLabel = pendingPrimaryAgent?.definition.name;
 
   const canAttach = !!getElectron()?.chooseFiles || !!project;
   const sendDisabled =
@@ -554,9 +610,9 @@ export default function ManageComposer({
             canAttach={canAttach}
             toolbarTier={0}
             enableAgentChip={enableAgentSelect}
-            currentMode={currentMode}
-            currentModeId={currentModeId}
-            availableModesCount={enableAgentSelect ? availableModes.length : 0}
+            currentMode={selectedAgentLabel ? { id: pendingPrimaryAgent!.definition.id, name: selectedAgentLabel } : currentMode}
+            currentModeId={selectedAgentLabel ? pendingPrimaryAgent!.definition.id : currentModeId}
+            availableModesCount={enableAgentSelect ? availableModes.length + primaryAgents.length + 1 : 0}
             agentStatus={agentStatus}
             providerModels={providerModels}
             onPickFile={() => void onPickFile()}
@@ -593,6 +649,28 @@ export default function ManageComposer({
           // the new thread, which applies it to the session on send. When
           // enableAgentSelect is off the chip is hidden, so this never fires.
           setPendingModeId(modeId);
+          setPendingPrimaryAgent(undefined);
+          setAgentMenu(null);
+        }}
+        primaryAgents={primaryAgents.map(({ definition }) => ({
+          id: definition.id,
+          name: definition.name,
+          scope: definition.scope,
+          runtimeSummary: [definition.runtimeProfile.runtimeId, definition.runtimeProfile.providerId, definition.runtimeProfile.modelId].filter(Boolean).join(' · '),
+        }))}
+        selectedPrimaryAgentId={pendingPrimaryAgent?.definition.id}
+        primaryAgentsLoading={primaryAgentsLoading}
+        primaryAgentsError={primaryAgentsError}
+        onSelectPrimaryAgent={(id) => {
+          const selected = primaryAgents.find((agent) => agent.definition.id === id);
+          if (!selected) return;
+          setPendingPrimaryAgent(selected);
+          setPendingModeId(undefined);
+          setAgentMenu(null);
+        }}
+        onSelectDefaultAgent={() => {
+          setPendingPrimaryAgent(undefined);
+          setPendingModeId(undefined);
           setAgentMenu(null);
         }}
         onSaveModel={(model) => {

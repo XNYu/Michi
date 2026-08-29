@@ -24,6 +24,19 @@ interface PaneAgentMenusProps {
   onSaveReasoning: (reasoning: AgentReasoning) => void;
   onCloseAgentMenu: () => void;
   onCloseModelMenu: () => void;
+  primaryAgents?: readonly PrimaryAgentMenuOption[];
+  selectedPrimaryAgentId?: string;
+  primaryAgentsLoading?: boolean;
+  primaryAgentsError?: string | null;
+  onSelectPrimaryAgent?: (id: string) => void;
+  onSelectDefaultAgent?: () => void;
+}
+
+export interface PrimaryAgentMenuOption {
+  id: string;
+  name: string;
+  scope: 'global' | 'workspace';
+  runtimeSummary: string;
 }
 
 export function PaneAgentMenus({
@@ -41,7 +54,37 @@ export function PaneAgentMenus({
   onSaveReasoning,
   onCloseAgentMenu,
   onCloseModelMenu,
+  primaryAgents = [],
+  selectedPrimaryAgentId,
+  primaryAgentsLoading = false,
+  primaryAgentsError = null,
+  onSelectPrimaryAgent,
+  onSelectDefaultAgent,
 }: PaneAgentMenusProps) {
+  const primarySections: MenuSection[] = onSelectPrimaryAgent && onSelectDefaultAgent
+    ? [
+        {
+          label: 'Conversation Agent',
+          items: [{
+            id: 'primary-default',
+            label: selectedPrimaryAgentId ? 'Default Michi Agent' : '✓ Default Michi Agent',
+            sublabel: 'Uses the runtime and model controls below',
+            run: onSelectDefaultAgent,
+          }],
+        },
+        ...(['workspace', 'global'] as const).map((scope) => ({
+          label: scope === 'workspace' ? 'Workspace Agents' : 'Global Agents',
+          items: primaryAgents.filter((agent) => agent.scope === scope).map((agent) => ({
+            id: `primary-${agent.id}`,
+            label: selectedPrimaryAgentId === agent.id ? `✓ ${agent.name}` : agent.name,
+            sublabel: agent.runtimeSummary,
+            run: () => onSelectPrimaryAgent(agent.id),
+          })),
+        })).filter((section) => section.items.length > 0),
+        ...(primaryAgentsLoading ? [{ items: [{ id: 'primary-loading', label: 'Loading Custom Agents…', disabled: true, run: () => {} }] }] : []),
+        ...(primaryAgentsError ? [{ items: [{ id: 'primary-error', label: primaryAgentsError, disabled: true, run: () => {} }] }] : []),
+      ]
+    : [];
   return (
     <>
       {agentMenu && (
@@ -53,7 +96,9 @@ export function PaneAgentMenus({
           maxHeight={192}
           searchable
           sections={[
+            ...primarySections,
             {
+              label: primarySections.length > 0 ? 'Built-in Modes' : undefined,
               items:
                 availableModes.length === 0
                   ? [{ id: 'loading', label: 'Loading…', disabled: true, run: () => {} }]

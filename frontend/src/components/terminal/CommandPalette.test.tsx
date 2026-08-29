@@ -111,3 +111,74 @@ describe('CommandPalette workspace routing', () => {
     expect(setPage).toHaveBeenCalledWith('dashboard');
   });
 });
+
+describe('CommandPalette quick number shortcuts', () => {
+  it('does not display number shortcut badges when search query is empty', () => {
+    render(<CommandPalette activePage="dashboard" setPage={vi.fn()} onClose={vi.fn()} />);
+
+    // In recents/unfiltered mode, quick number badges like ⌘1 or Ctrl+1 should not appear
+    expect(screen.queryByText(/^[⌘Ctrl+]+1$/)).toBeNull();
+  });
+
+  it('displays number shortcut badges and triggers result via Cmd+1 when searching', () => {
+    const setPage = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);
+
+    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
+    fireEvent.change(input, {
+      target: { value: 'Workspace B' },
+    });
+
+    // Match row exists and shows quick number shortcut
+    const badge = screen.getByText(/1$/);
+    expect(badge).not.toBeNull();
+
+    // Press Cmd+1 (or Ctrl+1)
+    fireEvent.keyDown(input, {
+      key: '1',
+      metaKey: true,
+    });
+
+    expect(selectProject).toHaveBeenCalledWith('workspace-2');
+    expect(setPage).toHaveBeenCalledWith('home');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('does not trigger quick number shortcuts when search query is empty', () => {
+    const setPage = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);
+
+    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
+
+    // Press Cmd+1 without query
+    fireEvent.keyDown(input, {
+      key: '1',
+      metaKey: true,
+    });
+
+    expect(selectProject).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('ignores Cmd+number when index exceeds result count', () => {
+    const setPage = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);
+
+    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
+    fireEvent.change(input, {
+      target: { value: 'Workspace B' },
+    });
+
+    // Only 1 result exists, pressing Cmd+9 should do nothing
+    fireEvent.keyDown(input, {
+      key: '9',
+      metaKey: true,
+    });
+
+    expect(selectProject).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});

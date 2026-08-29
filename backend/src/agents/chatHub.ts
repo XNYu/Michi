@@ -12,6 +12,7 @@ import type { AgentSession, CompactResult, SteerResult } from "./types";
 import type { NormalizedEvent } from "../services/chatEvents";
 import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEvents";
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
+import { getDb } from "../services/db";
 import { extractBranchOverview } from "../services/messageSerialization";
 import { log as appLog } from "../services/logger";
 import { ACPError } from "../services/acpClient";
@@ -105,6 +106,26 @@ export interface StartSelfTurnArgs {
   events: AsyncIterableIterator<NormalizedEvent>;
 }
 
+export interface StartRequestedSelfTurnArgs {
+  chatId: string;
+  nodeId: string;
+  ownerUserId?: string | null;
+  turnId: string;
+  text: string;
+  session: AgentSession;
+}
+
+export interface StartedRequestedSelfTurn extends StartedTurn {
+  existing: boolean;
+}
+
+interface DurableTurnIdentity {
+  turnId: string;
+  nodeId: string;
+  assistantId: string;
+  status: "active" | "completed" | "cancelled" | "error";
+}
+
 export const ENDED_LOG_RETENTION_MS = 60_000;
 export const TURN_CHECKPOINT_INTERVAL_MS = 1_500;
 
@@ -127,6 +148,7 @@ export class ChatHub {
   private readonly activeTurnCompletions = new Map<string, Promise<void>>();
   private readonly selfTurnQueues = new Map<string, Promise<void>>();
   private readonly pendingSelfTurns = new Set<string>();
+  private readonly requestedSelfTurnCompletions = new Map<string, Promise<void>>();
   /** Turn-scoped cancellation prevents a delayed Stop for turn A from
    * cancelling turn B on the same chat. Entries may also reserve a
    * client-minted turn id when cancel wins the race against POST /message. */
@@ -136,6 +158,7 @@ export class ChatHub {
   private readonly checkpointIntervalMs: number;
   private readonly workspaceIdForNode: (nodeId: string) => string | null;
   private readonly journal: HarnessJournal | null;
+  private readonly lookupDurableTurn: (turnId: string) => DurableTurnIdentity | null;
 
   constructor(opts: {
     retentionMs?: number;
@@ -143,6 +166,7 @@ export class ChatHub {
     checkpointIntervalMs?: number;
     workspaceIdForNode?: (nodeId: string) => string | null;
     journal?: HarnessJournal | null;
+    lookupDurableTurn?: (turnId: string) => DurableTurnIdentity | null;
   } = {}) {
     this.retentionMs = opts.retentionMs ?? ENDED_LOG_RETENTION_MS;
     this.persistence = opts.persistence ?? repositoryTurnPersistence;
@@ -152,6 +176,21 @@ export class ChatHub {
     this.journal = opts.journal === undefined
       ? (opts.persistence ? null : createSqliteHarnessJournal())
       : opts.journal;
+    this.lookupDurableTurn = opts.lookupDurableTurn ?? ((turnId) => {
+      const row = getDb().prepare(`SELECT turn_id, node_id, assistant_message_id, status
+        FROM turns WHERE turn_id = ?`).get(turnId) as {
+          turn_id: string;
+          node_id: string;
+          assistant_message_id: string;
+          status: DurableTurnIdentity['status'];
+        } | undefined;
+      return row ? {
+        turnId: row.turn_id,
+        nodeId: row.node_id,
+        assistantId: row.assistant_message_id,
+        status: row.status,
+      } : null;
+    });
   }
 
   isActive(chatId: string): boolean {
@@ -164,6 +203,36 @@ export class ChatHub {
 
   activeOwnerTurnId(chatId: string): string | undefined {
     return this.activeSessions.has(chatId) ? this.turns.get(chatId)?.turnId : undefined;
+  }
+
+  activeDurableTurnIds(): ReadonlySet<string> {
+    return new Set([...this.turns.values()]
+      .filter((turn) => turn.status === 'active')
+      .map((turn) => turn.turnId));
+  }
+
+  requestedTurnStatus(turnId: string): DurableTurnIdentity['status'] | null {
+    return this.lookupDurableTurn(turnId)?.status ?? null;
+  }
+
+  resolveActiveInvocationAnchor(input: {
+    runtimeSessionId: string | null;
+    nodeId: string;
+    ownerUserId: string;
+    runtimeToolCallId: string | null;
+  }): { turnId: string; messageId: string; toolCallId: string | null } | null {
+    const candidates = [...new Set([input.runtimeSessionId, input.nodeId].filter((value): value is string => !!value))];
+    for (const chatId of candidates) {
+      const log = this.turns.get(chatId);
+      if (!log || log.status !== 'active' || log.nodeId !== input.nodeId) continue;
+      if (log.ownerUserId !== null && log.ownerUserId !== input.ownerUserId) continue;
+      return {
+        turnId: log.turnId,
+        messageId: log.assistantId,
+        toolCallId: input.runtimeToolCallId,
+      };
+    }
+    return null;
   }
 
   startTurn(args: StartTurnArgs): StartedTurn {
@@ -205,7 +274,11 @@ export class ChatHub {
     }, false);
     const done = this.runTurn(args.chatId, log, args.session);
     this.activeTurnCompletions.set(args.chatId, done);
-    void done.finally(() => {
+    void done.then(() => {
+      if (this.activeTurnCompletions.get(args.chatId) === done) {
+        this.activeTurnCompletions.delete(args.chatId);
+      }
+    }, () => {
       if (this.activeTurnCompletions.get(args.chatId) === done) {
         this.activeTurnCompletions.delete(args.chatId);
       }
@@ -537,12 +610,109 @@ export class ChatHub {
         });
       });
     this.selfTurnQueues.set(args.chatId, queued);
-    void queued.finally(() => {
+    void queued.then(() => {
+      if (this.selfTurnQueues.get(args.chatId) === queued) {
+        this.selfTurnQueues.delete(args.chatId);
+        this.pendingSelfTurns.delete(args.chatId);
+      }
+    }, () => {
       if (this.selfTurnQueues.get(args.chatId) === queued) {
         this.selfTurnQueues.delete(args.chatId);
         this.pendingSelfTurns.delete(args.chatId);
       }
     });
+  }
+
+  /**
+   * Starts a backend-requested Parent continuation with a caller-supplied
+   * durable turn id. Committing that identity happens before the runtime
+   * iterator is consumed. A retry returns the existing terminal turn, or
+   * resumes an active turn that survived a crash but is absent in memory.
+   */
+  async startRequestedSelfTurn(args: StartRequestedSelfTurnArgs): Promise<StartedRequestedSelfTurn> {
+    const durable = this.lookupDurableTurn(args.turnId);
+    if (durable) {
+      this.assertRequestedTurnIdentity(durable, args);
+      if (durable.status !== 'active') {
+        return { turnId: durable.turnId, assistantId: durable.assistantId, done: Promise.resolve(), existing: true };
+      }
+      const inMemory = this.turns.get(args.chatId);
+      const completion = this.requestedSelfTurnCompletions.get(args.turnId);
+      if (inMemory?.turnId === args.turnId && completion) {
+        return { turnId: durable.turnId, assistantId: durable.assistantId, done: completion, existing: true };
+      }
+    }
+
+    this.pendingSelfTurns.add(args.chatId);
+    const previous = this.selfTurnQueues.get(args.chatId) ?? Promise.resolve();
+    let started!: StartedRequestedSelfTurn;
+    const began = new Promise<void>((resolve, reject) => {
+      const queued = previous
+        .catch(() => {})
+        .then(async () => {
+          const activeForeground = this.activeTurnCompletions.get(args.chatId);
+          if (activeForeground) await activeForeground.catch(() => {});
+          const existing = this.lookupDurableTurn(args.turnId);
+          if (existing) this.assertRequestedTurnIdentity(existing, args);
+          const assistantId = existing?.assistantId ?? `self-${args.nodeId}-${args.turnId}`;
+          const log = this.createLog({
+            chatId: args.chatId,
+            turnId: args.turnId,
+            assistantId,
+            nodeId: args.nodeId,
+            wireText: args.text,
+            displayText: '',
+            selfInitiated: true,
+            ownerUserId: args.ownerUserId ?? null,
+          });
+          this.persistence.begin(log.snapshot);
+          this.turns.set(args.chatId, log);
+          this.append(args.chatId, log, {
+            event: CHAT_STREAM_EVENTS.turnStart,
+            data: {
+              turnId: args.turnId,
+              assistantId,
+              nodeId: args.nodeId,
+              userText: '',
+              selfInitiated: true,
+              startedAt: log.snapshot.startedAt,
+            },
+          } as ChatStreamEvent, false);
+          const done = this.runSelfTurn(args.chatId, log, args.session.send(args.text));
+          started = { turnId: args.turnId, assistantId, done, existing: !!existing };
+          this.requestedSelfTurnCompletions.set(args.turnId, done);
+          void done.then(
+            () => this.requestedSelfTurnCompletions.delete(args.turnId),
+            () => this.requestedSelfTurnCompletions.delete(args.turnId),
+          );
+          resolve();
+          await done;
+        })
+        .catch((error) => {
+          reject(error);
+        });
+      this.selfTurnQueues.set(args.chatId, queued);
+      void queued.then(() => {
+        if (this.selfTurnQueues.get(args.chatId) === queued) {
+          this.selfTurnQueues.delete(args.chatId);
+          this.pendingSelfTurns.delete(args.chatId);
+        }
+      }, () => {
+        if (this.selfTurnQueues.get(args.chatId) === queued) {
+          this.selfTurnQueues.delete(args.chatId);
+          this.pendingSelfTurns.delete(args.chatId);
+        }
+      });
+    });
+    await began;
+    return started;
+  }
+
+  private assertRequestedTurnIdentity(durable: DurableTurnIdentity, args: StartRequestedSelfTurnArgs): void {
+    const expectedAssistantId = `self-${args.nodeId}-${args.turnId}`;
+    if (durable.nodeId !== args.nodeId || durable.assistantId !== expectedAssistantId) {
+      throw new Error(`requested Parent turn ${args.turnId} was reused with a different durable identity`);
+    }
   }
 
   private async beginSelfTurn(args: StartSelfTurnArgs): Promise<void> {

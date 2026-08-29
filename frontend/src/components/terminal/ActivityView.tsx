@@ -16,6 +16,17 @@ import {
   selectProjectNodeStatuses,
   type OpenState,
 } from '../../state/sidebarSelectors';
+import { useAgentDomain } from '../../state/agentDomain';
+import { agentResourceKey, identityOf } from '../../state/agentIdentity';
+import { AgentRunsActivity } from './agentRuns/AgentRunsActivity';
+
+function useOptionalAgentDomain() {
+  try {
+    return useAgentDomain();
+  } catch {
+    return null;
+  }
+}
 
 // ── Time bucket helpers ────────────────────────────────────────────────────
 
@@ -133,7 +144,10 @@ export default function ActivityView({
     createMergedChat,
     createDigest,
     renameNode,
+    openAgentRunPane,
   } = useChatActions();
+  const agentDomain = useOptionalAgentDomain();
+  const agentState = agentDomain?.state;
   const { prefs, setPref } = usePrefs();
   const nodes = useChatNodesSnapshot();
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
@@ -146,6 +160,10 @@ export default function ActivityView({
   const activityItems = useMemo(
     () => deriveActivityData(projects, nodes),
     [projects, nodes],
+  );
+  const agentRuns = useMemo(
+    () => Object.values(agentState?.runs ?? {}).filter((resource) => resource.value.workspaceId === activeProjectId),
+    [activeProjectId, agentState?.runs],
   );
 
   const bucketGroups = useMemo(() => {
@@ -365,6 +383,17 @@ export default function ActivityView({
         fontSize: 'var(--sb-fs, 13.5px)',
       }}
     >
+      {agentRuns.length > 0 && (
+        <AgentRunsActivity
+          runs={agentRuns}
+          onOpen={(identity) => {
+            const resource = agentState?.runs[agentResourceKey(identity)];
+            if (!resource) return;
+            openAgentRunPane(identityOf(resource), resource.value.workspaceId, resource.value.effectiveDefinition.name);
+            onActivate?.();
+          }}
+        />
+      )}
       {BUCKET_ORDER.map((bucket) => {
         const items = bucketGroups.get(bucket);
         if (!items || items.length === 0) return null;
@@ -439,7 +468,7 @@ export default function ActivityView({
           </div>
         );
       })}
-      {activityItems.length === 0 && (
+      {activityItems.length === 0 && agentRuns.length === 0 && (
         <div
           style={{
             padding: '40px 16px',

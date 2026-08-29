@@ -1,9 +1,18 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import type { AgentSession, CancelAck, ChatMessage } from "../types";
+import type {
+    AgentReasoning,
+    AgentSession,
+    CancelAck,
+    ChatMessage,
+    RuntimePermissionBroker,
+    RuntimeSessionOwner,
+    RuntimeToolProfile,
+} from "../types";
 import type { NormalizedEvent, PermissionOption } from "../../services/chatEvents";
 import type { AgentToolBridge } from "../toolBridge";
+import { resolveAgentRunToolsForSession } from "../toolBridge";
 import { getRuntimeDeps } from "../runtimeDeps";
 import { getProviderInfo } from "./piProviders";
 import { getModelAttemptIds, getUpstreamProviderId, resolvePiModel } from "./piProviders";
@@ -40,6 +49,13 @@ export interface PiSessionDeps {
      * Electron) the legacy env / disk store is used.
      */
     ownerUserId: string | null;
+    owner?: RuntimeSessionOwner;
+    profileHash?: string | null;
+    toolProfile?: RuntimeToolProfile;
+    permissionBroker?: RuntimePermissionBroker;
+    requestedProvider?: string | null;
+    requestedModel?: string | null;
+    requestedReasoning?: AgentReasoning | null;
     /**
      * Prior messages from SQLite (rehydrate path). When non-empty:
      *   - Agent.initialState.messages is seeded with them
@@ -111,6 +127,13 @@ export class PiSession implements AgentSession {
      * BYOK users can resolve their own encrypted key.
      */
     private readonly ownerUserId: string | null;
+    public readonly owner: RuntimeSessionOwner;
+    public readonly runtimeProfileHash: string | null;
+    private readonly toolProfile: RuntimeToolProfile | undefined;
+    private readonly permissionBroker: RuntimePermissionBroker | undefined;
+    private readonly requestedProvider: string | null;
+    private readonly requestedModel: string | null;
+    private readonly requestedReasoning: AgentReasoning | null;
     private readonly history: ChatMessage[] = [];
     /**
      * Mutable per-turn budget shared with the read tool. Built once and
@@ -159,6 +182,13 @@ export class PiSession implements AgentSession {
         this.parentChatId = deps.parentChatId;
         this.workspaceId = deps.workspaceId;
         this.ownerUserId = deps.ownerUserId;
+        this.owner = deps.owner ?? { kind: "chat_node", nodeId: id };
+        this.runtimeProfileHash = deps.profileHash ?? null;
+        this.toolProfile = deps.toolProfile;
+        this.permissionBroker = deps.permissionBroker;
+        this.requestedProvider = deps.requestedProvider ?? null;
+        this.requestedModel = deps.requestedModel ?? null;
+        this.requestedReasoning = deps.requestedReasoning ?? null;
 
         // Seed history from SQLite-rehydrated messages (text-only).
         const seed = deps.initialMessages ?? [];
@@ -207,19 +237,26 @@ export class PiSession implements AgentSession {
     }
 
     private async *runTurn(rawText: string): AsyncIterableIterator<NormalizedEvent> {
-        const ownerUserId = this.ownerUserId ?? undefined;
+        // Runtime ownership is required for durable Agent Runs even on local
+        // desktop installs (where the synthetic owner is "local-user"). Do
+        // not confuse that audit identity with a cloud BYOK credential owner:
+        // local Pi sessions must keep resolving config/keys from env or the
+        // shared ~/.michi/config.json store, exactly like ordinary chats.
+        const ownerUserId = process.env.MICHI_CLOUD === "1"
+            ? this.ownerUserId ?? undefined
+            : undefined;
         const deps = getRuntimeDeps();
         const cfg = deps.agentConfig.getAgentConfig(ownerUserId);
-        const provider = cfg.provider;
+        const provider = this.requestedProvider ?? cfg.provider;
         const upstreamProvider = getUpstreamProviderId(provider);
-        const requestedModel = deps.agentConfig.resolveModel(this.runtimeId, ownerUserId);
+        const requestedModel = this.requestedModel ?? deps.agentConfig.resolveModel(this.runtimeId, ownerUserId);
         const modelAttemptIds = getModelAttemptIds(provider, requestedModel);
         const apiKey = deps.providerKeys.getProviderApiKey(provider, ownerUserId);
         if (!apiKey) {
             const name = getProviderInfo(provider)?.name ?? provider;
             // Tailor the error so cloud users see "set your key in Settings"
             // rather than the desktop-flavored "API key not configured".
-            const hint = this.ownerUserId
+            const hint = ownerUserId
                 ? `${name} API key not set for your account — add it in Settings.`
                 : `${name} API key not configured`;
             throw new Error(hint);
@@ -256,7 +293,17 @@ export class PiSession implements AgentSession {
                 // Stable closure: tools are built once, but activePush is rebound
                 // each turn. show_image routes its inline image through here.
                 emitImage: (ev) => this.activePush?.(ev),
-            });
+                agentRunTools: resolveAgentRunToolsForSession(this.bridge, {
+                    runtimeId: this.runtimeId,
+                    sessionId: this.id,
+                    owner: this.owner,
+                    ownerUserId: this.ownerUserId,
+                    workspaceId: this.workspaceId,
+                    nodeId: this.owner.kind === 'chat_node' ? this.owner.nodeId : null,
+                }),
+                owner: this.owner,
+                toolProfile: this.toolProfile,
+            }).filter((tool) => this.isToolAllowed(tool.name));
 
             // Per-workspace Instructions panel feeds the system prompt directly
             // here. Pi has no warm pool, so we can apply it at session creation
@@ -274,7 +321,7 @@ export class PiSession implements AgentSession {
                     tools,
                     // pi thinkingLevel doesn't accept "max"; clamp to xhigh.
                     thinkingLevel: (() => {
-                        const r = deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
+                        const r = this.requestedReasoning ?? deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
                         if (r === "max") return "xhigh";
                         return r ?? "off";
                     })(),
@@ -291,6 +338,24 @@ export class PiSession implements AgentSession {
                     bcCtx: { toolCall: { name: string }; args: unknown },
                     signal?: AbortSignal,
                 ): Promise<{ block: boolean; reason?: string } | undefined> => {
+                    if (!this.isToolAllowed(bcCtx.toolCall.name)) {
+                        return { block: true, reason: "tool is not enabled for this Agent Run" };
+                    }
+                    if (this.permissionBroker) {
+                        const decision = await this.permissionBroker.requestPermission({
+                            owner: this.owner,
+                            ownerUserId: this.ownerUserId,
+                            workspaceId: this.workspaceId,
+                            toolName: bcCtx.toolCall.name,
+                            input: bcCtx.args,
+                        });
+                        if (decision === "deny") return { block: true, reason: "denied by Run permission policy" };
+                        if (decision !== "ask") return undefined;
+                        const answer = await this.requestPermission(bcCtx.toolCall.name, bcCtx.args, signal);
+                        return answer?.startsWith("allow")
+                            ? undefined
+                            : { block: true, reason: "denied by Run permission policy" };
+                    }
                     const policy = resolvePolicy(this.workspaceId, bcCtx.toolCall.name, bcCtx.args);
                     if (policy === "allow") return undefined;
                     if (policy === "deny") return { block: true, reason: "denied by policy" };
@@ -404,6 +469,11 @@ export class PiSession implements AgentSession {
             await promptPromise;
             this.activePush = undefined;
         }
+    }
+
+    private isToolAllowed(toolName: string): boolean {
+        const allowed = this.toolProfile?.allowedToolNames;
+        return !allowed || allowed.includes(toolName);
     }
 
     /**

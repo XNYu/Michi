@@ -5,6 +5,7 @@ import fs from "node:fs";
 import type {
   HistoryStore, GlobalContextProvider, ProviderKeyStore, AgentConfigResolver,
 } from "./ports";
+import type { RuntimeSessionOwner } from "./types";
 
 export interface RuntimeDeps {
   historyStore: HistoryStore;
@@ -14,6 +15,8 @@ export interface RuntimeDeps {
   globalContext?: GlobalContextProvider;
   providerKeys: ProviderKeyStore;
   agentConfig: AgentConfigResolver;
+  /** Optional audit hook for live runtime ownership changes. */
+  onSessionOwnerBound?: (sessionId: string, owner: RuntimeSessionOwner) => void;
 }
 
 let deps: RuntimeDeps | undefined;
@@ -24,6 +27,7 @@ export function configureRuntimeDeps(next: {
   globalContext?: GlobalContextProvider;
   providerKeys?: ProviderKeyStore;
   agentConfig: AgentConfigResolver;
+  onSessionOwnerBound?: (sessionId: string, owner: RuntimeSessionOwner) => void;
 }): void {
   deps = {
     historyStore: next.historyStore,
@@ -31,6 +35,7 @@ export function configureRuntimeDeps(next: {
     globalContext: next.globalContext,
     providerKeys: next.providerKeys ?? { getProviderApiKey: (p) => process.env[`${p.toUpperCase().replace(/-/g, "_")}_API_KEY`] ?? null },
     agentConfig: next.agentConfig,
+    onSessionOwnerBound: next.onSessionOwnerBound,
   };
   fs.mkdirSync(deps.dataDir, { recursive: true });
 }

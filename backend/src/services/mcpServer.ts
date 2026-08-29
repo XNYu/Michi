@@ -12,8 +12,15 @@ import {
     type ParamSpec,
 } from "../agents/builtinTools";
 import type { BridgeContextResult } from "../agents/toolBridge";
+import {
+    AGENT_RUN_TOOL_NAMES,
+    type AgentRunToolName,
+    type AgentRunToolInvoker,
+} from "../agents/runToolBridge";
+import type { RuntimeSessionOwner } from "../agents/types";
 import { log } from "./logger";
 import { isLoopbackAddress } from "./remoteAccess";
+import type { ResultBundleV1 } from "michi-shared";
 
 function paramToZod(spec: ParamSpec): z.ZodTypeAny {
     if (spec === "string") return z.string();
@@ -55,6 +62,14 @@ function builtinToZodShape(tool: BuiltinTool): Record<string, z.ZodTypeAny> {
 export interface McpSlot {
     slotId: string;
     /**
+     * Product owner identity for this MCP slot. Chat sessions use
+     * `{ kind: "chat_node", nodeId }`, Agent Runs use
+     * `{ kind: "agent_run", runId, attemptId }`. When absent (legacy
+     * callers), the slot is treated as a chat slot with implicit Node
+     * ownership — existing callers remain backward compatible.
+     */
+    owner?: RuntimeSessionOwner;
+    /**
      * Michi node id for the owning chat. This is the durable identity used to
      * derive workspace_id from SQLite. Warm slots start null and are rebound
      * when handed off to a real node.
@@ -70,6 +85,9 @@ export interface McpSlot {
      * Cached workspace id for compatibility and cold-start races. Tool calls
      * resolve the workspace from nodeId first, then runtime session ids, and
      * only use this cache as a final fallback.
+     *
+     * For `agent_run` owners this is the authoritative Workspace binding
+     * supplied at slot creation — no Node lookup is performed.
      */
     workspaceId: string | null;
     /**
@@ -79,6 +97,15 @@ export interface McpSlot {
      * Null on desktop (single-user, no auth).
      */
     ownerUserId: string | null;
+    /**
+     * Explicit tool allow-list for this slot. When present, only tools whose
+     * name appears in this set are registered on the MCP server. When absent,
+     * all tools with matching callbacks are registered (legacy behavior).
+     *
+     * This is the product-level gate — independent of whether a callback
+     * exists. A tool must appear here AND have a callback to be registered.
+     */
+    exposedToolNames?: ReadonlySet<string>;
     onSpawnBranches: (
         topics: Array<{ title: string; prompt: string }>,
     ) => Promise<Array<{ title: string; prompt: string; chatId: string }>>;
@@ -108,11 +135,18 @@ export interface McpSlot {
         options: Array<{ label: string; description?: string }>;
         multiSelect: boolean;
     }>) => Promise<Record<string, string> | null>;
-    /** Best-effort UI backfill of the real MCP result onto the in-flight ACP tool card. */
-    onMcpToolResult?: (toolName: string, result: unknown) => void;
+    /** Optional T13 generic Agent Run bridge. T16 supplies the production
+     * active-turn binding; leaving it absent preserves existing MCP behavior. */
+    agentRuns?: AgentRunToolInvoker;
+    agentRunToolNames?: readonly AgentRunToolName[];
+    onSubmitAgentResult?: (payload: unknown) => ResultBundleV1;
 }
 
 export interface McpSlotCallbacks {
+    /** Product owner identity. See McpSlot.owner. */
+    owner?: RuntimeSessionOwner;
+    /** Explicit tool allow-list. See McpSlot.exposedToolNames. */
+    exposedToolNames?: ReadonlySet<string>;
     onSpawnBranches: McpSlot["onSpawnBranches"];
     onSaveArtifact: McpSlot["onSaveArtifact"];
     onUpdateArtifact: McpSlot["onUpdateArtifact"];
@@ -130,7 +164,9 @@ export interface McpSlotCallbacks {
         | { behavior: "deny"; message: string }
     >;
     onAskUser?: McpSlot["onAskUser"];
-    onMcpToolResult?: McpSlot["onMcpToolResult"];
+    agentRuns?: AgentRunToolInvoker;
+    agentRunToolNames?: readonly AgentRunToolName[];
+    onSubmitAgentResult?: McpSlot["onSubmitAgentResult"];
 }
 
 export class McpSlotRegistry {
@@ -146,11 +182,13 @@ export class McpSlotRegistry {
         const slotId = randomBytes(16).toString("hex");
         const slot: McpSlot = {
             slotId,
+            owner: cbs.owner,
             nodeId: opts?.nodeId ?? null,
             parentChatId,
             cwd,
             workspaceId: opts?.workspaceId ?? null,
             ownerUserId,
+            exposedToolNames: cbs.exposedToolNames,
             ...cbs,
         };
         this.slots.set(slotId, slot);
@@ -170,6 +208,14 @@ export class McpSlotRegistry {
 }
 
 function resolveSlotBinding(slot: McpSlot): { workspaceId: string | null; nodeId: string | null } {
+    // Agent Run owners carry an immutable Workspace binding supplied at slot
+    // creation time. They MUST NOT perform a Node lookup — Runs have no
+    // backing node row, and querying one would be both incorrect and a
+    // contract violation (§2.5 of the implementation plan).
+    if (slot.owner?.kind === "agent_run") {
+        return { workspaceId: slot.workspaceId, nodeId: null };
+    }
+
     const fromNode = slot.nodeId
         ? getNodeSessionBinding(slot.nodeId, slot.ownerUserId)
         : null;
@@ -192,6 +238,18 @@ function resolveSlotBinding(slot: McpSlot): { workspaceId: string | null; nodeId
         return { workspaceId: null, nodeId: slot.nodeId };
     }
     return { workspaceId: slot.workspaceId, nodeId: slot.nodeId };
+}
+
+/**
+ * Returns true when a tool is permitted by the slot's exposed-tool allow-list.
+ * When no allow-list is set (legacy callers / chat slots that don't restrict),
+ * all tools are implicitly exposed. When the list is set, only tools in the
+ * set pass. This is the product-level gate and is checked independently of
+ * whether a callback exists.
+ */
+function isToolExposed(slot: McpSlot, toolName: string): boolean {
+    if (!slot.exposedToolNames) return true;
+    return slot.exposedToolNames.has(toolName);
 }
 
 /**
@@ -280,6 +338,32 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
                     }
                 }
                 return { content: [{ type: "text", text: `unhandled tool: ${tool.name}` }] };
+            },
+        );
+    }
+
+    if (slot.agentRuns) registerAgentRunTools(server, slot.agentRuns, slot.agentRunToolNames);
+
+    // submit_agent_result is registered only for agent_run owners with a bound
+    // Attempt collector callback AND when the tool passes the exposed-tool
+    // gate. Chat slots must never discover or invoke this tool.
+    if (
+        slot.owner?.kind === "agent_run"
+        && slot.onSubmitAgentResult
+        && isToolExposed(slot, "submit_agent_result")
+    ) {
+        server.registerTool(
+            "submit_agent_result",
+            {
+                description: "Submit the final structured Result Bundle for this exact Agent Run Attempt before finishing.",
+                inputSchema: z.record(z.string(), z.unknown()),
+            },
+            async (args) => {
+                if (!slot.onSubmitAgentResult) {
+                    throw new Error("submit_agent_result callback is no longer available");
+                }
+                slot.onSubmitAgentResult(args ?? {});
+                return { content: [{ type: "text", text: "Agent result submitted." }] };
             },
         );
     }
@@ -505,6 +589,60 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     );
 
     return server;
+}
+
+function registerAgentRunTools(server: McpServer, invoker: AgentRunToolInvoker,
+    allowedNames?: readonly AgentRunToolName[]): void {
+    const genericObject = z.record(z.string(), z.unknown());
+    const schemas: Record<AgentRunToolName, Record<string, z.ZodTypeAny>> = {
+        list_agents: {},
+        spawn_agent: {
+            agentId: z.string().optional(),
+            ephemeralDefinition: genericObject.optional(),
+            task: z.string().min(1),
+            contextManifest: genericObject.optional(),
+            permissionRestriction: genericObject.optional(),
+            environment: genericObject.optional(),
+            expectedResult: genericObject.optional(),
+            completionMode: z.enum(['wait', 'notify', 'wake', 'detach']).optional(),
+            runTtlMs: z.number().int().nonnegative().optional(),
+        },
+        check_agent: { runId: z.string().min(1) },
+        wait_agent: {
+            runId: z.string().optional(), watchId: z.string().optional(),
+            timeoutMs: z.number().int().nonnegative().optional(),
+        },
+        send_agent_input: {
+            runId: z.string().min(1), text: z.string().min(1),
+            mode: z.enum(['queued', 'immediate']).optional(), expectedAttemptId: z.string().optional(),
+        },
+        cancel_agent: { runId: z.string().min(1), reason: z.string().optional(), expectedAttemptId: z.string().optional() },
+        watch_agent_runs: {
+            runIds: z.array(z.string().min(1)).min(1), condition: genericObject,
+            completionMode: z.enum(['notify', 'wake']).optional(),
+        },
+        update_agent_watch: {
+            watchId: z.string().min(1), addRunIds: z.array(z.string().min(1)).optional(), condition: genericObject.optional(),
+        },
+    };
+    const descriptions: Record<AgentRunToolName, string> = {
+        list_agents: 'List enabled Agents available to this Workspace.',
+        spawn_agent: 'Start one durable Agent Run and return its Run ID without creating a branch.',
+        check_agent: 'Read the latest durable Run status and compact handoff.',
+        wait_agent: 'Perform one bounded event-driven wait. Timeout leaves the Run active.',
+        send_agent_input: 'Queue Run input, or explicitly redirect the active Attempt in immediate mode.',
+        cancel_agent: 'Cancel the currently expected Agent Run Attempt.',
+        watch_agent_runs: 'Create a durable Watch for long work; use wake/notify instead of polling.',
+        update_agent_watch: 'Add Runs or update an active Watch condition.',
+    };
+    const allowed = allowedNames ? new Set(allowedNames) : null;
+    for (const name of AGENT_RUN_TOOL_NAMES) {
+        if (allowed && !allowed.has(name)) continue;
+        server.registerTool(name, { description: descriptions[name], inputSchema: schemas[name] }, async (args) => {
+            const result = await invoker.invoke(name, args ?? {});
+            return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+        });
+    }
 }
 
 /**

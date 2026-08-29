@@ -19,6 +19,9 @@ import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
 import { confirmDialog } from '../ui/ConfirmDialog';
 import { findTreeIdForNode } from '../../state/tree';
+import { activeBackendApiBase, getKnownBackendConnections } from '../../config/backendConnections';
+import { backendConnectionIdFromApiBase } from '../../state/agentIdentity';
+import { useManageAgentRoute } from '../../state/manageRoute';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
@@ -86,6 +89,7 @@ export default function TerminalTopbar({
     navForward,
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
+  const manageAgentRoute = useManageAgentRoute();
 
   const closeOtherPanes = useCallback((keepId: string) => {
     const others = openPanes.filter((id) => id !== keepId);
@@ -288,7 +292,7 @@ export default function TerminalTopbar({
 
   const showWorkspaceTitle =
     page === 'workspaces' || page === 'trash' || page === 'archived' ||
-    page === 'workspace-manage' ||
+    page === 'workspace-manage' || page === 'agents' || page === 'agent-manage' ||
     (!!activeProject && threadPage);
   // Home page body inherits --term-bg from the shell; the rest of the app
   // paints panes with --term-pane-bg (≈ --term-surface), which is lighter.
@@ -304,7 +308,12 @@ export default function TerminalTopbar({
     : page === 'workspaces' ? 'WORKSPACES'
     : page === 'trash' ? 'TRASH'
     : page === 'archived' ? 'ARCHIVED'
+    : page === 'agents' ? 'AGENTS'
     : '';
+  const agentBackendConnectionId = page === 'agent-manage' && manageAgentRoute
+    ? manageAgentRoute.backendConnectionId
+    : backendConnectionIdFromApiBase(activeBackendApiBase());
+  const agentBackendName = getKnownBackendConnections().find((connection) => connection.id === agentBackendConnectionId)?.name ?? agentBackendConnectionId;
   // Trash title mirrors the Workspaces pattern: a single counts line in the
   // topbar so the page body can drop its in-page header. Combines deleted
   // workspaces with deletion groups (matches Settings.tsx's tally).
@@ -604,7 +613,7 @@ export default function TerminalTopbar({
                 ‹ back
               </BreadcrumbBackButton>
             )}
-            {page !== 'workspace-manage' && (
+            {page !== 'workspace-manage' && page !== 'agent-manage' && (
               <span
                 style={{
                   fontSize: 10,
@@ -615,14 +624,22 @@ export default function TerminalTopbar({
                 {pageLabel}
               </span>
             )}
-            {page !== 'workspace-manage' && page !== 'workspaces' && (
+            {page !== 'workspace-manage' && page !== 'agent-manage' && page !== 'workspaces' && (
               <span style={{ color: 'var(--term-faint)', fontSize: 11 }}>·</span>
             )}
-            {page === 'workspace-manage' ? (
+            {page === 'agent-manage' ? (
+              <BreadcrumbBackButton onClick={() => _onNav('agents')}>
+                ‹ Agent Library
+              </BreadcrumbBackButton>
+            ) : page === 'workspace-manage' ? (
               <BreadcrumbBackButton onClick={() => _onNav('workspaces')}>
                 ‹ all workspaces
               </BreadcrumbBackButton>
-            ) : page === 'workspaces' ? null : page === 'trash' ? (
+            ) : page === 'workspaces' ? null : page === 'agents' ? (
+              <span style={{ fontSize: 12, color: 'var(--term-mid)', whiteSpace: 'nowrap' }}>
+                control plane · {agentBackendName}
+              </span>
+            ) : page === 'trash' ? (
               <span
                 style={{
                   fontSize: 12,

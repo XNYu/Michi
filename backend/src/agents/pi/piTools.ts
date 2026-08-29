@@ -1,5 +1,10 @@
 import type { AgentToolBridge } from "../toolBridge";
 import {
+    AGENT_RUN_TOOL_NAMES,
+    type AgentRunToolName,
+    type AgentRunToolInvoker,
+} from "../runToolBridge";
+import {
     BUILTIN_TOOLS,
     type ParamField,
     type ParamObjectShape,
@@ -15,6 +20,11 @@ import { executeEdit } from "../tools/edit";
 import { executeBash } from "../tools/bash";
 import { resolveShowImage } from "../claude/showImage";
 import type { NormalizedEvent } from "../../services/chatEvents";
+import type { RuntimeSessionOwner, RuntimeToolProfile } from "../types";
+import {
+    SUBMIT_AGENT_RESULT_TOOL,
+    type RunWorkerToolProfile,
+} from "../runs/runWorkerTools";
 
 /**
  * Build the AgentTool[] array fed to pi-agent-core.
@@ -58,6 +68,10 @@ export interface BuildPiToolsOpts {
      * UI without feeding it into the LLM's context. No-op if no turn is active.
      */
     emitImage?: (ev: NormalizedEvent) => void;
+    /** Session-bound generic Agent tools resolved by PiSession. */
+    agentRunTools?: AgentRunToolInvoker | null;
+    owner?: RuntimeSessionOwner;
+    toolProfile?: RuntimeToolProfile;
 }
 
 /**
@@ -125,7 +139,7 @@ function fieldToTypebox(field: ParamField, Type: any): any {
 export function buildPiTools(opts: BuildPiToolsOpts): any[] {
     const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId, emitImage } = opts;
 
-    return BUILTIN_TOOLS.map((t): any => {
+    const builtinTools = BUILTIN_TOOLS.map((t): any => {
         const parameters = withPurposeField(t.parameters, Type);
 
         switch (t.name) {
@@ -421,4 +435,86 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
         }
         throw new Error(`unknown builtin tool: ${(t as any).name}`);
     }).filter(Boolean);
+    const tools = opts.agentRunTools
+        ? [...builtinTools, ...buildPiAgentRunTools(opts.agentRunTools, Type)]
+        : builtinTools;
+    const worker = runWorkerProfile(opts.owner, opts.toolProfile);
+    return worker ? [...tools, buildSubmitAgentResultTool(opts.owner!, worker, Type)] : tools;
+}
+
+function runWorkerProfile(owner: RuntimeSessionOwner | undefined,
+    profile: RuntimeToolProfile | undefined): RunWorkerToolProfile | null {
+    if (owner?.kind !== 'agent_run' || !profile || !('runWorkerTools' in profile)) return null;
+    if (!profile.allowedToolNames?.includes(SUBMIT_AGENT_RESULT_TOOL)) return null;
+    const candidate = profile as RunWorkerToolProfile;
+    return typeof candidate.runWorkerTools?.submitAgentResult === 'function' ? candidate : null;
+}
+
+function buildSubmitAgentResultTool(owner: RuntimeSessionOwner, profile: RunWorkerToolProfile, Type: any): any {
+    return {
+        name: SUBMIT_AGENT_RESULT_TOOL,
+        label: 'Submit Agent result',
+        description: 'Submit the final structured Result Bundle for this exact Agent Run Attempt before finishing.',
+        parameters: Type.Object({}, { additionalProperties: true }),
+        executionMode: 'sequential' as const,
+        execute: async (_id: string, payload: unknown) => {
+            profile.runWorkerTools.submitAgentResult(owner, payload);
+            return { content: [{ type: 'text', text: 'Agent result submitted.' }], details: { submitted: true } };
+        },
+    };
+}
+
+function buildPiAgentRunTools(invoker: AgentRunToolInvoker, Type: any): any[] {
+    const anyObject = () => Type.Object({}, { additionalProperties: true });
+    const optionalString = () => Type.Optional(Type.String());
+    const schemas: Record<AgentRunToolName, any> = {
+        list_agents: Type.Object({}),
+        spawn_agent: Type.Object({
+            agentId: optionalString(),
+            ephemeralDefinition: Type.Optional(anyObject()),
+            task: Type.String(),
+            contextManifest: Type.Optional(anyObject()),
+            permissionRestriction: Type.Optional(anyObject()),
+            environment: Type.Optional(anyObject()),
+            expectedResult: Type.Optional(anyObject()),
+            completionMode: Type.Optional(Type.Union(['wait', 'notify', 'wake', 'detach'].map((v) => Type.Literal(v)))),
+            runTtlMs: Type.Optional(Type.Number()),
+        }),
+        check_agent: Type.Object({ runId: Type.String() }),
+        wait_agent: Type.Object({ runId: optionalString(), watchId: optionalString(), timeoutMs: Type.Optional(Type.Number()) }),
+        send_agent_input: Type.Object({
+            runId: Type.String(), text: Type.String(),
+            mode: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('immediate')])),
+            expectedAttemptId: optionalString(),
+        }),
+        cancel_agent: Type.Object({ runId: Type.String(), reason: optionalString(), expectedAttemptId: optionalString() }),
+        watch_agent_runs: Type.Object({
+            runIds: Type.Array(Type.String()), condition: anyObject(),
+            completionMode: Type.Optional(Type.Union([Type.Literal('notify'), Type.Literal('wake')])),
+        }),
+        update_agent_watch: Type.Object({
+            watchId: Type.String(), addRunIds: Type.Optional(Type.Array(Type.String())), condition: Type.Optional(anyObject()),
+        }),
+    };
+    const descriptions: Record<AgentRunToolName, string> = {
+        list_agents: 'List enabled Agents available to this Workspace.',
+        spawn_agent: 'Start one durable Agent Run. Returns immediately with a Run ID; does not create a branch.',
+        check_agent: 'Read the latest durable status and compact handoff for one Agent Run.',
+        wait_agent: 'Wait once, event-driven and for a bounded duration, for a Run or Watch. Timeout never cancels work.',
+        send_agent_input: 'Queue input for an Agent Run, or explicitly redirect the active Attempt in immediate mode.',
+        cancel_agent: 'Cancel the currently expected Agent Run Attempt.',
+        watch_agent_runs: 'Create a durable Watch for long-running Agent Runs. Use wake/notify instead of polling.',
+        update_agent_watch: 'Add Runs or update the condition of an active Watch.',
+    };
+    return AGENT_RUN_TOOL_NAMES.map((name) => ({
+        name,
+        label: name.replace(/_/g, ' '),
+        description: descriptions[name],
+        parameters: schemas[name],
+        executionMode: 'sequential' as const,
+        execute: async (id: string, args: Record<string, unknown>) => {
+            const result = await invoker.invoke(name, args ?? {}, { runtimeToolCallId: id || null });
+            return { content: [{ type: 'text', text: JSON.stringify(result) }], details: result };
+        },
+    }));
 }

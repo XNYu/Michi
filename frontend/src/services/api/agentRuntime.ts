@@ -139,6 +139,28 @@ export async function listAgentModels(opts?: { provider?: string }): Promise<Age
   };
 }
 
+export interface RuntimeCatalogResponse {
+  providers: AgentProviderInfo[];
+  models: AgentModelInfo[];
+}
+
+/**
+ * Providers + models for an ARBITRARY runtime (the Agent editor edits
+ * profiles for any runtime, not just the active chat runtime).
+ */
+export async function fetchRuntimeCatalog(runtimeId: string, provider?: string): Promise<RuntimeCatalogResponse> {
+  const url = new URL(`${activeBackendApiBase()}/agent/runtime-catalog`, window.location.href);
+  url.searchParams.set('runtime', runtimeId);
+  if (provider) url.searchParams.set('provider', provider);
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`fetchRuntimeCatalog failed: ${res.status}`);
+  const body = await res.json();
+  return {
+    providers: Array.isArray(body.providers) ? body.providers : [],
+    models: Array.isArray(body.models) ? body.models : [],
+  };
+}
+
 export async function saveProviderKey(
   provider: string,
   key: string,

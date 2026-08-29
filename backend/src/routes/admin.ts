@@ -6,7 +6,23 @@ import { getDb } from '../services/db';
 import { getMichiDataDir } from '../services/dataDir';
 import { recordAudit } from '../services/audit';
 import { listUserProviderKeys } from '../services/userKeys';
+import {
+  exportAgentRunBackup,
+  portableBackupRelativePath,
+  sanitizeAgentNodeForBackup,
+  sanitizePortableBackupJson,
+} from '../services/agentRunBackup';
+import {
+  AgentRunAdministrativeLifecycle,
+  type AgentOwnerCleanupResult,
+  type PreparedAgentOwnerDeletion,
+} from '../services/agentRunAdministrativeLifecycle';
 
+export interface AdminRouteDeps {
+  agentRunLifecycle?: AgentRunAdministrativeLifecycle;
+}
+
+export function setupAdminRoutes(deps: AdminRouteDeps = {}): Router {
 const router = Router();
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -32,6 +48,48 @@ function ipFromReq(req: any): string | null {
 
 function uaFromReq(req: any): string | null {
   return (req.headers['user-agent'] as string | undefined) ?? null;
+}
+
+function portableWorkspaceRow(row: Record<string, unknown>): Record<string, unknown> {
+  let folders: unknown = null;
+  if (typeof row.folders === 'string') {
+    try {
+      const parsed = JSON.parse(row.folders);
+      if (Array.isArray(parsed)) {
+        folders = JSON.stringify(parsed.map((folder) => {
+          if (!folder || typeof folder !== 'object' || Array.isArray(folder)) return folder;
+          return { ...folder, path: null };
+        }));
+      }
+    } catch {
+      folders = null;
+    }
+  }
+  let settings: unknown = null;
+  if (typeof row.settings === 'string') {
+    try { settings = JSON.stringify(sanitizePortableBackupJson(JSON.parse(row.settings))); }
+    catch { settings = null; }
+  }
+  return { ...row, cwd: null, folders, settings };
+}
+
+function portableContextRow(row: Record<string, unknown>): Record<string, unknown> {
+  const filePath = typeof row.file_path === 'string' ? row.file_path : '';
+  return {
+    ...row,
+    file_path: portableBackupRelativePath(filePath),
+  };
+}
+
+function portableMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...row };
+  for (const field of ['blocks', 'tool_calls', 'metadata'] as const) {
+    const encoded = copy[field];
+    if (typeof encoded !== 'string') continue;
+    try { copy[field] = JSON.stringify(sanitizePortableBackupJson(JSON.parse(encoded))); }
+    catch { copy[field] = null; }
+  }
+  return copy;
 }
 
 // ─── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -179,11 +237,12 @@ router.post('/users/:id/export', async (req, res) => {
       return res.status(404).json({ error: 'user_not_found' });
     }
 
-    const workspaces = dataDb.prepare(
+    const rawWorkspaces = dataDb.prepare(
       'SELECT * FROM workspaces WHERE owner_user_id = ?'
-    ).all(targetId);
+    ).all(targetId) as Array<Record<string, unknown>>;
+    const workspaces = rawWorkspaces.map(portableWorkspaceRow);
 
-    const wsIds = (workspaces as Array<{ id: string }>).map((w) => w.id);
+    const wsIds = rawWorkspaces.map((w) => w.id as string);
 
     let trees: unknown[] = [];
     let nodes: unknown[] = [];
@@ -194,14 +253,19 @@ router.post('/users/:id/export', async (req, res) => {
     if (wsIds.length > 0) {
       const placeholders = wsIds.map(() => '?').join(',');
       trees = dataDb.prepare(`SELECT * FROM trees WHERE workspace_id IN (${placeholders})`).all(...wsIds);
-      nodes = dataDb.prepare(`SELECT * FROM nodes WHERE workspace_id IN (${placeholders})`).all(...wsIds);
+      nodes = (dataDb.prepare(`SELECT * FROM nodes WHERE workspace_id IN (${placeholders})`).all(...wsIds) as Array<Record<string, unknown>>)
+        .map(sanitizeAgentNodeForBackup);
       edges = dataDb.prepare(`SELECT * FROM edges WHERE workspace_id IN (${placeholders})`).all(...wsIds);
-      contexts = dataDb.prepare(`SELECT * FROM contexts WHERE workspace_id IN (${placeholders})`).all(...wsIds);
+      contexts = (dataDb.prepare(`SELECT * FROM contexts WHERE workspace_id IN (${placeholders})`).all(
+        ...wsIds,
+      ) as Array<Record<string, unknown>>).map(portableContextRow);
 
       const nodeIds = (nodes as Array<{ id: string }>).map((n) => n.id);
       if (nodeIds.length > 0) {
         const nodePlaceholders = nodeIds.map(() => '?').join(',');
-        messages = dataDb.prepare(`SELECT * FROM messages WHERE node_id IN (${nodePlaceholders})`).all(...nodeIds);
+        messages = (dataDb.prepare(`SELECT * FROM messages WHERE node_id IN (${nodePlaceholders})`).all(
+          ...nodeIds,
+        ) as Array<Record<string, unknown>>).map(portableMessageRow);
       }
     }
 
@@ -235,6 +299,7 @@ router.post('/users/:id/export', async (req, res) => {
       contexts,
       userAgentConfig: userAgentConfig ?? null,
       providerKeyPresence,
+      agents: exportAgentRunBackup(targetId, null),
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -245,8 +310,21 @@ router.post('/users/:id/export', async (req, res) => {
 
 router.delete('/users/:id', async (req, res) => {
   const targetId = req.params.id;
+  let preparedAgentDeletion: PreparedAgentOwnerDeletion | null = null;
   try {
     const dataDb = getDb();
+    const runCount = (dataDb.prepare(
+      'SELECT COUNT(*) as cnt FROM agent_runs WHERE owner_user_id = ?'
+    ).get(targetId) as { cnt: number }).cnt;
+    const definitionCount = (dataDb.prepare(
+      'SELECT COUNT(*) as cnt FROM agent_definitions WHERE owner_user_id = ?'
+    ).get(targetId) as { cnt: number }).cnt;
+    if ((runCount > 0 || definitionCount > 0) && !deps.agentRunLifecycle) {
+      return res.status(503).json({ error: 'agent_run_lifecycle_required' });
+    }
+    if (deps.agentRunLifecycle) {
+      preparedAgentDeletion = await deps.agentRunLifecycle.prepareOwnerDeletion(targetId);
+    }
 
     // Count for response
     const wsCount = (dataDb.prepare(
@@ -273,6 +351,9 @@ router.delete('/users/:id', async (req, res) => {
     // ── data.db transaction: delete all business data ──────────────────────
     dataDb.exec('BEGIN');
     try {
+      if (deps.agentRunLifecycle && preparedAgentDeletion) {
+        deps.agentRunLifecycle.deleteOwnerAgentRows(preparedAgentDeletion);
+      }
       // Cascade order: messages → edges → nodes → contexts →
       //   workspace_permission_grants → user_agent_configs →
       //   user_provider_keys → workspaces
@@ -310,6 +391,11 @@ router.delete('/users/:id', async (req, res) => {
     } catch (err) {
       dataDb.exec('ROLLBACK');
       throw err;
+    }
+
+    let agentCleanup: AgentOwnerCleanupResult = { cleanedRunIds: [], failed: [] };
+    if (deps.agentRunLifecycle && preparedAgentDeletion) {
+      agentCleanup = await deps.agentRunLifecycle.cleanupPreparedDeletion(preparedAgentDeletion);
     }
 
     // ── auth.sqlite transaction: delete session / account / user ──────────
@@ -352,8 +438,21 @@ router.delete('/users/:id', async (req, res) => {
       target: { type: 'user', id: targetId },
       ip: ipFromReq(req),
       ua: uaFromReq(req),
-      metadata: { workspaces: wsCount, nodes: nodeCount, messages: msgCount, providerKeys: keyCount },
+      metadata: {
+        workspaces: wsCount,
+        nodes: nodeCount,
+        messages: msgCount,
+        providerKeys: keyCount,
+        agentDefinitions: definitionCount,
+        agentRuns: runCount,
+        agentCleanupFailures: agentCleanup.failed.map((failure) => ({ ...failure, retryable: true })),
+      },
     });
+
+    if (deps.agentRunLifecycle && preparedAgentDeletion) {
+      deps.agentRunLifecycle.finishOwnerDeletion(preparedAgentDeletion);
+      preparedAgentDeletion = null;
+    }
 
     res.json({
       deleted: {
@@ -361,12 +460,24 @@ router.delete('/users/:id', async (req, res) => {
         nodes: nodeCount,
         messages: msgCount,
         providerKeys: keyCount,
+        agentDefinitions: definitionCount,
+        agentRuns: runCount,
+        agentRunFiles: agentCleanup.cleanedRunIds.length,
         files: filesRemoved,
       },
+      cleanupFailures: agentCleanup.failed.map((failure) => ({ ...failure, retryable: true })),
     });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    if (deps.agentRunLifecycle && preparedAgentDeletion) {
+      deps.agentRunLifecycle.abortOwnerDeletion(preparedAgentDeletion);
+    }
+    const message = (err as Error).message;
+    res.status(message.includes('could not be quiesced') || message.includes('deletion is already in progress')
+      || message.includes('deletion lease was lost') ? 409 : 500).json({ error: message });
   }
 });
 
-export default router;
+return router;
+}
+
+export default setupAdminRoutes();

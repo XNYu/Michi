@@ -31,7 +31,6 @@ export interface StreamActivity {
   detail?: string;
 }
 
-const MAX_TOOL_TITLE = 48;
 const MAX_PLAN_STEP = 48;
 
 function truncate(value: string, max: number): string {
@@ -81,15 +80,13 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
     blocks.length === 0 && !last.text && !last.thought && last.toolCalls.length === 0;
   if (hasNothingYet) return null;
 
-  // A tool actively executing is the most common silent gap (long bash / MCP
-  // call). Name it so the user sees what's churning. Most immediate signal,
-  // so it outranks the plan step below.
-  const runningTool = [...last.toolCalls].reverse().find((t) => isRunningStatus(t.status) && !isHiddenInternalTool(t.title));
-  if (runningTool) {
-    return {
-      label: runningTool.title ? `Running ${truncate(runningTool.title, MAX_TOOL_TITLE)}` : 'Running tool',
-    };
-  }
+  // ToolCallGroup already shows visible running tools in both collapsed and
+  // expanded states. Suppress this standalone row instead of repeating the
+  // same status below the chips.
+  const hasRunningTool = last.toolCalls.some(
+    (t) => isRunningStatus(t.status) && !isHiddenInternalTool(t.title),
+  );
+  if (hasRunningTool) return null;
 
   // While visible answer text streams, the blinking cursor already conveys
   // liveness — stay quiet regardless of plan state. However, if the stream has

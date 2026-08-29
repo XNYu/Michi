@@ -1,4 +1,4 @@
-import type { CapabilityDescriptor } from "michi-shared";
+import type { CapabilityDescriptor, JsonValue } from "michi-shared";
 import type { NormalizedEvent } from "../services/chatEvents";
 
 export type RuntimeId = string;
@@ -92,7 +92,49 @@ export interface SessionMode {
   description?: string;
 }
 
-export interface NewAgentSessionOptions {
+/** Durable product owner for one runtime session. Chat sessions retain their
+ * historical node identity; Agent Runs use the attempt id as their public
+ * session identity and never require a backing node row. */
+export type RuntimeSessionOwner =
+  | { kind: "chat_node"; nodeId: string }
+  | { kind: "agent_run"; runId: string; attemptId: string };
+
+export interface RuntimeToolProfile {
+  /** When present, tools outside this allow-list must not execute. */
+  allowedToolNames?: readonly string[];
+  /** Immutable public capability snapshot/configuration for adapter use. */
+  capabilitySnapshot?: JsonValue;
+}
+
+export interface RuntimePermissionRequest {
+  owner: RuntimeSessionOwner;
+  ownerUserId: string | null;
+  workspaceId: string | null;
+  toolName: string;
+  input: unknown;
+  toolCallId?: string;
+}
+
+export type RuntimePermissionDecision = "allow_once" | "allow_always" | "deny" | "ask";
+
+/** Run coordinators provide a durable permission broker. Chat sessions omit it
+ * and continue through the existing workspace policy/banner flow. */
+export interface RuntimePermissionBroker {
+  requestPermission(request: RuntimePermissionRequest): Promise<RuntimePermissionDecision>;
+}
+
+export interface RuntimeSessionBootstrapOptions {
+  owner?: RuntimeSessionOwner;
+  bootstrapInstructions?: string;
+  replayHistory?: ChatMessage[];
+  toolProfile?: RuntimeToolProfile;
+  permissionBroker?: RuntimePermissionBroker;
+  nativeResumeToken?: JsonValue | null;
+  /** Hash of the immutable effective runtime profile/capabilities. */
+  profileHash?: string | null;
+}
+
+export interface NewAgentSessionOptions extends RuntimeSessionBootstrapOptions {
   cwd: string;
   parentChatId?: string;
   mergeContexts?: string[];
@@ -129,12 +171,14 @@ export interface NewAgentSessionOptions {
   ownerUserId?: string | null;
 }
 
-export interface LoadAgentSessionOptions {
+export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions {
   sessionId: string;
   /** Michi node id for this runtime session, when distinct from sessionId. */
   nodeId?: string | null;
   cwd: string;
   model?: string | null;
+  provider?: string | null;
+  reasoning?: AgentReasoning | null;
   /**
    * Workspace this session belongs to. Used as a cache/fallback by
    * globalContext tools; MCP-backed runtimes prefer nodeId -> nodes.workspace_id.
@@ -167,8 +211,12 @@ export interface AgentStatus {
 }
 
 export interface AgentSession {
-  /** Stable Michi node id. This is the only session identity exposed outside runtime adapters. */
+  /** Stable Michi node id for chats, or Attempt id for Agent Runs. */
   id: string;
+  /** Explicit product owner. Optional only for backward-compatible adapters. */
+  owner?: RuntimeSessionOwner;
+  /** Immutable profile hash used to reject unsafe session reuse. */
+  runtimeProfileHash?: string | null;
   /**
    * Runtime-owned resume/transport id when it differs from the Michi node id
    * (for example Kiro's ACP session id). Never expose this to the frontend.
@@ -227,7 +275,7 @@ export interface AgentRuntime {
    * runtime can keep its private maps, process/slot ownership, and
    * sessionRegistry in sync.
    */
-  releaseSession(sessionId: string): Promise<void> | void;
+  releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> | void;
   listModes?(sessionId: string): Promise<SessionMode[]>;
   listModels?(opts?: { provider?: string }): Promise<ModelInfo[]>;
   /** Refresh a dynamic model catalog from the underlying runtime. */
@@ -269,11 +317,84 @@ export interface AgentRuntimeWithProviders extends AgentRuntime {
 
 export function hasProviders(runtime: AgentRuntime): runtime is AgentRuntimeWithProviders {
   return runtime.capabilities.apiKeys === true
-    && typeof (runtime as any).listProviders === "function"
-    && typeof (runtime as any).verifyProviderKey === "function";
+    && typeof (runtime as AgentRuntimeWithProviders).listProviders === "function"
+    && typeof (runtime as AgentRuntimeWithProviders).verifyProviderKey === "function";
 }
 
 export interface ProviderEnvBinding {
   provider: string;
   envVars: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Owner equality and assertion helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Structural equality for two `RuntimeSessionOwner` values.
+ *
+ * - `chat_node` owners match when their `nodeId` is equal.
+ * - `agent_run` owners match when **both** `runId` and `attemptId` are equal.
+ *
+ * This function is the single authoritative owner-matching predicate. Internal
+ * modules (sessionRegistry, runWorkerTools, release guards) should delegate
+ * here instead of duplicating the comparison.
+ */
+export function sameOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'chat_node') {
+    return left.nodeId === (right as Extract<RuntimeSessionOwner, { kind: 'chat_node' }>).nodeId;
+  }
+  const rightRun = right as Extract<RuntimeSessionOwner, { kind: 'agent_run' }>;
+  return left.runId === rightRun.runId && left.attemptId === rightRun.attemptId;
+}
+
+/**
+ * Asserts that `actual` is structurally equal to `expected`.
+ * Throws a descriptive error when ownership does not match — used as a
+ * release guard by `AgentRuntime.releaseSession()` implementations and
+ * by `submit_agent_result` validation.
+ */
+export function assertOwner(actual: RuntimeSessionOwner, expected: RuntimeSessionOwner): void {
+  if (!sameOwner(actual, expected)) {
+    throw new Error(
+      `Owner mismatch: expected ${ownerLabel(expected)}, got ${ownerLabel(actual)}`,
+    );
+  }
+}
+
+/**
+ * Returns a human-readable label for an owner, safe for error messages and logs.
+ * Never includes credentials or secrets.
+ */
+export function ownerLabel(owner: RuntimeSessionOwner): string {
+  if (owner.kind === 'chat_node') return `chat_node(${owner.nodeId})`;
+  return `agent_run(run=${owner.runId}, attempt=${owner.attemptId})`;
+}
+
+// ---------------------------------------------------------------------------
+// Session identity documentation
+// ---------------------------------------------------------------------------
+
+/**
+ * Session identity contract:
+ *
+ * Every runtime session exposes two distinct identities:
+ *
+ * 1. **Public session id** (`AgentSession.id`):
+ *    - For `chat_node` owners this is the Michi node id.
+ *    - For `agent_run` owners this is the Attempt id.
+ *    - This is the key used by ChatHub, MCP slots, session registry, and all
+ *      product-level routing. It MUST equal the owner's identity key.
+ *
+ * 2. **Native session id** (`AgentSession.nativeSessionId`):
+ *    - A runtime-private transport/process identifier that may differ from the
+ *      public id (e.g. Kiro ACP session id, Codex thread id).
+ *    - Used only for native resume and internal runtime bookkeeping.
+ *    - Persisted as a private `nativeResumeToken` in the Attempt recovery
+ *      metadata and MUST NOT be surfaced to the frontend or backup exports.
+ *    - May be `null` for runtimes that do not support native resume (e.g. Pi).
+ *
+ * Invariant: `session.id === owner.attemptId` for Agent Runs.
+ * Invariant: `session.id === owner.nodeId` for chat nodes.
+ */

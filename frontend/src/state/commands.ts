@@ -24,7 +24,9 @@ export type PageId =
   | 'workspace-manage'
   | 'trash'
   | 'archived'
-  | 'profile';
+  | 'profile'
+  | 'agents'
+  | 'agent-manage';
 
 export interface CommandContext {
   activePage: PageId;
@@ -60,6 +62,9 @@ export interface CommandContext {
 
 export function buildCommands(ctx: CommandContext): Command[] {
   const out: Command[] = [];
+  // Kept in ACTION rather than NAV so the long-standing fixed nav-command
+  // ordering/shortcut contract remains unchanged; it still routes to a page.
+  out.push({ id: 'agents.open', group: 'action', glyph: '◇', label: 'Open Agent Library', run: () => ctx.setPage('agents') });
   if (ctx.hasActiveProject) {
     out.push(
       { id: 'nav.home',       group: 'nav', glyph: '◐', label: 'Go to home',            keys: kbd('mod', '0'), run: () => ctx.setPage('home') },

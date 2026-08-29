@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentSession, NewAgentSessionOptions } from '../types';
+import type {
+  AgentReasoning,
+  AgentSession,
+  ChatMessage,
+  RuntimePermissionBroker,
+  RuntimeSessionOwner,
+  RuntimeToolProfile,
+} from '../types';
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import { setNodeExternalSessionId } from '../../services/dbRepository';
@@ -36,6 +43,7 @@ export interface ClaudeSessionManagerDeps {
 
 export interface CreateClaudeSessionOptions {
   id: string;
+  owner?: RuntimeSessionOwner;
   cwd: string;
   parentChatId?: string;
   workspaceId?: string | null;
@@ -44,15 +52,27 @@ export interface CreateClaudeSessionOptions {
   ownerUserId?: string | null;
   /** Default true. Gates only the per-turn follow-up reminder. */
   enableFollowUps?: boolean;
+  replayHistory?: ChatMessage[];
+  toolProfile?: RuntimeToolProfile;
+  permissionBroker?: RuntimePermissionBroker;
+  profileHash?: string | null;
+  reasoning?: AgentReasoning | null;
 }
 
 export interface LoadClaudeSessionOptions {
   id: string;
+  owner?: RuntimeSessionOwner;
   cwd: string;
   workspaceId?: string | null;
   model?: string | null;
   externalSessionId: string;
   ownerUserId?: string | null;
+  replayHistory?: ChatMessage[];
+  bootstrapInstructions?: string;
+  toolProfile?: RuntimeToolProfile;
+  permissionBroker?: RuntimePermissionBroker;
+  profileHash?: string | null;
+  reasoning?: AgentReasoning | null;
 }
 
 export interface ClaudeSessionManagerStats {
@@ -88,6 +108,22 @@ export class ClaudeSessionManager {
     return this.active.get(id);
   }
 
+  getCompatible(
+    id: string,
+    owner: RuntimeSessionOwner,
+    profileHash: string | null,
+  ): ClaudeSession | undefined {
+    const existing = this.active.get(id);
+    if (!existing) return undefined;
+    if (!existing.matchesOwner(owner)) {
+      throw new Error(`session ${id} is already bound to a different owner`);
+    }
+    if ((existing.runtimeProfileHash ?? null) !== profileHash) {
+      throw new Error(`session ${id} runtime profile hash mismatch`);
+    }
+    return existing;
+  }
+
   stats(): ClaudeSessionManagerStats {
     const active = this.active.size;
     const warm = this.pool.size();
@@ -118,25 +154,37 @@ export class ClaudeSessionManager {
     if (this.shuttingDown) {
       throw new ClaudeConcurrencyError('ClaudeRuntime is shutting down');
     }
-    const existing = this.active.get(opts.id);
+    const owner = opts.owner ?? { kind: 'chat_node' as const, nodeId: opts.id };
+    const existing = this.getCompatible(opts.id, owner, opts.profileHash ?? null);
     if (existing) return existing;
 
     const model = opts.model ?? resolveModel('claude');
-    let session = this.pool.take(opts.cwd, model);
+    // Warm sessions are intentionally profile-neutral chat resources. A Run
+    // attempt has immutable tools/permissions/profile state and must cold-spawn
+    // unless a future pool explicitly keys those dimensions.
+    let session = owner.kind === 'chat_node' && !opts.profileHash
+      ? this.pool.take(opts.cwd, model)
+      : undefined;
     let releaseReservation: (() => void) | undefined;
     let releasePending: (() => void) | undefined;
 
     try {
-      if (!session && !this.deps.poolDisabled && this.deps.waitForWarm) {
+      if (!session && owner.kind === 'chat_node' && !opts.profileHash && !this.deps.poolDisabled && this.deps.waitForWarm) {
         session = await this.pool.waitForInflight(opts.cwd, model);
       }
       if (session) {
         session.rebindIdentity(opts.id, opts.id, {
           workspaceId: opts.workspaceId ?? null,
           ownerUserId: opts.ownerUserId ?? null,
+          owner,
+          profileHash: opts.profileHash ?? null,
+          toolProfile: opts.toolProfile,
+          permissionBroker: opts.permissionBroker,
+          reasoning: opts.reasoning ?? null,
+          replayHistory: opts.replayHistory,
         });
         const externalSessionId = session.getExternalSessionId();
-        if (externalSessionId) {
+        if (externalSessionId && owner.kind === 'chat_node') {
           try {
             setNodeExternalSessionId(opts.id, externalSessionId);
           } catch (err) {
@@ -148,6 +196,7 @@ export class ClaudeSessionManager {
         releaseReservation = await this.reserveSlot('active');
         session = new ClaudeSession(opts.id, {
           nodeId: opts.id,
+          owner,
           cwd: opts.cwd,
           workspaceId: opts.workspaceId ?? null,
           parentChatId: opts.parentChatId,
@@ -157,6 +206,11 @@ export class ClaudeSessionManager {
           bridge: this.deps.bridge,
           mcpPort: this.deps.mcpPort,
           ownerUserId: opts.ownerUserId ?? null,
+          profileHash: opts.profileHash ?? null,
+          replayHistory: opts.replayHistory,
+          toolProfile: opts.toolProfile,
+          permissionBroker: opts.permissionBroker,
+          reasoning: opts.reasoning ?? null,
         });
         releasePending = this.trackPendingSession(session);
         await session.spawnFresh();
@@ -185,12 +239,14 @@ export class ClaudeSessionManager {
     if (this.shuttingDown) {
       throw new ClaudeConcurrencyError('ClaudeRuntime is shutting down');
     }
-    const existing = this.active.get(opts.id);
+    const owner = opts.owner ?? { kind: 'chat_node' as const, nodeId: opts.id };
+    const existing = this.getCompatible(opts.id, owner, opts.profileHash ?? null);
     if (existing) return existing;
 
     const releaseReservation = await this.reserveSlot('active');
     const session = new ClaudeSession(opts.id, {
       nodeId: opts.id,
+      owner,
       cwd: opts.cwd,
       workspaceId: opts.workspaceId ?? null,
       model: opts.model ?? undefined,
@@ -198,11 +254,17 @@ export class ClaudeSessionManager {
       bridge: this.deps.bridge,
       mcpPort: this.deps.mcpPort,
       ownerUserId: opts.ownerUserId ?? null,
+      profileHash: opts.profileHash ?? null,
+      replayHistory: opts.replayHistory,
+      toolProfile: opts.toolProfile,
+      permissionBroker: opts.permissionBroker,
+      reasoning: opts.reasoning ?? null,
     });
     const releasePending = this.trackPendingSession(session);
 
     try {
       await session.spawnResume(opts.externalSessionId);
+      if (opts.bootstrapInstructions) session.setFirstTurnPrefix(opts.bootstrapInstructions);
       if (!this.registerActiveSession(opts.id, session)) {
         throw new Error('Claude session exited during resume');
       }
@@ -216,8 +278,9 @@ export class ClaudeSessionManager {
     }
   }
 
-  async releaseSession(sessionId: string): Promise<void> {
+  async releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
     const session = this.active.get(sessionId);
+    if (session && expectedOwner && !session.matchesOwner(expectedOwner)) return;
     if (session) {
       await session.dispose();
     }
@@ -243,6 +306,7 @@ export class ClaudeSessionManager {
     const anonymousId = randomUUID();
     const session = new ClaudeSession(anonymousId, {
       nodeId: anonymousId,
+      owner: { kind: 'chat_node', nodeId: anonymousId },
       cwd,
       workspaceId: null,
       model,
@@ -330,10 +394,10 @@ export class ClaudeSessionManager {
     if (this.active.get(id) !== session) {
       return false;
     }
-    if (this.deps.onSelfTurn) {
+    if (this.deps.onSelfTurn && session.owner.kind === 'chat_node') {
       session.onSelfTurn(this.deps.onSelfTurn);
     }
-    sessionRegistry.registerSession(session as AgentSession);
+    sessionRegistry.registerSession(session as AgentSession, session.getOwnerUserId(), session.owner);
     return true;
   }
 

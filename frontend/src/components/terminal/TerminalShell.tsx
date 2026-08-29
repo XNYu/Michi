@@ -13,6 +13,14 @@ import { usePrefs } from '../../state/prefs';
 import type { PageId } from '../../state/commands';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { setManageWorkspaceId, useManageWorkspaceId } from '../../state/manageRoute';
+import { setManageAgentRoute, useManageAgentRoute } from '../../state/manageRoute';
+import { useAgentDomain } from '../../state/agentDomain';
+import { agentResourceKey, backendConnectionIdFromApiBase } from '../../state/agentIdentity';
+import { activeBackendApiBase, backendConnectionIdForWorkspace, getKnownBackendConnections } from '../../config/backendConnections';
+import { AgentEnableBlockedError, createAgentDefinition, deleteAgentDefinition, disableAgentDefinition, duplicateAgentDefinition, enableAgentDefinition, getAgentDefinition, updateAgentDefinition } from '../../services/api';
+import type { AgentDefinitionDtoV1, AgentEnableBlockerV1, CreateAgentDefinitionRequestV1, RuntimeProfileV1 } from 'michi-shared';
+import { AgentDefinitionStatus } from 'michi-shared';
+import type { AgentDefinitionFormValue } from './agents/AgentDefinitionForm';
 import type { ChatNodeState } from '../../state/chatTypes';
 
 const NARROW_THRESHOLD = 700;
@@ -26,6 +34,8 @@ const TerminalWorkspaceManage = React.lazy(() => import('./pages/WorkspaceManage
 const TerminalTrash = React.lazy(() => import('./pages/Trash'));
 const TerminalArchived = React.lazy(() => import('./pages/Archived'));
 const TerminalProfile = React.lazy(() => import('./pages/Profile'));
+const AgentLibraryPage = React.lazy(() => import('./agents/AgentLibraryPage'));
+const AgentEditorPage = React.lazy(() => import('./agents/AgentEditorPage'));
 const CommandPalette = React.lazy(() => import('./CommandPalette'));
 
 function LazyPage({ children }: { children: React.ReactNode }) {
@@ -58,6 +68,7 @@ export default function TerminalShell() {
   );
   const [page, setPage] = useState<PageId>('home');
   const manageWorkspaceId = useManageWorkspaceId();
+  const manageAgentRoute = useManageAgentRoute();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -528,6 +539,8 @@ export default function TerminalShell() {
           {page === 'trash' && <LazyPage><TerminalTrash onNav={handleNav} /></LazyPage>}
           {page === 'archived' && <LazyPage><TerminalArchived onNav={handleNav} /></LazyPage>}
           {page === 'profile' && PROFILE_PAGE_ENABLED && <LazyPage><TerminalProfile onNav={handleNav} /></LazyPage>}
+          {page === 'agents' && <LazyPage><AgentManagementLibrary onNav={handleNav} /></LazyPage>}
+          {page === 'agent-manage' && <LazyPage><AgentManagementEditor route={manageAgentRoute} onNav={handleNav} /></LazyPage>}
         </div>
       </div>
       {paletteOpen && (
@@ -565,6 +578,109 @@ export default function TerminalShell() {
       )}
     </div>
   );
+}
+
+function activeControlPlaneId(activeProject: ReturnType<typeof useChatProjects>['activeProject']): string {
+  return activeProject
+    ? backendConnectionIdForWorkspace(activeProject.id)
+    : backendConnectionIdFromApiBase(activeBackendApiBase());
+}
+
+function AgentManagementLibrary({ onNav }: { onNav: (page: PageId) => void }) {
+  const { activeProject } = useChatProjects();
+  const { state, loadDefinitions, dispatch } = useAgentDomain();
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [featureUnavailable, setFeatureUnavailable] = React.useState(false);
+  const backendConnectionId = activeControlPlaneId(activeProject);
+  const backendName = getKnownBackendConnections().find((connection) => connection.id === backendConnectionId)?.name ?? backendConnectionId;
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void loadDefinitions(activeProject?.id ?? null).then(() => {
+      if (!cancelled) { setError(null); setFeatureUnavailable(false); }
+    }).catch((reason) => {
+      if (!cancelled) {
+        const message = reason instanceof Error ? reason.message : String(reason);
+        const unavailable = message.includes('404');
+        setFeatureUnavailable(unavailable);
+        setError(unavailable ? null : message);
+      }
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeProject?.id, backendConnectionId, loadDefinitions]);
+  const definitions = featureUnavailable ? [] : Object.values(state.definitions).filter((resource) => resource.backendConnectionId === backendConnectionId && (resource.value.scope === 'global' || resource.value.workspaceId === activeProject?.id));
+  const runs = Object.values(state.runs).filter((resource) => resource.backendConnectionId === backendConnectionId && resource.value.workspaceId === activeProject?.id);
+  const create = (scope: 'workspace' | 'global') => {
+    setManageAgentRoute({ mode: 'create', scope, workspaceId: scope === 'workspace' ? activeProject?.id ?? null : null, backendConnectionId, definitionId: null });
+    onNav('agent-manage');
+  };
+  const edit = (resource: (typeof definitions)[number]) => {
+    setManageAgentRoute({ mode: 'edit', scope: resource.value.scope, workspaceId: resource.value.workspaceId, backendConnectionId: resource.backendConnectionId, definitionId: resource.value.id });
+    onNav('agent-manage');
+  };
+  const update = async (identity: { backendConnectionId: string; id: string }, action: typeof enableAgentDefinition | typeof disableAgentDefinition | typeof duplicateAgentDefinition) => {
+    try { dispatch({ type: 'upsert-definitions', resources: [await action(identity)] }); setError(null); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  };
+  return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 10 }}>CONTROL PLANE · {backendName} ({backendConnectionId}){activeProject ? ` · WORKSPACE ${activeProject.name}` : ' · NO WORKSPACE SELECTED'}</div><AgentLibraryPage definitions={definitions} runs={runs} workspaceId={activeProject?.id ?? null} loading={loading} error={error} onCreate={create} onEdit={edit} onEnable={(identity) => { void update(identity, enableAgentDefinition); }} onDisable={(identity) => { void update(identity, disableAgentDefinition); }} onDuplicate={(identity) => { void update(identity, duplicateAgentDefinition); }} onDelete={(identity) => { void deleteAgentDefinition(identity).then(() => dispatch({ type: 'remove-definition', identity })).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }} /></div>;
+}
+
+function profileFromForm(value: AgentDefinitionFormValue['runtimeProfile']): RuntimeProfileV1 {
+  return { version: 1, runtimeId: value.runtimeId.trim(), ...(value.providerId.trim() ? { providerId: value.providerId.trim() } : {}), ...(value.modelId.trim() ? { modelId: value.modelId.trim() } : {}), ...(value.reasoning ? { reasoning: value.reasoning } : {}), ...(value.modeId.trim() ? { modeId: value.modeId.trim() } : {}) };
+}
+
+function refs(value: string): string[] {
+  return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function requestFromForm(value: AgentDefinitionFormValue): CreateAgentDefinitionRequestV1 {
+  return {
+    version: 1, scope: value.scope, workspaceId: value.scope === 'workspace' ? value.workspaceId : null,
+    name: value.name.trim(), description: value.description.trim(), instructions: value.instructions,
+    runtimeProfile: profileFromForm(value.runtimeProfile), fallbackChain: value.fallbackChain.map(profileFromForm),
+    toolRefs: refs(value.toolRefs), skillRefs: refs(value.skillRefs), mcpServerRefs: refs(value.mcpServerRefs),
+    permissionPolicy: { version: 1, preset: value.permissionPolicy.preset, categories: value.permissionPolicy.categories, maxDelegationDepth: Number(value.permissionPolicy.maxDelegationDepth), maxConcurrentRuns: Number(value.permissionPolicy.maxConcurrentRuns), maxWallTimeMs: Number(value.permissionPolicy.maxWallTimeMinutes) * 60_000, maxAttempts: Number(value.permissionPolicy.maxAttempts) },
+    contextPolicy: { version: 1, includeWorkspaceInstructions: value.includeWorkspaceInstructions, allowMessageContext: value.allowMessageContext, allowFileContext: value.allowFileContext, allowArtifactContext: value.allowArtifactContext, maxEstimatedChars: Number(value.maxContextChars) },
+    defaultRunTtlMs: value.retention === 'indefinite' ? null : Number(value.defaultRunTtlMs),
+  };
+}
+
+function AgentManagementEditor({ route, onNav }: { route: ReturnType<typeof useManageAgentRoute>; onNav: (page: PageId) => void }) {
+  const { activeProject } = useChatProjects();
+  const { state, dispatch } = useAgentDomain();
+  const [error, setError] = React.useState<string | null>(null);
+  const [blockers, setBlockers] = React.useState<AgentEnableBlockerV1[] | null>(null);
+  const key = route?.definitionId ? agentResourceKey({ backendConnectionId: route.backendConnectionId, id: route.definitionId }) : '';
+  const definition = key ? state.definitions[key] ?? null : null;
+  React.useEffect(() => {
+    if (!route || route.mode !== 'edit' || definition) return;
+    void getAgentDefinition({ backendConnectionId: route.backendConnectionId, id: route.definitionId! })
+      .then((resource) => dispatch({ type: 'upsert-definitions', resources: [resource] }))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  }, [route, definition, dispatch]);
+  if (!route) return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--term-muted)' }}>Agent editor link is missing.</div>;
+  if (route.mode === 'edit' && !definition && !error) return <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--term-muted)' }}>loading Agent…</div>;
+  const persist = async (value: AgentDefinitionFormValue, enable: boolean) => {
+    const currentBackend = activeControlPlaneId(activeProject);
+    if (route.mode === 'create' && currentBackend !== route.backendConnectionId) throw new Error(`Control plane changed from ${route.backendConnectionId} to ${currentBackend}. Return to the Library before saving.`);
+    const request = requestFromForm(value);
+    let saved;
+    if (definition) saved = await updateAgentDefinition({ backendConnectionId: definition.backendConnectionId, id: definition.value.id }, { ...request, expectedRevision: definition.value.revision });
+    else saved = await createAgentDefinition(request, undefined, route.backendConnectionId);
+    if (enable && saved.value.status !== AgentDefinitionStatus.Enabled) saved = await enableAgentDefinition({ backendConnectionId: saved.backendConnectionId, id: saved.value.id });
+    dispatch({ type: 'upsert-definitions', resources: [saved] });
+    setManageAgentRoute({ mode: 'edit', scope: saved.value.scope, workspaceId: saved.value.workspaceId, backendConnectionId: saved.backendConnectionId, definitionId: saved.value.id });
+  };
+  const identity = definition ? { backendConnectionId: definition.backendConnectionId, id: definition.value.id } : null;
+  const execute = async (action: () => Promise<void>) => {
+    try { await action(); setError(null); setBlockers(null); }
+    catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setBlockers(reason instanceof AgentEnableBlockedError ? reason.blockers : null);
+    }
+  };
+  return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 10 }}>CONTROL PLANE · {route.backendConnectionId}{route.workspaceId ? ` · WORKSPACE ${route.workspaceId}` : ' · GLOBAL'}</div><AgentEditorPage definition={definition} initialScope={route.scope} workspaceId={route.workspaceId} error={error} blockers={blockers} onCancel={() => onNav('agents')} onSaveDraft={(value) => execute(() => persist(value, false))} onEnable={(value) => execute(() => persist(value, true))} onDisable={identity ? () => execute(async () => { dispatch({ type: 'upsert-definitions', resources: [await disableAgentDefinition(identity)] }); }) : undefined} onDuplicate={identity ? () => execute(async () => { const copied = await duplicateAgentDefinition(identity); dispatch({ type: 'upsert-definitions', resources: [copied] }); setManageAgentRoute({ mode: 'edit', scope: copied.value.scope, workspaceId: copied.value.workspaceId, backendConnectionId: copied.backendConnectionId, definitionId: copied.value.id }); }) : undefined} onDelete={identity ? () => execute(async () => { await deleteAgentDefinition(identity); dispatch({ type: 'remove-definition', identity }); setManageAgentRoute(null); onNav('agents'); }) : undefined} /></div>;
 }
 
 function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void }) {

@@ -1,7 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractToolUsePurpose } from "michi-shared";
-import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
+import type {
+    AgentSession,
+    AgentTurnInput,
+    ChatMessage,
+    RuntimePermissionBroker,
+    RuntimeSessionOwner,
+    RuntimeToolProfile,
+} from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
 import { translateAcpToolCall } from "../../services/acp/toolCallTranslate";
@@ -135,22 +142,37 @@ const BRANCH_OVERVIEW_TOOL_REMINDER = `
  *   - Perf timing of `first_chunk` (ChatManager — needs the original `tStart`).
  */
 export class KiroSession implements AgentSession {
-    public readonly runtimeId: string;
+    public readonly runtimeId = "kiro";
+    public readonly owner?: RuntimeSessionOwner;
+    public readonly runtimeProfileHash?: string | null;
     public parentChatId?: string;
     private history: ChatMessage[] = [];
     private pendingAssistantBuf: string[] | undefined;
     private enableFollowUps: boolean;
+    private readonly toolProfile?: RuntimeToolProfile;
+    private readonly permissionBroker?: RuntimePermissionBroker;
 
     constructor(
         public readonly id: string,
         public readonly nativeSessionId: string,
         private readonly runtime: AcpAgentRuntime,
         private readonly cwd: string,
-        opts?: { parentChatId?: string; enableFollowUps?: boolean },
+        opts?: {
+            parentChatId?: string;
+            enableFollowUps?: boolean;
+            owner?: RuntimeSessionOwner;
+            runtimeProfileHash?: string | null;
+            toolProfile?: RuntimeToolProfile;
+            permissionBroker?: RuntimePermissionBroker;
+        },
     ) {
         this.runtimeId = runtime.id;
         this.parentChatId = opts?.parentChatId;
         this.enableFollowUps = opts?.enableFollowUps !== false;
+        this.owner = opts?.owner;
+        this.runtimeProfileHash = opts?.runtimeProfileHash ?? null;
+        this.toolProfile = opts?.toolProfile;
+        this.permissionBroker = opts?.permissionBroker;
     }
 
     getEnableFollowUps(): boolean {
@@ -237,8 +259,21 @@ export class KiroSession implements AgentSession {
      *
      * The thrown error carries `acpErrorKind` (connection | auth | generic) so
      * ChatHub can hand the UI a class-appropriate banner.
+     *
+     * Agent Run sessions (`agent_run` owner) disable the hidden auto-retry.
+     * A tool may have produced a non-visible side effect before the transport
+     * failed, making an automatic resend unsafe. Durable Run recovery is owned
+     * by the Coordinator and uses the persisted ACP session id.
      */
     private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
+        // Agent Run sessions must not auto-retry — surface the error immediately
+        // so the Coordinator can decide whether to checkpoint or create a
+        // recovery Attempt.
+        if (this.owner?.kind === "agent_run") {
+            yield* this.runPromptOnce(text, imageBlocks);
+            return;
+        }
+
         let attempt = 0;
         while (true) {
             let firstVisibleYielded = false;
@@ -381,26 +416,57 @@ export class KiroSession implements AgentSession {
                     yield { kind: "follow_ups" as const, followUps };
                 }
             } else if (kind === "permission_request") {
-                // Incoming permission request from the ACP agent — forward to
-                // SSE so the frontend can show an approval dialog. Cursor (and
-                // similar) put the real tool name / args on toolCall here
-                // while the earlier tool_call event was an empty "MCP: tool"
-                // stub, so also emit a tool_call_update to enrich the chip.
-                const toolCall = update.toolCall && typeof update.toolCall === "object"
-                    ? update.toolCall
-                    : {};
-                const enriched = toToolEvent("tool_call_update", toolCall);
-                if (enriched.toolCallId) {
-                    yield enriched;
+                // Incoming permission request from kiro-cli — agent_run owners
+                // route through the Run permission broker; chat_node owners
+                // forward to SSE for the frontend approval dialog.
+                if (this.owner?.kind === "agent_run" && this.permissionBroker) {
+                    // Broker the permission asynchronously. ACP is blocked
+                    // waiting for our JSON-RPC response, so the agent stays
+                    // paused until we answer.
+                    const toolName = update.toolCall?.title ?? "unknown";
+                    const decision = await this.permissionBroker.requestPermission({
+                        owner: this.owner,
+                        ownerUserId: null,
+                        workspaceId: null,
+                        toolName,
+                        input: update.toolCall,
+                        toolCallId: update.toolCall?.toolCallId,
+                    });
+                    const rawOptions: any[] = Array.isArray(update.options) ? update.options : [];
+                    if (decision === "allow_once" || decision === "allow_always") {
+                        // Find the "allow" option by optionId; fall back to first option.
+                        const allowOption = rawOptions.find(
+                            (o: any) => o.optionId === "allow" || o.optionId === "allowForSession" || o.optionId === "yes",
+                        ) ?? rawOptions[0];
+                        if (allowOption) {
+                            this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allowOption.optionId);
+                        }
+                        // allow_always for Runs is Attempt-scoped only — do NOT
+                        // write a normal chat Workspace grant.
+                    } else if (decision === "deny") {
+                        this.runtime.cancelPermission(this.nativeSessionId, update.requestId);
+                    } else {
+                        // "ask" — surface as a Run interaction so the Executor/UI
+                        // can handle it. Yield the permission_request event.
+                        yield {
+                            kind: "permission_request" as const,
+                            requestId: update.requestId,
+                            toolCallId: update.toolCall?.toolCallId,
+                            title: update.toolCall?.title ?? "Tool call",
+                            options: rawOptions,
+                            source: "acp_permission",
+                        };
+                    }
+                } else {
+                    yield {
+                        kind: "permission_request" as const,
+                        requestId: update.requestId,
+                        toolCallId: update.toolCall?.toolCallId,
+                        title: update.toolCall?.title ?? "Tool call",
+                        options: Array.isArray(update.options) ? update.options : [],
+                        source: "acp_permission",
+                    };
                 }
-                yield {
-                    kind: "permission_request" as const,
-                    requestId: update.requestId,
-                    toolCallId: enriched.toolCallId || update.toolCall?.toolCallId,
-                    title: enriched.title || update.toolCall?.title || "Tool call",
-                    options: Array.isArray(update.options) ? update.options : [],
-                    source: "acp_permission",
-                };
             } else if (kind === "subagent_list_update") {
                 yield {
                     kind: "subagent_list_update" as const,

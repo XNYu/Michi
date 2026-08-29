@@ -183,3 +183,71 @@ describe('KiroSession connection-class auto-retry', () => {
     assert.equal((thrown as { acpErrorKind?: string }).acpErrorKind, 'connection');
   });
 });
+
+describe('KiroSession agent_run owner retry behavior', () => {
+  it('agent_run owner does NOT auto-retry — surfaces connection error immediately', async () => {
+    let recoverCount = 0;
+    const { runtime } = scriptedRuntime([connErr()]);
+    // Override recoverSession to track calls.
+    (runtime as any).recoverSession = async () => {
+      recoverCount += 1;
+      return true;
+    };
+
+    const session = new KiroSession('attempt-1', 'sid-run', runtime, '/tmp', {
+      owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
+    });
+
+    let thrown: unknown;
+    try {
+      for await (const _ev of session.send('task instructions')) { /* drain */ }
+    } catch (e) {
+      thrown = e;
+    }
+
+    assert.ok(thrown, 'should throw the connection error');
+    assert.equal(recoverCount, 0, 'agent_run owner must NOT trigger auto-recovery');
+    assert.equal((thrown as { acpErrorKind?: string }).acpErrorKind, undefined,
+      'agent_run path does not decorate acpErrorKind (raw error surfaced)');
+  });
+
+  it('agent_run owner surfaces ACPProcessExitedError without retry', async () => {
+    const { runtime, recoverCalls } = scriptedRuntime([
+      new ACPProcessExitedError('ACP process exited with code 1'),
+    ]);
+    const session = new KiroSession('attempt-2', 'sid-run-2', runtime, '/tmp', {
+      owner: { kind: 'agent_run', runId: 'run-2', attemptId: 'attempt-2' },
+    });
+
+    let thrown: unknown;
+    try {
+      for await (const _ev of session.send('task')) { /* drain */ }
+    } catch (e) {
+      thrown = e;
+    }
+
+    assert.ok(thrown instanceof ACPProcessExitedError);
+    assert.equal(recoverCalls.length, 0, 'no recovery for agent_run owner');
+  });
+
+  it('chat_node owner still retries on same error (backward compat)', async () => {
+    const { runtime, recoverCalls } = scriptedRuntime([
+      connErr(),
+      [
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'OK' } },
+        { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
+      ],
+    ]);
+    const session = new KiroSession('node-chat', 'sid-chat', runtime, '/tmp', {
+      owner: { kind: 'chat_node', nodeId: 'node-chat' },
+    });
+
+    const chunks: string[] = [];
+    for await (const ev of session.send('hi')) {
+      if (ev.kind === 'chunk') chunks.push(ev.text);
+    }
+
+    assert.equal(chunks.join(''), 'OK');
+    assert.equal(recoverCalls.length, 1, 'chat owner should retry with recovery');
+  });
+});

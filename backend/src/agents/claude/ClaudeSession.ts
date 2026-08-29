@@ -2,10 +2,25 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import type { AgentSession, AgentTurnInput, ChatMessage, LoadAgentSessionOptions, NewAgentSessionOptions } from '../types';
+import type {
+  AgentSession,
+  AgentTurnInput,
+  ChatMessage,
+  LoadAgentSessionOptions,
+  NewAgentSessionOptions,
+  RuntimePermissionBroker,
+  RuntimeSessionOwner,
+  RuntimeToolProfile,
+} from '../types';
 import type { NormalizedEvent, PermissionOption } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
+import { resolveAgentRunToolsForSession } from '../toolBridge';
+import {
+  SUBMIT_AGENT_RESULT_TOOL,
+  type RunWorkerToolProfile,
+} from '../runs/runWorkerTools';
+import { AGENT_RUN_TOOL_NAMES, type AgentRunToolName } from '../runToolBridge';
 import { spawnClaude } from './claudeBinary';
 import { ClaudeInitTimeoutError } from './claudeBinary';
 import { createClaudeEnvelopeParser } from './claudeEnvelopeParser';
@@ -43,6 +58,14 @@ function reasoningToClaudeEffort(
   return r;
 }
 
+function sameRuntimeOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
+  if (left.kind !== right.kind) return false;
+  return left.kind === 'chat_node'
+    ? left.nodeId === (right as Extract<RuntimeSessionOwner, { kind: 'chat_node' }>).nodeId
+    : left.runId === (right as Extract<RuntimeSessionOwner, { kind: 'agent_run' }>).runId
+      && left.attemptId === (right as Extract<RuntimeSessionOwner, { kind: 'agent_run' }>).attemptId;
+}
+
 // ---- Constants ---------------------------------------------------------------
 
 // Default 60s — claude's SessionStart hooks can take 10-20s on heavily-loaded
@@ -73,6 +96,12 @@ export interface ClaudeSessionDeps {
   /** Cloud-mode owner. Used to namespace the Claude project history directory
    *  so two users sharing the same cwd slug don't collide. Desktop: null. */
   ownerUserId?: string | null;
+  owner?: RuntimeSessionOwner;
+  profileHash?: string | null;
+  replayHistory?: ChatMessage[];
+  toolProfile?: RuntimeToolProfile;
+  permissionBroker?: RuntimePermissionBroker;
+  reasoning?: AgentReasoning | null;
 }
 
 export type SelfTurnIterator = AsyncIterableIterator<NormalizedEvent>;
@@ -94,6 +123,8 @@ export class ClaudeSession implements AgentSession {
   // identifier at handoff via rebindIdentity(). After rebindIdentity has
   // run once, the firstTurnPrefixConsumed gate prevents further mutation.
   public id: string;
+  public owner: RuntimeSessionOwner;
+  public runtimeProfileHash: string | null;
   public readonly runtimeId = 'claude';
   public readonly parentChatId: string | undefined;
   public currentModeId: string | null = null;
@@ -101,6 +132,10 @@ export class ClaudeSession implements AgentSession {
   /** Model currently bound to this session (reflects setModel). */
   get currentModelId(): string | null {
     return this.model ?? null;
+  }
+
+  get nativeSessionId(): string | null {
+    return this.externalSessionId;
   }
 
   /** Assistant text accumulated during the in-flight turn, exposed via
@@ -122,6 +157,9 @@ export class ClaudeSession implements AgentSession {
    *  model at process start and has no in-session model-change message. */
   private model: string | undefined;
   private ownerUserId: string | null;
+  private toolProfile: RuntimeToolProfile | undefined;
+  private permissionBroker: RuntimePermissionBroker | undefined;
+  private reasoning: AgentReasoning | null;
   private readonly systemPromptAppend: string | undefined;
   private readonly mcpRegistry: McpSlotRegistry;
   private readonly bridge: AgentToolBridge;
@@ -206,6 +244,11 @@ export class ClaudeSession implements AgentSession {
     this.parentChatId = deps.parentChatId;
     this.model = deps.model ?? undefined;
     this.ownerUserId = deps.ownerUserId ?? null;
+    this.owner = deps.owner ?? { kind: 'chat_node', nodeId: deps.nodeId };
+    this.runtimeProfileHash = deps.profileHash ?? null;
+    this.toolProfile = deps.toolProfile;
+    this.permissionBroker = deps.permissionBroker;
+    this.reasoning = deps.reasoning ?? null;
     this.systemPromptAppend = deps.systemPromptAppend;
     this.mcpRegistry = deps.mcpRegistry;
     this.bridge = deps.bridge;
@@ -216,6 +259,7 @@ export class ClaudeSession implements AgentSession {
         this.queue.push({ kind: 'heartbeat', idleMs });
       }
     });
+    this.history.push(...(deps.replayHistory ?? []).map((message) => ({ ...message })));
   }
 
   // ---- Public AgentSession interface ----------------------------------------
@@ -364,7 +408,16 @@ export class ClaudeSession implements AgentSession {
   rebindIdentity(
     newId: string,
     newNodeId: string,
-    opts?: { workspaceId?: string | null; ownerUserId?: string | null },
+    opts?: {
+      workspaceId?: string | null;
+      ownerUserId?: string | null;
+      owner?: RuntimeSessionOwner;
+      profileHash?: string | null;
+      toolProfile?: RuntimeToolProfile;
+      permissionBroker?: RuntimePermissionBroker;
+      reasoning?: AgentReasoning | null;
+      replayHistory?: ChatMessage[];
+    },
   ): void {
     if (this.firstTurnPrefixConsumed) {
       throw new Error('rebindIdentity called after first turn already sent');
@@ -373,7 +426,23 @@ export class ClaudeSession implements AgentSession {
     this.nodeId = newNodeId;
     if (opts && 'workspaceId' in opts) this.workspaceId = opts.workspaceId ?? null;
     if (opts && 'ownerUserId' in opts) this.ownerUserId = opts.ownerUserId ?? null;
+    if (opts?.owner) this.owner = opts.owner;
+    if (opts && 'profileHash' in opts) this.runtimeProfileHash = opts.profileHash ?? null;
+    if (opts && 'toolProfile' in opts) this.toolProfile = opts.toolProfile;
+    if (opts && 'permissionBroker' in opts) this.permissionBroker = opts.permissionBroker;
+    if (opts && 'reasoning' in opts) this.reasoning = opts.reasoning ?? null;
+    if (opts?.replayHistory) {
+      this.history.splice(0, this.history.length, ...opts.replayHistory.map((message) => ({ ...message })));
+    }
     this.syncMcpSlotBinding();
+  }
+
+  matchesOwner(owner: RuntimeSessionOwner): boolean {
+    return sameRuntimeOwner(this.owner, owner);
+  }
+
+  getOwnerUserId(): string | null {
+    return this.ownerUserId;
   }
 
   private syncMcpSlotBinding(): void {
@@ -381,9 +450,35 @@ export class ClaudeSession implements AgentSession {
     const slot = this.mcpRegistry.get(this.slotId);
     if (!slot) return;
     slot.parentChatId = this.id;
-    slot.nodeId = this.nodeId;
+    slot.nodeId = this.owner.kind === 'chat_node' ? this.nodeId : null;
     slot.workspaceId = this.workspaceId;
     slot.ownerUserId = this.ownerUserId;
+    slot.agentRuns = this.resolveAgentRunTools();
+    slot.agentRunToolNames = this.allowedAgentRunToolNames();
+    slot.onSubmitAgentResult = this.submitAgentResultCallback();
+  }
+
+  private resolveAgentRunTools() {
+    return resolveAgentRunToolsForSession(this.bridge, {
+      runtimeId: this.runtimeId,
+      sessionId: this.id,
+      owner: this.owner,
+      ownerUserId: this.ownerUserId,
+      workspaceId: this.workspaceId,
+      nodeId: this.owner.kind === 'chat_node' ? this.nodeId : null,
+    }) ?? undefined;
+  }
+
+  private submitAgentResultCallback(): ((payload: unknown) => ReturnType<RunWorkerToolProfile['runWorkerTools']['submitAgentResult']>) | undefined {
+    if (this.owner.kind !== 'agent_run' || !this.toolProfile || !('runWorkerTools' in this.toolProfile)) return undefined;
+    if (!this.toolProfile.allowedToolNames?.includes(SUBMIT_AGENT_RESULT_TOOL)) return undefined;
+    const profile = this.toolProfile as RunWorkerToolProfile;
+    if (typeof profile.runWorkerTools?.submitAgentResult !== 'function') return undefined;
+    return (payload) => profile.runWorkerTools.submitAgentResult(this.owner, payload);
+  }
+
+  private allowedAgentRunToolNames(): AgentRunToolName[] {
+    return AGENT_RUN_TOOL_NAMES.filter((name) => this.isToolAllowed(name));
   }
 
   /**
@@ -725,6 +820,7 @@ export class ClaudeSession implements AgentSession {
     perf.mark('claude:spawn_fresh_start', { sid: this.id });
     const slot = this.mcpRegistry.create(this.id, this.cwd, this.ownerUserId ?? null, {
       onSpawnBranches: async (topics) => {
+        if (!this.isToolAllowed('spawn_branches')) throw new Error('spawn_branches is not enabled for this session');
         const result = await this.bridge.spawnBranches({
           parentChatId: this.id,
           cwd: this.cwd,
@@ -736,6 +832,7 @@ export class ClaudeSession implements AgentSession {
         return result;
       },
       onSaveArtifact: (name, body) => {
+        if (!this.isToolAllowed('save_artifact')) return null;
         const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (saved) {
           this.queue.push({ kind: 'artifact_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
@@ -743,6 +840,7 @@ export class ClaudeSession implements AgentSession {
         return saved;
       },
       onUpdateArtifact: (name, body) => {
+        if (!this.isToolAllowed('update_artifact')) return null;
         const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (updated) {
           this.queue.push({ kind: 'artifact_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
@@ -750,6 +848,7 @@ export class ClaudeSession implements AgentSession {
         return updated;
       },
       onShowImage: (inputPath, caption) => {
+        if (!this.isToolAllowed('show_image')) return { error: 'show_image is not enabled for this session' };
         const r = resolveShowImage(this.cwd, inputPath);
         if (!r.ok) return { error: r.error };
         this.queue.push({ kind: 'image', path: r.relPath, caption, mimeType: r.mimeType, size: r.size });
@@ -758,8 +857,11 @@ export class ClaudeSession implements AgentSession {
       ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       onApprove: this.makeOnApprove(),
       onAskUser: this.makeOnAskUser(),
+      agentRuns: this.resolveAgentRunTools(),
+      agentRunToolNames: this.allowedAgentRunToolNames(),
+      onSubmitAgentResult: this.submitAgentResultCallback(),
     }, {
-      nodeId: this.nodeId,
+      nodeId: this.owner.kind === 'chat_node' ? this.nodeId : null,
       workspaceId: this.workspaceId,
     });
     this.slotId = slot.slotId;
@@ -774,6 +876,10 @@ export class ClaudeSession implements AgentSession {
   }
 
   async spawnResume(externalSessionId: string): Promise<void> {
+    // The caller supplied a validated opaque resume token. Retain it before
+    // the CLI emits its next system/init envelope so crash/cancel recovery can
+    // immediately describe the native state.
+    this.externalSessionId = externalSessionId;
     // Invariant 4: JSONL tail integrity check
     this.checkAndRepairJsonl(this.cwd, externalSessionId, this.ownerUserId);
 
@@ -785,6 +891,7 @@ export class ClaudeSession implements AgentSession {
 
     const slot = this.mcpRegistry.create(this.id, this.cwd, this.ownerUserId ?? null, {
       onSpawnBranches: async (topics) => {
+        if (!this.isToolAllowed('spawn_branches')) throw new Error('spawn_branches is not enabled for this session');
         const result = await this.bridge.spawnBranches({
           parentChatId: this.id,
           cwd: this.cwd,
@@ -796,6 +903,7 @@ export class ClaudeSession implements AgentSession {
         return result;
       },
       onSaveArtifact: (name, body) => {
+        if (!this.isToolAllowed('save_artifact')) return null;
         const saved = this.bridge.saveContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (saved) {
           this.queue.push({ kind: 'artifact_saved', contextId: saved.id, name: saved.name, filePath: saved.filePath, size: saved.size });
@@ -803,6 +911,7 @@ export class ClaudeSession implements AgentSession {
         return saved;
       },
       onUpdateArtifact: (name, body) => {
+        if (!this.isToolAllowed('update_artifact')) return null;
         const updated = this.bridge.updateContext({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
         if (updated) {
           this.queue.push({ kind: 'artifact_updated', contextId: updated.id, name: updated.name, filePath: updated.filePath, size: updated.size });
@@ -810,6 +919,7 @@ export class ClaudeSession implements AgentSession {
         return updated;
       },
       onShowImage: (inputPath, caption) => {
+        if (!this.isToolAllowed('show_image')) return { error: 'show_image is not enabled for this session' };
         const r = resolveShowImage(this.cwd, inputPath);
         if (!r.ok) return { error: r.error };
         this.queue.push({ kind: 'image', path: r.relPath, caption, mimeType: r.mimeType, size: r.size });
@@ -818,8 +928,11 @@ export class ClaudeSession implements AgentSession {
       ...(this.followUpsHookPocEnabled ? this.followUpsHookCallbacks() : {}),
       onApprove: this.makeOnApprove(),
       onAskUser: this.makeOnAskUser(),
+      agentRuns: this.resolveAgentRunTools(),
+      agentRunToolNames: this.allowedAgentRunToolNames(),
+      onSubmitAgentResult: this.submitAgentResultCallback(),
     }, {
-      nodeId: this.nodeId,
+      nodeId: this.owner.kind === 'chat_node' ? this.nodeId : null,
       workspaceId: this.workspaceId,
     });
     this.slotId = slot.slotId;
@@ -884,10 +997,12 @@ export class ClaudeSession implements AgentSession {
               );
             }
             this.externalSessionId = sessionId;
-            try {
-              setNodeExternalSessionId(this.nodeId, sessionId);
-            } catch (err) {
-              console.warn(`[ClaudeSession] setNodeExternalSessionId failed:`, err);
+            if (this.owner.kind === 'chat_node') {
+              try {
+                setNodeExternalSessionId(this.owner.nodeId, sessionId);
+              } catch (err) {
+                console.warn(`[ClaudeSession] setNodeExternalSessionId failed:`, err);
+              }
             }
           }
         } else if (!this.firstModelEnvelopeThisTurn && this.stdinWriteAt) {
@@ -943,14 +1058,16 @@ export class ClaudeSession implements AgentSession {
       // save_artifact, spawn_branches) is always available. Set MICHI_CLAUDE_STRICT_MCP=1
       // to lock the agent to ONLY __michi_internal__ — useful for multi-tenant
       // deploys where host MCP must not leak in.
-      strictMcpConfig: process.env.MICHI_CLAUDE_STRICT_MCP === '1',
+      strictMcpConfig: this.owner.kind === 'agent_run' || process.env.MICHI_CLAUDE_STRICT_MCP === '1',
       // Bare mode skips SessionStart hooks, plugins, skills, MCP auto-discovery.
       // Without it, configs with many plugins (financial-services, superpowers)
       // take 10-20s to emit system/init. Tests / CI / smoke runs opt in via env.
       // Production toggle is a follow-up; default to bare=false until then.
-      bare: this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1',
+      bare: this.owner.kind === 'agent_run'
+        ? true
+        : (this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1'),
       model: this.model,
-      effort: reasoningToClaudeEffort(resolveReasoning(getAgentConfig().runtime)),
+      effort: reasoningToClaudeEffort(this.reasoning ?? resolveReasoning(getAgentConfig().runtime)),
       // Opt-in override for multi-profile setups (agent.claudeConfigDir in
       // ~/.michi/config.json). Undefined for everyone else — claude keeps
       // its ~/.claude default.
@@ -1374,6 +1491,39 @@ export class ClaudeSession implements AgentSession {
     return async (params: { toolName: string; input: unknown; toolUseId: string }): Promise<
       { behavior: 'allow'; updatedInput?: unknown } | { behavior: 'deny'; message: string }
     > => {
+      if (!this.isToolAllowed(params.toolName)) {
+        return { behavior: 'deny', message: 'tool is not enabled for this Agent Run' };
+      }
+      if (this.permissionBroker) {
+        const decision = await this.permissionBroker.requestPermission({
+          owner: this.owner,
+          ownerUserId: this.ownerUserId,
+          workspaceId: this.workspaceId,
+          toolName: params.toolName,
+          input: params.input,
+          toolCallId: params.toolUseId,
+        });
+        if (decision === 'deny') return { behavior: 'deny', message: 'denied by Run permission policy' };
+        if (decision !== 'ask') return { behavior: 'allow', updatedInput: params.input };
+        // Ask uses the same runtime-native request queue as chat permissions,
+        // but the resulting event is projected into a durable Run interaction.
+        const requestId = ++this.nextRequestId;
+        this.queue.push({
+          kind: 'permission_request',
+          requestId,
+          title: `Approve ${params.toolName}?`,
+          detail: formatPermissionDetail(params.toolName, params.input),
+          options: [
+            { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
+          ],
+          source: 'claude_prompt_tool',
+        });
+        const answer = await this.awaitPermission(requestId);
+        return answer?.startsWith('allow')
+          ? { behavior: 'allow', updatedInput: params.input }
+          : { behavior: 'deny', message: 'denied by Run permission policy' };
+      }
       const policy = resolvePolicy(this.workspaceId, params.toolName, params.input);
       if (policy === 'allow') return { behavior: 'allow', updatedInput: params.input };
       if (policy === 'deny') return { behavior: 'deny', message: 'policy denied' };
@@ -1406,6 +1556,13 @@ export class ClaudeSession implements AgentSession {
       }
       return { behavior: 'deny', message: 'denied by user' };
     };
+  }
+
+  private isToolAllowed(toolName: string): boolean {
+    const allowed = this.toolProfile?.allowedToolNames;
+    if (!allowed) return true;
+    const canonical = canonicalPermissionToolName(toolName);
+    return allowed.includes(toolName) || allowed.includes(canonical);
   }
 
   private awaitPermission(requestId: number): Promise<string | null> {

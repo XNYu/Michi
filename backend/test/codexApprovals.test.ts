@@ -375,3 +375,179 @@ test('approval with missing threadId in params → immediate decline', async () 
 
   assert.deepEqual(result, { decision: 'decline' }, 'missing threadId should get immediate decline');
 });
+
+
+// ---- Agent Run approval routing tests (T06) ---------------------------------
+
+test('agent_run approval delegates to permissionBroker, not resolvePolicy', async () => {
+  const brokerRequests: Array<{ toolName: string }> = [];
+  const broker: any = {
+    async requestPermission(req: any) {
+      brokerRequests.push({ toolName: req.toolName });
+      return 'allow_once';
+    },
+  };
+
+  const client = makeStubClient();
+  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
+    if (method === 'thread/start') return { threadId: 'thread-run-approval' };
+    if (method === 'model/list') return { data: [] };
+    return {};
+  };
+
+  const runtime = makeRuntime(client);
+  await runtime.newSession({
+    sessionId: 'attempt-approval-1',
+    cwd: '/tmp/test',
+    model: 'test-model',
+    owner: { kind: 'agent_run', runId: 'run-approval', attemptId: 'attempt-approval-1' },
+    permissionBroker: broker,
+    toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
+  });
+
+  // Fire a known command approval — for agent_run, runtime should delegate
+  // directly to askPermission which routes through the broker.
+  const result = await client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.commandApproval,
+    { threadId: 'thread-run-approval', command: 'echo test' },
+  );
+
+  assert.equal(brokerRequests.length, 1, 'broker should have been called');
+  assert.equal(brokerRequests[0].toolName, 'bash');
+  assert.deepEqual(result, { decision: 'accept' }, 'allow_once from broker → accept');
+
+  await runtime.shutdown();
+});
+
+test('agent_run allow_always from broker produces acceptForSession without grantPermission', async () => {
+  const broker: any = {
+    async requestPermission(_req: any) { return 'allow_always'; },
+  };
+
+  const client = makeStubClient();
+  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
+    if (method === 'thread/start') return { threadId: 'thread-run-grant' };
+    if (method === 'model/list') return { data: [] };
+    return {};
+  };
+
+  const runtime = makeRuntime(client);
+  const session = await runtime.newSession({
+    sessionId: 'attempt-grant-1',
+    cwd: '/tmp/test',
+    model: 'test-model',
+    owner: { kind: 'agent_run', runId: 'run-grant', attemptId: 'attempt-grant-1' },
+    permissionBroker: broker,
+    toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
+    workspaceId: 'ws-test',
+  }) as CodexSession;
+
+  // Track whether onAlwaysAllow was called (it should NOT be for agent_run)
+  const alwaysAllowCalls: string[] = [];
+  session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
+
+  const result = await client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.commandApproval,
+    { threadId: 'thread-run-grant', command: 'npm install' },
+  );
+
+  assert.deepEqual(result, { decision: 'acceptForSession' }, 'allow_always → acceptForSession');
+  // onAlwaysAllow should NOT be called for agent_run (no grant persistence)
+  assert.equal(alwaysAllowCalls.length, 0, 'onAlwaysAllow must not be called for agent_run');
+
+  await runtime.shutdown();
+});
+
+test('agent_run deny from broker produces decline', async () => {
+  const broker: any = {
+    async requestPermission(_req: any) { return 'deny'; },
+  };
+
+  const client = makeStubClient();
+  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
+    if (method === 'thread/start') return { threadId: 'thread-run-deny' };
+    if (method === 'model/list') return { data: [] };
+    return {};
+  };
+
+  const runtime = makeRuntime(client);
+  await runtime.newSession({
+    sessionId: 'attempt-deny-1',
+    cwd: '/tmp/test',
+    model: 'test-model',
+    owner: { kind: 'agent_run', runId: 'run-deny', attemptId: 'attempt-deny-1' },
+    permissionBroker: broker,
+    toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
+  });
+
+  const result = await client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.commandApproval,
+    { threadId: 'thread-run-deny', command: 'rm -rf /' },
+  );
+
+  assert.deepEqual(result, { decision: 'decline' });
+
+  await runtime.shutdown();
+});
+
+test('agent_run unknown approval method delegates to broker (fails closed)', async () => {
+  const brokerRequests: Array<{ toolName: string }> = [];
+  const broker: any = {
+    async requestPermission(req: any) {
+      brokerRequests.push({ toolName: req.toolName });
+      return 'deny';
+    },
+  };
+
+  const client = makeStubClient();
+  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
+    if (method === 'thread/start') return { threadId: 'thread-run-unknown' };
+    if (method === 'model/list') return { data: [] };
+    return {};
+  };
+
+  const runtime = makeRuntime(client);
+  await runtime.newSession({
+    sessionId: 'attempt-unknown-1',
+    cwd: '/tmp/test',
+    model: 'test-model',
+    owner: { kind: 'agent_run', runId: 'run-unknown', attemptId: 'attempt-unknown-1' },
+    permissionBroker: broker,
+    toolProfile: { allowedToolNames: ['submit_agent_result'] },
+  });
+
+  const result = await client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.permissionsApproval,
+    { threadId: 'thread-run-unknown' },
+  );
+
+  assert.equal(brokerRequests.length, 1, 'unknown method still goes through broker for agent_run');
+  assert.deepEqual(result, { decision: 'decline' }, 'deny from broker → decline');
+
+  await runtime.shutdown();
+});
+
+test('chat session approval still uses resolvePolicy and grantPermission', async () => {
+  // This test verifies existing chat behavior is unchanged after T06 changes.
+  const { runtime, session, client } = await makeRuntimeWithSession();
+
+  const alwaysAllowCalls: string[] = [];
+  session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
+
+  const responsePromise = client._fireServerRequest(
+    CODEX_SERVER_REQUESTS.commandApproval,
+    { threadId: 'thread-approval-test', command: 'echo chat-test' },
+  );
+  await new Promise((r) => setImmediate(r));
+
+  // Should land in pendingPermissions (chat session asks the user)
+  assert.equal(session.pendingPermissions.size, 1);
+  const [requestId] = session.pendingPermissions.keys();
+  session.respondToPermission(requestId, 'allow_always');
+
+  const result = await responsePromise;
+  assert.deepEqual(result, { decision: 'acceptForSession' });
+  assert.deepEqual(alwaysAllowCalls, ['bash'], 'chat session should call onAlwaysAllow');
+
+  await runtime.shutdown();
+});

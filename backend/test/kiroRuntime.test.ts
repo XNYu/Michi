@@ -89,6 +89,32 @@ describe('KiroRuntime warm session handoff', () => {
     assert.equal(session.nativeSessionId, 'cold-sid');
     assert.equal(coldSessionNewCalls, 1);
   });
+
+  test('claimed conversation slot receives its own Agent Run invoker binding', async () => {
+    const bindings: any[] = [];
+    const slots = new Map<string, any>();
+    const registry = {
+      get: (id: string) => slots.get(id),
+      dispose: async (id: string) => { slots.delete(id); },
+    };
+    const sessionBridge = {
+      ...bridge,
+      agentRunToolsForSession: (binding: unknown) => { bindings.push(binding); return { invoke: async () => ({}) }; },
+    };
+    const runtime = new KiroRuntime(sessionBridge, registry as any, 0, '/tmp/default');
+    const rt = runtime as any;
+    rt.ensureClient = async () => ({});
+    rt.warmNextSession = () => {};
+    const slot: any = { slotId: 'slot-a', parentChatId: '__pending__', nodeId: null, cwd: '/tmp/a', workspaceId: null, ownerUserId: null };
+    slots.set(slot.slotId, slot);
+    rt.warmedSessions.set('/tmp/a', { sid: 'kiro-session-a', slotId: slot.slotId });
+    await runtime.newSession({ cwd: '/tmp/a', sessionId: 'node-a', workspaceId: 'ws-a', ownerUserId: 'owner-a' });
+    assert.ok(slot.agentRuns);
+    assert.deepEqual(bindings, [{
+      runtimeId: 'kiro', sessionId: 'kiro-session-a', owner: { kind: 'chat_node', nodeId: 'node-a' },
+      ownerUserId: 'owner-a', workspaceId: 'ws-a', nodeId: 'node-a',
+    }]);
+  });
 });
 describe('KiroRuntime model catalog cache', () => {
   test('returns the disk snapshot immediately and replaces it after a live refresh', async () => {

@@ -6,6 +6,7 @@ import type {
   LoadAgentSessionOptions,
   ModelInfo,
   NewAgentSessionOptions,
+  RuntimeSessionOwner,
   RuntimeId,
   SessionMode,
 } from '../types';
@@ -105,10 +106,11 @@ export class ClaudeRuntime implements AgentRuntime {
   }
 
   async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
-    const id = opts.sessionId ?? randomUUID();
+    const owner = resolveSessionOwner(opts.owner, opts.sessionId);
+    const id = owner.kind === 'agent_run' ? owner.attemptId : (opts.sessionId ?? owner.nodeId);
 
     // Invariant 9: double-load guard
-    const existing = this.manager.get(id);
+    const existing = this.manager.getCompatible(id, owner, opts.profileHash ?? null);
     if (existing) return existing;
 
     const cwd = opts.cwd;
@@ -116,7 +118,7 @@ export class ClaudeRuntime implements AgentRuntime {
     // Ancestor chain is needed by the per-chat preamble regardless of warm
     // hit vs cold spawn.
     const ancestorChain: AgentSession[] = [];
-    if (opts.parentChatId) {
+    if (owner.kind === 'chat_node' && opts.parentChatId) {
       sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
@@ -139,27 +141,41 @@ export class ClaudeRuntime implements AgentRuntime {
       mergeContexts: opts.mergeContexts,
       workspaceInstructions,
     });
+    const effectiveFirstTurnPrefix = [firstTurnPrefix, opts.bootstrapInstructions].filter(Boolean).join('\n\n');
 
     return this.manager.createSession({
       id,
+      owner,
       cwd,
-      parentChatId: opts.parentChatId,
+      parentChatId: owner.kind === 'chat_node' ? opts.parentChatId : undefined,
       workspaceId: opts.workspaceId ?? null,
       model: opts.model ?? undefined,
-      firstTurnPrefix,
+      firstTurnPrefix: effectiveFirstTurnPrefix,
       ownerUserId: opts.ownerUserId ?? null,
       enableFollowUps: opts.enableFollowUps,
+      replayHistory: opts.replayHistory,
+      toolProfile: opts.toolProfile,
+      permissionBroker: opts.permissionBroker,
+      profileHash: opts.profileHash ?? null,
+      reasoning: opts.reasoning ?? null,
     });
   }
 
   async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
+    const owner = resolveSessionOwner(opts.owner, opts.nodeId ?? opts.sessionId);
     // Invariant 9: double-load guard
-    const existing = this.manager.get(opts.sessionId);
+    const existing = this.manager.getCompatible(opts.sessionId, owner, opts.profileHash ?? null);
     if (existing) return existing;
 
-    // Look up external_session_id from the node row
-    const node = getNode(opts.sessionId);
-    const externalSessionId = node?.external_session_id ?? null;
+    // Chat sessions resolve their native id from the node. Run attempts carry
+    // the opaque resume token explicitly and never query a nodes row.
+    const node = owner.kind === 'chat_node' ? getNode(owner.nodeId) : null;
+    const explicitResumeToken = typeof opts.nativeResumeToken === 'string'
+      ? opts.nativeResumeToken
+      : null;
+    const externalSessionId = owner.kind === 'agent_run'
+      ? explicitResumeToken
+      : node?.external_session_id ?? null;
     if (!externalSessionId) {
       throw new ClaudeSessionNotResumableError(
         `Node ${opts.sessionId} has no external_session_id — cannot resume claude session`,
@@ -168,16 +184,23 @@ export class ClaudeRuntime implements AgentRuntime {
 
     return this.manager.loadSession({
       id: opts.sessionId,
+      owner,
       cwd: opts.cwd,
       workspaceId: opts.workspaceId ?? node?.workspace_id ?? null,
       model: opts.model ?? undefined,
       externalSessionId,
       ownerUserId: opts.ownerUserId ?? null,
+      replayHistory: opts.replayHistory,
+      bootstrapInstructions: opts.bootstrapInstructions,
+      toolProfile: opts.toolProfile,
+      permissionBroker: opts.permissionBroker,
+      profileHash: opts.profileHash ?? null,
+      reasoning: opts.reasoning ?? null,
     });
   }
 
-  async releaseSession(sessionId: string): Promise<void> {
-    await this.manager.releaseSession(sessionId);
+  async releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
+    await this.manager.releaseSession(sessionId, expectedOwner);
   }
 
   async listModes(_sessionId: string): Promise<SessionMode[]> {
@@ -196,4 +219,14 @@ export class ClaudeRuntime implements AgentRuntime {
     agentConfigEvents.off('model_changed', this.modelChangedHandler);
     await this.manager.shutdown();
   }
+}
+
+function resolveSessionOwner(owner: RuntimeSessionOwner | undefined, sessionId?: string): RuntimeSessionOwner {
+  if (owner) {
+    if (owner.kind === 'agent_run' && sessionId && sessionId !== owner.attemptId) {
+      throw new Error('Agent Run public session id must equal attemptId');
+    }
+    return owner;
+  }
+  return { kind: 'chat_node', nodeId: sessionId ?? randomUUID() };
 }

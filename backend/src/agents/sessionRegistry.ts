@@ -1,10 +1,11 @@
-import type { AgentSession, ChatMessage } from "./types";
+import type { AgentSession, ChatMessage, RuntimeSessionOwner } from "./types";
 import type { NormalizedEvent } from "../services/chatEvents";
 import { getRuntimeDeps } from "./runtimeDeps";
 
 type Entry = {
     session: AgentSession;
     ownerUserId: string | null;
+    owner: RuntimeSessionOwner;
     kind: "live" | "stub";
     lastAccessedAt: number;
 };
@@ -113,6 +114,7 @@ export function ensureAncestorChainLoaded(chatId: string): void {
             sessions.set(cursor, {
                 session: stub,
                 ownerUserId: null,
+                owner: { kind: "chat_node", nodeId: cursor },
                 kind: "stub",
                 lastAccessedAt: Date.now(),
             });
@@ -129,13 +131,32 @@ export function ensureAncestorChainLoaded(chatId: string): void {
     evictHistoryStubs({ protectedIds: visited });
 }
 
-export function registerSession(session: AgentSession, ownerUserId?: string | null): void {
+export function registerSession(
+    session: AgentSession,
+    ownerUserId?: string | null,
+    owner: RuntimeSessionOwner = session.owner ?? { kind: "chat_node", nodeId: session.id },
+): void {
     sessions.set(session.id, {
         session,
         ownerUserId: ownerUserId ?? null,
+        owner,
         kind: "live",
         lastAccessedAt: Date.now(),
     });
+    try {
+        getRuntimeDeps().onSessionOwnerBound?.(session.id, owner);
+    } catch {
+        // Registry is also used by isolated adapter tests before runtime deps
+        // are assembled; the audit hook is optional and must not change that.
+    }
+}
+
+function sameOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
+    if (left.kind !== right.kind) return false;
+    return left.kind === "chat_node"
+        ? left.nodeId === (right as Extract<RuntimeSessionOwner, { kind: "chat_node" }>).nodeId
+        : left.runId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).runId
+            && left.attemptId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).attemptId;
 }
 
 /**
@@ -169,8 +190,32 @@ export function getSessionForUser(chatId: string, userId: string | null): AgentS
     return e.session;
 }
 
+/** Owner-aware lookup used by Run coordinators. It prevents a delayed action
+ * for an old Attempt from reaching a replacement session. */
+export function getSessionForOwner(
+    sessionId: string,
+    owner: RuntimeSessionOwner,
+    userId: string | null,
+): AgentSession | null {
+    const entry = sessions.get(sessionId);
+    if (!entry || !sameOwner(entry.owner, owner)) return null;
+    if (process.env.MICHI_CLOUD === "1" && entry.ownerUserId !== userId) return null;
+    touch(entry);
+    return entry.session;
+}
+
+export function sessionMatchesOwner(sessionId: string, owner: RuntimeSessionOwner): boolean {
+    const entry = sessions.get(sessionId);
+    return !!entry && sameOwner(entry.owner, owner);
+}
+
 export function dropSession(chatId: string): void {
     sessions.delete(chatId);
+}
+
+export function dropSessionForOwner(sessionId: string, owner: RuntimeSessionOwner): boolean {
+    if (!sessionMatchesOwner(sessionId, owner)) return false;
+    return sessions.delete(sessionId);
 }
 
 /**

@@ -12,8 +12,10 @@ import { setupPersistenceRoutes } from './routes/persistence';
 import { setupBackupRoutes } from './routes/backup';
 import { setupSearchRoutes } from './routes/search';
 import { setupVersionRoutes } from './routes/version';
-import adminRouter from './routes/admin';
+import { setupAdminRoutes } from './routes/admin';
 import { setupAgentRoutes } from './routes/agent';
+import { setupCustomAgentRoutes } from './routes/customAgents';
+import { setupAgentRunRoutes } from './routes/agentRuns';
 import { setupUserKeysRoutes } from './routes/userKeys';
 import { setupUploadsRoutes } from './routes/uploads';
 import { setupFilesRoutes } from './routes/files';
@@ -25,7 +27,7 @@ import { ChatManager } from './services/chatManager';
 import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
 import { requireAdmin } from './routes/middleware/admin';
 import { McpSlotRegistry, mountMcp } from './services/mcpServer';
-import { initDb, closeDb, closeAuditDb } from './services/db';
+import { initDb, getDb, closeDb, closeAuditDb } from './services/db';
 import { recordAudit } from './services/audit';
 import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning } from './services/agentConfig';
 import { setProviderEnvBindings, getProviderApiKey } from './services/secrets';
@@ -54,6 +56,10 @@ import { sshTunnelManager } from './services/sshTunnelManager';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
 import { FileRuntimeModelCache } from './agents/runtimeModelCache';
 import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
+import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRunAssembly';
+import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
+import { chatHub } from './agents/chatHub';
+import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
@@ -113,7 +119,13 @@ const port = process.env.PORT || 3000;
 
 // Initialize SQLite before anything that might need it
 initDb();
-const interruptedTurns = recoverInterruptedTurns();
+const customAgentsEnabled = process.env.MICHI_CUSTOM_AGENTS === '1';
+const pendingAgentDeliveryTurnIds = customAgentsEnabled
+  ? new Set((getDb().prepare(`SELECT requested_turn_id FROM agent_run_watches
+      WHERE delivery_status = 'pending' AND requested_turn_id IS NOT NULL`).all() as Array<{ requested_turn_id: string }>)
+    .map((row) => row.requested_turn_id))
+  : new Set<string>();
+const interruptedTurns = recoverInterruptedTurns(Date.now(), pendingAgentDeliveryTurnIds);
 if (interruptedTurns > 0) {
   log.warn('boot', 'recovered interrupted turns', { count: interruptedTurns });
 }
@@ -145,6 +157,7 @@ const runtimeModelCache = new FileRuntimeModelCache(getMichiDataDir());
 // registration.
 const allEnvBindings: ProviderEnvBinding[] = [];
 let kiroRuntime: KiroRuntime | undefined;
+let agentRunAssembly: AgentRunAssembly | null = null;
 for (const factory of getEnabledFactories()) {
     let runtime!: AgentRuntime;
     const bridge = createAgentToolBridge({
@@ -247,6 +260,27 @@ for (const factory of getEnabledFactories()) {
                 userId,
             });
         },
+        agentRunToolsForSession: (binding) => {
+            if (!agentRunAssembly?.enabled || !binding.workspaceId) return null;
+            const ownerUserId = binding.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+            if (binding.owner.kind === 'agent_run') {
+                return agentRunAssembly.createToolInvoker({
+                    kind: 'agent_run',
+                    ownerUserId,
+                    workspaceId: binding.workspaceId,
+                    parentRunId: binding.owner.runId,
+                    parentAttemptId: binding.owner.attemptId,
+                });
+            }
+            const parentNodeId = binding.nodeId ?? binding.owner.nodeId;
+            return agentRunAssembly.createToolInvoker({
+                kind: 'conversation',
+                ownerUserId,
+                workspaceId: binding.workspaceId,
+                parentNodeId,
+                runtimeSessionId: binding.sessionId,
+            });
+        },
     });
     runtime = factory.create({
       bridge,
@@ -266,6 +300,60 @@ reconcileRuntimeWithRegistered(listRuntimes().map((r) => r.id));
 // kiroRuntime may be undefined in Pi-only / Claude-only deployments;
 // ChatManager guards its Kiro-specific methods accordingly.
 const chatManager = new ChatManager(kiroRuntime, defaultCwd);
+agentRunAssembly = createAgentRunAssembly({
+  enabled: customAgentsEnabled,
+  chatManager,
+  defaultCwd,
+  dataDir: getMichiDataDir(),
+});
+
+const agentRunLifecycle = new AgentRunAdministrativeLifecycle({
+  quiesceRun: async (ownerUserId, runId) => {
+    await agentRunAssembly!.coordinator.quiesceForAdministrativeDeletion(ownerUserId, runId);
+  },
+  cleanupRun: async (runId, resources) => {
+    const cleaner = agentRunAssembly!.resourceCleaner;
+    if (!cleaner.cleanupResources) {
+      throw new Error('Agent Run resource cleaner cannot clean captured resources');
+    }
+    await cleaner.cleanupResources(runId, resources);
+  },
+  auditCleanupFailure: ({ ownerUserId, runId, message }) => {
+    log.warn('boot', 'Agent Run administrative cleanup will retry', { ownerUserId, runId, message });
+  },
+});
+
+let agentRunCleanupPass: Promise<void> | null = null;
+const retryAgentRunCleanup = (): void => {
+  if (agentRunCleanupPass) return;
+  agentRunCleanupPass = agentRunLifecycle.retryPendingCleanup().then((result) => {
+    if (result.cleanedRunIds.length || result.failed.length) {
+      log.info('boot', 'Agent Run administrative cleanup pass complete', {
+        cleaned: result.cleanedRunIds.length,
+        failed: result.failed.length,
+      });
+    }
+  }).catch((error) => {
+    log.warn('boot', 'Agent Run administrative cleanup pass failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }).finally(() => {
+    agentRunCleanupPass = null;
+  });
+};
+retryAgentRunCleanup();
+const agentRunCleanupTimer = setInterval(retryAgentRunCleanup, 60_000);
+agentRunCleanupTimer.unref();
+
+const agentRunRecoveryPromise = agentRunAssembly.start()
+  .then((summary) => {
+    if (customAgentsEnabled) {
+      log.info('boot', 'Agent Run recovery audit complete', { ...summary });
+    }
+    const remaining = recoverInterruptedTurns(Date.now(), chatHub.activeDurableTurnIds());
+    if (remaining > 0) log.warn('boot', 'recovered deferred interrupted turns', { count: remaining });
+    return summary;
+  });
 
 async function warmConfiguredRuntime(): Promise<void> {
   if (!shouldBootWarm(defaultCwd)) {
@@ -285,7 +373,7 @@ async function warmConfiguredRuntime(): Promise<void> {
 // because Pi/Claude warm hooks read provider env.
 const tWarm = Date.now();
 startupMark('chat_warm_start');
-const warmPromise = warmConfiguredRuntime()
+const warmPromise = Promise.all([warmConfiguredRuntime(), agentRunRecoveryPromise])
   .then(() => {
     log.info('boot', 'warm complete', { durMs: Date.now() - tWarm });
     startupMark('chat_warm_done', { durMs: Date.now() - tWarm });
@@ -518,6 +606,10 @@ mountMcp(mcpRouter, mcpRegistry);
 app.use('/api', mcpRouter);
 
 app.use('/api', setupAgentRoutes());
+if (agentRunAssembly.enabled) {
+  app.use('/api', setupCustomAgentRoutes({ service: agentRunAssembly.definitionService }));
+  app.use('/api', setupAgentRunRoutes({ service: agentRunAssembly.routeService, sse: agentRunAssembly.sse }));
+}
 // Connection credentials belong to the local desktop gateway. A remotely
 // exposed execution backend never needs to manage or replay another server's
 // saved token, so keep this surface unavailable in remote mode.
@@ -532,7 +624,7 @@ if (REQUIRE_AUTH) {
   // Admin routes — gated by MICHI_ADMIN_EMAILS env var (requireAdmin).
   // requireSession is already applied globally above for all /api/* paths
   // not in SESSION_PUBLIC_PATHS, so req.user is already populated here.
-  app.use('/api/admin', requireAdmin, adminRouter);
+  app.use('/api/admin', requireAdmin, setupAdminRoutes({ agentRunLifecycle }));
 }
 app.use('/api', setupUploadsRoutes());
 app.use('/api', setupFilesRoutes());
@@ -587,6 +679,9 @@ const gracefulShutdown = async (): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info('boot', 'shutting down');
+  clearInterval(agentRunCleanupTimer);
+  await agentRunCleanupPass;
+  await agentRunAssembly?.shutdown();
   sessionRegistry.clearAllSessions();
   // runtime.shutdown() disposes each session, which SIGTERM/SIGKILLs the
   // underlying claude/kiro child. Skipping this orphans those children: they

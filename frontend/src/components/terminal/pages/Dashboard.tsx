@@ -1,6 +1,10 @@
-import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { ChatNodeState } from '../../../state/chatTypes';
+import type { AgentRunPaneItem } from '../../../state/paneItems';
+import { agentResourceKey, identityOf } from '../../../state/agentIdentity';
+import { useAgentDomain } from '../../../state/agentDomain';
+import { createAgentRunNotificationTracker } from '../../../state/agentRunNotifications';
 import { usePrefs } from '../../../state/prefs';
 import EmptyThreads from '../../EmptyThreads';
 import ResizeHandle from '../../ResizeHandle';
@@ -10,7 +14,8 @@ import ArtifactPane from '../ArtifactPane';
 import PaneErrorBoundary from '../PaneErrorBoundary';
 import TerminalHome from './Home';
 import { getElectron } from '../../../lib/electronBridge';
-import { getWebUploadCwd, importWorkspaceFileUpload, type UploadProgress } from '../../../services/api';
+import { getAgentRunDetail, getWebUploadCwd, importWorkspaceFileUpload, respondAgentRunInteraction, type UploadProgress } from '../../../services/api';
+import { notify } from '../../../services/notifications';
 import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 
@@ -21,6 +26,56 @@ const BrowserPane = lazy(() => import('../BrowserPane'));
 const PaneChooser = lazy(() => import('../PaneChooser'));
 const FilesPane = lazy(() => import('../FilesPane'));
 const ReviewPane = lazy(() => import('../ReviewPane'));
+const AgentRunPane = lazy(() => import('../agentRuns/AgentRunPane').then((module) => ({ default: module.AgentRunPane })));
+const notificationTracker = createAgentRunNotificationTracker();
+
+function AgentRunPaneSurface({ item }: { item: AgentRunPaneItem }) {
+  const { closePane } = useChatActions();
+  const { state, dispatch, sendInput, cancel } = useAgentDomain();
+  const identity = useMemo(() => ({ backendConnectionId: item.backendConnectionId, id: item.runId }), [item.backendConnectionId, item.runId]);
+  const runKey = agentResourceKey(identity);
+  const [attempts, setAttempts] = useState<Awaited<ReturnType<typeof getAgentRunDetail>>['value']['attempts']>([]);
+
+  useEffect(() => {
+    let active = true;
+    void getAgentRunDetail(identity).then((detail) => {
+      if (!active) return;
+      setAttempts(detail.value.attempts);
+      dispatch({
+        type: 'replace-run-feed',
+        resource: { backendConnectionId: detail.backendConnectionId, value: detail.value.run },
+        events: detail.value.events,
+        interactions: detail.value.interactions,
+      });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [dispatch, identity]);
+
+  const resource = state.runs[runKey];
+  if (!resource) return <div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 11 }}>loading Agent Run…</div>;
+  const target = { identity, workspaceId: resource.value.workspaceId, parentNodeId: resource.value.parentNodeId };
+  return (
+    <AgentRunPane
+      run={resource}
+      attempts={attempts}
+      events={state.eventsByRun[runKey] ?? []}
+      interactions={state.interactionsByRun[runKey] ?? []}
+      onClose={() => closePane(item.id)}
+      onCancel={() => { void cancel(target, { version: 1, expectedAttemptId: resource.value.activeAttemptId, reason: null }); }}
+      onSendInput={(_, request) => { void sendInput(target, request); }}
+      onRespondInteraction={(_, interaction, response) => {
+        void respondAgentRunInteraction(target, interaction.id, { version: 1, response })
+          .then(() => getAgentRunDetail(identity))
+          .then((detail) => dispatch({
+            type: 'replace-run-feed',
+            resource: { backendConnectionId: detail.backendConnectionId, value: detail.value.run },
+            events: detail.value.events,
+            interactions: detail.value.interactions,
+          }));
+      }}
+    />
+  );
+}
 
 /**
  * Center a pane using the coordinates that are actually painted in the
@@ -49,7 +104,8 @@ export function centeredPaneScrollLeft({
 
 export default function TerminalDashboard() {
   const { activeProject, openPanes, focusedPane, paneItems = {} } = useChatProjects();
-  const { setPaneWidth } = useChatActions();
+  const { setPaneWidth, openAgentRunPane } = useChatActions();
+  const agentDomain = useAgentDomain();
   const { prefs } = usePrefs();
   const selectPaneWidths = useCallback(
     (nodesMap: Record<string, ChatNodeState>) =>
@@ -81,6 +137,23 @@ export default function TerminalDashboard() {
   // flash the user reported). Toggled through classList — never React state —
   // so it stays off the streaming render path. See index.css `.selecting`.
   const selectionSourceRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!activeProject?.id) return;
+    void agentDomain.loadRuns({ version: 1, workspaceId: activeProject.id });
+    return agentDomain.subscribeWorkspace(activeProject.id);
+  }, [activeProject?.id, agentDomain.loadRuns, agentDomain.subscribeWorkspace]);
+
+  useEffect(() => {
+    const runs = Object.values(agentDomain.state.runs).filter((resource) => resource.value.workspaceId === activeProject?.id);
+    for (const item of notificationTracker.collect({ runs, focusedPaneId: focusedPane })) {
+      notify({
+        title: item.title,
+        body: item.body,
+        onClick: () => openAgentRunPane(identityOf(item.run), item.run.value.workspaceId, item.run.value.effectiveDefinition.name),
+      });
+    }
+  }, [activeProject?.id, agentDomain.state.runs, focusedPane, openAgentRunPane]);
 
   const clearPaneSelectionIsolation = useCallback(() => {
     stripRef.current?.classList.remove('selecting');
@@ -479,6 +552,7 @@ export default function TerminalDashboard() {
                     : paneItems[id].kind === 'file' ? <FilePane item={paneItems[id]} />
                     : paneItems[id].kind === 'diff' ? <DiffPane item={paneItems[id]} />
                     : paneItems[id].kind === 'terminal' ? <TerminalPane item={paneItems[id]} />
+                    : paneItems[id].kind === 'agent-run' ? <AgentRunPaneSurface item={paneItems[id]} />
                     : <BrowserPane item={paneItems[id]} />}
                 </Suspense>
               ) : paneKinds[i] === 'digest' ? (

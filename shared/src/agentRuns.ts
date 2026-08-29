@@ -1,215 +1,131 @@
-/**
- * Michi Custom Agent Contracts V1
- * 
- * This file defines the versioned DTOs and enums used across the backend and frontend
- * for Custom Agent Definitions and Durable Agent Runs.
- */
+/** Versioned public contracts for Custom Agents and durable Agent Runs. */
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+export const AGENT_RUN_CONTRACT_VERSION = 1 as const;
+export const AGENT_RUN_BACKUP_VERSION = 2 as const;
+export const MIN_RUN_TTL_MS = 60_000;
+export const MAX_RUN_TTL_MS = 365 * 24 * 60 * 60 * 1_000;
+export const AGENT_RUN_LIMITS = { id: 256, name: 160, description: 4_000, instructions: 64_000, task: 32_000, contextContent: 64_000, contextEntries: 128, capabilityRefs: 128, fallbackProfiles: 8, resultArtifacts: 128, resultReceipts: 128, receiptText: 16_000, searchQuery: 512, searchPageSize: 100, waitMs: 120_000, jsonDepth: 12, jsonNodes: 4_096, jsonString: 64_000, jsonArray: 256 } as const;
 
-export enum AgentRunStatus {
-  Queued = 'queued',
-  Preparing = 'preparing',
-  Running = 'running',
-  Waiting = 'waiting',
-  Recovering = 'recovering',
-  Completed = 'completed',
-  Failed = 'failed',
-  Cancelled = 'cancelled',
-  Terminal = 'terminal',
-}
+export enum AgentDefinitionStatus { Draft = "draft", Enabled = "enabled", Disabled = "disabled" }
+export enum AgentRunStatus { Queued = "queued", Preparing = "preparing", Running = "running", Waiting = "waiting", Recovering = "recovering", Completed = "completed", Failed = "failed", Cancelled = "cancelled" }
+export enum AgentRunWaitingReason { Permission = "permission", Context = "context", UserInput = "user_input", ParentInput = "parent_input" }
+export enum AgentRunInvocationMode { Delegated = "delegated", Manual = "manual" }
+export enum AgentRunCompletionMode { Wait = "wait", Notify = "notify", Wake = "wake", Detach = "detach" }
+export enum AgentPolicyCategory { Read = "read", Search = "search", Browse = "browse", ArtifactWrite = "artifact_write", FilesystemWrite = "filesystem_write", ShellExec = "shell_exec", ExternalAction = "external_action", SpawnAgent = "spawn_agent" }
+export enum AgentPolicyDecision { Allow = "allow", Ask = "ask", Deny = "deny" }
+export enum AgentRunEventType { RunStatusChanged = "run_status_changed", AttemptStatusChanged = "attempt_status_changed", Assistant = "assistant", Thought = "thought", ToolCall = "tool_call", ToolCallUpdate = "tool_call_update", Plan = "plan", Usage = "usage", ContextRequested = "context_requested", ContextSupplied = "context_supplied", InteractionRequested = "interaction_requested", InteractionResolved = "interaction_resolved", SteeringQueued = "steering_queued", SteeringApplied = "steering_applied", Checkpoint = "checkpoint", RecoveryStarted = "recovery_started", ResultBundleUpdated = "result_bundle_updated", WatchMembershipUpdated = "watch_membership_updated", WatchFired = "watch_fired", ParentDeliveryUpdated = "parent_delivery_updated", CancellationRequested = "cancellation_requested", CancellationAcknowledged = "cancellation_acknowledged", CancellationSettled = "cancellation_settled" }
 
-export enum AgentRunWaitingReason {
-  UserInput = 'user_input',
-  Permission = 'permission',
-  Steering = 'steering',
-  ParentDelivery = 'parent_delivery',
-  ExternalEvent = 'external_event',
-}
+export type AgentDefinitionScope = "global" | "workspace";
+export type RuntimeReasoning = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type AgentAttemptStatus = "preparing" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+export type AgentInteractionKind = "permission" | "context" | "user_input" | "parent_input";
+export type AgentInteractionStatus = "pending" | "resolved" | "rejected" | "cancelled";
+export type ResultBundleStatus = "completed" | "partial" | "blocked" | "failed" | "cancelled";
 
-export enum AgentRunInvocationMode {
-  Synchronous = 'synchronous',
-  Notify = 'notify',
-  Wake = 'wake',
-  Detach = 'detach',
-}
+export interface RuntimeProfileV1 { version: 1; runtimeId: string; providerId?: string | null; modelId?: string | null; reasoning?: RuntimeReasoning | null; modeId?: string | null; options?: Record<string, JsonValue> }
+export interface AgentCapabilityReferenceV1 { version: 1; id: string; kind: "tool" | "skill" | "mcp_server" }
+export interface AgentCapabilityCatalogEntryV1 extends AgentCapabilityReferenceV1 { ownerUserId: string; workspaceId: string | null; revision: string; readiness: "ready" | "missing" | "invalid" | "credential_required"; publicSchema: JsonValue; publicConfig: JsonValue; schemaHash: string; contentHash: string | null; configHash: string; credentialBindingIds: string[] }
+export interface EffectiveCapabilityEntryV1 { id: string; kind: "tool" | "skill" | "mcp_server"; revision: string; schemaHash: string; contentHash: string | null; configHash: string; publicSchema?: JsonValue; publicConfig: JsonValue; startupBinding?: JsonValue; credentialBindingIds: string[] }
+export interface EffectiveCapabilitySnapshotV1 { version: 1; entries: EffectiveCapabilityEntryV1[] }
+export interface AgentPermissionPolicyV1 { version: 1; preset: "research" | "build" | "custom"; categories: Partial<Record<AgentPolicyCategory, AgentPolicyDecision>>; maxDelegationDepth: number; maxConcurrentRuns: number; maxWallTimeMs: number; maxAttempts: number; maxTokens?: number | null; maxSpendMicros?: number | null }
+export interface AgentContextPolicyV1 { version: 1; includeWorkspaceInstructions: boolean; allowMessageContext: boolean; allowFileContext: boolean; allowArtifactContext: boolean; maxEstimatedChars: number }
+export interface EffectiveAgentDefinitionV1 { version: 1; name: string; description: string; instructions: string; runtimeProfile: RuntimeProfileV1; fallbackChain: RuntimeProfileV1[]; capabilitySnapshot: EffectiveCapabilitySnapshotV1; permissionPolicy: AgentPermissionPolicyV1; contextPolicy: AgentContextPolicyV1 }
+export interface AgentDefinitionDtoV1 { version: 1; id: string; ownerUserId: string; scope: AgentDefinitionScope; workspaceId: string | null; name: string; description: string; instructions: string; runtimeProfile: RuntimeProfileV1; fallbackChain: RuntimeProfileV1[]; toolRefs: string[]; skillRefs: string[]; mcpServerRefs: string[]; permissionPolicy: AgentPermissionPolicyV1 | null; contextPolicy: AgentContextPolicyV1; defaultRunTtlMs: number | null; status: AgentDefinitionStatus; revision: number; createdAt: number; updatedAt: number }
+/** One reason a Definition cannot be enabled. Instructions are optional by design — they never block enable. */
+export interface AgentEnableBlockerV1 { code: "runtime" | "fallback" | "capability"; ref: string | null; message: string }
 
-export enum AgentRunCompletionMode {
-  StructuredResult = 'structured_result',
-  InferredFallback = 'inferred_fallback',
-}
+export type AgentRunContextEntryV1 =
+  | { kind: "message"; nodeId: string; messageId: string; role: string; content: string; sha256: string }
+  | { kind: "artifact"; artifactId: string; name: string; snapshotPath: string; size: number; sha256: string }
+  | { kind: "file"; workspacePath: string; snapshotPath: string; size: number; sha256: string }
+  | { kind: "summary"; label: string; content: string; sha256: string }
+  | { kind: "workspace_instructions"; content: string; sha256: string };
+export interface AgentRunContextManifestV1 { version: 1; entries: AgentRunContextEntryV1[]; assembledAt: number; estimatedChars: number }
+export type ExecutionEnvironmentRequestV1 = { version: 1; kind: "auto" } | { version: 1; kind: "shared_workspace"; access: "read_only" | "read_write" } | { version: 1; kind: "git_worktree" };
+export interface ExecutionEnvironmentSnapshotV1 { version: 1; kind: "shared_workspace" | "git_worktree"; cwd: string; sourceWorkspaceId: string; baseCommit?: string; snapshotHash: string; createdAt: number }
+export interface ExpectedResultContractV1 { version: 1; format: "result_bundle" | "json"; instructions?: string; jsonSchema?: JsonValue }
+export interface ResultArtifactRefV1 { id: string; name: string; kind: string; uri: string | null; sha256: string | null; size: number | null }
+export interface ResourceMutationReceiptV1 { id: string; kind: string; summary: string; idempotencyKey: string | null; details: JsonValue | null }
+export interface ExternalActionReceiptV1 extends ResourceMutationReceiptV1 { provider: string; externalId: string | null }
+export interface GitChangeSetRefV1 { baseCommit: string; snapshotHash: string; worktreeId: string; changedFiles: string[]; summary: string; diffArtifactId: string | null }
+export interface RunUsageSummaryV1 { inputTokens: number; outputTokens: number; cachedTokens?: number; costMicros?: number }
+export interface ResultBundleV1 { version: 1; status: ResultBundleStatus; source: "submitted" | "inferred"; handoff: { conclusion: string; artifactsOrChanges: string; unresolvedIssues: string }; artifacts: ResultArtifactRefV1[]; resourceMutations: ResourceMutationReceiptV1[]; externalActions: ExternalActionReceiptV1[]; changeSet?: GitChangeSetRefV1; usage?: RunUsageSummaryV1; structuredResult?: JsonValue }
+export interface StructuredRunErrorV1 { version: 1; code: string; category: "transient" | "auth_permission" | "capacity" | "incompatible" | "unsafe_recovery" | "terminal" | "import_interrupted"; message: string; retryable: boolean; details?: JsonValue }
+export interface RecoveryEnvelopeV1 { version: 1; completedWork: string; currentResourceState: JsonValue; outstandingWork: string; failureBoundary: StructuredRunErrorV1; resultBundleDraft: ResultBundleV1 | null }
+export interface ParentInvocationAnchorV1 { parentRunId: string | null; parentAttemptId: string | null; parentNodeId: string | null; parentTurnId: string | null; parentMessageId: string | null; parentToolCallId: string | null }
+export interface AgentRunDtoV1 extends ParentInvocationAnchorV1 { version: 1; id: string; ownerUserId: string; workspaceId: string; definitionId: string | null; definitionRevision: number | null; effectiveDefinition: EffectiveAgentDefinitionV1; invocationMode: AgentRunInvocationMode; completionMode: AgentRunCompletionMode; task: string; contextManifest: AgentRunContextManifestV1; expectedResult: ExpectedResultContractV1 | null; executionEnvironment: ExecutionEnvironmentSnapshotV1; status: AgentRunStatus; waitingReason: AgentRunWaitingReason | null; activeAttemptId: string | null; resultBundle: ResultBundleV1 | null; latestEventSeq: number; createdAt: number; startedAt: number | null; completedAt: number | null; archivedAt: number | null; expiresAt: number | null }
+export interface AgentRunAttemptDtoV1 { version: 1; id: string; runId: string; attemptIndex: number; profileIndex: number; runtimeProfile: RuntimeProfileV1; status: AgentAttemptStatus; publicSessionId: string; recoveryEnvelope: RecoveryEnvelopeV1 | null; startedAt: number; checkpointAt: number | null; completedAt: number | null; error: StructuredRunErrorV1 | null }
+export interface AgentRunEventV1 { version: 1; runId: string; seq: number; attemptId: string | null; type: AgentRunEventType; payload: JsonValue; createdAt: number }
+export interface AgentRunInteractionDtoV1 { version: 1; id: string; runId: string; attemptId: string | null; kind: AgentInteractionKind; status: AgentInteractionStatus; request: JsonValue; response: JsonValue | null; createdAt: number; resolvedAt: number | null }
+export type WatchConditionV1 = { version: 1; kind: "all" | "any" | "manual" } | { version: 1; kind: "quorum"; count: number } | { version: 1; kind: "deadline"; at: number };
+export interface AgentRunWatchDtoV1 { version: 1; id: string; ownerUserId: string; workspaceId: string; runIds: string[]; condition: WatchConditionV1; completionMode: "notify" | "wake"; status: "active" | "fired" | "cancelled"; deliveryId: string; requestedTurnId: string; parentRunId: string | null; parentNodeId: string | null; parentTurnId: string | null; createdAt: number; firedAt: number | null }
+export interface ParentDeliveryDtoV1 { version: 1; deliveryId: string; requestedTurnId: string; watchId: string; parentNodeId: string; parentTurnId: string; runIds: string[]; status: "pending" | "delivering" | "delivered" | "undeliverable" | "failed"; createdAt: number; deliveredAt: number | null; error: StructuredRunErrorV1 | null }
 
-export enum AgentRunEventType {
-  StatusChange = 'status_change',
-  InteractionRequested = 'interaction_requested',
-  InteractionResolved = 'interaction_resolved',
-  EventLog = 'event_log',
-  ResultBundleUpdated = 'result_bundle_updated',
-  WatchFired = 'watch_fired',
-  AttemptStarted = 'attempt_started',
-  AttemptFinished = 'attempt_finished',
-}
+export interface CreateAgentDefinitionRequestV1 extends Omit<AgentDefinitionDtoV1, "id" | "ownerUserId" | "status" | "revision" | "createdAt" | "updatedAt"> {}
+export type UpdateAgentDefinitionRequestV1 = Partial<Omit<CreateAgentDefinitionRequestV1, "version">> & { version: 1; expectedRevision: number };
+export interface SpawnAgentRunRequestV1 extends ParentInvocationAnchorV1 { version: 1; workspaceId: string; agentId: string | null; ephemeralDefinition: EffectiveAgentDefinitionV1 | null; task: string; contextManifest: AgentRunContextManifestV1; permissionRestriction: AgentPermissionPolicyV1 | null; environment: ExecutionEnvironmentRequestV1; expectedResult: ExpectedResultContractV1 | null; completionMode: AgentRunCompletionMode; invocationMode: AgentRunInvocationMode; runTtlMs: number | null }
+export interface AgentRunInputRequestV1 { version: 1; text: string; mode: "queued" | "immediate"; expectedAttemptId: string | null }
+export interface CancelAgentRunRequestV1 { version: 1; expectedAttemptId: string | null; reason: string | null }
+export interface RespondAgentRunInteractionRequestV1 { version: 1; response: JsonValue }
+export interface CreateAgentRunWatchRequestV1 { version: 1; workspaceId: string; runIds: string[]; condition: WatchConditionV1; completionMode: "notify" | "wake"; parentRunId: string | null; parentNodeId: string | null; parentTurnId: string | null }
+export interface UpdateAgentRunWatchRequestV1 { version: 1; addRunIds: string[]; condition?: WatchConditionV1 }
+export interface AgentRunListQueryV1 { version: 1; workspaceId: string; statuses?: AgentRunStatus[]; q?: string; includeArchived?: boolean; limit?: number; cursor?: string | null }
+export interface WaitAgentRunRequestV1 { version: 1; runId?: string; watchId?: string; timeoutMs: number }
+export interface WaitAgentRunResultV1 { version: 1; run: AgentRunDtoV1 | null; watch: AgentRunWatchDtoV1 | null; resultBundle: ResultBundleV1 | null; stillRunning: boolean }
+export interface SubmitAgentResultRequestV1 { version: 1; attemptId: string; result: ResultBundleV1 }
+export interface AgentRunSseEnvelopeV1 { version: 1; event: "agent_run_event" | "agent_run_gap" | "heartbeat"; runId: string | null; seq: number | null; eventData: AgentRunEventV1 | null; gapAfterSeq: number | null; emittedAt: number }
+export interface AgentRunRetentionPolicyV1 { version: 1; defaultRunTtlMs: number | null; maxRunTtlMs: number; archiveBeforeDelete: true; terminalOnlyHardDelete: true }
+export type PortableContextEntryV1 = Exclude<AgentRunContextEntryV1, { kind: "artifact" } | { kind: "file" }> | { kind: "artifact"; artifactId: string; name: string; size: number; sha256: string; contentAvailability: "not_exported" } | { kind: "file"; workspacePath: string; size: number; sha256: string; contentAvailability: "not_exported" };
+export interface AgentRunBackupFragmentV2 { version: 2; scope: "owner_full" | "workspace"; workspaceId: string | null; definitions: AgentDefinitionDtoV1[]; runs: Array<Omit<AgentRunDtoV1, "contextManifest" | "executionEnvironment"> & { contextManifest: { version: 1; entries: PortableContextEntryV1[]; assembledAt: number; estimatedChars: number }; executionEnvironment: Omit<ExecutionEnvironmentSnapshotV1, "cwd"> & { cwd: null } }>; attempts: AgentRunAttemptDtoV1[]; events: AgentRunEventV1[]; interactions: AgentRunInteractionDtoV1[]; watches: AgentRunWatchDtoV1[]; deliveries: ParentDeliveryDtoV1[] }
 
-export enum AgentPolicyCategory {
-  Security = 'security',
-  Resource = 'resource',
-  Access = 'access',
-  Execution = 'execution',
-}
+export class AgentRunContractError extends Error { constructor(readonly path: string, message: string) { super(`${path}: ${message}`); this.name = "AgentRunContractError"; } }
+const SHA256 = /^[a-f0-9]{64}$/i;
+const SECRET_KEY = /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|bearer[_-]?token|authorization|password|secret|provider[_-]?key|native[_-]?resume[_-]?token|nativeResumeToken|credential)$/i;
+const transitions: Record<AgentRunStatus, ReadonlySet<AgentRunStatus>> = { queued: new Set([AgentRunStatus.Preparing, AgentRunStatus.Cancelled]), preparing: new Set([AgentRunStatus.Running, AgentRunStatus.Recovering, AgentRunStatus.Failed, AgentRunStatus.Cancelled]), running: new Set([AgentRunStatus.Waiting, AgentRunStatus.Recovering, AgentRunStatus.Completed, AgentRunStatus.Failed, AgentRunStatus.Cancelled]), waiting: new Set([AgentRunStatus.Running, AgentRunStatus.Recovering, AgentRunStatus.Failed, AgentRunStatus.Cancelled]), recovering: new Set([AgentRunStatus.Preparing, AgentRunStatus.Running, AgentRunStatus.Waiting, AgentRunStatus.Completed, AgentRunStatus.Failed, AgentRunStatus.Cancelled]), completed: new Set(), failed: new Set(), cancelled: new Set() };
+function fail(path: string, message: string): never { throw new AgentRunContractError(path, message); }
+function obj(value: unknown, path: string): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "must be an object"); return value as Record<string, unknown>; }
+function v1(raw: Record<string, unknown>, path: string): void { if (raw.version !== 1) fail(`${path}.version`, "must be 1"); }
+function str(value: unknown, path: string, max: number = AGENT_RUN_LIMITS.id, empty = false): string { if (typeof value !== "string") fail(path, "must be a string"); const out = value.trim(); if (!empty && !out) fail(path, "must not be empty"); if (out.length > max) fail(path, `must be at most ${max} characters`); return out; }
+function nullableStr(value: unknown, path: string): string | null { return value === null ? null : str(value, path); }
+function int(value: unknown, path: string, min = 0, max = Number.MAX_SAFE_INTEGER): number { if (!Number.isSafeInteger(value) || (value as number) < min || (value as number) > max) fail(path, `must be an integer from ${min} to ${max}`); return value as number; }
+function bool(value: unknown, path: string): boolean { if (typeof value !== "boolean") fail(path, "must be a boolean"); return value; }
+function choice<T extends string>(value: unknown, values: readonly T[], path: string): T { if (typeof value !== "string" || !values.includes(value as T)) fail(path, `must be one of: ${values.join(", ")}`); return value as T; }
+function arr(value: unknown, path: string, max: number): unknown[] { if (!Array.isArray(value)) fail(path, "must be an array"); if (value.length > max) fail(path, `must contain at most ${max} items`); return value; }
+function strings(value: unknown, path: string, max = AGENT_RUN_LIMITS.capabilityRefs): string[] { const out = arr(value, path, max).map((item, i) => str(item, `${path}[${i}]`)); if (new Set(out).size !== out.length) fail(path, "must not contain duplicates"); return out; }
+function digest(value: unknown, path: string): string { const out = str(value, path, 64); if (!SHA256.test(out)) fail(path, "must be a SHA-256 hex digest"); return out.toLowerCase(); }
 
-export enum AgentEnvironmentRequest {
-  ReadOnly = 'read_only',
-  SharedWrite = 'shared_write',
-  IsolatedWorktree = 'isolated_worktree',
-}
+export function parseJsonValue(value: unknown, path = "value"): JsonValue { let nodes = 0; const visit = (item: unknown, p: string, depth: number): JsonValue => { if (++nodes > AGENT_RUN_LIMITS.jsonNodes) fail(path, "contains too many JSON nodes"); if (depth > AGENT_RUN_LIMITS.jsonDepth) fail(p, "exceeds maximum JSON depth"); if (item === null || typeof item === "boolean") return item; if (typeof item === "number") { if (!Number.isFinite(item)) fail(p, "must be finite"); return item; } if (typeof item === "string") return str(item, p, AGENT_RUN_LIMITS.jsonString, true); if (Array.isArray(item)) return arr(item, p, AGENT_RUN_LIMITS.jsonArray).map((child, i) => visit(child, `${p}[${i}]`, depth + 1)); const raw = obj(item, p); const out: Record<string, JsonValue> = {}; for (const [key, child] of Object.entries(raw)) { if (SECRET_KEY.test(key)) fail(`${p}.${key}`, "secret-bearing fields are forbidden"); out[str(key, `${p} key`)] = visit(child, `${p}.${key}`, depth + 1); } return out; }; return visit(value, path, 0); }
+export function assertSecretFreePublicPayload(value: unknown, path = "payload"): void { parseJsonValue(value, path); }
+export function parseRunTtl(value: unknown, path = "runTtlMs"): number | null { return value === null ? null : int(value, path, MIN_RUN_TTL_MS, MAX_RUN_TTL_MS); }
+export function isValidAgentRunTransition(from: AgentRunStatus | null, to: AgentRunStatus): boolean { return from === null ? to === AgentRunStatus.Queued : transitions[from].has(to); }
 
-export type AgentDefinitionStatus = 'Draft' | 'Enabled' | 'Disabled';
+function runtime(value: unknown, path: string, allowIncomplete = false): RuntimeProfileV1 { const raw = obj(value, path); v1(raw, path); const out: RuntimeProfileV1 = { version: 1, runtimeId: str(raw.runtimeId, `${path}.runtimeId`, AGENT_RUN_LIMITS.id, allowIncomplete) }; if (raw.providerId !== undefined) out.providerId = raw.providerId === null ? null : str(raw.providerId, `${path}.providerId`); if (raw.modelId !== undefined) out.modelId = raw.modelId === null ? null : str(raw.modelId, `${path}.modelId`); if (raw.reasoning !== undefined) out.reasoning = raw.reasoning === null ? null : choice(raw.reasoning, ["minimal", "low", "medium", "high", "xhigh", "max"] as const, `${path}.reasoning`); if (raw.modeId !== undefined) out.modeId = raw.modeId === null ? null : str(raw.modeId, `${path}.modeId`); if (raw.options !== undefined) out.options = obj(parseJsonValue(raw.options, `${path}.options`), `${path}.options`) as Record<string, JsonValue>; return out; }
+function policy(value: unknown, path: string): AgentPermissionPolicyV1 { const raw = obj(value, path); v1(raw, path); const categoriesRaw = obj(raw.categories, `${path}.categories`); const categories: Partial<Record<AgentPolicyCategory, AgentPolicyDecision>> = {}; for (const [key, value] of Object.entries(categoriesRaw)) categories[choice(key, Object.values(AgentPolicyCategory), `${path}.categories key`)] = choice(value, Object.values(AgentPolicyDecision), `${path}.categories.${key}`); return { version: 1, preset: choice(raw.preset, ["research", "build", "custom"] as const, `${path}.preset`), categories, maxDelegationDepth: int(raw.maxDelegationDepth, `${path}.maxDelegationDepth`, 0, 16), maxConcurrentRuns: int(raw.maxConcurrentRuns, `${path}.maxConcurrentRuns`, 1, 64), maxWallTimeMs: int(raw.maxWallTimeMs, `${path}.maxWallTimeMs`, 1_000, 604_800_000), maxAttempts: int(raw.maxAttempts, `${path}.maxAttempts`, 1, 16), ...(raw.maxTokens === undefined ? {} : { maxTokens: raw.maxTokens === null ? null : int(raw.maxTokens, `${path}.maxTokens`, 1, 100_000_000) }), ...(raw.maxSpendMicros === undefined ? {} : { maxSpendMicros: raw.maxSpendMicros === null ? null : int(raw.maxSpendMicros, `${path}.maxSpendMicros`, 0, 1_000_000_000_000) }) }; }
+function contextPolicy(value: unknown, path: string): AgentContextPolicyV1 { const raw = obj(value, path); v1(raw, path); for (const key of ["includeWorkspaceInstructions", "allowMessageContext", "allowFileContext", "allowArtifactContext"] as const) if (typeof raw[key] !== "boolean") fail(`${path}.${key}`, "must be a boolean"); return { version: 1, includeWorkspaceInstructions: raw.includeWorkspaceInstructions as boolean, allowMessageContext: raw.allowMessageContext as boolean, allowFileContext: raw.allowFileContext as boolean, allowArtifactContext: raw.allowArtifactContext as boolean, maxEstimatedChars: int(raw.maxEstimatedChars, `${path}.maxEstimatedChars`, 1, 1_000_000) }; }
+function capabilities(value: unknown, path: string): EffectiveCapabilitySnapshotV1 { const raw = obj(value, path); v1(raw, path); const entries = arr(raw.entries, `${path}.entries`, AGENT_RUN_LIMITS.capabilityRefs).map((value, i): EffectiveCapabilityEntryV1 => { const p = `${path}.entries[${i}]`; const item = obj(value, p); const out: EffectiveCapabilityEntryV1 = { id: str(item.id, `${p}.id`), kind: choice(item.kind, ["tool", "skill", "mcp_server"] as const, `${p}.kind`), revision: str(item.revision, `${p}.revision`), schemaHash: digest(item.schemaHash, `${p}.schemaHash`), contentHash: item.contentHash === null ? null : digest(item.contentHash, `${p}.contentHash`), configHash: digest(item.configHash, `${p}.configHash`), publicConfig: parseJsonValue(item.publicConfig, `${p}.publicConfig`), credentialBindingIds: strings(item.credentialBindingIds, `${p}.credentialBindingIds`) }; if (item.publicSchema !== undefined) out.publicSchema = parseJsonValue(item.publicSchema, `${p}.publicSchema`); if (item.startupBinding !== undefined) out.startupBinding = parseJsonValue(item.startupBinding, `${p}.startupBinding`); return out; }); if (new Set(entries.map((e) => `${e.kind}:${e.id}`)).size !== entries.length) fail(`${path}.entries`, "contains duplicate capability identities"); return { version: 1, entries }; }
+export function parseEffectiveAgentDefinitionV1(value: unknown, path = "effectiveDefinition"): EffectiveAgentDefinitionV1 { const raw = obj(value, path); v1(raw, path); return { version: 1, name: str(raw.name, `${path}.name`, AGENT_RUN_LIMITS.name), description: str(raw.description, `${path}.description`, AGENT_RUN_LIMITS.description), instructions: str(raw.instructions, `${path}.instructions`, AGENT_RUN_LIMITS.instructions, true), runtimeProfile: runtime(raw.runtimeProfile, `${path}.runtimeProfile`), fallbackChain: arr(raw.fallbackChain, `${path}.fallbackChain`, AGENT_RUN_LIMITS.fallbackProfiles).map((v, i) => runtime(v, `${path}.fallbackChain[${i}]`)), capabilitySnapshot: capabilities(raw.capabilitySnapshot, `${path}.capabilitySnapshot`), permissionPolicy: policy(raw.permissionPolicy, `${path}.permissionPolicy`), contextPolicy: contextPolicy(raw.contextPolicy, `${path}.contextPolicy`) }; }
+export function parseAgentDefinitionDtoV1(value: unknown, path = "definition"): AgentDefinitionDtoV1 { const raw = obj(value, path); v1(raw, path); const scope = choice(raw.scope, ["global", "workspace"] as const, `${path}.scope`); const workspaceId = nullableStr(raw.workspaceId, `${path}.workspaceId`); if ((scope === "global") !== (workspaceId === null)) fail(`${path}.workspaceId`, "is inconsistent with scope"); const createdAt = int(raw.createdAt, `${path}.createdAt`); const updatedAt = int(raw.updatedAt, `${path}.updatedAt`); if (updatedAt < createdAt) fail(`${path}.updatedAt`, "must not precede createdAt"); return { version: 1, id: str(raw.id, `${path}.id`), ownerUserId: str(raw.ownerUserId, `${path}.ownerUserId`), scope, workspaceId, name: str(raw.name, `${path}.name`, AGENT_RUN_LIMITS.name), description: str(raw.description, `${path}.description`, AGENT_RUN_LIMITS.description, true), instructions: str(raw.instructions, `${path}.instructions`, AGENT_RUN_LIMITS.instructions, true), runtimeProfile: runtime(raw.runtimeProfile, `${path}.runtimeProfile`, true), fallbackChain: arr(raw.fallbackChain, `${path}.fallbackChain`, AGENT_RUN_LIMITS.fallbackProfiles).map((v, i) => runtime(v, `${path}.fallbackChain[${i}]`, true)), toolRefs: strings(raw.toolRefs, `${path}.toolRefs`), skillRefs: strings(raw.skillRefs, `${path}.skillRefs`), mcpServerRefs: strings(raw.mcpServerRefs, `${path}.mcpServerRefs`), permissionPolicy: raw.permissionPolicy === null ? null : policy(raw.permissionPolicy, `${path}.permissionPolicy`), contextPolicy: contextPolicy(raw.contextPolicy, `${path}.contextPolicy`), defaultRunTtlMs: parseRunTtl(raw.defaultRunTtlMs, `${path}.defaultRunTtlMs`), status: choice(raw.status, Object.values(AgentDefinitionStatus), `${path}.status`), revision: int(raw.revision, `${path}.revision`, 1), createdAt, updatedAt }; }
 
-export interface RuntimeProfileV1 {
-  runtimeId: string;
-  modelId: string;
-  version: string;
-  config: Record<string, any>;
-  fingerprint: string;
-}
-
-export interface EffectiveCapabilitySnapshotV1 {
-  capabilityRefs: string[];
-  schemaHash: string;
-  contentHash: string;
-  configHash: string;
-  bindingIds: string[]; // Opaque credential-binding IDs
-}
-
-export interface AgentDefinitionDtoV1 {
-  id: string;
-  ownerId: string;
-  workspaceId: string;
-  name: string;
-  instructions: string;
-  runtimeProfile: RuntimeProfileV1;
-  capabilities: string[];
-  fallback?: string[];
-  defaultRunTtlMs?: number;
-  status: AgentDefinitionStatus;
-  revision: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AgentRunDtoV1 {
-  id: string;
-  definitionId: string;
-  definitionSnapshot: AgentDefinitionDtoV1;
-  ownerId: string;
-  workspaceId: string;
-  status: AgentRunStatus;
-  waitingReason?: AgentRunWaitingReason;
-  currentAttemptId?: string;
-  expiresAt: string | null; // ISO date or null for indefinite
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AgentRunAttemptDtoV1 {
-  id: string;
-  runId: string;
-  status: AgentRunStatus;
-  startTime: string;
-  endTime?: string;
-  executorId: string;
-  profileHash: string;
-  nativeResumeToken?: string;
-}
-
-export interface AgentRunEventV1 {
-  seq: number;
-  timestamp: string;
-  type: AgentRunEventType;
-  payload: any;
-}
-
-export interface AgentRunInteractionDtoV1 {
-  id: string;
-  runId: string;
-  attemptId: string;
-  type: string;
-  status: 'pending' | 'resolved' | 'cancelled';
-  requestedAt: string;
-  resolvedAt?: string;
-  input?: any;
-  resolution?: any;
-}
-
-export interface AgentRunWatchDtoV1 {
-  id: string;
-  runId: string;
-  condition: any;
-  quorum: number;
-  deadline?: string;
-  status: 'active' | 'fired' | 'expired';
-  firedAt?: string;
-}
-
-export interface AgentRunContextManifestV1 {
-  version: string;
-  entries: Array<{
-    id: string;
-    type: string;
-    reference: string;
-    hash: string;
-  }>;
-}
-
-export interface ResultBundleV1 {
-  resultId: string;
-  summary: string;
-  artifacts: Array<{
-    id: string;
-    type: string;
-    uri: string;
-    hash: string;
-  }>;
-  mutations: Array<{
-    id: string;
-    type: string;
-    receipt: any;
-  }>;
-  changeSet: {
-    baseCommit: string;
-    patchHash: string;
-    summary: string;
-  };
-  handoff: {
-    parentMessageId: string;
-    parentToolCallId?: string;
-    deliveryId: string;
-    requestedTurnId: string;
-  };
-  unresolvedIssues: string[];
-}
-
-export interface AgentRunRequestDtoV1 {
-  operationId: string;
-  runId: string;
-  payload: any;
-}
-
-export interface AgentRunSseEnvelopeV1 {
-  event: string;
-  data: any;
-  timestamp: string;
-  cursor: number;
-}
-
-/**
- * Pure validation helpers for untrusted input
- */
-export const AgentRunValidators = {
-  validateStatus: (status: any): status is AgentRunStatus => 
-    Object.values(AgentRunStatus).includes(status),
-  
-  validateDefinitionStatus: (status: any): status is AgentDefinitionStatus => 
-    ['Draft', 'Enabled', 'Disabled'].includes(status),
-
-  validateTtl: (ttl: any): ttl is number => 
-    typeof ttl === 'number' && ttl >= 0,
-};
+function manifest(value: unknown, path: string): AgentRunContextManifestV1 { const raw = obj(value, path); v1(raw, path); const entries = arr(raw.entries, `${path}.entries`, AGENT_RUN_LIMITS.contextEntries).map((value, i): AgentRunContextEntryV1 => { const p = `${path}.entries[${i}]`; const item = obj(value, p); const kind = choice(item.kind, ["message", "artifact", "file", "summary", "workspace_instructions"] as const, `${p}.kind`); if (kind === "message") return { kind, nodeId: str(item.nodeId, `${p}.nodeId`), messageId: str(item.messageId, `${p}.messageId`), role: str(item.role, `${p}.role`, 32), content: str(item.content, `${p}.content`, AGENT_RUN_LIMITS.contextContent, true), sha256: digest(item.sha256, `${p}.sha256`) }; if (kind === "artifact") return { kind, artifactId: str(item.artifactId, `${p}.artifactId`), name: str(item.name, `${p}.name`, AGENT_RUN_LIMITS.name), snapshotPath: str(item.snapshotPath, `${p}.snapshotPath`, 4096), size: int(item.size, `${p}.size`), sha256: digest(item.sha256, `${p}.sha256`) }; if (kind === "file") return { kind, workspacePath: str(item.workspacePath, `${p}.workspacePath`, 4096), snapshotPath: str(item.snapshotPath, `${p}.snapshotPath`, 4096), size: int(item.size, `${p}.size`), sha256: digest(item.sha256, `${p}.sha256`) }; if (kind === "summary") return { kind, label: str(item.label, `${p}.label`, AGENT_RUN_LIMITS.name), content: str(item.content, `${p}.content`, AGENT_RUN_LIMITS.contextContent, true), sha256: digest(item.sha256, `${p}.sha256`) }; return { kind, content: str(item.content, `${p}.content`, AGENT_RUN_LIMITS.contextContent, true), sha256: digest(item.sha256, `${p}.sha256`) }; }); const ids = entries.map((e) => e.kind === "message" ? `${e.kind}:${e.nodeId}:${e.messageId}` : e.kind === "artifact" ? `${e.kind}:${e.artifactId}` : e.kind === "file" ? `${e.kind}:${e.workspacePath}` : e.kind === "summary" ? `${e.kind}:${e.label}` : e.kind); if (new Set(ids).size !== ids.length) fail(`${path}.entries`, "contains duplicate context identities"); return { version: 1, entries, assembledAt: int(raw.assembledAt, `${path}.assembledAt`), estimatedChars: int(raw.estimatedChars, `${path}.estimatedChars`, 0, 1_000_000) }; }
+function expectedResult(value: unknown, path: string): ExpectedResultContractV1 { const raw = obj(value, path); v1(raw, path); const format = choice(raw.format, ["result_bundle", "json"] as const, `${path}.format`); const out: ExpectedResultContractV1 = { version: 1, format }; if (raw.instructions !== undefined) out.instructions = str(raw.instructions, `${path}.instructions`, AGENT_RUN_LIMITS.description); if (raw.jsonSchema !== undefined) out.jsonSchema = parseJsonValue(raw.jsonSchema, `${path}.jsonSchema`); if (format === "json" && out.jsonSchema === undefined) fail(`${path}.jsonSchema`, "is required for json format"); return out; }
+export function parseResultBundleV1(value: unknown, path = "resultBundle"): ResultBundleV1 { const raw = obj(value, path); v1(raw, path); const handoff = obj(raw.handoff, `${path}.handoff`); const receipt = (value: unknown, p: string): ResourceMutationReceiptV1 => { const item = obj(value, p); return { id: str(item.id, `${p}.id`), kind: str(item.kind, `${p}.kind`), summary: str(item.summary, `${p}.summary`, AGENT_RUN_LIMITS.receiptText), idempotencyKey: item.idempotencyKey === null ? null : str(item.idempotencyKey, `${p}.idempotencyKey`), details: item.details === null ? null : parseJsonValue(item.details, `${p}.details`) }; }; const artifacts = arr(raw.artifacts, `${path}.artifacts`, AGENT_RUN_LIMITS.resultArtifacts).map((value, i): ResultArtifactRefV1 => { const p = `${path}.artifacts[${i}]`; const item = obj(value, p); return { id: str(item.id, `${p}.id`), name: str(item.name, `${p}.name`, AGENT_RUN_LIMITS.name), kind: str(item.kind, `${p}.kind`), uri: item.uri === null ? null : str(item.uri, `${p}.uri`, 4096), sha256: item.sha256 === null ? null : digest(item.sha256, `${p}.sha256`), size: item.size === null ? null : int(item.size, `${p}.size`) }; }); const resourceMutations = arr(raw.resourceMutations, `${path}.resourceMutations`, AGENT_RUN_LIMITS.resultReceipts).map((value, i) => receipt(value, `${path}.resourceMutations[${i}]`)); const externalActions = arr(raw.externalActions, `${path}.externalActions`, AGENT_RUN_LIMITS.resultReceipts).map((value, i): ExternalActionReceiptV1 => { const p = `${path}.externalActions[${i}]`; const item = obj(value, p); return { ...receipt(item, p), provider: str(item.provider, `${p}.provider`), externalId: item.externalId === null ? null : str(item.externalId, `${p}.externalId`) }; }); const out: ResultBundleV1 = { version: 1, status: choice(raw.status, ["completed", "partial", "blocked", "failed", "cancelled"] as const, `${path}.status`), source: choice(raw.source, ["submitted", "inferred"] as const, `${path}.source`), handoff: { conclusion: str(handoff.conclusion, `${path}.handoff.conclusion`, AGENT_RUN_LIMITS.receiptText), artifactsOrChanges: str(handoff.artifactsOrChanges, `${path}.handoff.artifactsOrChanges`, AGENT_RUN_LIMITS.receiptText, true), unresolvedIssues: str(handoff.unresolvedIssues, `${path}.handoff.unresolvedIssues`, AGENT_RUN_LIMITS.receiptText, true) }, artifacts, resourceMutations, externalActions }; if (raw.changeSet !== undefined) { const item = obj(raw.changeSet, `${path}.changeSet`); out.changeSet = { baseCommit: str(item.baseCommit, `${path}.changeSet.baseCommit`), snapshotHash: digest(item.snapshotHash, `${path}.changeSet.snapshotHash`), worktreeId: str(item.worktreeId, `${path}.changeSet.worktreeId`), changedFiles: strings(item.changedFiles, `${path}.changeSet.changedFiles`, AGENT_RUN_LIMITS.resultArtifacts), summary: str(item.summary, `${path}.changeSet.summary`, AGENT_RUN_LIMITS.receiptText), diffArtifactId: item.diffArtifactId === null ? null : str(item.diffArtifactId, `${path}.changeSet.diffArtifactId`) }; } if (raw.usage !== undefined) { const item = obj(raw.usage, `${path}.usage`); out.usage = { inputTokens: int(item.inputTokens, `${path}.usage.inputTokens`), outputTokens: int(item.outputTokens, `${path}.usage.outputTokens`), ...(item.cachedTokens === undefined ? {} : { cachedTokens: int(item.cachedTokens, `${path}.usage.cachedTokens`) }), ...(item.costMicros === undefined ? {} : { costMicros: int(item.costMicros, `${path}.usage.costMicros`) }) }; } if (raw.structuredResult !== undefined) out.structuredResult = parseJsonValue(raw.structuredResult, `${path}.structuredResult`); return out; }
+function structuredRunError(value: unknown, path: string): StructuredRunErrorV1 { const raw = obj(value, path); v1(raw, path); const out: StructuredRunErrorV1 = { version: 1, code: str(raw.code, `${path}.code`), category: choice(raw.category, ["transient", "auth_permission", "capacity", "incompatible", "unsafe_recovery", "terminal", "import_interrupted"] as const, `${path}.category`), message: str(raw.message, `${path}.message`, AGENT_RUN_LIMITS.receiptText), retryable: raw.retryable as boolean }; if (typeof raw.retryable !== "boolean") fail(`${path}.retryable`, "must be a boolean"); if (raw.details !== undefined) out.details = parseJsonValue(raw.details, `${path}.details`); return out; }
+function recoveryEnvelope(value: unknown, path: string): RecoveryEnvelopeV1 { const raw = obj(value, path); v1(raw, path); return { version: 1, completedWork: str(raw.completedWork, `${path}.completedWork`, AGENT_RUN_LIMITS.receiptText, true), currentResourceState: parseJsonValue(raw.currentResourceState, `${path}.currentResourceState`), outstandingWork: str(raw.outstandingWork, `${path}.outstandingWork`, AGENT_RUN_LIMITS.receiptText, true), failureBoundary: structuredRunError(raw.failureBoundary, `${path}.failureBoundary`), resultBundleDraft: raw.resultBundleDraft === null ? null : parseResultBundleV1(raw.resultBundleDraft, `${path}.resultBundleDraft`) }; }
+function anchors(raw: Record<string, unknown>, mode: AgentRunInvocationMode, path: string): ParentInvocationAnchorV1 { const parentAttemptProvided = raw.parentAttemptId !== undefined; const out = { parentRunId: nullableStr(raw.parentRunId, `${path}.parentRunId`), parentAttemptId: parentAttemptProvided ? nullableStr(raw.parentAttemptId, `${path}.parentAttemptId`) : null, parentNodeId: nullableStr(raw.parentNodeId, `${path}.parentNodeId`), parentTurnId: nullableStr(raw.parentTurnId, `${path}.parentTurnId`), parentMessageId: nullableStr(raw.parentMessageId, `${path}.parentMessageId`), parentToolCallId: nullableStr(raw.parentToolCallId, `${path}.parentToolCallId`) }; if (out.parentAttemptId && !out.parentRunId) fail(`${path}.parentAttemptId`, "requires parentRunId"); if (out.parentRunId && parentAttemptProvided && !out.parentAttemptId) fail(path, "parentRunId and parentAttemptId must be supplied together"); if (out.parentToolCallId && !out.parentRunId && !out.parentMessageId) fail(`${path}.parentToolCallId`, "requires parentMessageId for conversation-origin delegation"); const c = [out.parentNodeId, out.parentTurnId, out.parentMessageId]; if (c.some(Boolean) && !c.every(Boolean)) fail(path, "parentNodeId, parentTurnId, and parentMessageId must be supplied together"); if (out.parentRunId && c.some(Boolean)) fail(path, "Run and conversation Parent anchors are mutually exclusive"); if (mode === AgentRunInvocationMode.Manual && [out.parentRunId, out.parentAttemptId, ...c, out.parentToolCallId].some(Boolean)) fail(path, "manual invocation cannot have Parent anchors"); if (mode === AgentRunInvocationMode.Delegated && !out.parentRunId && !out.parentNodeId) fail(path, "delegated invocation requires a Parent anchor"); return out; }
+export function parseAgentRunDtoV1(value: unknown, path = "run"): AgentRunDtoV1 { const raw = obj(value, path); v1(raw, path); const mode = choice(raw.invocationMode, Object.values(AgentRunInvocationMode), `${path}.invocationMode`); const status = choice(raw.status, Object.values(AgentRunStatus), `${path}.status`); const waitingReason = raw.waitingReason === null ? null : choice(raw.waitingReason, Object.values(AgentRunWaitingReason), `${path}.waitingReason`); if ((status === AgentRunStatus.Waiting) !== (waitingReason !== null)) fail(`${path}.waitingReason`, "must be set exactly while waiting"); const definitionId = nullableStr(raw.definitionId, `${path}.definitionId`); const definitionRevision = raw.definitionRevision === null ? null : int(raw.definitionRevision, `${path}.definitionRevision`, 1); if (definitionId !== null && definitionRevision === null) fail(`${path}.definitionRevision`, "is required when definitionId is present"); const createdAt = int(raw.createdAt, `${path}.createdAt`); const startedAt = raw.startedAt === null ? null : int(raw.startedAt, `${path}.startedAt`); const completedAt = raw.completedAt === null ? null : int(raw.completedAt, `${path}.completedAt`); if (startedAt !== null && startedAt < createdAt) fail(`${path}.startedAt`, "must not precede createdAt"); const terminal = [AgentRunStatus.Completed, AgentRunStatus.Failed, AgentRunStatus.Cancelled].includes(status); if (terminal !== (completedAt !== null)) fail(`${path}.completedAt`, "must be set exactly for terminal Runs"); const environmentRaw = obj(raw.executionEnvironment, `${path}.executionEnvironment`); v1(environmentRaw, `${path}.executionEnvironment`); const kind = choice(environmentRaw.kind, ["shared_workspace", "git_worktree"] as const, `${path}.executionEnvironment.kind`); const executionEnvironment: ExecutionEnvironmentSnapshotV1 = { version: 1, kind, cwd: str(environmentRaw.cwd, `${path}.executionEnvironment.cwd`, 4096), sourceWorkspaceId: str(environmentRaw.sourceWorkspaceId, `${path}.executionEnvironment.sourceWorkspaceId`), snapshotHash: digest(environmentRaw.snapshotHash, `${path}.executionEnvironment.snapshotHash`), createdAt: int(environmentRaw.createdAt, `${path}.executionEnvironment.createdAt`) }; if (environmentRaw.baseCommit !== undefined) executionEnvironment.baseCommit = str(environmentRaw.baseCommit, `${path}.executionEnvironment.baseCommit`); if (kind === "git_worktree" && !executionEnvironment.baseCommit) fail(`${path}.executionEnvironment.baseCommit`, "is required"); return { version: 1, id: str(raw.id, `${path}.id`), ownerUserId: str(raw.ownerUserId, `${path}.ownerUserId`), workspaceId: str(raw.workspaceId, `${path}.workspaceId`), definitionId, definitionRevision, effectiveDefinition: parseEffectiveAgentDefinitionV1(raw.effectiveDefinition, `${path}.effectiveDefinition`), invocationMode: mode, completionMode: choice(raw.completionMode, Object.values(AgentRunCompletionMode), `${path}.completionMode`), ...anchors(raw, mode, path), task: str(raw.task, `${path}.task`, AGENT_RUN_LIMITS.task), contextManifest: manifest(raw.contextManifest, `${path}.contextManifest`), expectedResult: raw.expectedResult === null ? null : expectedResult(raw.expectedResult, `${path}.expectedResult`), executionEnvironment, status, waitingReason, activeAttemptId: nullableStr(raw.activeAttemptId, `${path}.activeAttemptId`), resultBundle: raw.resultBundle === null ? null : parseResultBundleV1(raw.resultBundle, `${path}.resultBundle`), latestEventSeq: int(raw.latestEventSeq, `${path}.latestEventSeq`, -1), createdAt, startedAt, completedAt, archivedAt: raw.archivedAt === null ? null : int(raw.archivedAt, `${path}.archivedAt`), expiresAt: raw.expiresAt === null ? null : int(raw.expiresAt, `${path}.expiresAt`) }; }
+export function parseAgentRunAttemptDtoV1(value: unknown, path = "attempt"): AgentRunAttemptDtoV1 { const raw = obj(value, path); v1(raw, path); const status = choice(raw.status, ["preparing", "running", "waiting", "completed", "failed", "cancelled"] as const, `${path}.status`); const startedAt = int(raw.startedAt, `${path}.startedAt`); const checkpointAt = raw.checkpointAt === null ? null : int(raw.checkpointAt, `${path}.checkpointAt`); const completedAt = raw.completedAt === null ? null : int(raw.completedAt, `${path}.completedAt`); if (checkpointAt !== null && checkpointAt < startedAt) fail(`${path}.checkpointAt`, "must not precede startedAt"); if (completedAt !== null && completedAt < startedAt) fail(`${path}.completedAt`, "must not precede startedAt"); const terminal = ["completed", "failed", "cancelled"].includes(status); if (terminal !== (completedAt !== null)) fail(`${path}.completedAt`, "must be set exactly for terminal Attempts"); return { version: 1, id: str(raw.id, `${path}.id`), runId: str(raw.runId, `${path}.runId`), attemptIndex: int(raw.attemptIndex, `${path}.attemptIndex`), profileIndex: int(raw.profileIndex, `${path}.profileIndex`, 0, AGENT_RUN_LIMITS.fallbackProfiles), runtimeProfile: runtime(raw.runtimeProfile, `${path}.runtimeProfile`), status, publicSessionId: str(raw.publicSessionId, `${path}.publicSessionId`), recoveryEnvelope: raw.recoveryEnvelope === null ? null : recoveryEnvelope(raw.recoveryEnvelope, `${path}.recoveryEnvelope`), startedAt, checkpointAt, completedAt, error: raw.error === null ? null : structuredRunError(raw.error, `${path}.error`) }; }
+export function parseAgentRunEventV1(value: unknown, path = "event"): AgentRunEventV1 { const raw = obj(value, path); v1(raw, path); const type = choice(raw.type, Object.values(AgentRunEventType), `${path}.type`); const payload = parseJsonValue(raw.payload, `${path}.payload`); if (type === AgentRunEventType.RunStatusChanged) { const p = obj(payload, `${path}.payload`); if (p.version !== 1) fail(`${path}.payload.version`, "must be 1"); const from = p.from === null ? null : choice(p.from, Object.values(AgentRunStatus), `${path}.payload.from`); const to = choice(p.to, Object.values(AgentRunStatus), `${path}.payload.to`); if (!isValidAgentRunTransition(from, to)) fail(`${path}.payload`, "contains an invalid status transition"); } return { version: 1, runId: str(raw.runId, `${path}.runId`), seq: int(raw.seq, `${path}.seq`), attemptId: nullableStr(raw.attemptId, `${path}.attemptId`), type, payload, createdAt: int(raw.createdAt, `${path}.createdAt`) }; }
+export function parseAgentRunInteractionDtoV1(value: unknown, path = "interaction"): AgentRunInteractionDtoV1 { const raw = obj(value, path); v1(raw, path); const status = choice(raw.status, ["pending", "resolved", "rejected", "cancelled"] as const, `${path}.status`); const createdAt = int(raw.createdAt, `${path}.createdAt`); const resolvedAt = raw.resolvedAt === null ? null : int(raw.resolvedAt, `${path}.resolvedAt`); if ((status === "pending") !== (resolvedAt === null)) fail(`${path}.resolvedAt`, "must be null exactly while pending"); if (resolvedAt !== null && resolvedAt < createdAt) fail(`${path}.resolvedAt`, "must not precede createdAt"); const response = raw.response === null ? null : parseJsonValue(raw.response, `${path}.response`); if (status === "pending" && response !== null) fail(`${path}.response`, "must be null while pending"); return { version: 1, id: str(raw.id, `${path}.id`), runId: str(raw.runId, `${path}.runId`), attemptId: nullableStr(raw.attemptId, `${path}.attemptId`), kind: choice(raw.kind, ["permission", "context", "user_input", "parent_input"] as const, `${path}.kind`), status, request: parseJsonValue(raw.request, `${path}.request`), response, createdAt, resolvedAt }; }
+function watchCondition(value: unknown, count: number | null, path: string): WatchConditionV1 { const raw = obj(value, path); v1(raw, path); const kind = choice(raw.kind, ["all", "any", "quorum", "deadline", "manual"] as const, `${path}.kind`); return kind === "quorum" ? { version: 1, kind, count: int(raw.count, `${path}.count`, 1, count ?? Number.MAX_SAFE_INTEGER) } : kind === "deadline" ? { version: 1, kind, at: int(raw.at, `${path}.at`) } : { version: 1, kind }; }
+export function parseAgentRunWatchDtoV1(value: unknown, path = "watch"): AgentRunWatchDtoV1 { const raw = obj(value, path); v1(raw, path); const runIds = strings(raw.runIds, `${path}.runIds`); const completionMode = choice(raw.completionMode, ["notify", "wake"] as const, `${path}.completionMode`); const parentRunId = nullableStr(raw.parentRunId, `${path}.parentRunId`); const parentNodeId = nullableStr(raw.parentNodeId, `${path}.parentNodeId`); const parentTurnId = nullableStr(raw.parentTurnId, `${path}.parentTurnId`); if ((parentNodeId === null) !== (parentTurnId === null)) fail(path, "parentNodeId and parentTurnId must be supplied together"); if (completionMode === "wake" && !parentRunId && !parentNodeId) fail(path, "wake requires a Parent target"); return { version: 1, id: str(raw.id, `${path}.id`), ownerUserId: str(raw.ownerUserId, `${path}.ownerUserId`), workspaceId: str(raw.workspaceId, `${path}.workspaceId`), runIds, condition: watchCondition(raw.condition, runIds.length || null, `${path}.condition`), completionMode, status: choice(raw.status, ["active", "fired", "cancelled"] as const, `${path}.status`), deliveryId: str(raw.deliveryId, `${path}.deliveryId`), requestedTurnId: str(raw.requestedTurnId, `${path}.requestedTurnId`), parentRunId, parentNodeId, parentTurnId, createdAt: int(raw.createdAt, `${path}.createdAt`), firedAt: raw.firedAt === null ? null : int(raw.firedAt, `${path}.firedAt`) }; }
+export function parseWaitAgentRunRequestV1(value: unknown, path = "wait"): WaitAgentRunRequestV1 { const raw = obj(value, path); v1(raw, path); const runId = raw.runId === undefined ? undefined : str(raw.runId, `${path}.runId`); const watchId = raw.watchId === undefined ? undefined : str(raw.watchId, `${path}.watchId`); if (Number(Boolean(runId)) + Number(Boolean(watchId)) !== 1) fail(path, "requires exactly one runId or watchId"); return { version: 1, ...(runId ? { runId } : {}), ...(watchId ? { watchId } : {}), timeoutMs: int(raw.timeoutMs, `${path}.timeoutMs`, 1, AGENT_RUN_LIMITS.waitMs) }; }
+export function parseAgentRunListQueryV1(value: unknown, path = "query"): AgentRunListQueryV1 { const raw = obj(value, path); v1(raw, path); return { version: 1, workspaceId: str(raw.workspaceId, `${path}.workspaceId`), ...(raw.statuses === undefined ? {} : { statuses: arr(raw.statuses, `${path}.statuses`, 8).map((s, i) => choice(s, Object.values(AgentRunStatus), `${path}.statuses[${i}]`)) }), ...(raw.q === undefined ? {} : { q: str(raw.q, `${path}.q`, AGENT_RUN_LIMITS.searchQuery, true) }), ...(raw.includeArchived === undefined ? {} : { includeArchived: bool(raw.includeArchived, `${path}.includeArchived`) }), ...(raw.limit === undefined ? {} : { limit: int(raw.limit, `${path}.limit`, 1, AGENT_RUN_LIMITS.searchPageSize) }), ...(raw.cursor === undefined ? {} : { cursor: raw.cursor === null ? null : str(raw.cursor, `${path}.cursor`) }) }; }
+export function parseAgentRunInputRequestV1(value: unknown, path = "input"): AgentRunInputRequestV1 { const raw = obj(value, path); v1(raw, path); return { version: 1, text: str(raw.text, `${path}.text`, AGENT_RUN_LIMITS.task), mode: choice(raw.mode, ["queued", "immediate"] as const, `${path}.mode`), expectedAttemptId: nullableStr(raw.expectedAttemptId, `${path}.expectedAttemptId`) }; }
+export function parseCancelAgentRunRequestV1(value: unknown, path = "cancel"): CancelAgentRunRequestV1 { const raw = obj(value, path); v1(raw, path); return { version: 1, expectedAttemptId: nullableStr(raw.expectedAttemptId, `${path}.expectedAttemptId`), reason: raw.reason === null ? null : str(raw.reason, `${path}.reason`, AGENT_RUN_LIMITS.description, true) }; }
+export function parseRespondAgentRunInteractionRequestV1(value: unknown, path = "interactionResponse"): RespondAgentRunInteractionRequestV1 { const raw = obj(value, path); v1(raw, path); return { version: 1, response: parseJsonValue(raw.response, `${path}.response`) }; }
+export function parseCreateAgentRunWatchRequestV1(value: unknown, path = "watch"): CreateAgentRunWatchRequestV1 { const raw = obj(value, path); v1(raw, path); const runIds = strings(raw.runIds, `${path}.runIds`); if (!runIds.length) fail(`${path}.runIds`, "must not be empty"); const completionMode = choice(raw.completionMode, ["notify", "wake"] as const, `${path}.completionMode`); const parentRunId = nullableStr(raw.parentRunId, `${path}.parentRunId`); const parentNodeId = nullableStr(raw.parentNodeId, `${path}.parentNodeId`); const parentTurnId = nullableStr(raw.parentTurnId, `${path}.parentTurnId`); if ((parentNodeId === null) !== (parentTurnId === null)) fail(path, "parentNodeId and parentTurnId must be supplied together"); if (completionMode === "wake" && !parentRunId && !parentNodeId) fail(path, "wake requires a Parent target"); return { version: 1, workspaceId: str(raw.workspaceId, `${path}.workspaceId`), runIds, condition: watchCondition(raw.condition, runIds.length, `${path}.condition`), completionMode, parentRunId, parentNodeId, parentTurnId }; }
+export function parseUpdateAgentRunWatchRequestV1(value: unknown, path = "watchUpdate"): UpdateAgentRunWatchRequestV1 { const raw = obj(value, path); v1(raw, path); const addRunIds = strings(raw.addRunIds, `${path}.addRunIds`); if (!addRunIds.length && raw.condition === undefined) fail(path, "requires addRunIds or condition"); return { version: 1, addRunIds, ...(raw.condition === undefined ? {} : { condition: watchCondition(raw.condition, Number.MAX_SAFE_INTEGER, `${path}.condition`) }) }; }
+export function parseSpawnAgentRunRequestV1(value: unknown, path = "spawn"): SpawnAgentRunRequestV1 { const raw = obj(value, path); v1(raw, path); const agentId = nullableStr(raw.agentId, `${path}.agentId`); const ephemeralDefinition = raw.ephemeralDefinition === null ? null : parseEffectiveAgentDefinitionV1(raw.ephemeralDefinition, `${path}.ephemeralDefinition`); if ((agentId === null) === (ephemeralDefinition === null)) fail(path, "requires exactly one agentId or ephemeralDefinition"); const invocationMode = choice(raw.invocationMode, Object.values(AgentRunInvocationMode), `${path}.invocationMode`); const environmentRaw = obj(raw.environment, `${path}.environment`); v1(environmentRaw, `${path}.environment`); const kind = choice(environmentRaw.kind, ["auto", "shared_workspace", "git_worktree"] as const, `${path}.environment.kind`); const environment: ExecutionEnvironmentRequestV1 = kind === "shared_workspace" ? { version: 1, kind, access: choice(environmentRaw.access, ["read_only", "read_write"] as const, `${path}.environment.access`) } : { version: 1, kind }; return { version: 1, workspaceId: str(raw.workspaceId, `${path}.workspaceId`), agentId, ephemeralDefinition, task: str(raw.task, `${path}.task`, AGENT_RUN_LIMITS.task), contextManifest: manifest(raw.contextManifest, `${path}.contextManifest`), permissionRestriction: raw.permissionRestriction === null ? null : policy(raw.permissionRestriction, `${path}.permissionRestriction`), environment, expectedResult: raw.expectedResult === null ? null : expectedResult(raw.expectedResult, `${path}.expectedResult`), completionMode: choice(raw.completionMode, Object.values(AgentRunCompletionMode), `${path}.completionMode`), invocationMode, runTtlMs: parseRunTtl(raw.runTtlMs, `${path}.runTtlMs`), ...anchors(raw, invocationMode, path) }; }
+export function parseAgentRunBackupFragmentV2(value: unknown, path = "backup"): AgentRunBackupFragmentV2 { assertSecretFreePublicPayload(value, path); const raw = obj(value, path); if (raw.version !== 2) fail(`${path}.version`, "must be 2"); const scope = choice(raw.scope, ["owner_full", "workspace"] as const, `${path}.scope`); const workspaceId = nullableStr(raw.workspaceId, `${path}.workspaceId`); if ((scope === "workspace") !== (workspaceId !== null)) fail(`${path}.workspaceId`, "is inconsistent with backup scope"); const rejectHostPaths = (item: unknown, p: string): void => { if (!item || typeof item !== "object") return; if (Array.isArray(item)) { item.forEach((child, index) => rejectHostPaths(child, `${p}[${index}]`)); return; } for (const [key, child] of Object.entries(item as Record<string, unknown>)) { if (key === "snapshotPath") fail(`${p}.${key}`, "Run-owned snapshot paths are forbidden in backups"); if (key === "cwd" && child !== null) fail(`${p}.${key}`, "execution cwd must be null in backups"); rejectHostPaths(child, `${p}.${key}`); } }; rejectHostPaths(raw, path); for (const key of ["definitions", "runs", "attempts", "events", "interactions", "watches", "deliveries"] as const) arr(raw[key], `${path}.${key}`, 100_000); return value as AgentRunBackupFragmentV2; }
+export function parseAgentRunSseEnvelopeV1(value: unknown, path = "sse"): AgentRunSseEnvelopeV1 { const raw = obj(value, path); v1(raw, path); const event = choice(raw.event, ["agent_run_event", "agent_run_gap", "heartbeat"] as const, `${path}.event`); const runId = nullableStr(raw.runId, `${path}.runId`); const seq = raw.seq === null ? null : int(raw.seq, `${path}.seq`); const eventData = raw.eventData === null ? null : parseAgentRunEventV1(raw.eventData, `${path}.eventData`); const gapAfterSeq = raw.gapAfterSeq === null ? null : int(raw.gapAfterSeq, `${path}.gapAfterSeq`, -1); if (event === "agent_run_event" && (!runId || seq === null || !eventData || eventData.runId !== runId || eventData.seq !== seq)) fail(path, "event identity does not match envelope"); if (event === "agent_run_gap" && (!runId || gapAfterSeq === null || eventData)) fail(path, "malformed gap envelope"); if (event === "heartbeat" && (runId || seq !== null || eventData || gapAfterSeq !== null)) fail(path, "heartbeat cannot carry Run data"); return { version: 1, event, runId, seq, eventData, gapAfterSeq, emittedAt: int(raw.emittedAt, `${path}.emittedAt`) }; }
+export const AgentRunValidators = { validateStatus: (value: unknown): value is AgentRunStatus => typeof value === "string" && Object.values(AgentRunStatus).includes(value as AgentRunStatus), validateDefinitionStatus: (value: unknown): value is AgentDefinitionStatus => typeof value === "string" && Object.values(AgentDefinitionStatus).includes(value as AgentDefinitionStatus), validateWaitingReason: (value: unknown): value is AgentRunWaitingReason => typeof value === "string" && Object.values(AgentRunWaitingReason).includes(value as AgentRunWaitingReason), validateTtl: (value: unknown): value is number | null => { try { parseRunTtl(value); return true; } catch { return false; } }, validateTransition: isValidAgentRunTransition };

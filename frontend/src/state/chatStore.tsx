@@ -20,7 +20,8 @@ import { joinMessageParts } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
-import { normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
+import { agentRunPaneId, normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
+import type { AgentResourceIdentity } from './agentIdentity';
 import { getElectron } from '../lib/electronBridge';
 import { useNavHistory, type NavEntry } from './navHistory';
 import { navigateToNode } from './navigateToNode';
@@ -170,7 +171,14 @@ export const HIGH_FREQ_ACTIONS: ReadonlySet<ChatAction['type']> = new Set([
   'set-composer-draft',
 ]);
 
-const ChatContext = createContext<ChatContextValue | null>(null);
+interface AgentRunPaneActions {
+  openAgentRunPane: (identity: AgentResourceIdentity, workspaceId: string, title?: string) => string;
+}
+
+type ExtendedChatContextValue = ChatContextValue & AgentRunPaneActions;
+type ExtendedChatActionsValue = ChatActionsValue & AgentRunPaneActions;
+
+const ChatContext = createContext<ExtendedChatContextValue | null>(null);
 
 interface ChatNodeStoreValue {
   getNode: (nodeId: string) => ChatNodeState | undefined;
@@ -190,7 +198,7 @@ interface ChatNodeStoreValue {
  * useStructuralSelector, or useChatNodesSnapshot — not this raw context.
  */
 export const ChatNodeStoreContext = createContext<ChatNodeStoreValue | null>(null);
-const ChatActionsContext = createContext<ChatActionsValue | null>(null);
+const ChatActionsContext = createContext<ExtendedChatActionsValue | null>(null);
 const ChatProjectsContext = createContext<ChatProjectsValue | null>(null);
 
 /**
@@ -2332,6 +2340,33 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return item.id;
   }, [openPane, registerPaneItem]);
 
+  const openAgentRunPane = useCallback((
+    identity: AgentResourceIdentity,
+    workspaceId: string,
+    title = 'Agent Run',
+  ): string => {
+    const project = projectsRef.current.find((candidate) => candidate.id === workspaceId && !candidate.deletedAt);
+    if (!project) throw new Error('Agent Run workspace is not available');
+    if (activeProjectIdRef.current !== workspaceId) selectProject(workspaceId);
+    const id = agentRunPaneId(identity.backendConnectionId, identity.id);
+    const item: PaneItem = {
+      id,
+      kind: 'agent-run',
+      projectId: workspaceId,
+      treeId: null,
+      title,
+      createdAt: Date.now(),
+      backendConnectionId: identity.backendConnectionId,
+      runId: identity.id,
+    };
+    registerPaneItem(item);
+    const treeId = project.activeTreeId;
+    if (treeId) openPaneInTree(workspaceId, treeId, id);
+    setFocusedNodeIdState(null);
+    window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+    return id;
+  }, [openPaneInTree, registerPaneItem, selectProject]);
+
   const openFilePane = useCallback((filePath: string): string => {
     if (!activeProjectId) throw new Error('No active project');
     const normalized = filePath.trim();
@@ -2852,7 +2887,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     ],
   );
 
-  const value = useMemo<ChatContextValue>(
+  const value = useMemo<ExtendedChatContextValue>(
     () => ({
       projects,
       activeProjectId,
@@ -2922,6 +2957,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openDiffPane,
       openTerminalPane,
       openBrowserPane,
+      openAgentRunPane,
       updatePaneItem,
       paneItems,
       openPanes,
@@ -3047,6 +3083,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openDiffPane,
       openTerminalPane,
       openBrowserPane,
+      openAgentRunPane,
       updatePaneItem,
       paneItems,
       openPanes,
@@ -3112,7 +3149,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     ],
   );
 
-  const hotActions = useMemo<ChatActionsValue>(
+  const hotActions = useMemo<ExtendedChatActionsValue>(
     () => ({
       createProject,
       enterChatsWorkspace,
@@ -3182,6 +3219,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openDiffPane,
       openTerminalPane,
       openBrowserPane,
+      openAgentRunPane,
       updatePaneItem,
       setUnreadFilterOn,
       markAllRead,
@@ -3259,6 +3297,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openDiffPane,
       openTerminalPane,
       openBrowserPane,
+      openAgentRunPane,
       updatePaneItem,
       setUnreadFilterOn,
       markAllRead,
@@ -3280,13 +3319,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 }
 
-export function useChatStore(): ChatContextValue {
+export function useChatStore(): ExtendedChatContextValue {
   const v = useContext(ChatContext);
   if (!v) throw new Error('useChatStore must be used within ChatProvider');
   return v;
 }
 
-export function useChatActions(): ChatActionsValue {
+export function useChatActions(): ExtendedChatActionsValue {
   const v = useContext(ChatActionsContext);
   if (!v) throw new Error('useChatActions must be used within ChatProvider');
   return v;

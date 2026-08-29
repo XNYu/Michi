@@ -11,6 +11,23 @@ import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
 import { shouldShowFollowUps } from '../../state/followUpsVisibility';
 import { usageIsUnverifiable } from 'michi-shared';
+import { useAgentDomain } from '../../state/agentDomain';
+import { useChatActions } from '../../state/chatStore';
+import { backendConnectionIdForWorkspace } from '../../config/backendConnections';
+import { AgentRunCardGroup } from './agentRuns/AgentRunCard';
+import { selectParentRunCards } from './agentRuns/agentRunSelectors';
+import { agentResourceKey } from '../../state/agentIdentity';
+
+function useOptionalAgentRunUi() {
+  try {
+    const domain = useAgentDomain();
+    const actions = useChatActions();
+    return { domain, actions };
+  } catch {
+    // PaneMessageList has intentionally provider-free render/perf unit tests.
+    return null;
+  }
+}
 
 interface PaneMessageListProps {
   node: ChatNodeState;
@@ -74,6 +91,8 @@ function PaneMessageListInner({
   onMentionClick,
   onTestConnection,
 }: PaneMessageListProps) {
+  const agentRunUi = useOptionalAgentRunUi();
+  const backendConnectionId = backendConnectionIdForWorkspace(node.projectId);
   const tailAssistantId = React.useMemo(() => {
     // Backward scan (no array copy) — this recomputes on every stream chunk
     // since the reducer hands a fresh messages array each chunk, so the old
@@ -163,6 +182,9 @@ function PaneMessageListInner({
           ? node.messages.findIndex((msg) => msg.id === editingMessageId)
           : -1;
         const isDownstream = editingIdx >= 0 && i > editingIdx;
+        const parentRuns = agentRunUi && !isUser
+          ? selectParentRunCards(Object.values(agentRunUi.domain.state.runs), backendConnectionId, m.id)
+          : [];
 
         return (
           <React.Fragment key={m.id}>
@@ -253,6 +275,31 @@ function PaneMessageListInner({
                   message that spawned the agents. Render it inline within that
                   turn's frame (not detached at the bottom of the conversation). */}
               {!isUser && m.id === tailAssistantId && <SubagentStatus node={node} />}
+              {parentRuns.length > 0 && (
+                <div style={{ margin: '8px 0 2px' }}>
+                  <AgentRunCardGroup
+                    runs={parentRuns}
+                    onOpen={(identity) => {
+                      const resource = agentRunUi?.domain.state.runs[agentResourceKey(identity)];
+                      agentRunUi?.actions.openAgentRunPane(
+                        identity,
+                        node.projectId,
+                        resource?.value.effectiveDefinition.name,
+                      );
+                    }}
+                    onOpenAll={(identities) => {
+                      for (const identity of identities) {
+                        const resource = agentRunUi?.domain.state.runs[agentResourceKey(identity)];
+                        agentRunUi?.actions.openAgentRunPane(
+                          identity,
+                          node.projectId,
+                          resource?.value.effectiveDefinition.name,
+                        );
+                      }
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </React.Fragment>
         );
