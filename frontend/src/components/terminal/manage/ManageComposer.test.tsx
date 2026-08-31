@@ -84,7 +84,7 @@ describe('ManageComposer', () => {
         onSubmitted={onSubmitted}
       />,
     );
-    const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
+    const ta = await screen.findByRole('textbox') as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: 'hello there' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     await waitFor(() => {
@@ -107,7 +107,7 @@ describe('ManageComposer', () => {
     );
     unmountFirst = first.unmount;
 
-    const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
+    const ta = await screen.findByRole('textbox') as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: 'do not haunt home' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
 
@@ -120,7 +120,7 @@ describe('ManageComposer', () => {
         onSubmitted={vi.fn()}
       />,
     );
-    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
+    expect((await screen.findByRole('textbox') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('does not submit empty input', () => {

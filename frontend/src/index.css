@@ -2617,6 +2617,13 @@ html[data-vibrancy="on"],
   cursor: pointer;
 }
 
+/* ── Composer lazy-load fallback ────────────────────────────────────────────── */
+.composer-loading-stub {
+  min-height: calc(var(--composer-body-size, var(--message-body-size, 14px)) * 1.5 * 1.5);
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── MentionEditor (TipTap composer) ─────────────────────────────────────────
    Replaces the old transparent-textarea + overlay composer. The contenteditable
    matches the message-body typography (you type in the same metrics as a rendered

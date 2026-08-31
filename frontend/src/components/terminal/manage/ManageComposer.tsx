@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '../../../state/chatStore';
-import MentionEditor, { type MentionEditorHandle } from '../../MentionEditor';
+import type { MentionEditorHandle } from '../../MentionEditor';
+const MentionEditor = React.lazy(() => import('../../MentionEditor'));
 import type { MentionRecord } from '../../mentions';
 import { expandMentions } from '../../mentions';
 import { getElectron } from '../../../lib/electronBridge';
@@ -590,6 +591,7 @@ export default function ManageComposer({
           </>
         }
         input={
+          <React.Suspense fallback={<div className="composer-loading-stub" />}>
           <MentionEditor
             ref={inputRef}
             value={draft.value}
@@ -603,6 +605,7 @@ export default function ManageComposer({
             onSubmit={() => submit()}
             onPaste={(e) => { void handlePaste(e as unknown as React.ClipboardEvent<HTMLTextAreaElement>); }}
           />
+          </React.Suspense>
         }
         toolbarLeft={<>
           {toolbarLeftPrefix}

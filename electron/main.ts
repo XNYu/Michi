@@ -50,6 +50,18 @@ if (isDev && process.env.MICHI_ELECTRON_USER_DATA_DIR) {
 // owns the flag so the CSS never assumes see-through the window doesn't have.
 const VIBRANCY_ENABLED = process.platform === 'darwin' && process.env.MICHI_NO_VIBRANCY !== '1';
 
+// Minimal skeleton HTML shown immediately while the backend starts. Matches
+// the app's warm light / dark background so the transition to the real UI is
+// seamless. Loaded via data: URL — no network, no disk read.
+const SKELETON_HTML = `<!DOCTYPE html>
+<html style="margin:0;height:100%">
+<head><meta charset="utf-8"><title>Michi</title></head>
+<body style="margin:0;height:100%;display:flex;align-items:center;justify-content:center;
+  font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  background:${VIBRANCY_ENABLED ? 'transparent' : '#F5F2EE'};color:#8B7E74;font-size:13px">
+<div style="opacity:0.6">loading…</div>
+</body></html>`;
+
 // Capture once at load — Electron may not chdir, but be defensive.
 // `bin/michi` forwards the shell's pwd via `open --env MICHI_LAUNCH_CWD=…`
 // because `open` doesn't inherit cwd. Direct `electron …` invocations
@@ -730,7 +742,13 @@ function resolveBackendEntry(): string | null {
   return candidate;
 }
 
-async function startBackend(): Promise<number | null> {
+/**
+ * Fork the backend child and return the port immediately — does NOT wait for
+ * /api/health. Callers that need readiness should follow up with
+ * waitForBackend(port). This split lets us show a skeleton window in parallel
+ * with backend startup.
+ */
+async function forkBackend(): Promise<number | null> {
   const entry = resolveBackendEntry();
   if (!entry) {
     startupMark('backend_external_dev', { isDev });
@@ -789,16 +807,6 @@ async function startBackend(): Promise<number | null> {
     elog('WARN', 'boot', 'backend child exited', { code, signal });
     backendChild = null;
   });
-  try {
-    startupMark('backend_health_wait_start', { port });
-    await waitForBackend(port);
-    elog('INFO', 'boot', 'backend ready', { port });
-    startupMark('backend_health_ready', { port });
-  } catch (err) {
-    elog('ERROR', 'boot', 'backend did not become ready', { port, err: (err as Error).message });
-    startupMark('backend_health_failed', { port, error: (err as Error).message });
-    throw err;
-  }
   return port;
 }
 
@@ -877,7 +885,7 @@ function buildAppMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createWindow(backendPort: number | null): Promise<void> {
+async function createWindow(backendPort: number | null, healthPromise?: Promise<void>): Promise<void> {
   const slot = nextWindowSlot++;
   const savedState = loadWindowState(slot);
   const cascade = slot * 32;
@@ -1005,6 +1013,17 @@ async function createWindow(backendPort: number | null): Promise<void> {
     }
   } else {
     if (backendPort) {
+      // In production the backend serves the frontend HTML. If we have a
+      // pending health promise, show a local skeleton immediately so the
+      // window appears while the backend is still starting, then navigate
+      // once the backend is ready.
+      if (healthPromise) {
+        startupMark('skeleton_load_start', { slot });
+        await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(SKELETON_HTML)}`);
+        startupMark('skeleton_load_done', { slot });
+        // Window is visible with the skeleton; now wait for the backend.
+        await healthPromise;
+      }
       const url = withWindowId(`http://127.0.0.1:${backendPort}`);
       startupMark('renderer_load_start', { url, slot });
       await win.loadURL(withStartupTraceQuery(url));
@@ -1289,10 +1308,36 @@ app.whenReady().then(async () => {
       if (fs.existsSync(devIcon)) app.dock.setIcon(devIcon);
     }
     buildAppMenu();
-    const backendPort = await startBackend();
+
+    // Fork the backend and get the port immediately (fast: ~50ms for port
+    // selection + fork), then create the window in parallel with the health
+    // wait. In dev mode forkBackend returns null (external Vite serves the
+    // frontend); in prod the backend serves the frontend HTML so the window
+    // initially loads a local skeleton and navigates once health passes.
+    const backendPort = await forkBackend();
     resolvedBackendPort = backendPort;
+
+    // Start backend health check and window creation in parallel.
+    const healthPromise = backendPort != null
+      ? (async () => {
+          try {
+            startupMark('backend_health_wait_start', { port: backendPort });
+            await waitForBackend(backendPort);
+            elog('INFO', 'boot', 'backend ready', { port: backendPort });
+            startupMark('backend_health_ready', { port: backendPort });
+          } catch (err) {
+            elog('ERROR', 'boot', 'backend did not become ready', { port: backendPort, err: (err as Error).message });
+            startupMark('backend_health_failed', { port: backendPort, error: (err as Error).message });
+            throw err;
+          }
+        })()
+      : Promise.resolve();
+
     await installDevExtensions();
-    await createWindow(backendPort);
+    await createWindow(backendPort, healthPromise);
+
+    // Wait for backend health to finish (may already be resolved by now).
+    await healthPromise;
     elog('INFO', 'boot', 'window created', { backendPort });
     initAutoUpdate({
       isDev,

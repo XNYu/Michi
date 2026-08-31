@@ -1,5 +1,6 @@
 export type FrontendChunkName =
   | 'react-vendor'
+  | 'editor-tiptap'
   | 'markdown-code'
   | 'markdown-streamdown';
 
@@ -18,6 +19,15 @@ export function frontendManualChunk(id: string): FrontendChunkName | undefined {
     id.includes('node_modules/katex')
   )
     return undefined;
+
+  // TipTap + ProseMirror are only needed once the composer mounts. Keep them
+  // off the critical boot path in their own lazy chunk so cold-start parse/eval
+  // skips the entire rich-text editing stack.
+  if (
+    id.includes('node_modules/@tiptap/') ||
+    id.includes('node_modules/prosemirror-')
+  )
+    return 'editor-tiptap';
 
   // Keep shiki langs/themes as separate Rollup-managed dynamic chunks.
   // Only bundle shiki core+engine into markdown-code so it ships once

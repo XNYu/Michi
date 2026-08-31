@@ -5,7 +5,8 @@ import { usePrefs } from '../../state/prefs';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { stripBranchPrefix, parseFanoutCommand, shouldBranchOnSubmit } from '../nodes/chatNodeUtils';
 import SelectionActions from '../SelectionActions';
-import MentionEditor, { type MentionEditorHandle } from '../MentionEditor';
+import type { MentionEditorHandle } from '../MentionEditor';
+const MentionEditor = React.lazy(() => import('../MentionEditor'));
 import type { MentionRecord } from '../mentions';
 import { expandMentions } from '../mentions';
 import { findTreeIdForNode } from '../../state/tree';
@@ -2134,6 +2135,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         input={
           <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
+            <React.Suspense fallback={<div className="composer-loading-stub" />}>
             <MentionEditor
               ref={inputRef}
               value={draft.value}
@@ -2152,6 +2154,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               onSubmit={({ branch }) => observing ? undefined : void onSubmit(branch)}
               onPaste={(e) => { void handlePaste(e as unknown as React.ClipboardEvent<HTMLTextAreaElement>); }}
             />
+            </React.Suspense>
             {observing && !draftHasText && (
               <div className="composer-observing-hint" aria-hidden>
                 Viewing — another window is editing

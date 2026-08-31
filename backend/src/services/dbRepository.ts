@@ -1545,10 +1545,99 @@ export function loadWorkspaceMeta(id: string, userId?: string): MetaWorkspaceDat
 }
 
 export function loadAllWorkspacesMeta(userId?: string): MetaWorkspaceData[] {
+  const db = getDb();
+  const isCloud = process.env.MICHI_CLOUD === '1' && userId;
+
+  // Batch: fetch ALL rows for every table in one query each, then group by
+  // workspace_id in JS. This replaces the previous N+1 pattern (6 queries per
+  // workspace) with 6 queries total, independent of workspace count.
   const workspaces = listWorkspaces(userId);
-  return workspaces
-    .map(ws => loadWorkspaceMeta(ws.id, userId))
-    .filter((d): d is MetaWorkspaceData => d !== null);
+  if (workspaces.length === 0) return [];
+
+  const wsIds = new Set(workspaces.map(w => w.id));
+
+  let allTrees: TreeRow[];
+  let allNodes: NodeRow[];
+  let allEdges: EdgeRow[];
+  let allContexts: ContextRow[];
+
+  if (isCloud) {
+    allTrees = db.prepare(
+      'SELECT t.* FROM trees t JOIN workspaces w ON t.workspace_id = w.id WHERE w.owner_user_id = ? ORDER BY t.last_active_at DESC'
+    ).all(userId) as unknown as TreeRow[];
+    allNodes = db.prepare(
+      'SELECT n.* FROM nodes n JOIN workspaces w ON n.workspace_id = w.id WHERE w.owner_user_id = ? AND n.purged_at IS NULL'
+    ).all(userId) as unknown as NodeRow[];
+    allEdges = db.prepare(
+      'SELECT e.* FROM edges e JOIN workspaces w ON e.workspace_id = w.id WHERE w.owner_user_id = ?'
+    ).all(userId) as unknown as EdgeRow[];
+    allContexts = db.prepare(
+      'SELECT c.* FROM contexts c JOIN workspaces w ON c.workspace_id = w.id WHERE w.owner_user_id = ? ORDER BY c.created_at ASC'
+    ).all(userId) as unknown as ContextRow[];
+  } else {
+    allTrees = db.prepare('SELECT * FROM trees ORDER BY last_active_at DESC').all() as unknown as TreeRow[];
+    allNodes = db.prepare('SELECT * FROM nodes WHERE purged_at IS NULL').all() as unknown as NodeRow[];
+    allEdges = db.prepare('SELECT * FROM edges').all() as unknown as EdgeRow[];
+    allContexts = db.prepare('SELECT * FROM contexts ORDER BY created_at ASC').all() as unknown as ContextRow[];
+  }
+
+  // Group by workspace_id
+  const treesByWs = new Map<string, TreeRow[]>();
+  for (const t of allTrees) {
+    if (!wsIds.has(t.workspace_id)) continue;
+    const arr = treesByWs.get(t.workspace_id);
+    if (arr) arr.push(t); else treesByWs.set(t.workspace_id, [t]);
+  }
+  const nodesByWs = new Map<string, NodeRow[]>();
+  for (const n of allNodes) {
+    if (!wsIds.has(n.workspace_id)) continue;
+    const arr = nodesByWs.get(n.workspace_id);
+    if (arr) arr.push(n); else nodesByWs.set(n.workspace_id, [n]);
+  }
+  const edgesByWs = new Map<string, EdgeRow[]>();
+  for (const e of allEdges) {
+    if (!wsIds.has(e.workspace_id)) continue;
+    const arr = edgesByWs.get(e.workspace_id);
+    if (arr) arr.push(e); else edgesByWs.set(e.workspace_id, [e]);
+  }
+  const contextsByWs = new Map<string, ContextRow[]>();
+  for (const c of allContexts) {
+    if (!wsIds.has(c.workspace_id)) continue;
+    const arr = contextsByWs.get(c.workspace_id);
+    if (arr) arr.push(c); else contextsByWs.set(c.workspace_id, [c]);
+  }
+
+  // Batched message counts — single GROUP BY across ALL nodes
+  const allNodeIds = allNodes.filter(n => wsIds.has(n.workspace_id)).map(n => n.id);
+  const countByNode = new Map<string, number>();
+  if (allNodeIds.length > 0) {
+    // SQLite has a variable limit (~999 by default). Chunk if needed.
+    const CHUNK = 900;
+    for (let i = 0; i < allNodeIds.length; i += CHUNK) {
+      const chunk = allNodeIds.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = db.prepare(
+        `SELECT node_id, COUNT(*) as cnt FROM messages WHERE node_id IN (${placeholders}) GROUP BY node_id`
+      ).all(...chunk) as unknown as Array<{ node_id: string; cnt: number }>;
+      for (const r of rows) countByNode.set(r.node_id, r.cnt);
+    }
+  }
+
+  return workspaces.map(ws => {
+    const nodes = nodesByWs.get(ws.id) ?? [];
+    const nodesWithCount: NodeRowWithCount[] = nodes.map(n => ({
+      ...n,
+      message_count: countByNode.get(n.id) ?? 0,
+    }));
+    return {
+      workspace: ws,
+      trees: treesByWs.get(ws.id) ?? [],
+      nodes: nodesWithCount,
+      edges: edgesByWs.get(ws.id) ?? [],
+      messages: [] as never[],
+      contexts: contextsByWs.get(ws.id) ?? [],
+    };
+  });
 }
 
 /**
