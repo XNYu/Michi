@@ -104,42 +104,201 @@ describe('AcpClient cancellation transport', () => {
   });
 });
 
-describe('AcpClient MCP tool-result backfill', () => {
-  test('injects a tool_call_update only for an in-flight placeholder tool', () => {
+describe('AcpClient subagent routing (per-tool-call Map)', () => {
+  /** Helper: build a minimal AcpClient with fake internals for dispatch testing. */
+  function makeTestClient(): any {
     const client = new AcpClient('/bin/false', '/tmp') as any;
-    const pushed: any[] = [];
-    client.sessionQueues.set('s1', { push: (item: unknown) => pushed.push(item) });
-    client.sessionInFlight.set('s1', Promise.resolve());
-    client.inflightToolBySession.set('s1', { toolCallId: 'tc-1', lastOutput: { success: true } });
+    // Create fake session queues so dispatch can route events
+    const queues = new Map<string, { items: any[] }>();
+    const makeQueue = (sid: string) => {
+      const q = { items: [] as any[], push(item: any) { this.items.push(item); } };
+      queues.set(sid, q);
+      client.sessionQueues.set(sid, q);
+      return q;
+    };
+    return { client, queues, makeQueue };
+  }
 
-    assert.equal(client.backfillToolOutput('s1', { content: [{ type: 'text', text: '{"n":2}' }] }), true);
-    assert.equal(pushed.length, 1);
-    assert.deepEqual(pushed[0].update, {
-      sessionUpdate: 'tool_call_update',
-      toolCallId: 'tc-1',
-      rawOutput: '{"n":2}',
-    });
+  function toolCallMsg(sessionId: string, toolCallId: string, title: string) {
+    return {
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId,
+        update: { sessionUpdate: 'tool_call', toolCallId, title },
+      },
+    };
+  }
+
+  function toolCallUpdateMsg(sessionId: string, toolCallId: string, status: string) {
+    return {
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId,
+        update: { sessionUpdate: 'tool_call_update', toolCallId, status },
+      },
+    };
+  }
+
+  function listUpdateMsg(subagents: Array<{ sessionId?: string; name?: string; status?: string }>) {
+    return {
+      jsonrpc: '2.0',
+      method: '_kiro.dev/subagent/list_update',
+      params: { subagents },
+    };
+  }
+
+  test('routes list_update to the correct session when only one owner exists', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+    const qB = makeQueue('session-B');
+
+    // Session A triggers a subagent tool call
+    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
+
+    // list_update arrives — should route to session-A only
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
+
+    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(aUpdates.length, 1, 'session-A should receive the list_update');
+    assert.equal(bUpdates.length, 0, 'session-B should NOT receive the list_update');
+    assert.equal(aUpdates[0].update.subagents[0].name, 'gpu-coder');
   });
 
-  test('does not invent a toolCallId when none is in flight', () => {
-    const client = new AcpClient('/bin/false', '/tmp') as any;
-    const pushed: any[] = [];
-    client.sessionQueues.set('s1', { push: (item: unknown) => pushed.push(item) });
-    client.sessionInFlight.set('s1', Promise.resolve());
-    assert.equal(client.backfillToolOutput('s1', { content: [{ type: 'text', text: 'x' }] }), false);
-    assert.equal(pushed.length, 0);
+  test('does not route list_update to a session whose tool_call already completed', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+    const qB = makeQueue('session-B');
+
+    // Session A triggers and completes a subagent tool call
+    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
+    client.dispatch(toolCallUpdateMsg('session-A', 'tc-1', 'completed'));
+
+    // Session B triggers a subagent tool call
+    client.dispatch(toolCallMsg('session-B', 'tc-2', 'subagent'));
+
+    // list_update arrives — should route to session-B only
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-2', name: 'gpu-research', status: 'Running' }]));
+
+    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(aUpdates.length, 0, 'completed session-A should NOT receive list_update');
+    assert.equal(bUpdates.length, 1, 'session-B should receive the list_update');
   });
 
-  test('does not overwrite a real existing output', () => {
-    const client = new AcpClient('/bin/false', '/tmp') as any;
-    const pushed: any[] = [];
-    client.sessionQueues.set('s1', { push: (item: unknown) => pushed.push(item) });
-    client.sessionInFlight.set('s1', Promise.resolve());
-    client.inflightToolBySession.set('s1', {
-      toolCallId: 'tc-1',
-      lastOutput: { items: [{ Json: { ok: true } }] },
+  test('concurrent owners: most recently registered wins (LIFO)', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+    const qB = makeQueue('session-B');
+
+    // Both sessions trigger subagent tool calls — B is registered second
+    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
+    client.dispatch(toolCallMsg('session-B', 'tc-2', 'spawn'));
+
+    // list_update should route to session-B (most recent)
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
+
+    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(aUpdates.length, 0, 'session-A (older) should NOT receive the list_update');
+    assert.equal(bUpdates.length, 1, 'session-B (newer) should receive the list_update');
+  });
+
+  test('after the most recent owner completes, the remaining owner takes over', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+    const qB = makeQueue('session-B');
+
+    // Both sessions trigger subagent tool calls
+    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
+    client.dispatch(toolCallMsg('session-B', 'tc-2', 'task'));
+
+    // B completes → A should become the sole owner
+    client.dispatch(toolCallUpdateMsg('session-B', 'tc-2', 'completed'));
+
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
+
+    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(aUpdates.length, 1, 'session-A (remaining) should receive the list_update');
+    assert.equal(bUpdates.length, 0, 'session-B (completed) should NOT receive list_update');
+  });
+
+  test('no owners → list_update is silently discarded', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+
+    // No tool_call registered — list_update should be dropped
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
+
+    const updates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(updates.length, 0, 'list_update should be discarded when there are no owners');
+  });
+
+  test('empty roster does not clear another session\'s parent mappings', () => {
+    const { client, makeQueue } = makeTestClient();
+    makeQueue('session-A');
+    makeQueue('session-B');
+
+    // Both sessions trigger subagent tool calls
+    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
+    client.dispatch(toolCallMsg('session-B', 'tc-2', 'agent'));
+
+    // Roster with entries → builds parent mapping for the most recent owner (B)
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'coder', status: 'Running' }]));
+    assert.equal(client.subagentParentMap.get('sub-1'), 'session-B');
+
+    // B completes. A becomes sole owner. Push a new sub for A.
+    client.dispatch(toolCallUpdateMsg('session-B', 'tc-2', 'completed'));
+    client.dispatch(listUpdateMsg([
+      { sessionId: 'sub-2', name: 'researcher', status: 'Running' },
+    ]));
+    assert.equal(client.subagentParentMap.get('sub-2'), 'session-A');
+
+    // Empty roster → should clear A's mappings only
+    client.dispatch(listUpdateMsg([]));
+    // sub-2 was mapped to A → should be cleared
+    assert.equal(client.subagentParentMap.has('sub-2'), false);
+  });
+
+  test('tool_call without toolCallId does not register ownership', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+
+    // tool_call with no toolCallId → should not register
+    client.dispatch({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-A',
+        update: { sessionUpdate: 'tool_call', title: 'agent' },
+      },
     });
-    assert.equal(client.backfillToolOutput('s1', { content: [{ type: 'text', text: 'late' }] }), false);
-    assert.equal(pushed.length, 0);
+
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'coder', status: 'Running' }]));
+
+    const updates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(updates.length, 0, 'no ownership → event discarded');
+  });
+
+  test('error status also releases ownership', () => {
+    const { client, makeQueue } = makeTestClient();
+    const qA = makeQueue('session-A');
+    const qB = makeQueue('session-B');
+
+    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
+    client.dispatch(toolCallUpdateMsg('session-A', 'tc-1', 'error'));
+
+    // Session B triggers after A errored
+    client.dispatch(toolCallMsg('session-B', 'tc-2', 'agent'));
+
+    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'coder', status: 'Running' }]));
+
+    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
+    assert.equal(aUpdates.length, 0);
+    assert.equal(bUpdates.length, 1);
   });
 });
