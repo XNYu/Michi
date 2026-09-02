@@ -41,8 +41,24 @@ const DEFAULT_PROCESS_CAP = parseInt(process.env.MICHI_KIRO_MAX_PROCESSES ?? "20
  */
 const DEFAULT_IDLE_TTL_MS = parseInt(process.env.MICHI_KIRO_IDLE_TTL_MS ?? "300000", 10);
 
-export { KiroConcurrencyError, AcpConcurrencyError } from "../acp/AcpRuntime";
-export type { OpenSessionResult, LoadSessionResult, McpSlotCallbacksFactory } from "../acp/AcpRuntime";
+/**
+ * Number of pre-warmed ACP sessions to keep per cwd. When a warmed session is
+ * consumed, the pool replenishes in the background up to this depth. Higher
+ * values reduce cold-start latency when many threads open concurrently at the
+ * cost of idle session memory. Default 3.
+ */
+const WARM_POOL_SIZE = Math.max(1, parseInt(process.env.MICHI_KIRO_WARM_POOL_SIZE ?? "3", 10));
+
+export interface OpenSessionResult {
+    sid: string;
+    slotId?: string;
+    modes?: any;
+}
+export interface LoadSessionResult {
+    sid: string;
+    slotId?: string;
+    modes?: any;
+}
 
 /**
  * Internal binding record for a Kiro runtime session. Keyed by the public
@@ -138,7 +154,7 @@ export class KiroRuntime implements AgentRuntime {
      * the slot's parentChatId from the "__pending__" sentinel to the
      * real sessionId.
      */
-    private warmedSessions = new Map<string, { sid: string; slotId?: string; currentModeId?: string }>();
+    private warmedSessions = new Map<string, Array<{ sid: string; slotId?: string; currentModeId?: string }>>();
     /** Dedupes concurrent warm-next calls per cwd. */
     private warmSessionLocks = new Map<string, Promise<void>>();
     /** sessionId → ACP currentModeId (per-session; availableModes is global). */
@@ -405,12 +421,14 @@ export class KiroRuntime implements AgentRuntime {
         }
         const warmed = this.warmedSessions.get(cwd);
         if (warmed) {
-            if (warmed.slotId) {
-                this.mcpRegistry?.dispose(warmed.slotId);
+            for (const entry of warmed) {
+                if (entry.slotId) {
+                    this.mcpRegistry?.dispose(entry.slotId);
+                }
+                this.sessionCurrentMode.delete(entry.sid);
+                this.sessionCurrentModel.delete(entry.sid);
             }
             this.warmedSessions.delete(cwd);
-            this.sessionCurrentMode.delete(warmed.sid);
-            this.sessionCurrentModel.delete(warmed.sid);
         }
     }
 
@@ -1008,7 +1026,8 @@ export class KiroRuntime implements AgentRuntime {
      * need to close over a slotId getter and route to ChatManager state.
      */
     warmNextSession(cwd: string): void {
-        if (this.warmedSessions.has(cwd)) return;
+        const pool = this.warmedSessions.get(cwd);
+        if (pool && pool.length >= WARM_POOL_SIZE) return;
         if (this.warmSessionLocks.has(cwd)) return;
         const makeCallbacks: McpSlotCallbacksFactory = (getSlotId) => this.makeSlotCallbacks(getSlotId);
         const p = (async () => {
@@ -1021,12 +1040,23 @@ export class KiroRuntime implements AgentRuntime {
                     if (slotId) await this.mcpRegistry?.dispose(slotId);
                     return;
                 }
-                this.warmedSessions.set(cwd, { sid, slotId, currentModeId: modes?.currentModeId });
-                perf.measure("warm:session_ready", t0, { cwd, sid });
+                const entry = { sid, slotId, currentModeId: modes?.currentModeId };
+                const existing = this.warmedSessions.get(cwd);
+                if (existing) {
+                    existing.push(entry);
+                } else {
+                    this.warmedSessions.set(cwd, [entry]);
+                }
+                perf.measure("warm:session_ready", t0, { cwd, sid, poolSize: (existing?.length ?? 1) });
             } catch (err) {
                 console.warn(`[kiroRuntime] warmNextSession(${cwd}) failed:`, err);
             } finally {
                 this.warmSessionLocks.delete(cwd);
+                // Continue filling the pool if still below target.
+                const currentPool = this.warmedSessions.get(cwd);
+                if (!currentPool || currentPool.length < WARM_POOL_SIZE) {
+                    this.warmNextSession(cwd);
+                }
             }
         })();
         this.warmSessionLocks.set(cwd, p);
@@ -1046,9 +1076,10 @@ export class KiroRuntime implements AgentRuntime {
      * — so callers don't have to thread the mode through themselves.
      */
     consumeWarmedSession(cwd: string): { sid: string; slotId?: string; currentModeId?: string } | undefined {
-        const entry = this.warmedSessions.get(cwd);
-        if (!entry) return undefined;
-        this.warmedSessions.delete(cwd);
+        const pool = this.warmedSessions.get(cwd);
+        if (!pool || pool.length === 0) return undefined;
+        const entry = pool.shift()!;
+        if (pool.length === 0) this.warmedSessions.delete(cwd);
         if (entry.currentModeId) {
             this.sessionCurrentMode.set(entry.sid, entry.currentModeId);
         }
@@ -1064,7 +1095,7 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Snapshot of the warmed-session entries (for shutdown slot release). */
     listWarmedSessions(): Array<{ sid: string; slotId?: string; currentModeId?: string }> {
-        return [...this.warmedSessions.values()];
+        return [...this.warmedSessions.values()].flat();
     }
 
     /** currentModeId for a session (undefined if unknown). */
@@ -1664,8 +1695,10 @@ export class KiroRuntime implements AgentRuntime {
         this.cwdLastActivity.clear();
 
         // Release slots held by warmed (unclaimed) sessions before dropping clients.
-        for (const entry of this.warmedSessions.values()) {
-            if (entry.slotId) await this.mcpRegistry?.dispose(entry.slotId);
+        for (const pool of this.warmedSessions.values()) {
+            for (const entry of pool) {
+                if (entry.slotId) await this.mcpRegistry?.dispose(entry.slotId);
+            }
         }
         // Release slots bound to live sessions.
         for (const slotId of this.slotByChatId.values()) await this.mcpRegistry?.dispose(slotId);
