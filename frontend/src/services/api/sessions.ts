@@ -197,6 +197,22 @@ export interface EnsureSessionResult {
   resumeReason?: string;
 }
 
+/**
+ * Generate node IDs locally using `crypto.randomUUID()`. This is the same
+ * format the backend produces (`n-${randomUUID()}`) but avoids a network
+ * round-trip, which is critical when the backend event loop is busy with
+ * concurrent ensure-session / SQLite operations. UUID v4 collision probability
+ * is ~2^-122, so local generation is safe.
+ */
+export function allocateNodeIdsLocal(count = 1): string[] {
+  return Array.from({ length: count }, () => `n-${crypto.randomUUID()}`);
+}
+
+/**
+ * Allocate node IDs from the backend. Retained for cases where server-side
+ * coordination is genuinely needed (currently none). Prefer
+ * `allocateNodeIdsLocal` for all normal UI-driven node creation.
+ */
 export async function allocateNodeIds(count = 1, connectionId?: string): Promise<string[]> {
   const base = connectionId ? backendApiBase(connectionId) : activeBackendApiBase();
   const res = await fetch(`${base}/node-ids/allocate`, {

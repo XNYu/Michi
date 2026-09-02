@@ -60,6 +60,7 @@ function renderHook<T>(cb: () => T): HookHarness<T> {
 
 vi.mock('../services/api', () => ({
   allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
+  allocateNodeIdsLocal: (() => { let i = 0; return (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   ensureSession: () => Promise.resolve({ chatId: 'fake', currentModeId: null, resumeStrategy: 'fresh' }),
   streamMessage: () => () => {},
   setChatMode: () => Promise.resolve(''),

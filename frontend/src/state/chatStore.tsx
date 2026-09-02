@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat, steerChat, subscribeChat } from '../services/api';
+import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat, steerChat, subscribeChat } from '../services/api';
 import type { AgentStatus, SessionMode } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
@@ -1320,14 +1320,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const newNodeId = useCallback(
-    async () => {
-      try {
-        return (await allocateNodeIds(1))[0];
-      } catch (err) {
-        toast.error('Could not allocate a new thread id.');
-        throw err;
-      }
-    },
+    () => allocateNodeIdsLocal(1)[0],
     [],
   );
 
@@ -1772,7 +1765,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           branchParentNodeId = tree.rootNodeId;
         }
       }
-      const nodeId = await newNodeId();
+      const nodeId = newNodeId();
       dispatch({ type: 'create', nodeId, projectId, parentNodeId: branchParentNodeId });
       const createdAt = Date.now();
       setProjects((prev) =>
@@ -1820,7 +1813,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const parent = nodesRef.current[parentNodeId];
       if (!parent) throw new Error('unknown parent node');
       const projectId = parent.projectId;
-      const nodeId = await newNodeId();
+      const nodeId = newNodeId();
       dispatch({ type: 'create', nodeId, projectId, parentNodeId });
       const createdAt = Date.now();
       setProjects((prev) =>
@@ -1882,7 +1875,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           throw new Error('cross-workspace merge');
         }
       }
-      const nodeId = await newNodeId();
+      const nodeId = newNodeId();
       const treeId = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const now = Date.now();
       dispatch({
@@ -2281,9 +2274,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       if (!parent) throw new Error('unknown parent node');
       const projectId = parent.projectId;
 
-      // Pre-generate ids, add all structural updates in one pass so views see
-      // the new nodes appear together.
-      const newIds = await allocateNodeIds(cleaned.length);
+      // Pre-generate ids locally, add all structural updates in one pass so
+      // views see the new nodes appear together. No network round-trip needed.
+      const newIds = allocateNodeIdsLocal(cleaned.length);
       newIds.forEach((nid) => {
         dispatch({ type: 'create', nodeId: nid, projectId, parentNodeId });
       });

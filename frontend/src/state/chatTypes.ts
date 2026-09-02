@@ -1013,7 +1013,7 @@ export interface ChatContextValue {
   selection: ReadonlySet<string>;
   toggleSelection: (nodeId: string) => void;
   clearSelection: () => void;
-  createThread: (modeId?: string) => Promise<string | null>;
+  createThread: (modeId?: string) => string | null;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
   pinTree: (treeId: string) => void;
