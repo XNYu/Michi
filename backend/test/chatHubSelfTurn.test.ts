@@ -56,7 +56,7 @@ describe('ChatHub.startTurn', () => {
       },
     };
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'attachment-chat',
       nodeId: 'attachment-node',
       text: 'Inspect the image',
@@ -82,7 +82,7 @@ describe('ChatHub.startTurn', () => {
       close: () => {},
     });
 
-    const { done, turnId } = hub.startTurn({
+    const { done, turnId } = await hub.startTurn({
       chatId: 'separated-chat',
       nodeId: 'separated-node',
       text: 'foreground',
@@ -121,7 +121,7 @@ describe('ChatHub.startTurn', () => {
     hub.subscribeBackground({ send: (_chatId, event) => background.push(event), close: () => {} });
     const session = sessionFrom([]);
     session.send = () => foreground;
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'mutex-chat', nodeId: 'mutex-node', text: 'foreground', session,
     });
     hub.startSelfTurn({
@@ -143,7 +143,7 @@ describe('ChatHub.startTurn', () => {
       close: () => {},
     });
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'owner-chat',
       nodeId: 'owner-node',
       text: 'Summarize this branch',
@@ -168,7 +168,7 @@ describe('ChatHub.startTurn', () => {
       close: () => {},
     });
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'structured-overview-chat',
       nodeId: 'structured-overview-node',
       text: 'Update the overview',
@@ -218,7 +218,7 @@ describe('ChatHub.startTurn', () => {
       ]);
     };
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'durable-chat',
       nodeId: 'durable-node',
       text: 'wire prompt with injected context',
@@ -248,7 +248,7 @@ describe('ChatHub.startTurn', () => {
       close: () => {},
     });
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'failed-chat',
       nodeId: 'failed-node',
       text: 'hello',
@@ -280,7 +280,7 @@ describe('ChatHub.startTurn', () => {
       close: () => {},
     });
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'transient-failure-chat',
       nodeId: 'transient-failure-node',
       text: 'hello',
@@ -314,7 +314,7 @@ describe('ChatHub.startTurn', () => {
       close: () => {},
     });
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'checkpoint-failure-chat',
       nodeId: 'checkpoint-failure-node',
       text: 'hello',
@@ -353,7 +353,7 @@ describe('ChatHub.startTurn', () => {
       output: `line ${index}`,
     }));
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'chatty-tool-chat',
       nodeId: 'chatty-tool-node',
       text: 'run the command',
@@ -390,7 +390,7 @@ describe('ChatHub.startSelfTurn', () => {
       ]),
     });
 
-    assert.throws(() => hub.startTurn({
+    await assert.rejects(async () => hub.startTurn({
       chatId: 'same-chat',
       nodeId: 'same-node',
       text: 'foreground should wait',
@@ -581,7 +581,7 @@ describe('ChatHub.startSelfTurn', () => {
 });
 
 describe('ChatHub.cancel', () => {
-  it('reserves a client turn id when Stop beats POST /message', () => {
+  it('reserves a client turn id when Stop beats POST /message', async () => {
     const hub = hubWithPersistence();
     const session: AgentSession = {
       id: 'reserved-session', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
@@ -590,8 +590,8 @@ describe('ChatHub.cancel', () => {
     };
 
     assert.equal(hub.cancel('reserved-chat', 'reserved-turn'), false);
-    assert.throws(
-      () => hub.startTurn({
+    await assert.rejects(
+      async () => hub.startTurn({
         chatId: 'reserved-chat', nodeId: 'reserved-node', text: 'must not run',
         turnId: 'reserved-turn', session,
       }),
@@ -601,7 +601,7 @@ describe('ChatHub.cancel', () => {
 
   it('ignores a delayed cancel from the previous turn', async () => {
     const hub = hubWithPersistence();
-    const first = hub.startTurn({
+    const first = await hub.startTurn({
       chatId: 'reuse-chat', nodeId: 'reuse-node', text: 'first', turnId: 'turn-a',
       session: {
         id: 'session-a', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
@@ -613,7 +613,7 @@ describe('ChatHub.cancel', () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     let secondCancelled = 0;
-    const second = hub.startTurn({
+    const second = await hub.startTurn({
       chatId: 'reuse-chat', nodeId: 'reuse-node', text: 'second', turnId: 'turn-b',
       session: {
         id: 'session-b', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
@@ -645,7 +645,7 @@ describe('ChatHub.cancel', () => {
       cancel: () => {},
     };
 
-    const { done } = hub.startTurn({ chatId: 'cancel-terminal-chat', nodeId: 'cancel-terminal-node', text: 'hello', session });
+    const { done } = await hub.startTurn({ chatId: 'cancel-terminal-chat', nodeId: 'cancel-terminal-node', text: 'hello', session });
     await new Promise((resolve) => setTimeout(resolve, 5));
     hub.cancel('cancel-terminal-chat');
     releaseTerminal();
@@ -683,7 +683,7 @@ describe('ChatHub.cancel', () => {
       },
     };
 
-    const { done } = hub.startTurn({
+    const { done } = await hub.startTurn({
       chatId: 'cancel-chat',
       nodeId: 'cancel-node',
       text: 'hello',

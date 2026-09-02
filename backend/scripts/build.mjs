@@ -74,6 +74,25 @@ const buildOptions = {
   ],
 };
 
+// Database worker thread — bundled as a separate entry point so
+// `new Worker('dist/dbWorkerThread.js')` can load it independently.
+const workerBuildOptions = {
+  entryPoints: [resolve(root, "src/services/dbWorkerThread.ts")],
+  outfile: resolve(dist, "dbWorkerThread.js"),
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "cjs",
+  sourcemap: process.env.SOURCEMAP === "1" || WATCH,
+  legalComments: "none",
+  define: {
+    __MICHIBUNDLE__: "true",
+  },
+  external: [
+    "node:*",
+  ],
+};
+
 if (WATCH) {
   // Dev: watch + run in one process. esbuild rebuilds dist/server.js on each
   // source change (incremental, fast); after every successful rebuild we
@@ -157,17 +176,19 @@ if (WATCH) {
   };
   const ctx = await context({ ...buildOptions, plugins: [runOnRebuild] });
   await ctx.watch();
+  // Worker thread bundle: rebuild alongside the main server but no restart
+  // trigger — the main server's Worker constructor loads the fresh file.
+  const workerCtx = await context(workerBuildOptions);
+  await workerCtx.watch();
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    // Await the child's real exit, THEN dispose esbuild, THEN exit. Awaiting
-    // (rather than fire-and-forget + process.exit) is what stops the child from
-    // orphaning and holding the port past the next dev start.
-    void stopChild().then(() => ctx.dispose()).finally(() => process.exit(0));
+    void stopChild().then(() => Promise.all([ctx.dispose(), workerCtx.dispose()])).finally(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 } else {
+  await build(workerBuildOptions);
   await build(buildOptions);
   if (stagedOutfile !== outfile) {
     copyTree(stagedOutfile, outfile);

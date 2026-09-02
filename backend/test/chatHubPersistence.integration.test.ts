@@ -66,7 +66,7 @@ describe('ChatHub authoritative persistence integration', () => {
     const hub = new ChatHub({ retentionMs: 100 });
     const received: ChatStreamEvent[] = [];
     const detach = hub.subscribe('chat-1', { send: (event) => received.push(event), close: () => {} });
-    const started = hub.startTurn({
+    const started = await hub.startTurn({
       chatId: 'chat-1', nodeId: 'node-1', text: 'wire with injected context',
       displayText: 'visible user text', userMetadata: { quotedText: 'quote' }, session,
       turnId: 'turn-1',
@@ -121,7 +121,7 @@ describe('ChatHub authoritative persistence integration', () => {
         chatId: `chat-${index}`, nodeId: `node-${index}`,
         text: `wire-${index}`, displayText: `user-${index}`,
         session, turnId: `turn-${index}`,
-      }).done;
+      }).then((started) => started.done);
     });
     await Promise.all(turns);
 

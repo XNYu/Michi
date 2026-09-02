@@ -2,14 +2,11 @@ import { getDb, prepareCached, runInTransaction } from './db';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
-  appendBranchOverviewEntry,
-  checkpointTurnContent,
-  parseBranchOverviewEntries,
-  serializeBranchOverviewEntries,
-  type DurableMessage,
   type DurableTurnSnapshot,
 } from 'michi-shared';
-import { computeTranscriptFingerprint, type TranscriptMessage } from './resumeStrategy';
+import {
+  MESSAGE_SQL,
+} from './turnPersistence.recipes';
 
 /**
  * How long tombstone rows (workspaces / nodes with non-null `purged_at`) are
@@ -629,23 +626,6 @@ export function updateNodeTitle(id: string, title: string, userId?: string): voi
   getDb().prepare('UPDATE nodes SET title = ? WHERE id = ?').run(title, id);
 }
 
-/**
- * Append one per-turn entry to a node's branch-overview journal. The column
- * stores a JSON entry array; legacy plain-string snapshots hydrate as a
- * single entry before the append. Verbatim repeats of the last entry are
- * dropped (dual delivery: structured event + turn-end text fallback).
- */
-function appendBranchOverviewJournal(nodeId: string, text: string): void {
-  const row = prepareCached('SELECT branch_overview FROM nodes WHERE id = ?')
-    .get(nodeId) as { branch_overview?: string | null } | undefined;
-  if (!row) return;
-  const entries = parseBranchOverviewEntries(row.branch_overview ?? null);
-  const next = appendBranchOverviewEntry(entries, text, Date.now());
-  if (next === entries) return;
-  prepareCached('UPDATE nodes SET branch_overview = ? WHERE id = ?')
-    .run(serializeBranchOverviewEntries(next), nodeId);
-}
-
 export function updateNodeBranchOverview(id: string, overview: string, userId?: string): void {
   if (process.env.MICHI_CLOUD === '1' && userId) {
     const owned = getDb().prepare(
@@ -653,7 +633,7 @@ export function updateNodeBranchOverview(id: string, overview: string, userId?: 
     ).get(id, id, userId);
     if (!owned) return;
   }
-  appendBranchOverviewJournal(id, overview);
+  coreAppendBranchOverviewJournal(mainThreadDb, id, overview);
 }
 
 export function softDeleteNode(id: string, deletedAt: number, groupId: string, userId?: string): void {
@@ -1115,16 +1095,8 @@ export function saveMessage(msg: MessageRow, userId?: string): void {
   }
   // Tombstone guard — messages can't outlive their owning node.
   if (isNodeTombstoned(msg.node_id)) return;
-  getDb().prepare(`
-    INSERT INTO messages (id, node_id, role, content, blocks, tool_calls, metadata, seq, created_at, rev)
-    VALUES (@id, @node_id, @role, @content, @blocks, @tool_calls, @metadata, @seq, @created_at, @rev)
-    ON CONFLICT(id) DO UPDATE SET
-      content=excluded.content,
-      blocks=COALESCE(excluded.blocks, messages.blocks),
-      tool_calls=COALESCE(excluded.tool_calls, messages.tool_calls),
-      metadata=COALESCE(excluded.metadata, messages.metadata),
-      rev=COALESCE(excluded.rev, messages.rev)
-  `).run({ blocks: null, tool_calls: null, metadata: null, rev: null, ...msg });
+  getDb().prepare(MESSAGE_SQL.upsert)
+    .run({ blocks: null, tool_calls: null, metadata: null, rev: null, ...msg });
 }
 
 export function getMessageCount(nodeId: string, userId?: string): number {
@@ -1138,229 +1110,28 @@ export function getMessageCount(nodeId: string, userId?: string): number {
   return row.cnt;
 }
 
-function jsonOrNull(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  return JSON.stringify(value);
-}
+// ── Turn lifecycle — delegated to turnPersistence.core ──────────────────────
+//
+// The business logic lives in turnPersistence.core.ts. This file provides
+// the main-thread adapter (DbPrimitives over prepareCached / runInTransaction)
+// and thin wrappers that preserve the existing export signatures.
 
-function durableMessageMetadata(message: DurableMessage): string | null {
-  if (message.role === 'assistant') {
-    return message.plan && message.plan.length > 0 ? jsonOrNull({ plan: message.plan }) : null;
-  }
-  return message.metadata && Object.keys(message.metadata).length > 0
-    ? jsonOrNull(message.metadata)
-    : null;
-}
-
-function getTurnRow(turnId: string): TurnRow | null {
-  return (prepareCached('SELECT * FROM turns WHERE turn_id = ?').get(turnId) as TurnRow | undefined) ?? null;
-}
-
-function assertTurnIdentity(row: TurnRow, snapshot: DurableTurnSnapshot): void {
-  if (
-    row.node_id !== snapshot.nodeId
-    || row.assistant_message_id !== snapshot.assistantId
-    || row.user_message_id !== (snapshot.userMessage?.id ?? null)
-  ) {
-    throw new Error(`turn ${snapshot.turnId} was replayed with different durable identity`);
-  }
-}
-
-function clearPendingSpawnPromptOutbox(nodeId: string): void {
-  const row = prepareCached('SELECT composer_draft FROM nodes WHERE id = ?')
-    .get(nodeId) as { composer_draft?: string | null } | undefined;
-  const raw = row?.composer_draft;
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof parsed?.__michiPendingSpawnPrompt !== 'string') return;
-  } catch {
-    return;
-  }
-  prepareCached('UPDATE nodes SET composer_draft = NULL WHERE id = ? AND composer_draft = ?')
-    .run(nodeId, raw);
-}
-
-function writeAssistantSnapshot(snapshot: DurableTurnSnapshot, content = snapshot.assistantMessage.content): void {
-  const message = snapshot.assistantMessage;
-  const result = prepareCached(`
-    UPDATE messages
-    SET content = ?, blocks = ?, tool_calls = ?, metadata = ?
-    WHERE id = ? AND node_id = ? AND role = 'assistant'
-  `).run(
-    content,
-    message.blocks.length > 0 ? JSON.stringify(message.blocks) : null,
-    message.toolCalls.length > 0 ? JSON.stringify(message.toolCalls) : null,
-    durableMessageMetadata(message),
-    message.id,
-    snapshot.nodeId,
-  );
-  if (Number(result.changes) !== 1) {
-    throw new Error(`assistant message ${message.id} is missing for turn ${snapshot.turnId}`);
-  }
-}
-
-function writeTurnNodeProjection(snapshot: DurableTurnSnapshot, terminal: boolean): void {
-  const metadata = snapshot.nodeMetadata;
-  if (metadata.title) {
-    prepareCached(`
-      UPDATE nodes
-      SET title = CASE WHEN title IS NULL OR TRIM(title) = '' THEN ? ELSE title END
-      WHERE id = ?
-    `).run(metadata.title, snapshot.nodeId);
-  }
-  if (metadata.followUps !== undefined) {
-    prepareCached('UPDATE nodes SET follow_ups = ?, follow_ups_source_message_id = ? WHERE id = ?')
-      .run(JSON.stringify(metadata.followUps), snapshot.assistantId, snapshot.nodeId);
-  }
-  // Journal append happens only at the turn's durability boundary so each
-  // turn contributes at most one entry even when checkpoints ran earlier.
-  if (terminal && metadata.branchOverview) {
-    appendBranchOverviewJournal(snapshot.nodeId, metadata.branchOverview);
-  }
-  prepareCached(`
-    UPDATE nodes
-    SET status = ?, last_applied_turn_id = ?, last_applied_seq = ?
-    WHERE id = ?
-  `).run(
-    terminal ? (snapshot.status === 'error' ? 'error' : 'idle') : 'streaming',
-    snapshot.turnId,
-    snapshot.lastAppliedSeq,
-    snapshot.nodeId,
-  );
-}
-
-function refreshResumeFingerprint(nodeId: string): void {
-  const transcript: TranscriptMessage[] = listMessages(nodeId)
-    .filter((message) => message.role === 'user' || message.role === 'assistant')
-    .map((message) => ({
-      role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: message.content,
-    }));
-  prepareCached('UPDATE nodes SET resume_fingerprint = ? WHERE id = ?')
-    .run(computeTranscriptFingerprint(transcript), nodeId);
-}
+import { mainThreadDb } from './turnPersistence.mainAdapter';
+import { coreBeginTurn, coreCheckpointTurn, coreFinalizeTurn, appendBranchOverviewJournal as coreAppendBranchOverviewJournal } from './turnPersistence.core';
 
 /** Insert deterministic provisional messages and the turn receipt atomically. */
 export function beginTurn(snapshot: DurableTurnSnapshot): TurnRow {
-  return runInTransaction(() => {
-    const existing = getTurnRow(snapshot.turnId);
-    if (existing) {
-      assertTurnIdentity(existing, snapshot);
-      clearPendingSpawnPromptOutbox(snapshot.nodeId);
-      return existing;
-    }
-    const node = getNode(snapshot.nodeId);
-    if (!node) throw new Error(`node ${snapshot.nodeId} does not exist`);
-    if (node.workspace_id !== snapshot.workspaceId) {
-      throw new Error(`node ${snapshot.nodeId} does not belong to workspace ${snapshot.workspaceId}`);
-    }
-    // The spawn prompt is a one-shot durable outbox. Consume it in the same
-    // transaction that makes the first turn visible, so a renderer/backend
-    // crash after begin cannot replay the prompt or mask a real composer draft.
-    clearPendingSpawnPromptOutbox(snapshot.nodeId);
-
-    const max = prepareCached('SELECT COALESCE(MAX(seq), -1) AS seq FROM messages WHERE node_id = ?')
-      .get(snapshot.nodeId) as { seq: number };
-    let seq = max.seq + 1;
-    if (snapshot.userMessage) {
-      saveMessage({
-        id: snapshot.userMessage.id,
-        node_id: snapshot.nodeId,
-        role: 'user',
-        content: snapshot.userMessage.content,
-        blocks: null,
-        tool_calls: null,
-        metadata: durableMessageMetadata(snapshot.userMessage),
-        seq: seq++,
-        created_at: snapshot.userMessage.createdAt,
-      });
-    }
-    saveMessage({
-      id: snapshot.assistantMessage.id,
-      node_id: snapshot.nodeId,
-      role: 'assistant',
-      content: snapshot.assistantMessage.content,
-      blocks: null,
-      tool_calls: null,
-      metadata: durableMessageMetadata(snapshot.assistantMessage),
-      seq,
-      created_at: snapshot.assistantMessage.createdAt,
-    });
-    const now = Date.now();
-    prepareCached(`
-      INSERT INTO turns (
-        turn_id, node_id, user_message_id, assistant_message_id, status,
-        last_seq, stop_reason, error, started_at, checkpoint_at, completed_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'active', ?, NULL, NULL, ?, NULL, NULL, ?)
-    `).run(
-      snapshot.turnId,
-      snapshot.nodeId,
-      snapshot.userMessage?.id ?? null,
-      snapshot.assistantId,
-      snapshot.lastAppliedSeq,
-      snapshot.startedAt,
-      now,
-    );
-    writeTurnNodeProjection(snapshot, false);
-    return getTurnRow(snapshot.turnId)!;
-  });
+  return coreBeginTurn(mainThreadDb, snapshot) as unknown as TurnRow;
 }
 
 /** Persist a bounded partial snapshot without marking the turn terminal. */
 export function checkpointTurn(snapshot: DurableTurnSnapshot): TurnRow {
-  return runInTransaction(() => {
-    const row = getTurnRow(snapshot.turnId);
-    if (!row) throw new Error(`turn ${snapshot.turnId} has not begun`);
-    assertTurnIdentity(row, snapshot);
-    if (row.status !== 'active' || snapshot.lastAppliedSeq < row.last_seq) return row;
-    writeAssistantSnapshot(snapshot, checkpointTurnContent(snapshot));
-    writeTurnNodeProjection(snapshot, false);
-    const now = Date.now();
-    prepareCached(`
-      UPDATE turns SET last_seq = ?, checkpoint_at = ?, updated_at = ? WHERE turn_id = ?
-    `).run(snapshot.lastAppliedSeq, now, now, snapshot.turnId);
-    return getTurnRow(snapshot.turnId)!;
-  });
+  return coreCheckpointTurn(mainThreadDb, snapshot) as unknown as TurnRow;
 }
 
 /** Atomically materialize the canonical terminal snapshot before SSE success. */
 export function finalizeTurn(snapshot: DurableTurnSnapshot): TurnRow {
-  if (snapshot.status === 'active') {
-    throw new Error(`turn ${snapshot.turnId} cannot finalize while active`);
-  }
-  return runInTransaction(() => {
-    const row = getTurnRow(snapshot.turnId);
-    if (!row) throw new Error(`turn ${snapshot.turnId} has not begun`);
-    assertTurnIdentity(row, snapshot);
-    if (row.status !== 'active') {
-      if (row.status !== snapshot.status) {
-        throw new Error(`turn ${snapshot.turnId} is already finalized as ${row.status}`);
-      }
-      return row;
-    }
-    writeAssistantSnapshot(snapshot);
-    writeTurnNodeProjection(snapshot, true);
-    refreshResumeFingerprint(snapshot.nodeId);
-    const now = Date.now();
-    const completedAt = snapshot.completedAt ?? now;
-    prepareCached(`
-      UPDATE turns
-      SET status = ?, last_seq = ?, stop_reason = ?, error = ?,
-          checkpoint_at = ?, completed_at = ?, updated_at = ?
-      WHERE turn_id = ?
-    `).run(
-      snapshot.status,
-      snapshot.lastAppliedSeq,
-      snapshot.stopReason ?? null,
-      snapshot.error ?? null,
-      now,
-      completedAt,
-      now,
-      snapshot.turnId,
-    );
-    return getTurnRow(snapshot.turnId)!;
-  });
+  return coreFinalizeTurn(mainThreadDb, snapshot) as unknown as TurnRow;
 }
 
 /** Mark checkpointed turns left active by a previous process as interrupted. */

@@ -27,7 +27,8 @@ import { ChatManager } from './services/chatManager';
 import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
 import { requireAdmin } from './routes/middleware/admin';
 import { McpSlotRegistry, mountMcp } from './services/mcpServer';
-import { initDb, getDb, closeDb, closeAuditDb } from './services/db';
+import { initDb, getDb, getDbPath, closeDb, closeAuditDb } from './services/db';
+import { initDbWorker, shutdownDbWorker } from './services/dbWorkerClient';
 import { recordAudit } from './services/audit';
 import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning } from './services/agentConfig';
 import { setProviderEnvBindings, getProviderApiKey } from './services/secrets';
@@ -119,6 +120,12 @@ const port = process.env.PORT || 3000;
 
 // Initialize SQLite before anything that might need it
 initDb();
+// Spin up the async database worker thread. It opens its own WAL connection
+// to the same data.db file so writes execute off the main thread. Hot-path
+// routes (ensure-session) call dbWorker.* instead of synchronous dbRepository.
+void initDbWorker(getDbPath()).catch((err) => {
+  log.warn('boot', 'dbWorker failed to initialize; falling back to sync writes', { error: (err as Error).message });
+});
 const customAgentsEnabled = process.env.MICHI_CUSTOM_AGENTS === '1';
 const pendingAgentDeliveryTurnIds = customAgentsEnabled
   ? new Set((getDb().prepare(`SELECT requested_turn_id FROM agent_run_watches
@@ -692,6 +699,7 @@ const gracefulShutdown = async (): Promise<void> => {
   closeAllArtifactWatchers();
   closeDb();
   closeAuditDb();
+  await shutdownDbWorker();
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
     // server.close() only stops accepting new connections; it then WAITS for

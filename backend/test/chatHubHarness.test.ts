@@ -75,7 +75,7 @@ describe('ChatHub provenance', () => {
     const chatHub = hub(journal);
     const events: ChatStreamEvent[] = [];
     chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',
@@ -101,7 +101,7 @@ describe('ChatHub provenance', () => {
     const chatHub = hub(journal as any);
     const events: ChatStreamEvent[] = [];
     chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',
@@ -119,7 +119,7 @@ describe('cancel phase', () => {
     const events: ChatStreamEvent[] = [];
     const gate = { release: () => {} };
     chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',
@@ -141,7 +141,7 @@ describe('cancel phase', () => {
     const events: ChatStreamEvent[] = [];
     const gate = { release: () => {} };
     chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',
@@ -161,7 +161,7 @@ describe('cancel phase', () => {
     const events: ChatStreamEvent[] = [];
     const gate = { release: () => {} };
     const detach = chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',
@@ -181,7 +181,7 @@ describe('ChatHub optional session methods', () => {
   it('returns invisible when steer is missing', async () => {
     const chatHub = hub();
     const gate = { release: () => {} };
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',
@@ -198,7 +198,7 @@ describe('ChatHub optional session methods', () => {
     const events: ChatStreamEvent[] = [];
     const gate = { release: () => {} };
     chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = chatHub.startTurn({
+    const started = await chatHub.startTurn({
       chatId: 'node-a',
       nodeId: 'node-a',
       text: 'hello',

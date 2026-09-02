@@ -35,6 +35,7 @@ import {
 } from "../services/dbRepository";
 import type { WorkspaceRow } from "../services/dbRepository";
 import { ensureDurableGraphNode } from "../services/graphCommands";
+import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import {
     buildCompatibleResumeContext,
@@ -235,16 +236,35 @@ function persistResumeBinding(
     signature: ResumeSignature,
     fingerprint: string,
 ): void {
+    const fields = {
+        nodeId,
+        acp_session_id: session.nativeSessionId ?? session.id,
+        runtime_id: signature.runtimeId,
+        provider_id: signature.providerId ?? null,
+        model_id: signature.modelId ?? null,
+        reasoning: signature.reasoning ?? null,
+        resume_fingerprint: fingerprint,
+        current_mode_id: session.currentModeId ?? null,
+    };
+    if (isDbWorkerReady()) {
+        // Fire-and-forget on the worker — the caller already has the session,
+        // so blocking the response for this write is unnecessary.
+        void dbWorker.persistResumeBinding(fields).catch((err) => {
+            console.warn(`Failed to persist resume binding for ${nodeId} (worker):`, err);
+        });
+        return;
+    }
+    // Fallback: synchronous on main thread
     try {
         if (!getNode(nodeId)) return;
         updateNodeResumeBinding(nodeId, {
-            acp_session_id: session.nativeSessionId ?? session.id,
-            runtime_id: signature.runtimeId,
-            provider_id: signature.providerId,
-            model_id: signature.modelId,
-            reasoning: signature.reasoning,
-            resume_fingerprint: fingerprint,
-            current_mode_id: session.currentModeId ?? null,
+            acp_session_id: fields.acp_session_id,
+            runtime_id: fields.runtime_id,
+            provider_id: fields.provider_id,
+            model_id: fields.model_id,
+            reasoning: fields.reasoning,
+            resume_fingerprint: fields.resume_fingerprint,
+            current_mode_id: fields.current_mode_id,
         });
     } catch (err) {
         console.warn(`Failed to persist resume binding for ${nodeId}:`, err);
@@ -901,10 +921,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 });
             }
             try {
-                ensureDurableGraphNode({
+                const graphInput = {
                     ...(prerequisite as Parameters<typeof ensureDurableGraphNode>[0]),
                     ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
-                });
+                };
+                if (isDbWorkerReady()) {
+                    await dbWorker.ensureDurableGraphNode(graphInput);
+                } else {
+                    ensureDurableGraphNode(graphInput);
+                }
             } catch (err) {
                 return res.status(409).json({
                     error: (err as Error).message,
@@ -1268,7 +1293,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
         let started;
         try {
-            started = chatHub.startTurn({
+            started = await chatHub.startTurn({
                 chatId: nodeId, nodeId, text, displayText, userMetadata, session,
                 turnId,
                 ownerUserId: req.user?.id ?? null,

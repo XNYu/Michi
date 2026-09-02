@@ -18,6 +18,7 @@ import { log as appLog } from "../services/logger";
 import { ACPError } from "../services/acpClient";
 import type { HarnessJournal } from "../services/harnessJournal";
 import { createSqliteHarnessJournal } from "../services/harnessJournal";
+import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 
 export interface HubSubscriber {
   send(ev: ChatStreamEvent): void;
@@ -71,15 +72,44 @@ interface TurnLog {
 }
 
 export interface TurnPersistence {
-  begin(snapshot: DurableTurnSnapshot): void;
+  begin(snapshot: DurableTurnSnapshot): void | Promise<void>;
   checkpoint(snapshot: DurableTurnSnapshot): void;
-  finalize(snapshot: DurableTurnSnapshot): void;
+  finalize(snapshot: DurableTurnSnapshot): void | Promise<void>;
 }
 
 const repositoryTurnPersistence: TurnPersistence = {
-  begin: (snapshot) => { beginTurn(snapshot); },
-  checkpoint: (snapshot) => { checkpointTurn(snapshot); },
-  finalize: (snapshot) => { finalizeTurn(snapshot); },
+  begin: (snapshot) => {
+    if (isDbWorkerReady()) {
+      return dbWorker.beginTurn(snapshot).then(() => {});
+    }
+    beginTurn(snapshot);
+  },
+  checkpoint: (snapshot) => {
+    // Defer the write so the current tick can finish broadcasting SSE events.
+    // When the worker is ready, the write happens off-thread entirely.
+    // Checkpoints are idempotent and non-critical — if one is skipped due to
+    // process exit, finalize will persist the canonical terminal state.
+    if (isDbWorkerReady()) {
+      // Fire-and-forget: the worker handles the write off-thread.
+      dbWorker.checkpointTurn(snapshot).catch((err) => {
+        console.warn(`[turnPersistence] worker checkpoint failed for turn ${snapshot.turnId}:`, err);
+      });
+    } else {
+      setImmediate(() => {
+        try {
+          checkpointTurn(snapshot);
+        } catch (err) {
+          console.warn(`[turnPersistence] deferred checkpoint failed for turn ${snapshot.turnId}:`, err);
+        }
+      });
+    }
+  },
+  finalize: (snapshot) => {
+    if (isDbWorkerReady()) {
+      return dbWorker.finalizeTurn(snapshot).then(() => {});
+    }
+    finalizeTurn(snapshot);
+  },
 };
 
 export interface StartTurnArgs {
@@ -235,7 +265,7 @@ export class ChatHub {
     return null;
   }
 
-  startTurn(args: StartTurnArgs): StartedTurn {
+  async startTurn(args: StartTurnArgs): Promise<StartedTurn> {
     if (this.isActive(args.chatId) || this.pendingSelfTurns.has(args.chatId)) {
       throw new Error('a turn is already active for this chat');
     }
@@ -258,7 +288,7 @@ export class ChatHub {
     // The durable provisional rows are the prerequisite for both runtime
     // execution and the visible turn_start frame.
     const persistStartedAt = Date.now();
-    this.persistence.begin(log.snapshot);
+    await this.persistence.begin(log.snapshot);
     logInfo('turn begin committed', log, { durationMs: Date.now() - persistStartedAt });
     this.turns.set(args.chatId, log);
     this.activeSessions.set(args.chatId, args.session);
@@ -665,7 +695,7 @@ export class ChatHub {
             selfInitiated: true,
             ownerUserId: args.ownerUserId ?? null,
           });
-          this.persistence.begin(log.snapshot);
+          await this.persistence.begin(log.snapshot);
           this.turns.set(args.chatId, log);
           this.append(args.chatId, log, {
             event: CHAT_STREAM_EVENTS.turnStart,
@@ -729,7 +759,7 @@ export class ChatHub {
       ownerUserId: args.ownerUserId ?? null,
     });
     const persistStartedAt = Date.now();
-    this.persistence.begin(log.snapshot);
+    await this.persistence.begin(log.snapshot);
     logInfo('self turn begin committed', log, { durationMs: Date.now() - persistStartedAt });
     this.turns.set(args.chatId, log);
     this.append(args.chatId, log, {
@@ -804,7 +834,7 @@ export class ChatHub {
           if (!branchOverviewPublished) {
             branchOverviewPublished = this.publishBranchOverview(chatId, log);
           }
-          this.finishWithDone(
+          await this.finishWithDone(
             chatId,
             log,
             this.cancelledTurnIds.has(log.turnId) ? 'cancelled' : ev.stopReason,
@@ -815,7 +845,7 @@ export class ChatHub {
       }
       if (log.status === 'active') {
         if (!branchOverviewPublished) this.publishBranchOverview(chatId, log);
-        this.finishWithDone(
+        await this.finishWithDone(
           chatId,
           log,
           this.cancelledTurnIds.has(log.turnId) ? 'cancelled' : 'end_turn',
@@ -823,9 +853,9 @@ export class ChatHub {
       }
     } catch (err) {
       if (this.cancelledTurnIds.has(log.turnId)) {
-        this.finishWithDone(chatId, log, 'cancelled');
+        await this.finishWithDone(chatId, log, 'cancelled');
       } else {
-        this.finishWithError(chatId, log, err);
+        await this.finishWithError(chatId, log, err);
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
@@ -1004,7 +1034,7 @@ export class ChatHub {
     }, false);
   }
 
-  private finishWithDone(chatId: string, log: TurnLog, stopReason?: string): void {
+  private async finishWithDone(chatId: string, log: TurnLog, stopReason?: string): Promise<void> {
     this.emitCancelSettled(chatId, log);
     const stamped = this.stamp(log, {
       event: CHAT_STREAM_EVENTS.done,
@@ -1015,7 +1045,7 @@ export class ChatHub {
     // the transaction containing messages + node metadata + turn receipt commits.
     const persistStartedAt = Date.now();
     try {
-      this.persistence.finalize(terminalSnapshot);
+      await this.persistence.finalize(terminalSnapshot);
     } catch (err) {
       this.finishWithPersistenceError(chatId, log, err);
       return;
@@ -1033,7 +1063,7 @@ export class ChatHub {
     this.broadcast(chatId, log, stamped.ev);
   }
 
-  private finishWithError(chatId: string, log: TurnLog, err: unknown): void {
+  private async finishWithError(chatId: string, log: TurnLog, err: unknown): Promise<void> {
     let message = err instanceof Error ? err.message : String(err);
     // Surface the rpcData detail so the user sees the real reason (e.g.
     // "The model you've selected is temporarily unavailable") instead of the
@@ -1059,7 +1089,7 @@ export class ChatHub {
         data: { message, completedAt: Date.now(), ...(acpErrorKind ? { code: acpErrorKind } : {}) },
       });
       const terminalSnapshot = applyTurnEvent(log.snapshot, stamped.ev);
-      this.persistence.finalize(terminalSnapshot);
+      await this.persistence.finalize(terminalSnapshot);
       log.snapshot = terminalSnapshot;
       log.events.push(stamped);
       this.journalStamped(log, stamped);
@@ -1115,7 +1145,7 @@ export class ChatHub {
           if (!branchOverviewPublished) {
             branchOverviewPublished = this.publishBranchOverview(chatId, log);
           }
-          this.finishWithDone(
+          await this.finishWithDone(
             chatId,
             log,
             this.cancelledTurnIds.has(log.turnId) ? 'cancelled' : ev.stopReason,
@@ -1127,7 +1157,7 @@ export class ChatHub {
       }
       if (!terminalSeen) {
         if (!branchOverviewPublished) this.publishBranchOverview(chatId, log);
-        this.finishWithDone(
+        await this.finishWithDone(
           chatId,
           log,
           this.cancelledTurnIds.has(log.turnId) ? 'cancelled' : 'end_turn',
@@ -1137,9 +1167,9 @@ export class ChatHub {
       if (this.cancelledTurnIds.has(log.turnId)) {
         // Cancel was requested — treat the resulting runtime error as a
         // graceful cancellation rather than a hard error.
-        this.finishWithDone(chatId, log, 'cancelled');
+        await this.finishWithDone(chatId, log, 'cancelled');
       } else {
-        this.finishWithError(chatId, log, err);
+        await this.finishWithError(chatId, log, err);
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
