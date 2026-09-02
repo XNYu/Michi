@@ -2187,6 +2187,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             onSend={() => void onSubmit()}
             onStop={() => cancelStream(nodeId)}
             onRetry={() => retryLastTurn(nodeId)}
+            contextUsagePercentage={n.contextUsagePercentage}
+            usageSummary={n.usageSummary}
           />
         }
       />

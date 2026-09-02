@@ -1,5 +1,6 @@
 import React from 'react';
 import { kbd } from '../../lib/platform';
+import { ContextRing, type ContextRingProps } from './ContextRing';
 
 export type PaneComposerSendMode = 'send' | 'stop' | 'retry';
 
@@ -12,6 +13,10 @@ interface PaneComposerActionsProps {
   onSend: () => void;
   onStop: () => void;
   onRetry: () => void;
+  /** Context window usage percentage (0–100). Shows ring indicator when present. */
+  contextUsagePercentage?: number | null;
+  /** Token breakdown for the ring tooltip. */
+  usageSummary?: ContextRingProps['usageSummary'];
 }
 
 export function PaneComposerActions({
@@ -23,9 +28,12 @@ export function PaneComposerActions({
   onSend,
   onStop,
   onRetry,
+  contextUsagePercentage,
+  usageSummary,
 }: PaneComposerActionsProps) {
   return (
     <>
+      <ContextRing percentage={contextUsagePercentage} usageSummary={usageSummary} />
       {draftHasText && (
         <button
           type="button"
