@@ -45,9 +45,10 @@ if (isDev && process.env.MICHI_ELECTRON_USER_DATA_DIR) {
 // True window vibrancy (see-through to desktop / other apps behind Michi) is a
 // native macOS NSVisualEffectView feature. Off on Windows/Linux (no equivalent)
 // and can be force-disabled with MICHI_NO_VIBRANCY=1 for debugging. The renderer
-// reads this over `app:vibrancy` (sync) so it can punch the sidebar hole only
-// when the window base is actually the vibrancy material — main authoritatively
-// owns the flag so the CSS never assumes see-through the window doesn't have.
+// reads this via the `michiVibrancy` URL query param (injected by createWindow)
+// so it can punch the sidebar hole only when the window base is actually the
+// vibrancy material — main authoritatively owns the flag so the CSS never
+// assumes see-through the window doesn't have.
 const VIBRANCY_ENABLED = process.platform === 'darwin' && process.env.MICHI_NO_VIBRANCY !== '1';
 
 // Minimal skeleton HTML shown immediately while the backend starts. Matches
@@ -994,6 +995,8 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
   const withWindowId = (base: string): string => {
     const url = new URL(base);
     url.searchParams.set('michiWindowId', windowId);
+    if (app.isPackaged) url.searchParams.set('michiPackaged', '1');
+    if (VIBRANCY_ENABLED) url.searchParams.set('michiVibrancy', '1');
     return url.toString();
   };
 
@@ -1032,7 +1035,12 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
       const indexPath = path.join(app.getAppPath(), 'frontend', 'build', 'index.html');
       startupMark('renderer_load_start', { file: indexPath, slot });
       await win.loadFile(indexPath, {
-        query: { ...(startupTraceFileQuery() ?? {}), michiWindowId: windowId },
+        query: {
+          ...(startupTraceFileQuery() ?? {}),
+          michiWindowId: windowId,
+          ...(app.isPackaged ? { michiPackaged: '1' } : {}),
+          ...(VIBRANCY_ENABLED ? { michiVibrancy: '1' } : {}),
+        },
       });
       startupMark('renderer_load_done', { slot });
     }
@@ -1229,19 +1237,11 @@ ipcMain.on('app:relaunch', () => {
   app.exit(0);
 });
 
-// Synchronous channel so the renderer can decide at first paint whether to
-// render packaged-only UI (e.g. Update & Restart) without an async round trip.
-ipcMain.on('app:isPackaged', (ev) => {
-  ev.returnValue = app.isPackaged;
-});
+// isPackaged and vibrancy flags are injected via URL query params by
+// createWindow — the preload reads them from window.location.search with
+// zero IPC. Legacy sendSync handlers removed.
 
-// Synchronous so the renderer can set the see-through hole-punch on <html>
-// before first paint — otherwise the sidebar would flash opaque then turn
-// transparent. Only true on macOS Electron; the CSS reads this to switch the
-// sidebar from CSS-glass (blur its own wash) to real window vibrancy.
-ipcMain.on('app:vibrancy', (ev) => {
-  ev.returnValue = VIBRANCY_ENABLED;
-});
+// (vibrancy flag is now injected via URL query param — see above comment)
 
 // Keep native chrome, vibrancy, and Browser WebContentsViews aligned with the
 // active Michi palette. Browser views receive a Chromium preferred-color-scheme

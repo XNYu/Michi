@@ -50,9 +50,12 @@ type FilePreviewResult =
   | { kind: 'text'; content: string; size: number; modifiedAt: number; extension: string }
   | { kind: 'image'; dataUrl: string; size: number; modifiedAt: number; extension: string };
 
-const isPackaged: boolean = ipcRenderer.sendSync('app:isPackaged') === true;
-const michiWindowId: string = new URLSearchParams(window.location.search).get('michiWindowId') ?? '';
-const hasVibrancy: boolean = ipcRenderer.sendSync('app:vibrancy') === true;
+// Read bootstrap flags from the URL query string injected by main.ts —
+// zero IPC, no sendSync blocking the renderer's main thread.
+const _qs = new URLSearchParams(window.location.search);
+const isPackaged: boolean = _qs.get('michiPackaged') === '1';
+const michiWindowId: string = _qs.get('michiWindowId') ?? '';
+const hasVibrancy: boolean = _qs.get('michiVibrancy') === '1';
 
 // Mark <html> before first paint so index.css can punch the see-through hole
 // (transparent shell + sidebar) without an opaque→glass flash. document may not
