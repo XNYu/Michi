@@ -750,6 +750,13 @@ const thoughtProseVars: React.CSSProperties = {
   '--tw-prose-links': 'var(--term-accent)',
 } as React.CSSProperties;
 
+/** Feature profile for answer-segment Markdown: enables table controls
+ *  (copy / download / fullscreen toolbar + auto-measure-then-lock column
+ *  widths to prevent reflow during streaming). */
+const ANSWER_FEATURES: import('../MarkdownContent').MarkdownFeatureProfile = {
+  tableControls: true,
+};
+
 function renderSegments(
   segments: ReturnType<typeof useVisibleStream>['segments'],
   isDark: boolean,
@@ -774,6 +781,7 @@ function renderSegments(
                 className={isDark ? 'prose-invert' : ''}
                 style={proseVars}
                 revealTailChars={seg.revealTailChars}
+                features={ANSWER_FEATURES}
               />
             )}
           >
@@ -783,6 +791,7 @@ function renderSegments(
               className={isDark ? 'prose-invert' : ''}
               style={proseVars}
               revealTailChars={seg.revealTailChars}
+              features={ANSWER_FEATURES}
             />
           </React.Suspense>
         );
@@ -795,6 +804,7 @@ function renderSegments(
           className={isDark ? 'prose-invert' : ''}
           style={proseVars}
           revealTailChars={seg.revealTailChars}
+          features={ANSWER_FEATURES}
         />
       );
     }

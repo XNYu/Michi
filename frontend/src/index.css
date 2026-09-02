@@ -209,13 +209,30 @@
 :is(.terminal-message-assistant, .terminal-message-user) .prose table {
   font-size: calc(var(--message-body-size) * 0.95);
   width: 100%;
-  table-layout: fixed;
+  table-layout: fixed;    /* stable during streaming — no column-width jumps */
+}
+/* After streaming content settles, MarkdownFeatureTable flips to auto
+   so the browser recalculates column widths based on all content. */
+:is(.terminal-message-assistant, .terminal-message-user) .prose table.michi-table-settled {
+  table-layout: auto;
+  width: auto;
+  min-width: 100%;
+  max-width: 100%;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(th, td) {
   padding: 5px 3px;
   border-bottom-width: 1px;
   overflow-wrap: anywhere;
   word-break: break-word;
+  min-width: 3em;         /* prevent columns from collapsing below ~4 chars */
+}
+/* Settled (auto-layout) tables: only break at normal word boundaries so the
+   browser's column-width algorithm doesn't over-compress short-content
+   columns (e.g. "1957" splitting into "195\n7").  Long text still wraps
+   at word boundaries; only forced mid-word breaks are suppressed. */
+:is(.terminal-message-assistant, .terminal-message-user) .prose table.michi-table-settled :where(th, td) {
+  word-break: normal;
+  overflow-wrap: break-word;  /* still allows wrapping at word boundaries for long text */
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose th {
   font-weight: 600;
@@ -416,7 +433,6 @@
   background: var(--term-surface, var(--surface));
 }
 
-.michi-table-feature.is-fullscreen,
 .michi-mermaid-block.is-fullscreen {
   position: fixed;
   inset: 16px;
@@ -426,6 +442,72 @@
   margin: 0;
   padding: 12px;
   background: var(--app-bg, var(--background));
+}
+
+/* --- Table lightbox (portal-based fullscreen viewer) --- */
+.michi-table-lightbox {
+  width: min(92vw, 1200px);
+  max-height: 84vh;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg, var(--app-bg));
+  border: 1px solid var(--term-line);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.35);
+}
+.michi-table-lightbox-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--term-line);
+  flex-shrink: 0;
+}
+.michi-table-lightbox-controls button {
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--term-line, var(--line));
+  border-radius: 4px;
+  background: var(--term-surface, var(--surface));
+  color: var(--term-fg, var(--fg));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.michi-table-lightbox-controls button:hover {
+  background: var(--term-line, var(--line));
+}
+.michi-table-lightbox-scroll {
+  overflow: auto;
+  max-height: calc(84vh - 56px);   /* 84vh lightbox cap minus controls bar */
+  padding: 12px;
+}
+.michi-table-lightbox-scroll table {
+  table-layout: auto;
+  width: auto;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.michi-table-lightbox-scroll th,
+.michi-table-lightbox-scroll td {
+  padding: 6px 10px;
+  border: 1px solid var(--term-line, var(--line));
+  text-align: left;
+  vertical-align: top;
+  min-width: 3em;
+}
+.michi-table-lightbox-scroll th {
+  background: var(--term-surface, var(--surface));
+  font-weight: 600;
+  font-size: 12px;
+}
+.michi-table-lightbox-scroll td {
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .michi-table-controls,
