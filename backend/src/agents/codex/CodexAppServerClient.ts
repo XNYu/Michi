@@ -56,6 +56,7 @@ export class CodexAppServerClient {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private readonly threadHandlers = new Map<string, Set<NotificationHandler>>();
+  private readonly globalNotificationHandlers = new Set<NotificationHandler>();
   private serverRequestHandler: ServerRequestHandler | null = null;
   private readonly exitHandlers = new Set<() => void>();
   private lineBuf = '';
@@ -185,6 +186,17 @@ export class CodexAppServerClient {
     // Notification (has method, no id)
     if (typeof obj.method === 'string') {
       const params = (obj.params as Record<string, unknown>) ?? {};
+
+      // Global handlers receive every notification — used by CodexSession to
+      // discover child subagent threads whose threadId is not yet registered.
+      for (const h of this.globalNotificationHandlers) {
+        try {
+          h(obj.method, params);
+        } catch {
+          /* global handler must not break dispatch */
+        }
+      }
+
       const threadId =
         typeof params['threadId'] === 'string' ? (params['threadId'] as string) : null;
       if (threadId) {
@@ -242,6 +254,19 @@ export class CodexAppServerClient {
     return () => {
       set!.delete(handler);
       if (set!.size === 0) this.threadHandlers.delete(threadId);
+    };
+  }
+
+  /**
+   * Register a handler that receives ALL notifications regardless of threadId.
+   * Used by CodexSession to discover child subagent threads (thread/started
+   * notifications arrive with the *child* threadId, which has no registered
+   * per-thread handler yet).
+   */
+  onGlobalNotification(handler: NotificationHandler): () => void {
+    this.globalNotificationHandlers.add(handler);
+    return () => {
+      this.globalNotificationHandlers.delete(handler);
     };
   }
 

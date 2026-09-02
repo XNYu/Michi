@@ -61,7 +61,7 @@ export const CODEX_DESCRIPTOR: CapabilityDescriptor = {
   nativeResume: slot("native", "native", "thread/resume"),
   permissions: slot("native", "native", "codex_approval"),
   sandbox: slot("native", "native", "OS sandbox + approval policy"),
-  subagents: invisibleSlot("review/collab remain experimental"),
+  subagents: slot("native", "projected", "thread/started child discovery + per-thread item/* forwarding"),
   usage: slot("native", "native", "thread/tokenUsage/updated"),
 };
 

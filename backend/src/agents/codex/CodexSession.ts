@@ -12,6 +12,7 @@ import type {
   SteerResult,
 } from '../types';
 import type { NormalizedEvent, PermissionOption, UserInputQuestion } from '../../services/chatEvents';
+import type { SubagentInfo } from 'michi-shared';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
 import type { CodexAppServerClient } from './CodexAppServerClient';
@@ -148,6 +149,11 @@ export class CodexSession implements AgentSession {
   private readonly history: ChatMessage[] = [];
   private markTranslatorTurnStart: (() => void) | null = null;
   private unsubscribeNotification: (() => void) | null = null;
+
+  // ---- Child subagent thread tracking ----------------------------------------
+  private unsubGlobalNotification: (() => void) | null = null;
+  private readonly childThreadInfos = new Map<string, SubagentInfo>();
+  private readonly childNotificationUnsubs = new Map<string, () => void>();
 
   private firstTurnPrefix: string;
   private firstTurnPrefixConsumed = false;
@@ -744,6 +750,13 @@ export class CodexSession implements AgentSession {
     }
     this.pendingUserInputs.clear();
 
+    // Clean up child thread tracking
+    this.unsubGlobalNotification?.();
+    this.unsubGlobalNotification = null;
+    for (const [, unsub] of this.childNotificationUnsubs) unsub();
+    this.childNotificationUnsubs.clear();
+    this.childThreadInfos.clear();
+
     this.queue.push({ kind: 'runtime_error', error: reason });
     this.queue.push({ kind: 'turn_end', stopReason: 'error' });
     this.queue.dispose();
@@ -1078,6 +1091,129 @@ export class CodexSession implements AgentSession {
         }
       },
     );
+
+    // ---- Child subagent thread discovery via global notification handler -----
+    this.unsubGlobalNotification = this.client.onGlobalNotification((method, params) => {
+      if (method === 'thread/started') {
+        this.handleChildThreadStarted(params);
+      } else if (method === 'thread/status/changed' || method === 'thread/closed') {
+        this.handleChildThreadLifecycle(method, params);
+      }
+    });
+  }
+
+  // ---- Child subagent thread handling ----------------------------------------
+
+  private handleChildThreadStarted(params: Record<string, unknown>): void {
+    const thread = (params['thread'] ?? params) as Record<string, unknown>;
+    const parentId = typeof thread['parentThreadId'] === 'string' ? thread['parentThreadId'] : null;
+    if (parentId !== this.threadId) return; // Not our child
+
+    const childId = typeof thread['id'] === 'string' ? thread['id'] : '';
+    if (!childId || this.childThreadInfos.has(childId)) return; // Already tracked
+
+    // Extract agent identity from Thread object
+    const agentNickname = typeof thread['agentNickname'] === 'string' ? thread['agentNickname'] : '';
+    const agentRole = typeof thread['agentRole'] === 'string' ? thread['agentRole'] : '';
+    const preview = typeof thread['preview'] === 'string' ? thread['preview'] : '';
+
+    // Dig into SubAgentSource for richer metadata
+    let spawnNickname = '';
+    let spawnRole = '';
+    const source = thread['source'];
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      const subAgent = (source as Record<string, unknown>)['subAgent'];
+      if (subAgent && typeof subAgent === 'object' && !Array.isArray(subAgent)) {
+        const spawn = (subAgent as Record<string, unknown>)['thread_spawn'];
+        if (spawn && typeof spawn === 'object' && !Array.isArray(spawn)) {
+          const s = spawn as Record<string, unknown>;
+          spawnNickname = typeof s['agent_nickname'] === 'string' ? s['agent_nickname'] : '';
+          spawnRole = typeof s['agent_role'] === 'string' ? s['agent_role'] : '';
+        }
+      }
+    }
+
+    const name = agentNickname || spawnNickname || agentRole || spawnRole || childId.slice(0, 8);
+    const info: SubagentInfo = {
+      sessionId: childId,
+      sessionName: name,
+      agentName: agentNickname || spawnNickname || 'subagent',
+      initialQuery: preview,
+      status: 'working',
+      statusMessage: '',
+      group: '',
+      dependsOn: [],
+    };
+    this.childThreadInfos.set(childId, info);
+
+    log.debug('chat', 'codex child subagent thread discovered', {
+      nodeId: this.id,
+      parentThreadId: this.threadId,
+      childThreadId: childId,
+      agentName: info.agentName,
+    });
+
+    // Push roster update
+    this.queue.push({
+      kind: 'subagent_list_update',
+      subagents: [...this.childThreadInfos.values()],
+    });
+
+    // Subscribe to child thread notifications → translate tool activity
+    const childTranslator = createCodexTranslator((ev) => {
+      if (ev.kind === 'tool_call' || ev.kind === 'tool_call_update') {
+        this.queue.push({
+          kind: 'subagent_tool_activity',
+          subagentSessionId: childId,
+          title: ev.title,
+          status: ev.status ?? '',
+        });
+        // Update roster statusMessage with latest tool title
+        info.statusMessage = ev.title;
+        this.queue.push({
+          kind: 'subagent_list_update',
+          subagents: [...this.childThreadInfos.values()],
+        });
+      }
+      if (ev.kind === 'turn_end') {
+        info.status = 'terminated';
+        this.queue.push({
+          kind: 'subagent_list_update',
+          subagents: [...this.childThreadInfos.values()],
+        });
+      }
+    });
+
+    const unsub = this.client.onNotification(childId, (childMethod, childParams) => {
+      childTranslator.feed(childMethod, childParams);
+    });
+    this.childNotificationUnsubs.set(childId, unsub);
+  }
+
+  private handleChildThreadLifecycle(
+    method: string,
+    params: Record<string, unknown>,
+  ): void {
+    const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : '';
+    const info = this.childThreadInfos.get(threadId);
+    if (!info) return;
+
+    if (method === 'thread/closed' || method === 'thread/status/changed') {
+      const status = params['status'];
+      const isClosed = method === 'thread/closed'
+        || (typeof status === 'object' && status !== null && (status as Record<string, unknown>)['type'] === 'idle');
+      if (isClosed) {
+        info.status = 'terminated';
+        log.debug('chat', 'codex child subagent thread terminated', {
+          nodeId: this.id,
+          childThreadId: threadId,
+        });
+        this.queue.push({
+          kind: 'subagent_list_update',
+          subagents: [...this.childThreadInfos.values()],
+        });
+      }
+    }
   }
 
   // ---- Dispose --------------------------------------------------------------
@@ -1101,6 +1237,13 @@ export class CodexSession implements AgentSession {
     // Unsubscribe notification handler
     this.unsubscribeNotification?.();
     this.unsubscribeNotification = null;
+
+    // Unsubscribe global + child thread notification handlers
+    this.unsubGlobalNotification?.();
+    this.unsubGlobalNotification = null;
+    for (const [, unsub] of this.childNotificationUnsubs) unsub();
+    this.childNotificationUnsubs.clear();
+    this.childThreadInfos.clear();
 
     // Best-effort thread/unsubscribe (skip if crashed)
     try {
