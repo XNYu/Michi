@@ -132,7 +132,7 @@ describe('Cursor ACP profile', () => {
         /Grok/,
       );
       assert.equal(
-        findCursorCli({ PATH: `${grokDir}:${pathDir}` }, tmp),
+        findCursorCli({ PATH: [grokDir, pathDir].join(path.delimiter) }, tmp),
         localAgent,
       );
       fs.unlinkSync(localAgent);

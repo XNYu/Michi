@@ -98,7 +98,7 @@ describe('codexBinary', () => {
     // Point CODEX_CLI_BIN at a nonexistent path
     process.env.CODEX_CLI_BIN = '/nonexistent/path/to/codex-does-not-exist-abc123';
 
-    // Empty PATH so `which codex` fails
+    // Empty PATH so PATH lookup cannot find a real codex
     const emptyBinDir = path.join(tmpDir, 'emptybin');
     fs.mkdirSync(emptyBinDir);
     process.env.PATH = emptyBinDir;

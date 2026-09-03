@@ -14,7 +14,8 @@
  * Default timeout 30s, max 5 min. Exit code is reported separately.
  */
 
-import { spawn } from "node:child_process";
+import { findOnPath } from "../executableLookup";
+import { spawnAgentProcess } from "../processTree";
 import { resolveWithinCwd, PathSandboxError, getUserSandboxRoot } from "./pathSandbox";
 import { truncateTail, formatSize, type TruncationDetails } from "./truncate";
 import { errorResult, type ToolResult } from "./types";
@@ -44,6 +45,16 @@ export interface BashDetails {
  */
 export interface BashContext {
     ownerUserId?: string | null;
+}
+
+export function resolveBashShell(
+    platform: NodeJS.Platform = process.platform,
+    locate: (name: string) => string | null = (name) => findOnPath(name),
+): { command: string; prefix: string[] } {
+    if (platform !== "win32") return { command: "bash", prefix: ["-c"] };
+    const bash = locate("bash");
+    if (bash) return { command: bash, prefix: ["-c"] };
+    return { command: process.env.ComSpec || "cmd.exe", prefix: ["/d", "/s", "/c"] };
 }
 
 export async function executeBash(
@@ -86,7 +97,12 @@ export async function executeBash(
               }
             : process.env;
 
-    const child = spawn("bash", ["-c", args.command], { cwd: runCwd, env: spawnEnv });
+    const shell = resolveBashShell();
+    const child = spawnAgentProcess(shell.command, [...shell.prefix, args.command], {
+        cwd: runCwd,
+        env: spawnEnv,
+        detached: false,
+    });
     let buf = "";
     let bufferTruncated = false;
     const append = (chunk: Buffer) => {

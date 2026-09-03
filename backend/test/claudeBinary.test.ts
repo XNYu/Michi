@@ -105,7 +105,7 @@ describe('claudeBinary', () => {
 
   test('findClaudeBinary throws ClaudeBinaryNotFoundError when CLAUDE_CLI_BIN points to nonexistent file and PATH has no claude', () => {
     process.env.CLAUDE_CLI_BIN = '/nonexistent/path/to/claude-does-not-exist-abc123';
-    // Override PATH to an empty dir so `which claude` / `execSync('which claude')` fails
+    // Override PATH to an empty dir so PATH lookup cannot find a real claude
     const emptyBinDir = path.join(tmpDir, 'emptybin');
     fs.mkdirSync(emptyBinDir);
     const origPath = process.env.PATH;

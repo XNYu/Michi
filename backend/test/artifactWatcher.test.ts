@@ -10,6 +10,7 @@ import {
   _activeWatcherCount,
   type ArtifactWatchEvent,
 } from "../src/services/artifactWatcher";
+import { trySymlinkSync } from "./symlinkUtil";
 
 // Short debounce so tests aren't slow; still non-zero to exercise merging.
 process.env.ARTIFACT_WATCH_DEBOUNCE_MS = "40";
@@ -131,7 +132,7 @@ describe("artifactWatcher", () => {
     const cwd = mkTmp();
     fs.mkdirSync(path.join(cwd, ".artifacts"));
     const link = path.join(cwd, ".artifacts", "link.md");
-    fs.symlinkSync(target, link);
+    if (!trySymlinkSync(target, link)) return;
 
     const events: ArtifactWatchEvent[] = [];
     subscribeArtifactWatch(cwd, (e) => events.push(e));

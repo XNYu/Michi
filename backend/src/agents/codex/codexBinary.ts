@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { resolveNamedBinary } from '../executableLookup';
 
 export class CodexBinaryNotFoundError extends Error {
   constructor(message: string) {
@@ -35,53 +36,22 @@ export function resetCodexBinaryCacheForTest(): void {
  *
  * Search order:
  *   1. `CODEX_CLI_BIN` env override (if the file exists)
- *   2. `which codex` (PATH lookup)
- *   3. Standard installation paths
+ *   2. PATH lookup (`.exe` / `.cmd` on Windows)
+ *   3. Standard installation paths, including macOS app bundles
  */
 export function findCodexBinary(): string {
   if (_cached !== null) return _cached;
 
-  const tried: string[] = [];
-
-  // 1. Env override
-  const envBin = process.env.CODEX_CLI_BIN;
-  if (envBin) {
-    tried.push(envBin);
-    if (fs.existsSync(envBin)) {
-      _cached = envBin;
-      return _cached;
-    }
-  }
-
-  // 2. which codex
-  try {
-    tried.push('<PATH lookup via which>');
-    const result = execSync('which codex', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    const trimmed = result.trim();
-    if (trimmed && fs.existsSync(trimmed)) {
-      _cached = trimmed;
-      return _cached;
-    }
-  } catch {
-    // not on PATH
-  }
-
-  // 3. Standard paths
-  const standardPaths = [
-    path.join(os.homedir(), '.npm-global', 'bin', 'codex'),
-    path.join(os.homedir(), '.local', 'bin', 'codex'),
-    '/usr/local/bin/codex',
-    '/opt/homebrew/bin/codex',
-    '/Applications/ChatGPT.app/Contents/Resources/codex',
-    '/Applications/Codex.app/Contents/Resources/codex',
-  ];
-
-  for (const candidate of standardPaths) {
-    tried.push(candidate);
-    if (fs.existsSync(candidate)) {
-      _cached = candidate;
-      return _cached;
-    }
+  const { found, tried } = resolveNamedBinary('codex', {
+    envValue: process.env.CODEX_CLI_BIN,
+    extraFiles: [
+      '/Applications/ChatGPT.app/Contents/Resources/codex',
+      '/Applications/Codex.app/Contents/Resources/codex',
+    ],
+  });
+  if (found) {
+    _cached = found;
+    return _cached;
   }
 
   throw new CodexBinaryNotFoundError(

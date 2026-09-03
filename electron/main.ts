@@ -577,14 +577,44 @@ async function waitForBackend(port: number, timeoutMs = 15_000): Promise<void> {
 
 function isExecutable(cand: string): boolean {
   if (!fs.existsSync(cand)) return false;
+  if (process.platform === 'win32') return true;
   try { fs.accessSync(cand, fs.constants.X_OK); return true; } catch { return false; }
 }
 
+function candidateBinNames(binName: string): string[] {
+  if (process.platform !== 'win32' || path.extname(binName)) return [binName];
+  return [`${binName}.exe`, `${binName}.cmd`, `${binName}.bat`, binName];
+}
+
 function probePath(binName: string): boolean {
-  for (const p of (process.env.PATH || '').split(':')) {
-    if (p && isExecutable(path.join(p, binName))) return true;
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    if (candidateBinNames(binName).some((name) => isExecutable(path.join(dir, name)))) return true;
   }
   return false;
+}
+
+function probeNamedBins(binName: string, extraFiles: string[] = []): boolean {
+  if (probePath(binName)) return true;
+  const home = os.homedir();
+  const dirs = [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.toolbox', 'bin'),
+    path.join(home, '.npm-global', 'bin'),
+  ];
+  const extras = [...extraFiles];
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    dirs.unshift(path.join(localAppData, 'Toolbox', 'bin'));
+    dirs.push(path.join(appData, 'npm'));
+  } else {
+    extras.push(`/usr/local/bin/${binName}`, `/opt/homebrew/bin/${binName}`);
+  }
+  if (dirs.some((dir) => candidateBinNames(binName).some((name) => isExecutable(path.join(dir, name))))) {
+    return true;
+  }
+  return extras.some((cand) => fs.existsSync(cand));
 }
 
 /**
@@ -597,19 +627,34 @@ function probeKiroCli(): boolean {
   if (env && fs.existsSync(env)) return true;
   const home = os.homedir();
 
-  if (isExecutable(path.join(home, '.local', 'bin', 'kiro-cli'))) return true;
+  if (probeNamedBins('kiro-cli')) return true;
 
-  const toolsDir = path.join(home, '.toolbox', 'tools', 'kiro-cli');
-  try {
-    for (const v of fs.readdirSync(toolsDir)) {
-      const cand = path.join(toolsDir, v, 'Kiro CLI.app', 'Contents', 'MacOS', 'kiro-cli');
-      if (isExecutable(cand)) return true;
+  if (process.platform === 'darwin') {
+    const toolsDir = path.join(home, '.toolbox', 'tools', 'kiro-cli');
+    try {
+      for (const v of fs.readdirSync(toolsDir)) {
+        const cand = path.join(toolsDir, v, 'Kiro CLI.app', 'Contents', 'MacOS', 'kiro-cli');
+        if (isExecutable(cand)) return true;
+      }
+    } catch { /* toolsDir may not exist */ }
+  }
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    if (candidateBinNames('kiro-cli').some((name) => isExecutable(path.join(localAppData, 'Kiro-Cli', name)))) {
+      return true;
     }
-  } catch { /* toolsDir may not exist */ }
+    const toolsDir = path.join(localAppData, 'Toolbox', 'tools', 'kiro-cli');
+    try {
+      for (const v of fs.readdirSync(toolsDir)) {
+        if (candidateBinNames('kiro-cli').some((name) => isExecutable(path.join(toolsDir, v, name)))) {
+          return true;
+        }
+      }
+    } catch { /* toolsDir may not exist */ }
+  }
 
-  if (probePath('kiro-cli')) return true;
-
-  return isExecutable(path.join(home, '.toolbox', 'bin', 'kiro-cli'));
+  return false;
 }
 
 /**
@@ -619,16 +664,10 @@ function probeKiroCli(): boolean {
 function probeCodexCli(): boolean {
   const env = process.env.CODEX_CLI_BIN;
   if (env && fs.existsSync(env)) return true;
-  if (probePath('codex')) return true;
-  const home = os.homedir();
-  return [
-    path.join(home, '.npm-global', 'bin', 'codex'),
-    path.join(home, '.local', 'bin', 'codex'),
-    '/usr/local/bin/codex',
-    '/opt/homebrew/bin/codex',
+  return probeNamedBins('codex', [
     '/Applications/ChatGPT.app/Contents/Resources/codex',
     '/Applications/Codex.app/Contents/Resources/codex',
-  ].some((cand) => fs.existsSync(cand));
+  ]);
 }
 
 /**
@@ -638,15 +677,7 @@ function probeCodexCli(): boolean {
 function probeClaudeCli(): boolean {
   const env = process.env.CLAUDE_CLI_BIN;
   if (env && fs.existsSync(env)) return true;
-  if (probePath('claude')) return true;
-  const home = os.homedir();
-  return [
-    path.join(home, '.npm-global', 'bin', 'claude'),
-    path.join(home, '.local', 'bin', 'claude'),
-    path.join(home, '.toolbox', 'bin', 'claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-  ].some((cand) => fs.existsSync(cand));
+  return probeNamedBins('claude');
 }
 
 /**

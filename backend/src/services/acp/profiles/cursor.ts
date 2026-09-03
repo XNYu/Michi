@@ -1,6 +1,7 @@
-import { existsSync, accessSync, constants as fsConstants, readdirSync, statSync, realpathSync } from "fs";
+import { existsSync, readdirSync, statSync, realpathSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { candidateNames, findInDir, isRunnableFile, pathDirs } from "../../../agents/executableLookup";
 import type {
     AcpHandlerContext,
     AcpIncomingNotification,
@@ -42,12 +43,7 @@ export function mapCursorPermissionOptions(options: unknown[]): unknown[] {
 }
 
 function isExecutable(filePath: string): boolean {
-    try {
-        accessSync(filePath, fsConstants.X_OK);
-        return true;
-    } catch {
-        return false;
-    }
+    return isRunnableFile(filePath);
 }
 
 function realPathOrSelf(filePath: string): string {
@@ -72,7 +68,7 @@ export function isGrokAgentBinary(filePath: string): boolean {
 
 export function resolvesToCursorAgent(filePath: string): boolean {
     const real = realPathOrSelf(filePath).replace(/\\/g, "/");
-    const base = real.split("/").pop() ?? "";
+    const base = (real.split("/").pop() ?? "").replace(/\.(exe|cmd|bat)$/i, "");
     return base === "cursor-agent" || real.includes("cursor-agent");
 }
 
@@ -92,17 +88,18 @@ export function findCursorCli(env: NodeJS.ProcessEnv = process.env, home: string
         if (existsSync(override)) return override;
         throw new Error(`CURSOR_CLI_BIN is set to ${override} but that file does not exist.`);
     }
-    const local = join(home, ".local", "bin", "agent");
-    if (existsSync(local) && isExecutable(local) && !isGrokAgentBinary(local)) {
+    const local = findInDir(join(home, ".local", "bin"), "agent", { env, home });
+    if (local && !isGrokAgentBinary(local)) {
         return local;
     }
     for (const name of ["cursor-agent", "agent"]) {
-        for (const dir of (env.PATH || "").split(":")) {
-            if (!dir) continue;
-            const cand = join(dir, name);
-            if (!existsSync(cand) || !isExecutable(cand)) continue;
-            if (isGrokAgentBinary(cand)) continue;
-            if (name === "cursor-agent" || resolvesToCursorAgent(cand)) return cand;
+        for (const dir of pathDirs(env.PATH)) {
+            for (const fileName of candidateNames(name)) {
+                const cand = join(dir, fileName);
+                if (!existsSync(cand) || !isExecutable(cand)) continue;
+                if (isGrokAgentBinary(cand)) continue;
+                if (name === "cursor-agent" || resolvesToCursorAgent(cand)) return cand;
+            }
         }
     }
     throw new Error(

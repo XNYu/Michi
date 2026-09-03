@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { killProcessTree, spawnAgentProcess } from "../processTree";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -140,11 +141,9 @@ export class AntigravitySession implements AgentSession {
     let failure: Error | null = null;
     let finalized = false;
 
-    const child = spawn(this.binaryPath, args, {
+    const child = spawnAgentProcess(this.binaryPath, args, {
       cwd: this.cwd,
       env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: true,
     });
     this.activeChild = child;
     const stderr: string[] = [];
@@ -266,10 +265,9 @@ function readConversationId(logPath: string): string | null {
 }
 
 function terminateProcessGroup(child: ChildProcessWithoutNullStreams): void {
-  try {
-    if (child.pid) process.kill(-child.pid, "SIGTERM");
-    else child.kill("SIGTERM");
-  } catch {
-    try { child.kill("SIGTERM"); } catch {}
+  if (child.pid) {
+    killProcessTree(child.pid, "SIGTERM");
+    return;
   }
+  try { child.kill("SIGTERM"); } catch {}
 }

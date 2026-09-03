@@ -1,6 +1,12 @@
-import { existsSync, readdirSync, accessSync, constants as fsConstants } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import {
+    exeName,
+    findInDir,
+    findOnPath,
+    isRunnableFile,
+} from "../../../agents/executableLookup";
 import { log } from "../../logger";
 import type {
     AcpHandlerContext,
@@ -9,24 +15,9 @@ import type {
     AcpUpdate,
 } from "../types";
 
-export function findKiroCli(): string {
-    const env = process.env.KIRO_CLI_BIN;
-    if (env && existsSync(env)) return env;
-
-    const home = homedir();
-
-    const local = join(home, ".local", "bin", "kiro-cli");
+function newestVersionDirs(toolsDir: string): string[] {
     try {
-        // existsSync follows symlinks, so a dangling link returns false.
-        if (existsSync(local)) {
-            accessSync(local, fsConstants.X_OK);
-            return local;
-        }
-    } catch {}
-
-    const toolsDir = join(home, ".toolbox", "tools", "kiro-cli");
-    try {
-        const versions = readdirSync(toolsDir)
+        return readdirSync(toolsDir)
             .map((name) => ({
                 name,
                 parts: name.split(".").map((x) => (/^\d+$/.test(x) ? Number(x) : 0)),
@@ -38,29 +29,55 @@ export function findKiroCli(): string {
                     if (av !== bv) return bv - av;
                 }
                 return 0;
-            });
-        for (const v of versions) {
-            const cand = join(toolsDir, v.name, "Kiro CLI.app", "Contents", "MacOS", "kiro-cli");
-            if (existsSync(cand)) {
-                try {
-                    accessSync(cand, fsConstants.X_OK);
-                    return cand;
-                } catch {}
-            }
-        }
-    } catch {}
+            })
+            .map((v) => v.name);
+    } catch {
+        return [];
+    }
+}
 
-    for (const p of (process.env.PATH || "").split(":")) {
-        if (!p) continue;
-        const cand = join(p, "kiro-cli");
-        if (existsSync(cand)) {
-            try {
-                accessSync(cand, fsConstants.X_OK);
-                return cand;
-            } catch {}
+export function findKiroCli(): string {
+    const env = process.env.KIRO_CLI_BIN;
+    if (env && existsSync(env)) return env;
+
+    const home = homedir();
+    const local = findInDir(join(home, ".local", "bin"), "kiro-cli");
+    if (local) return local;
+
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+        const toolboxBin = findInDir(join(localAppData, "Toolbox", "bin"), "kiro-cli");
+        if (toolboxBin) return toolboxBin;
+        const kiroCliDir = findInDir(join(localAppData, "Kiro-Cli"), "kiro-cli");
+        if (kiroCliDir) return kiroCliDir;
+    }
+
+    if (process.platform === "darwin") {
+        const toolsDir = join(home, ".toolbox", "tools", "kiro-cli");
+        for (const version of newestVersionDirs(toolsDir)) {
+            const cand = join(toolsDir, version, "Kiro CLI.app", "Contents", "MacOS", "kiro-cli");
+            if (isRunnableFile(cand)) return cand;
         }
     }
 
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+        const toolsDir = join(localAppData, "Toolbox", "tools", "kiro-cli");
+        for (const version of newestVersionDirs(toolsDir)) {
+            const cand = findInDir(join(toolsDir, version), "kiro-cli");
+            if (cand) return cand;
+        }
+    }
+
+    const onPath = findOnPath("kiro-cli");
+    if (onPath) return onPath;
+
+    // Historical fallback: return the conventional toolbox path even if missing
+    // so callers can surface a concrete path in error messages.
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+        return join(localAppData, "Toolbox", "bin", exeName("kiro-cli"));
+    }
     return join(home, ".toolbox", "bin", "kiro-cli");
 }
 

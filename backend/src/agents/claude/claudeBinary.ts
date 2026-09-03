@@ -1,7 +1,9 @@
-import { spawn, execSync, ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { resolveNamedBinary } from '../executableLookup';
+import { spawnAgentProcess } from '../processTree';
 import { resolveClaudeCliModelId } from './claudeModelCatalog';
 
 export class ClaudeBinaryNotFoundError extends Error {
@@ -76,51 +78,17 @@ let _cached: string | null = null;
 export function findClaudeBinary(): string {
   if (_cached !== null) return _cached;
 
-  const tried: string[] = [];
-
-  // 1. Env override
-  const envBin = process.env.CLAUDE_CLI_BIN;
-  if (envBin) {
-    tried.push(envBin);
-    if (fs.existsSync(envBin)) {
-      _cached = envBin;
-      return _cached;
-    }
-  }
-
-  // 2. which claude
-  try {
-    tried.push('<PATH lookup via which>');
-    const result = execSync('which claude', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    const trimmed = result.trim();
-    if (trimmed && fs.existsSync(trimmed)) {
-      _cached = trimmed;
-      return _cached;
-    }
-  } catch {
-    // not on PATH
-  }
-
-  // 3. Standard paths
-  const standardPaths = [
-    path.join(os.homedir(), '.npm-global', 'bin', 'claude'),
-    path.join(os.homedir(), '.local', 'bin', 'claude'),
-    path.join(os.homedir(), '.toolbox', 'bin', 'claude'),
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-  ];
-
-  for (const candidate of standardPaths) {
-    tried.push(candidate);
-    if (fs.existsSync(candidate)) {
-      _cached = candidate;
-      return _cached;
-    }
+  const { found, tried } = resolveNamedBinary('claude', {
+    envValue: process.env.CLAUDE_CLI_BIN,
+  });
+  if (found) {
+    _cached = found;
+    return _cached;
   }
 
   throw new ClaudeBinaryNotFoundError(
     `claude binary not found. Tried: ${tried.join(', ')}. ` +
-      'Install with: npm install -g @anthropic-ai/claude-code, or set CLAUDE_CLI_BIN.',
+      'Install with: npm install -g @anthropic-ai/claude-code, irm https://claude.ai/install.ps1 | iex, or set CLAUDE_CLI_BIN.',
   );
 }
 
@@ -260,15 +228,13 @@ export function spawnClaude(args: SpawnClaudeArgs): ChildProcessWithoutNullStrea
   preflightClaudeAuth(args.configDir);
   const binary = findClaudeBinary();
   const argv = buildClaudeArgv(args);
-  const child = spawn(binary, argv, {
+  return spawnAgentProcess(binary, argv, {
     cwd: args.cwd,
     env: {
       ...process.env,
       ...(args.configDir ? { CLAUDE_CONFIG_DIR: args.configDir } : {}),
       ...args.env,
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
     signal: args.signal,
   });
-  return child;
 }

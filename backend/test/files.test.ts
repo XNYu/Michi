@@ -8,6 +8,7 @@ import { setupFilesRoutes } from '../src/routes/files';
 import { SHOW_IMAGE_MAX_BYTES } from '../src/agents/claude/showImage';
 import { closeDb } from '../src/services/db';
 import { saveWorkspace } from '../src/services/dbRepository';
+import { trySymlinkSync } from './symlinkUtil';
 
 // Mirror agentStatusRoute.test.ts: build a real express app, listen on an
 // ephemeral port, and exercise the route with fetch(). No supertest dep.
@@ -135,7 +136,9 @@ describe('GET /api/files/:workspaceId/*', () => {
         // Symlink it INTO the workspace root. resolveWithinCwd passes (the link
         // path is inside cwd) but realpathSync resolves outside → must 404.
         const link = path.join(root, 'link.png');
-        fs.symlinkSync(secret, link);
+        if (!trySymlinkSync(secret, link)) {
+            return;
+        }
         await withServer(appWithRoot(root), async (port) => {
             const res = await fetch(`http://127.0.0.1:${port}/api/files/ws1/link.png`);
             assert.equal(res.status, 404);

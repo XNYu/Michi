@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnAgentProcess } from "../processTree";
 import fs from "node:fs";
 import path from "node:path";
 import { buildMetadataSystemPrompt } from "../preamble";
@@ -44,8 +44,9 @@ export async function warmAntigravityCustomization(
   customization: AntigravityCustomization,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(binaryPath, ["--add-dir", customization.rootDir, "agents"], {
+    const child = spawnAgentProcess(binaryPath, ["--add-dir", customization.rootDir, "agents"], {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];

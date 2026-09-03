@@ -1,13 +1,38 @@
-import { cpSync, readFileSync, rmSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { build, context } from "esbuild";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(root, "dist");
 const outfile = resolve(dist, "server.js");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+
+// esbuild's native writer STATUS_STACK_BUFFER_OVERRUN-crashes on some Windows
+// OneDrive / non-ASCII checkout paths. Stage the bundle on a short TEMP path
+// and copy it into dist/ afterwards.
+function stagingOutfile() {
+  if (process.platform !== "win32") return outfile;
+  return join(tmpdir(), `michi-backend-${process.pid}-${randomBytes(4).toString("hex")}.js`);
+}
+
+/** Recursive copy that avoids `fs.cpSync`, which STATUS_STACK_BUFFER_OVERRUN-crashes
+ *  on some Windows OneDrive / non-ASCII checkout paths (Node 24). */
+function copyTree(src, dest) {
+  const st = statSync(src);
+  if (st.isDirectory()) {
+    mkdirSync(dest, { recursive: true });
+    for (const name of readdirSync(src)) {
+      copyTree(join(src, name), join(dest, name));
+    }
+    return;
+  }
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(src, dest);
+}
 
 // `--watch` (dev): rebuild the bundle on source change and (re)start the server
 // child on each successful rebuild. This is the fast dev loop — cold boot from
@@ -22,18 +47,19 @@ rmSync(dist, { recursive: true, force: true });
 // live at dist/db/... . Without this, runMigrations' readdirSync hits ENOENT
 // and (per its catch) silently no-ops — every schema change stays unapplied.
 function copyAssets() {
-  cpSync(resolve(root, "src/db/migrations"), resolve(dist, "db/migrations"), { recursive: true });
-  cpSync(resolve(root, "src/db/auditMigrations"), resolve(dist, "db/auditMigrations"), { recursive: true });
-  cpSync(
+  copyTree(resolve(root, "src/db/migrations"), resolve(dist, "db/migrations"));
+  copyTree(resolve(root, "src/db/auditMigrations"), resolve(dist, "db/auditMigrations"));
+  copyTree(
     resolve(root, "src/agents/codex/codexStopHookRunner.cjs"),
     resolve(dist, "codexStopHookRunner.cjs"),
   );
 }
 copyAssets();
 
+const stagedOutfile = stagingOutfile();
 const buildOptions = {
   entryPoints: [resolve(root, "src/server.ts")],
-  outfile,
+  outfile: stagedOutfile,
   bundle: true,
   platform: "node",
   target: "node22",
@@ -64,6 +90,19 @@ if (WATCH) {
   let shuttingDown = false;
 
   const killGroup = (proc, signal) => {
+    if (!proc?.pid) return;
+    if (process.platform === "win32") {
+      const force = signal === "SIGKILL";
+      try {
+        execFileSync("taskkill", force ? ["/F", "/T", "/PID", String(proc.pid)] : ["/T", "/PID", String(proc.pid)], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      } catch {
+        try { proc.kill(signal); } catch { /* already gone */ }
+      }
+      return;
+    }
     try { process.kill(-proc.pid, signal); }
     catch { try { proc.kill(signal); } catch { /* already gone */ } }
   };
@@ -89,7 +128,8 @@ if (WATCH) {
     const c = spawn(process.execPath, [outfile], {
       stdio: "inherit",
       env: process.env,      // inherit MICHI_DATA_DIR / PORT / etc
-      detached: true,        // own process group → killable as a unit
+      detached: process.platform !== "win32",
+      windowsHide: true,
     });
     child = c;
     c.on("exit", (code, signal) => {
@@ -110,6 +150,7 @@ if (WATCH) {
           return;
         }
         copyAssets();
+        if (stagedOutfile !== outfile) copyTree(stagedOutfile, outfile);
         chain = chain.then(startServer).catch((err) => console.error("[backend] restart failed:", err));
       });
     },
@@ -128,6 +169,10 @@ if (WATCH) {
   process.on("SIGTERM", shutdown);
 } else {
   await build(buildOptions);
+  if (stagedOutfile !== outfile) {
+    copyTree(stagedOutfile, outfile);
+    rmSync(stagedOutfile, { force: true });
+  }
 
   const bundled = readFileSync(outfile, "utf8");
   const runtimeDeps = Object.keys(packageJson.dependencies ?? {});

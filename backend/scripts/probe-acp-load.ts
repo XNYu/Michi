@@ -17,7 +17,8 @@
  * JSON-RPC over stdio directly.
  */
 
-import { spawn, ChildProcess } from "node:child_process";
+import { ChildProcess } from "node:child_process";
+import { killProcessTree, spawnAgentProcess } from "../src/agents/processTree";
 import { findKiroCli } from "../src/services/acpClient";
 
 interface Pending {
@@ -40,10 +41,8 @@ class MiniAcpClient {
     ) {}
 
     start(): void {
-        this.proc = spawn(this.bin, ["acp", "-a"], {
+        this.proc = spawnAgentProcess(this.bin, ["acp", "-a"], {
             cwd: this.cwd,
-            stdio: ["pipe", "pipe", "pipe"],
-            detached: true,
         });
         this.proc.stdout!.on("data", (chunk: Buffer) => this.onStdout(chunk));
         this.proc.stderr!.on("data", (chunk: Buffer) => {
@@ -131,15 +130,7 @@ class MiniAcpClient {
     killHard(): void {
         if (!this.proc) return;
         const pid = this.proc.pid;
-        if (pid) {
-            try {
-                process.kill(-pid, "SIGKILL");
-            } catch {
-                try {
-                    process.kill(pid, "SIGKILL");
-                } catch {}
-            }
-        }
+        if (pid) killProcessTree(pid, "SIGKILL");
     }
 }
 

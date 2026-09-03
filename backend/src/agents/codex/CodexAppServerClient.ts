@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawnAgentProcess } from '../processTree';
 import { findCodexBinary, preflightCodexAuth, warnIfCodexVersionBelowMinimum } from './codexBinary';
 import type { CodexIncoming, CodexRpcId } from './codexProtocol';
 
@@ -72,9 +73,8 @@ export class CodexAppServerClient {
       (() => {
         preflightCodexAuth();
         warnIfCodexVersionBelowMinimum();
-        return spawn(findCodexBinary(), ['app-server', '-c', 'mcp_servers={}'], {
+        return spawnAgentProcess(findCodexBinary(), ['app-server', '-c', 'mcp_servers={}'], {
           env: spawnEnv,
-          stdio: ['pipe', 'pipe', 'pipe'],
         });
       });
   }

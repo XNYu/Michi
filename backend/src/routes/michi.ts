@@ -442,8 +442,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
         try {
             fs.symlinkSync(sourcePath, target);
-        } catch (err) {
-            return res.status(500).json({ error: `symlink failed: ${(err as Error).message}` });
+        } catch {
+            try {
+                fs.copyFileSync(sourcePath, target);
+            } catch (err) {
+                return res.status(500).json({ error: `link/copy failed: ${(err as Error).message}` });
+            }
         }
         res.json({
             name,

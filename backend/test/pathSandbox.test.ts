@@ -1,8 +1,10 @@
 // backend/test/pathSandbox.test.ts
 import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import { configureRuntimeDeps, __resetRuntimeDeps } from "../src/agents/runtimeDeps";
-import { getUserSandboxRoot, deriveSandboxCwd, NotFoundError } from "../src/agents/tools/pathSandbox";
+import { getUserSandboxRoot, deriveSandboxCwd, expandPath, NotFoundError } from "../src/agents/tools/pathSandbox";
 import type { HistoryStore } from "../src/agents/ports";
 
 const store: HistoryStore = {
@@ -17,11 +19,18 @@ describe("pathSandbox with injected deps", () => {
 
   test("getUserSandboxRoot uses injected dataDir", () => {
     configureRuntimeDeps({ historyStore: store, agentConfig: cfg, dataDir: "/tmp/agent-runtime-sbx" });
-    assert.equal(getUserSandboxRoot("u1"), "/tmp/agent-runtime-sbx/user-cwds/u1");
+    assert.equal(getUserSandboxRoot("u1"), path.join("/tmp/agent-runtime-sbx", "user-cwds", "u1"));
   });
 
   test("deriveSandboxCwd throws NotFoundError on unknown workspace", () => {
     configureRuntimeDeps({ historyStore: store, agentConfig: cfg, dataDir: "/tmp/agent-runtime-sbx" });
     assert.throws(() => deriveSandboxCwd("u1", "nope"), NotFoundError);
+  });
+
+  test("expandPath joins ~ and ~\\ onto the home directory", () => {
+    const home = os.homedir();
+    assert.equal(expandPath("~/docs"), path.join(home, "docs"));
+    assert.equal(expandPath("~\\docs"), path.join(home, "docs"));
+    assert.equal(expandPath("~"), home);
   });
 });

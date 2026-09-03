@@ -1,7 +1,5 @@
-import { execFileSync, execSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { resolveNamedBinary } from "../executableLookup";
 
 export class AntigravityBinaryNotFoundError extends Error {
   constructor(message: string) {
@@ -22,33 +20,10 @@ export function resetAntigravityBinaryCacheForTest(): void {
 export function findAntigravityBinary(): string {
   if (cachedBinary) return cachedBinary;
 
-  const tried: string[] = [];
-  const override = process.env.ANTIGRAVITY_CLI_BIN;
-  if (override) {
-    tried.push(override);
-    if (fs.existsSync(override)) return (cachedBinary = override);
-  }
-
-  try {
-    tried.push("<PATH lookup via which agy>");
-    const found = execSync("which agy", {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (found && fs.existsSync(found)) return (cachedBinary = found);
-  } catch {
-    // Continue through GUI/Electron-safe absolute paths.
-  }
-
-  const candidates = [
-    path.join(os.homedir(), ".local", "bin", "agy"),
-    "/opt/homebrew/bin/agy",
-    "/usr/local/bin/agy",
-  ];
-  for (const candidate of candidates) {
-    tried.push(candidate);
-    if (fs.existsSync(candidate)) return (cachedBinary = candidate);
-  }
+  const { found, tried } = resolveNamedBinary("agy", {
+    envValue: process.env.ANTIGRAVITY_CLI_BIN,
+  });
+  if (found) return (cachedBinary = found);
 
   throw new AntigravityBinaryNotFoundError(
     `Antigravity CLI (agy) not found. Tried: ${tried.join(", ")}. ` +

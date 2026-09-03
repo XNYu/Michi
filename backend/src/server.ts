@@ -600,9 +600,11 @@ process.on('SIGTERM', shutdownAndExit);
 // children on every code save. Clean up first, then re-raise SIGUSR2 so
 // nodemon performs the actual restart. `once` so the re-raised signal falls
 // through to the default action instead of looping back into this handler.
-process.once('SIGUSR2', () => {
-  void gracefulShutdown().finally(() => {
-    process.kill(process.pid, 'SIGUSR2');
+if (process.platform !== 'win32') {
+  process.once('SIGUSR2', () => {
+    void gracefulShutdown().finally(() => {
+      process.kill(process.pid, 'SIGUSR2');
+    });
+    setTimeout(() => process.exit(1), 5000).unref();
   });
-  setTimeout(() => process.exit(1), 5000).unref();
-});
+}

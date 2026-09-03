@@ -1,4 +1,5 @@
-import { spawn, ChildProcess } from "child_process";
+import { ChildProcess } from "child_process";
+import { killProcessTree, spawnAgentProcess } from "../../agents/processTree";
 import * as perf from "../perf";
 import { log } from "../logger";
 import { startupMark } from "../startupTrace";
@@ -284,10 +285,8 @@ export class AcpClient {
         const args = this.profile.spawnArgs;
         const label = this.profile.logLabel;
         startupMark(`${label}_spawn_start`, { cwd: this.cwd, binaryPath: this.binaryPath });
-        this.proc = spawn(this.binaryPath, args, {
+        this.proc = spawnAgentProcess(this.binaryPath, args, {
             cwd: this.cwd,
-            stdio: ["pipe", "pipe", "pipe"],
-            detached: true, // own process group for clean group-kill
             env: this.profile.spawnEnv
                 ? { ...process.env, ...this.profile.spawnEnv }
                 : undefined,
@@ -917,9 +916,7 @@ export class AcpClient {
         if (!proc) return;
         const pid = proc.pid;
 
-        try {
-            if (pid) process.kill(-pid, "SIGTERM");
-        } catch {}
+        if (pid) killProcessTree(pid, "SIGTERM");
 
         const exited = await new Promise<boolean>((resolve) => {
             const t = setTimeout(() => resolve(false), 5000);
@@ -929,11 +926,7 @@ export class AcpClient {
             });
         });
 
-        if (!exited && pid) {
-            try {
-                process.kill(-pid, "SIGKILL");
-            } catch {}
-        }
+        if (!exited && pid) killProcessTree(pid, "SIGKILL");
 
         this.proc = null;
         this.sessionQueues.clear();

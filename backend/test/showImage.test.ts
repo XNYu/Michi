@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { resolveShowImage, SHOW_IMAGE_MAX_BYTES } from '../src/agents/claude/showImage';
+import { trySymlinkSync } from './symlinkUtil';
 
 function tmpWorkspace(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'showimg-'));
@@ -51,7 +52,7 @@ test('rejects a symlink inside the workspace pointing outside it', () => {
   fs.writeFileSync(outsideFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   // A symlink INSIDE the workspace that escapes to it — this is exactly what
   // the realpath recheck (beyond resolveWithinCwd's lexical check) defeats.
-  fs.symlinkSync(outsideFile, path.join(cwd, 'link.png'));
+  if (!trySymlinkSync(outsideFile, path.join(cwd, 'link.png'))) return;
   const r = resolveShowImage(cwd, 'link.png');
   assert.equal(r.ok, false);
 });

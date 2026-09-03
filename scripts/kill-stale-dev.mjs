@@ -7,19 +7,77 @@
 // Matches by command line containing the repo's absolute path, so other
 // projects' Vite / nodemon / Electron processes are not touched.
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WORKTREES_DIR = path.join(REPO_ROOT, '.worktrees') + path.sep;
+const IS_WIN = process.platform === 'win32';
 
-// Walk up the process tree from ourselves and collect every ancestor pid.
-// We must never SIGTERM the npm / shell that just invoked us; killing the
-// shell would also tear down whatever sibling task (e.g. an LLM session)
-// happens to share that terminal.
+function parsePosixProcessTable(raw, withCommand) {
+  const rows = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (withCommand) {
+      const m = trimmed.match(/^(\d+)\s+(.*)$/);
+      if (!m) continue;
+      rows.push({ pid: Number(m[1]), cmd: m[2] });
+    } else {
+      const m = trimmed.match(/^(\d+)\s+(\d+)$/);
+      if (!m) continue;
+      rows.push({ pid: Number(m[1]), ppid: Number(m[2]) });
+    }
+  }
+  return rows;
+}
+
+function listWindowsProcesses() {
+  const script = [
+    'Get-CimInstance Win32_Process | ForEach-Object {',
+    '  $cmd = if ($_.CommandLine) { $_.CommandLine -replace "[\\r\\n\\t]", " " } else { "" }',
+    '  "{0}`t{1}`t{2}" -f $_.ProcessId, $_.ParentProcessId, $cmd',
+    '}',
+  ].join(' ');
+  const raw = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  const rows = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const [pidRaw, ppidRaw, ...rest] = line.split('\t');
+    const pid = Number(pidRaw);
+    const ppid = Number(ppidRaw);
+    if (!Number.isInteger(pid)) continue;
+    rows.push({ pid, ppid, cmd: rest.join('\t') });
+  }
+  return rows;
+}
+
 function collectAncestors() {
   const ancestors = new Set([process.pid]);
+  if (IS_WIN) {
+    let rows;
+    try {
+      rows = listWindowsProcesses();
+    } catch {
+      ancestors.add(process.ppid);
+      return ancestors;
+    }
+    const ppidByPid = new Map(rows.map((row) => [row.pid, row.ppid]));
+    let cur = process.pid;
+    while (true) {
+      const parent = ppidByPid.get(cur);
+      if (!parent || parent <= 0 || ancestors.has(parent)) break;
+      ancestors.add(parent);
+      cur = parent;
+    }
+    return ancestors;
+  }
+
   let raw;
   try {
     raw = execSync('ps -eo pid=,ppid=', { encoding: 'utf8' });
@@ -28,10 +86,8 @@ function collectAncestors() {
     return ancestors;
   }
   const ppidByPid = new Map();
-  for (const line of raw.split('\n')) {
-    const m = line.trim().match(/^(\d+)\s+(\d+)$/);
-    if (!m) continue;
-    ppidByPid.set(Number(m[1]), Number(m[2]));
+  for (const row of parsePosixProcessTable(raw, false)) {
+    ppidByPid.set(row.pid, row.ppid);
   }
   let cur = process.pid;
   while (true) {
@@ -46,43 +102,40 @@ function collectAncestors() {
 const ANCESTOR_PIDS = collectAncestors();
 
 function belongsToThisCheckout(cmd) {
-  // Must reference this checkout's path …
   if (!cmd.includes(REPO_ROOT)) return false;
-  // … but not a sibling git worktree under .worktrees/, which is its own
-  // independent dev environment we must never touch.
   if (cmd.includes(WORKTREES_DIR)) return false;
   return true;
 }
 
+function looksLikeDev(cmd) {
+  return (
+    /electron(\.exe)?\b/i.test(cmd) ||
+    /node .*[\\/](nodemon|tsx|vite|concurrently)\b/.test(cmd) ||
+    /electron[\\/]dist[\\/]main\.js/.test(cmd) ||
+    /backend[\\/]dist[\\/]server\.js/.test(cmd) ||
+    /\bnpm(\.cmd)? (run|exec) (dev|electron:dev)/.test(cmd) ||
+    /Michi\.app|michi\.app|michi\.exe/i.test(cmd)
+  );
+}
+
 function listMatchingPids() {
-  // ps -eo pid,command — fields separated by whitespace; command can contain spaces.
-  let raw;
+  let rows;
   try {
-    raw = execSync('ps -eo pid=,command=', { encoding: 'utf8' });
+    if (IS_WIN) {
+      rows = listWindowsProcesses();
+    } else {
+      const raw = execSync('ps -eo pid=,command=', { encoding: 'utf8' });
+      rows = parsePosixProcessTable(raw, true);
+    }
   } catch {
     return [];
   }
   const matches = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const m = trimmed.match(/^(\d+)\s+(.*)$/);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    const cmd = m[2];
-    if (ANCESTOR_PIDS.has(pid)) continue;
-    if (!belongsToThisCheckout(cmd)) continue;
-    // Filter to dev-server / electron-launch shaped commands; ignore
-    // shells / editors / git that just happen to have the path in argv.
-    const looksLikeDev =
-      / electron\b/.test(cmd) ||
-      /node .*\/(nodemon|tsx|vite|concurrently)\b/.test(cmd) ||
-      /electron\/dist\/main\.js/.test(cmd) ||
-      /backend\/dist\/server\.js/.test(cmd) ||
-      /\bnpm (run|exec) (dev|electron:dev)/.test(cmd) ||
-      /Michi\.app|michi\.app/.test(cmd);
-    if (!looksLikeDev) continue;
-    matches.push({ pid, cmd });
+  for (const row of rows) {
+    if (ANCESTOR_PIDS.has(row.pid)) continue;
+    if (!belongsToThisCheckout(row.cmd)) continue;
+    if (!looksLikeDev(row.cmd)) continue;
+    matches.push({ pid: row.pid, cmd: row.cmd });
   }
   return matches;
 }
@@ -105,7 +158,6 @@ for (const { pid, cmd } of targets) {
 
 if (DRY_RUN) process.exit(0);
 
-// Give them a moment to exit cleanly, then SIGKILL anything still alive.
 const deadline = Date.now() + 1500;
 function stillAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
@@ -116,12 +168,16 @@ function stillAlive(pid) {
   if (Date.now() >= deadline) {
     for (const { pid } of remaining) {
       console.log(`[kill-stale-dev] SIGKILL pid=${pid}`);
-      try { process.kill(pid, 'SIGKILL'); } catch { /* */ }
+      try {
+        if (IS_WIN) {
+          execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+        } else {
+          process.kill(pid, 'SIGKILL');
+        }
+      } catch { /* */ }
     }
     return;
   }
-  // Busy-wait briefly; this script runs to completion before npm continues,
-  // so blocking is fine and avoids leaking timers.
   const until = Date.now() + 100;
   while (Date.now() < until) { /* tight wait */ }
   waitLoop();

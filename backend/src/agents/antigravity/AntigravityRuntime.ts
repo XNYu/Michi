@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnAgentProcess } from "../processTree";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
@@ -238,11 +238,12 @@ export class AntigravityRuntime implements AgentRuntime {
 
 async function runModelsCommand(binaryPath: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, ["models"], {
+    const child = spawnAgentProcess(binaryPath, ["models"], {
       // AGY keeps waiting when Node leaves its stdin pipe open. An ignored
       // stdin matches normal non-interactive shell invocation and lets the
       // catalog command exit as soon as it has printed the models.
       stdio: ["ignore", "pipe", "pipe"],
+      detached: false,
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];

@@ -35,7 +35,9 @@ export function expandPath(filePath: string): string {
     const stripped = filePath.startsWith("@") ? filePath.slice(1) : filePath;
     const normalized = stripped.replace(UNICODE_SPACES, " ");
     if (normalized === "~") return homedir();
-    if (normalized.startsWith("~/")) return homedir() + normalized.slice(1);
+    if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+        return path.join(homedir(), normalized.slice(2));
+    }
     return normalized;
 }
 

@@ -1,23 +1,10 @@
 import { execFileSync } from "child_process";
-import { existsSync, accessSync, constants as fsConstants } from "fs";
+import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { findInDir, findOnPath } from "../../../agents/executableLookup";
 import type { AcpAuthMethod, AcpInitializeResult, AcpProfile } from "../types";
 import { mapCursorPermissionOptions } from "./cursor";
-
-function findOnPath(name: string): string | undefined {
-    for (const p of (process.env.PATH || "").split(":")) {
-        if (!p) continue;
-        const cand = join(p, name);
-        if (existsSync(cand)) {
-            try {
-                accessSync(cand, fsConstants.X_OK);
-                return cand;
-            } catch {}
-        }
-    }
-    return undefined;
-}
 
 export function findGrokCli(): string {
     const env = process.env.GROK_CLI_BIN;
@@ -27,13 +14,8 @@ export function findGrokCli(): string {
     }
     const found = findOnPath("grok");
     if (found) return found;
-    const local = join(homedir(), ".local", "bin", "grok");
-    if (existsSync(local)) {
-        try {
-            accessSync(local, fsConstants.X_OK);
-            return local;
-        } catch {}
-    }
+    const local = findInDir(join(homedir(), ".local", "bin"), "grok");
+    if (local) return local;
     throw new Error(
         "Grok CLI binary not found. Install the official xAI Grok CLI (`grok`) or set GROK_CLI_BIN to its path.",
     );

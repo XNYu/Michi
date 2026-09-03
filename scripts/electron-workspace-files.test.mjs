@@ -19,7 +19,11 @@ test('workspace directory listing is shallow, sorted, and root constrained', asy
   await fs.writeFile(path.join(root, 'z.txt'), 'z');
   await fs.writeFile(path.join(root, 'a.txt'), 'a');
   await fs.writeFile(path.join(outside, 'secret.txt'), 'secret');
-  await fs.symlink(outside, path.join(root, 'escaped-link'));
+  try {
+    await fs.symlink(outside, path.join(root, 'escaped-link'));
+  } catch {
+    // Windows without Developer Mode cannot create directory symlinks.
+  }
 
   const entries = await listWorkspaceDirectory(root, [root]);
   assert.deepEqual(entries.map((entry) => [entry.name, entry.kind]), [
