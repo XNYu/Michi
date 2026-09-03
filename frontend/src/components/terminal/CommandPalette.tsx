@@ -283,6 +283,14 @@ export default function CommandPalette({
   // Flat list of keyboard-navigable rows = commands + message matches.
   const totalRows = visible.length + (showRecents ? 0 : searchMatches.length);
 
+  // Reset the active highlight to the first row whenever the query changes so
+  // the user can type a filter term and immediately press Enter to run the
+  // top match. Without this, the active index stays wherever it was before
+  // the filter, which may now point at an unrelated row.
+  useEffect(() => {
+    setActive(0);
+  }, [query]);
+
   useEffect(() => {
     if (active >= totalRows) setActive(0);
   }, [totalRows, active]);
@@ -300,6 +308,15 @@ export default function CommandPalette({
     const el = listRef.current?.querySelector<HTMLElement>(`[data-row-idx="${active}"]`);
     el?.scrollIntoView({ block: 'nearest' });
   }, [active]);
+
+  // Stabilize scroll when async search results arrive (totalRows changes)
+  // without the active index itself changing. Without this, the DOM reflows
+  // when the MESSAGES section appears and the previously-visible active row
+  // may scroll out of view.
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-row-idx="${active}"]`);
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [totalRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runRowAtIndex = useCallback(
     (idx: number) => {

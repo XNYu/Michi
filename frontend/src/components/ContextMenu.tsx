@@ -86,6 +86,8 @@ export default function ContextMenu({
   const searchRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState({ x, y });
   const [filter, setFilter] = useState('');
+  // Keyboard-navigable active index for searchable menus (-1 = nothing highlighted).
+  const [activeIdx, setActiveIdx] = useState(-1);
   // id of the row currently playing the confirm blink (null = none).
   const [blinkingId, setBlinkingId] = useState<string | null>(null);
   const blinkTimer = useRef<number | null>(null);
@@ -198,6 +200,12 @@ export default function ContextMenu({
     if (searchable) searchRef.current?.focus();
   }, [searchable]);
 
+  // Reset active index when the filter changes so Enter always fires the
+  // top match. Start at 0 (first item highlighted) once the user types.
+  useEffect(() => {
+    setActiveIdx(filter ? 0 : -1);
+  }, [filter]);
+
   const q = filter.toLowerCase();
   const filtered: MenuSection[] = q
     ? sections.map((s) => {
@@ -214,6 +222,39 @@ export default function ContextMenu({
         return { ...s, items: [...prefix, ...rest] };
       })
     : sections;
+
+  // Flat list of enabled items from non-pinned sections for keyboard navigation.
+  const flatItems = filtered
+    .filter((s) => !s.pinned)
+    .flatMap((s) => s.items.filter((it) => !it.disabled));
+
+  // Handle arrow/enter in the search input for keyboard navigation.
+  const onSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveIdx((i) => Math.min(flatItems.length - 1, i + 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveIdx((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const item = flatItems[activeIdx];
+        if (item) fireWithBlink(item);
+        return;
+      }
+    },
+    [flatItems, activeIdx, onClose, fireWithBlink],
+  );
 
   return (
     <PopoverSurface
@@ -234,6 +275,7 @@ export default function ContextMenu({
             ref={searchRef}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={onSearchKeyDown}
             placeholder={searchPlaceholder ?? 'filter…'}
             style={{
               width: '100%',
@@ -255,106 +297,120 @@ export default function ContextMenu({
           ...(maxHeight ? { maxHeight, overflowY: 'auto' } : null),
         }}
       >
-        {filtered
-          .filter((s) => !s.pinned)
-          .map((section, si) => {
-            // Default: glyphs render on the right (state-indicator style). A
-            // section can opt back into leading icons with trailingGlyph: false.
-            const trailing = section.trailingGlyph !== false;
-            return (
-              <React.Fragment key={si}>
-                {si > 0 && (
-                  <li
-                    aria-hidden="true"
-                    style={{
-                      height: 1,
-                      background: 'var(--term-line)',
-                      margin: '4px 0',
-                      listStyle: 'none',
-                    }}
-                  />
-                )}
-                {section.label && (
-                  <li
-                    aria-hidden="true"
-                    style={{
-                      padding: '4px 10px 2px',
-                      fontSize: 9,
-                      letterSpacing: '.16em',
-                      textTransform: 'uppercase',
-                      color: 'var(--term-faint)',
-                      fontFamily: 'var(--ui-font)',
-                      listStyle: 'none',
-                    }}
-                  >
-                    {section.label}
-                  </li>
-                )}
-                {section.items.map((item) => (
-                  <MenuRow
-                    key={item.id}
-                    onClick={() => run(item)}
-                    danger={item.danger}
-                    disabled={item.disabled}
-                    className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
-                  >
-                    {!trailing && item.glyph && (
-                      <span
-                        style={{
-                          width: 14,
-                          textAlign: 'center',
-                          color: 'var(--term-mid)',
-                          fontSize: 11,
-                        }}
-                      >
-                        {item.glyph}
-                      </span>
-                    )}
-                    <span
+        {(() => {
+          let flatIdx = 0;
+          return filtered
+            .filter((s) => !s.pinned)
+            .map((section, si) => {
+              // Default: glyphs render on the right (state-indicator style). A
+              // section can opt back into leading icons with trailingGlyph: false.
+              const trailing = section.trailingGlyph !== false;
+              return (
+                <React.Fragment key={si}>
+                  {si > 0 && (
+                    <li
+                      aria-hidden="true"
                       style={{
-                        flex: 1,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        height: 1,
+                        background: 'var(--term-line)',
+                        margin: '4px 0',
+                        listStyle: 'none',
+                      }}
+                    />
+                  )}
+                  {section.label && (
+                    <li
+                      aria-hidden="true"
+                      style={{
+                        padding: '4px 10px 2px',
+                        fontSize: 9,
+                        letterSpacing: '.16em',
+                        textTransform: 'uppercase',
+                        color: 'var(--term-faint)',
+                        fontFamily: 'var(--ui-font)',
+                        listStyle: 'none',
                       }}
                     >
-                      <span style={{ fontWeight: 600 }}>{item.label}</span>
-                      {item.sublabel && (
-                        <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
-                          {item.sublabel}
+                      {section.label}
+                    </li>
+                  )}
+                  {section.items.map((item) => {
+                    // Only enabled items participate in keyboard navigation.
+                    const myFlatIdx = item.disabled ? -1 : flatIdx++;
+                    const isActive = searchable && myFlatIdx >= 0 && myFlatIdx === activeIdx;
+                    return (
+                      <MenuRow
+                        key={item.id}
+                        onClick={() => run(item)}
+                        danger={item.danger}
+                        disabled={item.disabled}
+                        active={isActive}
+                        className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
+                        onMouseEnter={
+                          searchable && myFlatIdx >= 0
+                            ? () => setActiveIdx(myFlatIdx)
+                            : undefined
+                        }
+                      >
+                        {!trailing && item.glyph && (
+                          <span
+                            style={{
+                              width: 14,
+                              textAlign: 'center',
+                              color: 'var(--term-mid)',
+                              fontSize: 11,
+                            }}
+                          >
+                            {item.glyph}
+                          </span>
+                        )}
+                        <span
+                          style={{
+                            flex: 1,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>{item.label}</span>
+                          {item.sublabel && (
+                            <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
+                              {item.sublabel}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </span>
-                    {item.keys && (
-                      <span
-                        style={{
-                          fontFamily: 'var(--ui-font)',
-                          fontSize: 11,
-                          color: 'var(--term-faint)',
-                          minWidth: 12,
-                          textAlign: 'right',
-                        }}
-                      >
-                        {item.keys}
-                      </span>
-                    )}
-                    {trailing && item.glyph && (
-                      <span
-                        style={{
-                          width: 14,
-                          textAlign: 'center',
-                          color: 'var(--term-mid)',
-                          fontSize: 11,
-                        }}
-                      >
-                        {item.glyph}
-                      </span>
-                    )}
-                  </MenuRow>
-                ))}
-              </React.Fragment>
-            );
-          })}
+                        {item.keys && (
+                          <span
+                            style={{
+                              fontFamily: 'var(--ui-font)',
+                              fontSize: 11,
+                              color: 'var(--term-faint)',
+                              minWidth: 12,
+                              textAlign: 'right',
+                            }}
+                          >
+                            {item.keys}
+                          </span>
+                        )}
+                        {trailing && item.glyph && (
+                          <span
+                            style={{
+                              width: 14,
+                              textAlign: 'center',
+                              color: 'var(--term-mid)',
+                              fontSize: 11,
+                            }}
+                          >
+                            {item.glyph}
+                          </span>
+                        )}
+                      </MenuRow>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            });
+        })()}
       </ul>
       {filtered.some((s) => s.pinned) && (
         <ul
