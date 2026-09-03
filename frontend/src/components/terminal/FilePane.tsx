@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { FilePaneItem } from '../../state/paneItems';
-import { useChatActions, useChatProjects } from '../../state/chatStore';
+import { useChatActions, useChatProjects, useChatStore, ChatNodeStoreContext } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { fetchArtifactContent } from '../../services/api';
 import { getElectron } from '../../lib/electronBridge';
 import MarkdownContent from '../MarkdownContent';
+import SelectionActions from '../SelectionActions';
+import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
 
 const MARKDOWN_EXTS = new Set(['md', 'mdx', 'markdown']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -20,7 +22,9 @@ function basename(filePath: string): string {
 
 export default function FilePane({ item }: { item: FilePaneItem }) {
   const { projects } = useChatProjects();
-  const { focusPane, setFocusedNodeId, updatePaneItem } = useChatActions();
+  const { focusPane, setFocusedNodeId, updatePaneItem, createChildChat, addPendingComment, setComposerDraft } = useChatActions();
+  const { focusedNodeId } = useChatStore();
+  const nodeStore = useContext(ChatNodeStoreContext)!;
   const project = projects.find((candidate) => candidate.id === item.projectId);
   const shellStyle = usePaneShellStyle(item.id);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
@@ -28,6 +32,68 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   const loadRef = useRef<{ key: string; promise: Promise<LoadState> } | null>(null);
   const diskStateRef = useRef(item.diskState);
   diskStateRef.current = item.diskState;
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // Track the last focused chat pane so selection actions route there even
+  // while the file pane itself is focused (for reading).
+  const lastFocusedChatRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusedNodeId && focusedNodeId !== item.id) {
+      const target = nodeStore.getNode(focusedNodeId);
+      if (target && target.kind === 'chat') {
+        lastFocusedChatRef.current = focusedNodeId;
+      }
+    }
+  }, [focusedNodeId, item.id, nodeStore]);
+
+  /** Resolve the target chat node for quote/comment/branch routing. */
+  const getTargetChatNodeId = useCallback((): string | null => {
+    if (focusedNodeId && focusedNodeId !== item.id) {
+      const target = nodeStore.getNode(focusedNodeId);
+      if (target && target.kind === 'chat') return focusedNodeId;
+    }
+    return lastFocusedChatRef.current;
+  }, [focusedNodeId, item.id, nodeStore]);
+
+  const fileSource = useMemo((): QuoteSource | undefined => {
+    return { type: 'artifact', name: basename(item.filePath), filePath: item.filePath };
+  }, [item.filePath]);
+
+  const handleQuote = useCallback(
+    (text: string) => {
+      const targetId = getTargetChatNodeId();
+      if (!targetId) return;
+      const target = nodeStore.getNode(targetId);
+      setComposerDraft(targetId, {
+        value: target?.composerDraft?.value ?? '',
+        mentions: target?.composerDraft?.mentions ?? [],
+        quotedText: text,
+      });
+    },
+    [getTargetChatNodeId, nodeStore, setComposerDraft],
+  );
+
+  const handleBranch = useCallback(
+    (quoted: string, prompt: string) => {
+      const targetId = getTargetChatNodeId();
+      if (!targetId) return;
+      void createChildChat(
+        targetId,
+        formatQuotedMessage(quoted, prompt, fileSource),
+        { quotedText: quoted, displayText: prompt },
+      ).catch(() => {});
+    },
+    [getTargetChatNodeId, createChildChat, fileSource],
+  );
+
+  const handleComment = useCallback(
+    (quoted: string, body: string) => {
+      const targetId = getTargetChatNodeId();
+      if (!targetId) return;
+      addPendingComment(targetId, quoted, body, fileSource);
+    },
+    [getTargetChatNodeId, addPendingComment, fileSource],
+  );
 
   useEffect(() => {
     let active = true;
@@ -110,7 +176,13 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
         <button type="button" className="t-icon-btn" onClick={() => setReloadKey((value) => value + 1)} aria-label="Reload file" title="Reload file">↻</button>
         {absolutePath ? <button type="button" className="t-icon-btn" onClick={openExternal} aria-label="Open externally" title="Open externally">↗</button> : null}
       </div>
-      <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 22px 28px', color: 'var(--term-fg)' }}>
+      <div ref={contentScrollRef} className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 22px 28px', color: 'var(--term-fg)' }}>
+        <SelectionActions
+          containerRef={contentScrollRef}
+          onQuote={handleQuote}
+          onBranch={handleBranch}
+          onComment={handleComment}
+        />
         {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 11 }}>loading {basename(item.filePath)}…</div> : null}
         {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 11 }}>⚠ {state.message}</div> : null}
         {state.phase === 'loaded' && isMarkdown && item.viewMode === 'rendered' ? (
