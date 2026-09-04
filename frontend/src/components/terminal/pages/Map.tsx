@@ -1114,9 +1114,8 @@ function ZoomPill({
 }) {
   const btn = 't-icon-btn';
   const btnStyle: React.CSSProperties = {
-    width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none',
-    background: 'transparent', fontSize: 14,
-    fontFamily: 'var(--message-code-font)', color: 'var(--term-mid)',
+    width: 28, height: 28, display: 'grid', placeItems: 'center',
+    fontSize: 14, fontFamily: 'var(--message-code-font)', color: 'var(--term-mid)',
   };
   return (
     <div

@@ -154,12 +154,7 @@ function MessageActions({
     setTimeout(() => setCopied(false), 1200);
   };
   const btnStyle: React.CSSProperties = {
-    padding: 4,
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
     color: 'var(--term-muted)',
-    border: 'none',
   };
   const hasUsage = !!usageInfo;
   return (

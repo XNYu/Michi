@@ -861,13 +861,9 @@ function Zone1IconButton({
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
           minWidth: ZONE1_BUTTON_W,
           height: ZONE1_BUTTON_W,
           padding: '0 6px',
-          border: 'none',
           color: active ? undefined : 'var(--term-faint)',
           opacity: disabled ? 0.3 : 1,
           flexShrink: 0,
@@ -986,13 +982,9 @@ function TopbarIconToggle({
         onMouseLeave={() => setHover(false)}
         style={{
           position: 'relative',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
           minWidth: ZONE1_BUTTON_W,
           height: ZONE1_BUTTON_W,
           padding: '0 6px',
-          border: 'none',
           color: active ? undefined : 'var(--term-faint)',
           flexShrink: 0,
           WebkitAppRegion: 'no-drag',

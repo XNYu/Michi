@@ -136,10 +136,7 @@ export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
             className="t-icon-btn"
             aria-label="close diff"
             style={{
-              border: 'none',
-              background: 'transparent',
               color: 'var(--term-muted)',
-              cursor: 'pointer',
               padding: '2px 4px',
               fontSize: 12,
             }}
