@@ -1465,8 +1465,20 @@ html[data-vibrancy="on"],
 .t-hover-fg:hover { color: var(--term-fg); }
 
 /* Icon buttons — subtle bg on hover, dimmed bg + press on active. Used by
-   message-action rows and any single-icon interactive affordance. */
+   message-action rows and any single-icon interactive affordance.
+   Provides minimal layout so bare <button class="t-icon-btn">…</button>
+   works without inline overrides. 26×26 matches the Topbar toggle size.
+   Consumers that need different sizing (e.g. MessageBlock smaller)
+   override via inline style. */
 .t-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 4px;
+  border: none;
+  background: transparent;
   cursor: pointer;
   border-radius: 4px;
   transition: color var(--t-quick) var(--t-ease),
@@ -1501,9 +1513,10 @@ html[data-vibrancy="on"],
   font-size: 11px;
   font-family: var(--ui-font);
   line-height: 1;
-  padding: 2px 8px;
+  min-height: 26px;
+  padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 2px;
+  border-radius: 4px;
   background: transparent;
   color: var(--term-mid);
   cursor: pointer;
