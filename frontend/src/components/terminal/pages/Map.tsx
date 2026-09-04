@@ -1112,10 +1112,11 @@ function ZoomPill({
   onZoomOut: () => void;
   onFit: () => void;
 }) {
-  const btn: React.CSSProperties = {
+  const btn = 't-icon-btn';
+  const btnStyle: React.CSSProperties = {
     width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none',
-    background: 'transparent', color: 'var(--term-mid)', cursor: 'pointer', fontSize: 14,
-    fontFamily: 'var(--message-code-font)',
+    background: 'transparent', fontSize: 14,
+    fontFamily: 'var(--message-code-font)', color: 'var(--term-mid)',
   };
   return (
     <div
@@ -1129,25 +1130,20 @@ function ZoomPill({
         boxShadow: GLASS_SHADOW,
       }}
     >
-      <button type="button" style={btn} onClick={onZoomOut} title="zoom out"
-        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--term-alt)')}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>−</button>
+      <button type="button" className={btn} style={btnStyle} onClick={onZoomOut} title="zoom out">−</button>
       <span style={{
         fontFamily: 'var(--message-code-font)', fontSize: 10.5, color: 'var(--term-fg)',
         minWidth: 40, textAlign: 'center',
       }}>{Math.round(zoom * 100)}%</span>
-      <button type="button" style={btn} onClick={onZoomIn} title="zoom in"
-        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--term-alt)')}
-        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>+</button>
+      <button type="button" className={btn} style={btnStyle} onClick={onZoomIn} title="zoom in">+</button>
       <button
         type="button"
+        className={`t-text-btn${auto ? ' is-active' : ''}`}
         onClick={onFit}
         title="fit map to the visible area"
         style={{
-          border: 'none', borderLeft: GLASS_BORDER, background: 'transparent',
-          padding: '0 12px', height: 28, cursor: 'pointer',
+          borderLeft: GLASS_BORDER, borderRadius: 0,
           fontFamily: 'var(--message-code-font)', fontSize: 10, letterSpacing: '.08em',
-          color: auto ? 'var(--term-accent)' : 'var(--term-mid)',
         }}
       >FIT</button>
     </div>

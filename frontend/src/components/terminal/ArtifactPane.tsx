@@ -383,17 +383,9 @@ export default function ArtifactPane({
         {isMarkdown && (
           <button
             type="button"
+            className={`t-text-btn is-bordered${artifact.viewMode === 'source' ? ' is-active' : ''}`}
             onClick={(e) => { e.stopPropagation(); toggleView(); }}
-            style={{
-              padding: '2px 8px',
-              border: '1px solid var(--term-line)',
-              background: artifact.viewMode === 'source' ? 'var(--term-alt)' : 'transparent',
-              color: 'var(--term-mid)',
-              fontSize: 10,
-              cursor: 'pointer',
-              fontFamily: 'var(--ui-font)',
-              whiteSpace: 'nowrap',
-            }}
+            style={{ fontSize: 10 }}
             title={artifact.viewMode === 'rendered' ? 'Show source' : 'Show rendered'}
           >
             {artifact.viewMode === 'rendered' ? 'View source' : 'Rendered'}
@@ -402,17 +394,9 @@ export default function ArtifactPane({
         {/* Open in editor */}
         <button
           type="button"
+          className="t-text-btn is-bordered"
           onClick={(e) => { e.stopPropagation(); openInEditor(); }}
-          style={{
-            padding: '2px 8px',
-            border: '1px solid var(--term-line)',
-            background: 'transparent',
-            color: 'var(--term-mid)',
-            fontSize: 10,
-            cursor: 'pointer',
-            fontFamily: 'var(--ui-font)',
-            whiteSpace: 'nowrap',
-          }}
+          style={{ fontSize: 10 }}
           title="Open in external editor"
         >
           ↗ Open

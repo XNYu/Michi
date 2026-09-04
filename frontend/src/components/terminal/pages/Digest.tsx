@@ -115,28 +115,8 @@ function DigestInput({
 function ChipButton({ label, color }: { label: string; color?: string }) {
   return (
     <span
-      style={{
-        height: 26,
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '0 8px',
-        fontSize: 11,
-        letterSpacing: '.04em',
-        color: color || 'var(--term-mid)',
-        border: '1px solid transparent',
-        borderRadius: 2,
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-        transition: 'border-color 100ms, background 100ms',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = 'var(--term-line)';
-        e.currentTarget.style.background = 'var(--term-alt)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = 'transparent';
-        e.currentTarget.style.background = 'transparent';
-      }}
+      className="t-text-btn"
+      style={color ? { color, letterSpacing: '.04em', height: 26 } : { letterSpacing: '.04em', height: 26 }}
     >
       {label}
     </span>

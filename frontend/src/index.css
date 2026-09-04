@@ -1481,6 +1481,59 @@ html[data-vibrancy="on"],
   background: color-mix(in srgb, var(--term-hover-bg, var(--term-alt)) 80%, var(--term-fg) 10%);
   transform: scale(0.9);
 }
+.t-icon-btn.is-on {
+  background: color-mix(in srgb, var(--term-fg) 8%, transparent);
+  color: var(--term-fg);
+}
+.t-icon-btn.is-on:hover {
+  background: color-mix(in srgb, var(--term-fg) 12%, transparent);
+}
+
+/* Text buttons — compact text-label affordance, default borderless.
+   Sister to .t-icon-btn for label-bearing (not icon-only) affordances.
+   Default: muted text, transparent bg+border; hover reveals bg.
+   .is-bordered: visible border at rest (e.g. dense toolbar actions).
+   .is-active:   toggle-on / selected state. */
+.t-text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--ui-font);
+  line-height: 1;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--term-mid);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t-quick) var(--t-ease),
+              border-color var(--t-quick) var(--t-ease),
+              color var(--t-quick) var(--t-ease);
+}
+.t-text-btn:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.t-text-btn:active {
+  background: color-mix(in srgb, var(--term-hover-bg, var(--term-alt)) 80%, var(--term-fg) 10%);
+}
+.t-text-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.t-text-btn:disabled:hover {
+  background: transparent;
+  color: var(--term-mid);
+}
+.t-text-btn.is-bordered {
+  border-color: var(--term-line);
+}
+.t-text-btn.is-active {
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
 
 /* Follow-up rows. The row text is the primary action ("continue in this
    pane"); the right-hand branch button is the explicit "branch into new

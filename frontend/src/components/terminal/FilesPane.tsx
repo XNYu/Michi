@@ -174,13 +174,13 @@ function Preview({ selection, project }: { selection: FileSelection | null; proj
 
   return (
     <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ height: 39, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', borderBottom: '1px solid var(--term-line)' }}>
+      <div style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', borderBottom: '1px solid var(--term-line)' }}>
         <span aria-hidden style={{ color: 'var(--term-muted)' }}>▱</span>
         <span title={selection?.absolutePath ?? selection?.artifactPath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selection ? 'var(--term-mid)' : 'var(--term-muted)', fontSize: 11 }}>
           {selection ? selection.absolutePath ?? selection.artifactPath : '/'}
         </span>
         {state.phase === 'loaded' && state.result.kind === 'text' && isMarkdown ? (
-          <button type="button" className="t-icon-btn" onClick={() => setViewMode((value) => value === 'rendered' ? 'source' : 'rendered')} style={{ width: 'auto', padding: '0 6px', fontSize: 9.5, color: 'var(--term-mid)' }}>
+          <button type="button" className={`t-text-btn${viewMode === 'source' ? ' is-active' : ''}`} onClick={() => setViewMode((value) => value === 'rendered' ? 'source' : 'rendered')}>
             {viewMode === 'rendered' ? 'source' : 'preview'}
           </button>
         ) : null}

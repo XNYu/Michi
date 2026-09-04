@@ -176,9 +176,8 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
         {isMarkdown ? (
           <button
             type="button"
-            className="t-icon-btn"
+            className={`t-text-btn${item.viewMode === 'source' ? ' is-active' : ''}`}
             onClick={() => updatePaneItem(item.id, { viewMode: item.viewMode === 'rendered' ? 'source' : 'rendered' })}
-            style={{ fontSize: 10, color: 'var(--term-mid)' }}
           >
             {item.viewMode === 'rendered' ? 'source' : 'preview'}
           </button>

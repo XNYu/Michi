@@ -857,7 +857,7 @@ function Zone1IconButton({
         disabled={disabled}
         aria-label={ariaLabel}
         aria-disabled={disabled || undefined}
-        className={className}
+        className={['t-icon-btn', active && 'is-on', className].filter(Boolean).join(' ')}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         style={{
@@ -867,17 +867,9 @@ function Zone1IconButton({
           minWidth: ZONE1_BUTTON_W,
           height: ZONE1_BUTTON_W,
           padding: '0 6px',
-          background: active
-            ? 'color-mix(in srgb, var(--term-fg) 8%, transparent)'
-            : showHover
-            ? 'color-mix(in srgb, var(--term-fg) 5%, transparent)'
-            : 'transparent',
           border: 'none',
-          borderRadius: 4,
-          color: active ? 'var(--term-fg)' : showHover ? 'var(--term-mid)' : 'var(--term-faint)',
-          cursor: disabled ? 'default' : 'pointer',
+          color: active ? undefined : 'var(--term-faint)',
           opacity: disabled ? 0.3 : 1,
-          transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease), opacity var(--t-quick) var(--t-ease)',
           flexShrink: 0,
         }}
       >
@@ -949,18 +941,10 @@ function BreadcrumbBackButton({
       type="button"
       onClick={onClick}
       title={title}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      className="t-text-btn"
       style={{
-        border: 'none',
-        background: hover ? 'var(--term-hover-bg, var(--term-alt))' : 'transparent',
-        cursor: 'pointer',
-        color: hover ? 'var(--term-fg)' : 'var(--term-muted)',
         fontFamily: 'var(--font-mono, var(--ui-font))',
         fontSize: 12,
-        padding: '2px 6px',
-        borderRadius: 4,
-        transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
         WebkitAppRegion: 'no-drag',
       } as React.CSSProperties}
     >
@@ -997,6 +981,7 @@ function TopbarIconToggle({
         type="button"
         onClick={onClick}
         aria-label={label}
+        className={`t-icon-btn${active ? ' is-on' : ''}`}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
         style={{
@@ -1007,16 +992,8 @@ function TopbarIconToggle({
           minWidth: ZONE1_BUTTON_W,
           height: ZONE1_BUTTON_W,
           padding: '0 6px',
-          background: active
-            ? 'color-mix(in srgb, var(--term-fg) 8%, transparent)'
-            : hover
-            ? 'color-mix(in srgb, var(--term-fg) 5%, transparent)'
-            : 'transparent',
           border: 'none',
-          borderRadius: 4,
-          color: active ? 'var(--term-fg)' : hover ? 'var(--term-mid)' : 'var(--term-faint)',
-          cursor: 'pointer',
-          transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease)',
+          color: active ? undefined : 'var(--term-faint)',
           flexShrink: 0,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}
