@@ -5,14 +5,20 @@ import type { PageId } from '../../../state/commands';
 import { workspaceAccent, initialOf } from '../workspaceAccent';
 import { isArchiveGroupId } from '../../../state/trashActions';
 import { confirmDialog } from '../../ui/ConfirmDialog';
+import { descendants } from '../../../state/tree';
 
 /**
- * Archived-nodes surface. Sibling to Trash, but scoped to the archive lane
- * (`deletionGroupId` prefixed `arch-`). Archive reuses the single-node trim
- * engine, so an archived entry restores byte-for-byte via the same
- * `restoreDeletion` path. Unlike Trash, the archived lane is durable: no TTL
- * auto-purge and no "empty" sweep — items leave only via explicit restore or
- * delete-permanently.
+ * Unified archive surface — shows both archived threads (tree-level archive
+ * via `tree.archivedAt`) and archived nodes (single-node archive via
+ * `deletionGroupId` prefixed `arch-`) in one mixed-chronological list.
+ *
+ * The two archive mechanisms have different semantics internally:
+ * - Thread archive: hides an entire tree, preserving its structure.
+ * - Node archive: trims a single node out of the conversation, reparenting
+ *   children up. Restore reverses via the trimSnapshot.
+ *
+ * Both are presented identically to the user. The `_kind` discriminator on
+ * ArchiveGroup routes restore/delete to the correct underlying function.
  */
 
 interface ArchiveGroup {
@@ -21,6 +27,10 @@ interface ArchiveGroup {
   archivedAt: number;
   rootTitle: string;
   memberCount: number;
+  /** Internal discriminator — not surfaced in UI. */
+  _kind: 'node' | 'tree';
+  /** Tree id, only set when _kind === 'tree'. */
+  _treeId?: string;
 }
 
 interface WorkspaceSection {
@@ -42,17 +52,37 @@ function formatRelative(ts: number): string {
   return `${Math.floor(d / 30)}mo ago`;
 }
 
+/** Count live (non-deleted) nodes belonging to a tree, including its root. */
+function countTreeNodes(
+  rootNodeId: string,
+  edges: Project['edges'],
+  nodes: Record<string, ChatNodeState>,
+): number {
+  const liveEdges = edges.filter(
+    (e) => !nodes[e.source]?.deletedAt && !nodes[e.target]?.deletedAt,
+  );
+  const desc = descendants(rootNodeId, liveEdges);
+  // +1 for the root itself, but only if the root node exists and is not deleted
+  const rootNode = nodes[rootNodeId];
+  const rootAlive = rootNode && !rootNode.deletedAt ? 1 : 0;
+  return desc.size + rootAlive;
+}
+
 export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => void } = {}) {
   const {
     projects,
     restoreDeletion,
     purgeDeletionAsync,
+    unarchiveTree,
+    deleteTree,
     openPane,
     selectProject,
+    activateTree,
   } = useChatStore();
   const nodesSnapshot = useChatNodesSnapshot();
 
-  const groups: ArchiveGroup[] = useMemo(() => {
+  // ── Node archive groups (existing logic) ──────────────────────────────
+  const nodeGroups: ArchiveGroup[] = useMemo(() => {
     const byGid = new Map<string, ChatNodeState[]>();
     for (const n of Object.values(nodesSnapshot)) {
       if (!isArchiveGroupId(n.deletionGroupId)) continue;
@@ -71,14 +101,43 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
         archivedAt,
         rootTitle: root?.title || chatLabel(root) || 'thread',
         memberCount: members.length,
+        _kind: 'node',
       });
     });
     return out;
   }, [nodesSnapshot]);
 
+  // ── Thread archive entries (new) ──────────────────────────────────────
+  const threadGroups: ArchiveGroup[] = useMemo(() => {
+    const out: ArchiveGroup[] = [];
+    for (const p of projects) {
+      for (const t of p.trees) {
+        if (!t.archivedAt) continue;
+        const root = nodesSnapshot[t.rootNodeId];
+        const nodeCount = countTreeNodes(t.rootNodeId, p.edges, nodesSnapshot);
+        out.push({
+          id: `tree-${t.id}`,
+          projectId: p.id,
+          archivedAt: t.archivedAt,
+          rootTitle: root?.title || t.name || 'Untitled thread',
+          memberCount: nodeCount,
+          _kind: 'tree',
+          _treeId: t.id,
+        });
+      }
+    }
+    return out;
+  }, [projects, nodesSnapshot]);
+
+  // ── Merge + group by workspace ────────────────────────────────────────
+  const allGroups = useMemo(
+    () => [...nodeGroups, ...threadGroups],
+    [nodeGroups, threadGroups],
+  );
+
   const sortedSections: WorkspaceSection[] = useMemo(() => {
     const byProj = new Map<string, WorkspaceSection>();
-    for (const g of groups) {
+    for (const g of allGroups) {
       const proj = projects.find((p) => p.id === g.projectId);
       if (!proj) continue;
       const cur = byProj.get(proj.id) ?? { project: proj, groups: [], sortKey: 0 };
@@ -89,9 +148,45 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
     return Array.from(byProj.values())
       .map((s) => ({ ...s, groups: [...s.groups].sort((a, b) => b.archivedAt - a.archivedAt) }))
       .sort((a, b) => b.sortKey - a.sortKey);
-  }, [groups, projects]);
+  }, [allGroups, projects]);
 
-  const totalCount = groups.length;
+  const totalCount = allGroups.length;
+
+  // ── Restore / purge handlers routed by _kind ──────────────────────────
+  const handleRestore = (project: Project, g: ArchiveGroup) => {
+    if (g._kind === 'tree' && g._treeId) {
+      unarchiveTree(g._treeId);
+      selectProject(project.id);
+      activateTree(g._treeId);
+      onNav?.('dashboard');
+    } else {
+      const root = restoreDeletion(g.id);
+      if (root) {
+        selectProject(project.id);
+        openPane(root);
+        onNav?.('dashboard');
+      }
+    }
+  };
+
+  const handlePurge = async (g: ArchiveGroup) => {
+    const noun = g._kind === 'tree' ? 'thread' : 'node';
+    if (!(await confirmDialog({
+      title: `Delete ${noun}`,
+      message: `Permanently delete "${g.rootTitle}" (${g.memberCount} node${g.memberCount === 1 ? '' : 's'})?`,
+      confirmLabel: 'Delete',
+    }))) return;
+
+    try {
+      if (g._kind === 'tree' && g._treeId) {
+        deleteTree(g._treeId);
+      } else {
+        await purgeDeletionAsync(g.id);
+      }
+    } catch (err) {
+      window.alert(`Failed to delete: ${(err as Error).message}`);
+    }
+  };
 
   return (
     <div
@@ -109,7 +204,7 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
             fontFamily: 'var(--ui-font)',
           }}
         >
-          — empty — archive a node from its context menu to keep it here without cluttering the conversation
+          — empty — archive a thread or node from its context menu to keep it here
         </div>
       ) : (
         <div style={{ background: 'var(--term-surface)', border: '1px solid var(--term-line)' }}>
@@ -118,26 +213,8 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
               key={s.project.id}
               section={s}
               isFirst={i === 0}
-              onRestoreGroup={(g) => {
-                const root = restoreDeletion(g.id);
-                if (root) {
-                  selectProject(s.project.id);
-                  openPane(root);
-                  onNav?.('dashboard');
-                }
-              }}
-              onPurgeGroup={async (g) => {
-                if (!(await confirmDialog({
-                  title: 'Delete thread',
-                  message: `Permanently delete "${g.rootTitle}" (${g.memberCount} node${g.memberCount === 1 ? '' : 's'})?`,
-                  confirmLabel: 'Delete',
-                }))) return;
-                try {
-                  await purgeDeletionAsync(g.id);
-                } catch (err) {
-                  window.alert(`Failed to delete: ${(err as Error).message}`);
-                }
-              }}
+              onRestoreGroup={(g) => handleRestore(s.project, g)}
+              onPurgeGroup={handlePurge}
             />
           ))}
         </div>
@@ -189,7 +266,7 @@ function WorkspaceSectionView({
         </span>
         <span style={{ color: 'var(--term-fg)', fontWeight: 600, fontSize: 12 }}>{project.name}</span>
         <span style={{ color: 'var(--term-muted)', fontSize: 10 }}>
-          {groups.length} node{groups.length === 1 ? '' : 's'}
+          {groups.length} item{groups.length === 1 ? '' : 's'}
         </span>
       </div>
 
@@ -197,7 +274,9 @@ function WorkspaceSectionView({
         <ArchiveListRow
           key={g.id}
           title={g.rootTitle}
-          meta={`${g.memberCount} node${g.memberCount === 1 ? '' : 's'}`}
+          meta={g._kind === 'tree'
+            ? `thread · ${g.memberCount} node${g.memberCount === 1 ? '' : 's'}`
+            : `${g.memberCount} node${g.memberCount === 1 ? '' : 's'}`}
           archivedAt={g.archivedAt}
           onRestore={() => onRestoreGroup(g)}
           onPurge={() => onPurgeGroup(g)}

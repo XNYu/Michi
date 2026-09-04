@@ -132,7 +132,7 @@ export function buildTreeContextMenu({
                   id: 'archive-nodes',
                   label: anyRoot
                     ? `Archive ${scope.length} (root excluded)`
-                    : `Archive ${scope.length} nodes`,
+                    : `Archive ${scope.length}`,
                   run: () => {
                     for (const id of scope) {
                       if (id === rootId) continue;
@@ -220,7 +220,7 @@ export function buildTreeContextMenu({
           // "Archive" is trim that lands in the Archived surface (durable,
           // restorable) instead of Trash. Children slide up either way.
           id: 'archive',
-          label: 'Archive node',
+          label: 'Archive',
           keys: 'A',
           run: () => actions.archiveNode(targetId),
         },
