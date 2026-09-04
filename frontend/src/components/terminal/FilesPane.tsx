@@ -6,6 +6,7 @@ import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { fetchArtifactContent } from '../../services/api';
 import { getElectron, type FilePreviewResult, type FileTreeEntry } from '../../lib/electronBridge';
 import MarkdownContent from '../MarkdownContent';
+import { ExternalLinkIcon } from './icons';
 
 const MARKDOWN_EXTS = new Set(['md', 'mdx', 'markdown']);
 
@@ -185,7 +186,7 @@ function Preview({ selection, project }: { selection: FileSelection | null; proj
           </button>
         ) : null}
         {selection?.absolutePath ? (
-          <button type="button" className="t-icon-btn" aria-label="Open file externally" title="Open externally" onClick={() => { void getElectron()?.openPath?.(selection.absolutePath!); }}>↗</button>
+          <button type="button" className="t-icon-btn" aria-label="Open file externally" title="Open externally" onClick={() => { void getElectron()?.openPath?.(selection.absolutePath!); }}><ExternalLinkIcon size={14} /></button>
         ) : null}
       </div>
       <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: state.phase === 'loaded' && state.result.kind === 'image' ? 18 : '20px 22px 28px', color: 'var(--term-fg)' }}>

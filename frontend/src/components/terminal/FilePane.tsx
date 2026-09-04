@@ -8,6 +8,7 @@ import MarkdownContent from '../MarkdownContent';
 import SelectionActions from '../SelectionActions';
 import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
 import { computeTextSelector, rangeToOffsets, type TextSelector } from '../../lib/textSelector';
+import { RetryIcon, ExternalLinkIcon } from './icons';
 
 const MARKDOWN_EXTS = new Set(['md', 'mdx', 'markdown']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -182,8 +183,8 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
             {item.viewMode === 'rendered' ? 'source' : 'preview'}
           </button>
         ) : null}
-        <button type="button" className="t-icon-btn" onClick={() => setReloadKey((value) => value + 1)} aria-label="Reload file" title="Reload file">↻</button>
-        {absolutePath ? <button type="button" className="t-icon-btn" onClick={openExternal} aria-label="Open externally" title="Open externally">↗</button> : null}
+        <button type="button" className="t-icon-btn" onClick={() => setReloadKey((value) => value + 1)} aria-label="Reload file" title="Reload file"><RetryIcon size={14} /></button>
+        {absolutePath ? <button type="button" className="t-icon-btn" onClick={openExternal} aria-label="Open externally" title="Open externally"><ExternalLinkIcon size={14} /></button> : null}
       </div>
       <div ref={contentScrollRef} className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 22px 28px', color: 'var(--term-fg)' }}>
         <SelectionActions

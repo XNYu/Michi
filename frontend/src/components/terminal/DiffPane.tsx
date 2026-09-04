@@ -3,6 +3,7 @@ import type { DiffPaneItem } from '../../state/paneItems';
 import { useChatActions } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { RetryIcon } from './icons';
 
 type DiffState =
   | { phase: 'loading' }
@@ -45,7 +46,7 @@ export default function DiffPane({ item }: { item: DiffPaneItem }) {
         <span style={{ color: 'var(--term-digest)', fontSize: 11, fontWeight: 700 }}>±</span>
         <span title={item.filePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--term-mid)' }}>{item.filePath}</span>
         {state.phase === 'loaded' && state.truncated ? <span style={{ fontSize: 9.5, color: 'var(--term-muted)' }}>truncated</span> : null}
-        <button type="button" className="t-icon-btn" onClick={() => setReloadKey((value) => value + 1)} aria-label="Reload diff">↻</button>
+        <button type="button" className="t-icon-btn" onClick={() => setReloadKey((value) => value + 1)} aria-label="Reload diff"><RetryIcon size={14} /></button>
       </div>
       <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 0 24px' }}>
         {state.phase === 'loading' ? <div style={{ padding: '10px 14px', color: 'var(--term-muted)', fontSize: 11 }}>loading diff…</div> : null}
