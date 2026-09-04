@@ -629,7 +629,6 @@ function probeNamedBins(binName: string, extraFiles: string[] = []): boolean {
   }
   return extras.some((cand) => fs.existsSync(cand));
 }
-
 /**
  * Mirror of backend/src/services/acpClient.ts findKiroCli() for the
  * packaged-default decision. Kept in sync by hand — both probes look in
@@ -691,17 +690,6 @@ function probeClaudeCli(): boolean {
   const env = process.env.CLAUDE_CLI_BIN;
   if (env && fs.existsSync(env)) return true;
   return probeNamedBins('claude');
-}
-
-/**
- * Pick the packaged-app default runtime: first CLI detected in preference
- * order codex → claude → kiro, falling back to the CLI-less `pi` runtime.
- */
-function detectDefaultRuntime(): string {
-  if (probeCodexCli()) return 'codex';
-  if (probeClaudeCli()) return 'claude';
-  if (probeKiroCli()) return 'kiro';
-  return 'pi';
 }
 
 /**

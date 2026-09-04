@@ -1,3 +1,20 @@
+import { ChildProcess } from "child_process";
+import { existsSync, readdirSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
+import { killProcessTree, spawnAgentProcess } from "../agents/processTree";
+import {
+    exeName,
+    findInDir,
+    findOnPath,
+    isRunnableFile,
+} from "../agents/executableLookup";
+import * as perf from "./perf";
+import { log } from "./logger";
+import { startupMark } from "./startupTrace";
+import { BACKEND_STREAM_PROBE_ENABLED, writeBackendStreamProbe } from "./streamProbe";
+import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
+
 /**
  * Compatibility surface for the shared ACP client.
  *
@@ -114,24 +131,9 @@ function rpcErrorDataForLog(value: unknown): string | undefined {
     return `${serialized.slice(0, MAX_RPC_ERROR_DATA_CHARS)}…[truncated]`;
 }
 
-function findKiroCli(): string {
-    const env = process.env.KIRO_CLI_BIN;
-    if (env && existsSync(env)) return env;
-
-    const home = homedir();
-
-    const local = join(home, ".local", "bin", "kiro-cli");
+function newestVersionDirs(toolsDir: string): string[] {
     try {
-        // existsSync follows symlinks, so a dangling link returns false.
-        if (existsSync(local)) {
-            accessSync(local, fsConstants.X_OK);
-            return local;
-        }
-    } catch {}
-
-    const toolsDir = join(home, ".toolbox", "tools", "kiro-cli");
-    try {
-        const versions = readdirSync(toolsDir)
+        return readdirSync(toolsDir)
             .map((name) => ({
                 name,
                 parts: name.split(".").map((x) => (/^\d+$/.test(x) ? Number(x) : 0)),
@@ -143,29 +145,55 @@ function findKiroCli(): string {
                     if (av !== bv) return bv - av;
                 }
                 return 0;
-            });
-        for (const v of versions) {
-            const cand = join(toolsDir, v.name, "Kiro CLI.app", "Contents", "MacOS", "kiro-cli");
-            if (existsSync(cand)) {
-                try {
-                    accessSync(cand, fsConstants.X_OK);
-                    return cand;
-                } catch {}
-            }
-        }
-    } catch {}
+            })
+            .map((v) => v.name);
+    } catch {
+        return [];
+    }
+}
 
-    for (const p of (process.env.PATH || "").split(":")) {
-        if (!p) continue;
-        const cand = join(p, "kiro-cli");
-        if (existsSync(cand)) {
-            try {
-                accessSync(cand, fsConstants.X_OK);
-                return cand;
-            } catch {}
+function findKiroCli(): string {
+    const env = process.env.KIRO_CLI_BIN;
+    if (env && existsSync(env)) return env;
+
+    const home = homedir();
+    const local = findInDir(join(home, ".local", "bin"), "kiro-cli");
+    if (local) return local;
+
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+        const toolboxBin = findInDir(join(localAppData, "Toolbox", "bin"), "kiro-cli");
+        if (toolboxBin) return toolboxBin;
+        const kiroCliDir = findInDir(join(localAppData, "Kiro-Cli"), "kiro-cli");
+        if (kiroCliDir) return kiroCliDir;
+    }
+
+    if (process.platform === "darwin") {
+        const toolsDir = join(home, ".toolbox", "tools", "kiro-cli");
+        for (const version of newestVersionDirs(toolsDir)) {
+            const cand = join(toolsDir, version, "Kiro CLI.app", "Contents", "MacOS", "kiro-cli");
+            if (isRunnableFile(cand)) return cand;
         }
     }
 
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+        const toolsDir = join(localAppData, "Toolbox", "tools", "kiro-cli");
+        for (const version of newestVersionDirs(toolsDir)) {
+            const cand = findInDir(join(toolsDir, version), "kiro-cli");
+            if (cand) return cand;
+        }
+    }
+
+    const onPath = findOnPath("kiro-cli");
+    if (onPath) return onPath;
+
+    // Historical fallback: return the conventional toolbox path even if missing
+    // so callers can surface a concrete path in error messages.
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
+        return join(localAppData, "Toolbox", "bin", exeName("kiro-cli"));
+    }
     return join(home, ".toolbox", "bin", "kiro-cli");
 }
 
@@ -308,10 +336,8 @@ export class AcpClient {
         if (this.model) args.push("--model", this.model);
 
         startupMark("kiro_spawn_start", { cwd: this.cwd, binaryPath: this.binaryPath });
-        this.proc = spawn(this.binaryPath, args, {
+        this.proc = spawnAgentProcess(this.binaryPath, args, {
             cwd: this.cwd,
-            stdio: ["pipe", "pipe", "pipe"],
-            detached: true, // own process group for clean group-kill
         });
         startupMark("kiro_spawn_done", { cwd: this.cwd, pid: this.proc.pid });
         perf.mark("acp:spawn_requested", { cwd: this.cwd, pid: this.proc.pid });
@@ -962,7 +988,7 @@ export class AcpClient {
         const pid = proc.pid;
 
         try {
-            if (pid) process.kill(-pid, "SIGTERM");
+            if (pid) killProcessTree(pid, "SIGTERM");
         } catch {}
 
         const exited = await new Promise<boolean>((resolve) => {
@@ -975,7 +1001,7 @@ export class AcpClient {
 
         if (!exited && pid) {
             try {
-                process.kill(-pid, "SIGKILL");
+                killProcessTree(pid, "SIGKILL");
             } catch {}
         }
 

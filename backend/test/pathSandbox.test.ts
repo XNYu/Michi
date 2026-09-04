@@ -9,6 +9,7 @@ import {
   assertWithinCwd,
   getUserSandboxRoot,
   deriveSandboxCwd,
+  expandPath,
   normalizeWorkspaceCwd,
   NotFoundError,
   PathSandboxError,
