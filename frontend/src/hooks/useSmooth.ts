@@ -413,6 +413,10 @@ export function useSmooth(
   const isBackgroundedRef = useRef(false);
   const wasBackgroundedRef = useRef(false);
 
+  // Lock-and-coast: when streaming ends, freeze the last computed CPS so the
+  // remaining backlog drains at a constant speed instead of decelerating.
+  const lockedFinishCpsRef = useRef<number | null>(null);
+
   // Hybrid leaky-controller throughput state.
   const throughputEmaRef = useRef(0);       // graphemes/sec, EMA of sustained throughput
   const burstCountRef = useRef(0);          // number of bursts observed (for cold-start gate)
@@ -486,6 +490,7 @@ export function useSmooth(
     lastArrivalAtRef.current = null;
     agentCpsRef.current = 0;
     hasRateEstimateRef.current = false;
+    lockedFinishCpsRef.current = null;
     // Reset leaky controller state
     throughputEmaRef.current = 0;
     burstCountRef.current = 0;
@@ -620,6 +625,19 @@ export function useSmooth(
         maxTypewriterCps: cfg.maxTypewriterCps,
       });
     }
+    // Lock-and-coast: once streaming ends, freeze CPS at the current value
+    // so the remaining backlog drains at constant speed (zero-order hold).
+    // This eliminates the exponential deceleration tail from proportional
+    // control and the overdrive blend ramp-down.
+    if (!streamingRef.current && backlog > 0) {
+      if (lockedFinishCpsRef.current === null) {
+        lockedFinishCpsRef.current = Math.max(cps, cfg.minTypewriterCps);
+      }
+      cps = lockedFinishCpsRef.current;
+    } else if (streamingRef.current) {
+      lockedFinishCpsRef.current = null;
+    }
+
     const elapsedMs = Math.min(rawElapsedMs, MAX_FRAME_DELTA_MS);
 
     budgetRef.current += cps * (elapsedMs / 1000);
