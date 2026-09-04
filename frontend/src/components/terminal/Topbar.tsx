@@ -465,14 +465,15 @@ export default function TerminalTopbar({
       <div
         style={{
           flex: 1,
-          // Zone 2 spans the whole over-body stretch of the topbar. Paint it
-          // topbarBg so this stretch always matches the content column below:
-          // under macOS vibrancy the topbar root carries the chrome frost tint
-          // (to blend with the sidebar), which must never show over the body.
-          // Caption cells paint their own (dimmable) pane bg on top of this;
-          // the overflow strip's spare right padding falls back to it. No-op
-          // without vibrancy, where the root already equals topbarBg.
-          background: topbarBg,
+          // Zone 2 spans the whole over-body stretch of the topbar. When pane
+          // cells are visible, use --term-bg so the topbar area to the right
+          // of the last caption cell matches the shell background that shows
+          // in the Dashboard strip below it; caption cells already paint
+          // their own --term-pane-bg on top. Under macOS vibrancy the topbar
+          // root carries the chrome frost tint (to blend with the sidebar),
+          // which must never show over the body — this zone covers it.
+          // Without pane cells, fall back to topbarBg.
+          background: showPaneCells ? 'var(--term-bg)' : topbarBg,
           display: 'flex',
           alignItems: 'stretch',
           minWidth: 0,
