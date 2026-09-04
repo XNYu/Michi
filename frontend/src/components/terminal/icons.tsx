@@ -147,3 +147,37 @@ export function CheckIcon({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+export function ExternalLinkIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M12 9v4.5H2.5V4H7" />
+      <path d="M10 2h4v4" />
+      <path d="M7 9L14 2" />
+    </svg>
+  );
+}
+
+export function ChevronLeftIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M10 3L5 8l5 5" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M6 3l5 5-5 5" />
+    </svg>
+  );
+}
+
+export function StopIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
