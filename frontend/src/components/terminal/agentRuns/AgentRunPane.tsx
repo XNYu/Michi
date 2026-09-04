@@ -68,7 +68,7 @@ export function AgentRunPane({
   return (
     <section data-testid="agent-run-pane" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', background: 'var(--term-bg)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', position: 'relative' }}>
       {/* Boxless identity header: plain text + status dot, no chips. */}
-      <header style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', padding: '8px 14px', background: 'var(--term-surface)', flexShrink: 0 }}>
+      <header style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', padding: '0 12px', background: 'var(--term-surface)', flexShrink: 0 }}>
         <button type="button" aria-label="Agent metadata" aria-expanded={metaOpen} onClick={() => setMetaOpen((open) => !open)}
           style={{ border: 0, padding: 0, background: 'transparent', cursor: 'pointer', color: 'var(--term-fg)', fontSize: 13, fontWeight: 650, borderBottom: '1px dotted var(--term-line-s)' }}>
           {run.effectiveDefinition.name}
@@ -89,7 +89,7 @@ export function AgentRunPane({
 
       {/* Metadata popover — everything the old kv sections carried. */}
       {metaOpen && (
-        <div data-testid="run-metadata-popover" style={{ position: 'absolute', left: 14, top: 38, width: 340, zIndex: 6, background: 'var(--term-surface)', border: '1px solid var(--term-line-s)', boxShadow: 'var(--term-float-shadow, 0 12px 34px rgba(0,0,0,.14))' }}>
+        <div data-testid="run-metadata-popover" style={{ position: 'absolute', left: 14, top: 36, width: 340, zIndex: 6, background: 'var(--term-surface)', border: '1px solid var(--term-line-s)', boxShadow: 'var(--term-float-shadow, 0 12px 34px rgba(0,0,0,.14))' }}>
           <div style={{ padding: '7px 12px 6px', borderBottom: '1px solid var(--term-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontFamily: 'var(--mono-font)', fontSize: 9.5, fontWeight: 600, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--term-faint)' }}>Agent metadata</span>
             <span style={{ flex: 1 }} />

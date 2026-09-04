@@ -92,7 +92,8 @@ export default function DigestPane({
     >
       <div
         style={{
-          padding: '8px 14px',
+          height: 36,
+          padding: '0 12px',
           background: 'var(--term-digest-f)',
           borderBottom: '1px solid var(--term-line)',
           display: 'flex',

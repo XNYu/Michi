@@ -78,7 +78,7 @@ export default function ReviewPane({ item }: { item: ReviewPaneItem }) {
     <div data-pane-id={item.id} data-pane-kind="review" className="terminal-pane" onMouseDown={() => { focusPane(item.id); setFocusedNodeId(null); }} style={shellStyle}>
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(220px, 31%)' }}>
         <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ height: 39, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-mid)', fontSize: 11 }}>
+          <div style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-mid)', fontSize: 11, flexShrink: 0 }}>
             <span aria-hidden style={{ color: 'var(--term-digest)', fontWeight: 700 }}>±</span>
             <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedPath ?? 'Working tree'}</span>
             {diff.phase === 'loaded' && diff.truncated ? <span style={{ color: 'var(--term-muted)', fontSize: 9.5 }}>truncated</span> : null}

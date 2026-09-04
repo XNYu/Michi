@@ -309,7 +309,8 @@ export default function ArtifactPane({
       {/* Header: breadcrumb + toolbar */}
       <div
         style={{
-          padding: '6px 14px',
+          height: 36,
+          padding: '0 12px',
           background: 'var(--term-surface)',
           borderBottom: '1px solid var(--term-line)',
           display: 'flex',
