@@ -1,4 +1,5 @@
 import type { PendingComment } from '../state/chatTypes';
+import type { TextSelector } from './textSelector';
 import { formatQuoteBlock, formatQuotedSelectionContext } from './quoteFormat';
 
 /**
@@ -47,7 +48,9 @@ export function truncateQuotePreview(
  *
  * When the comment carries artifact source metadata, an attribution line
  * and a "read full document" instruction are included so the agent knows
- * which file the selection came from.
+ * which file the selection came from. If a TextSelector is present, its
+ * line numbers, section heading, and prefix/suffix context are rendered
+ * so the agent can precisely locate the passage.
  */
 export function renderComment(c: PendingComment): string {
   const preview = truncateQuotePreview(c.quotedText.trim());
@@ -55,10 +58,33 @@ export function renderComment(c: PendingComment): string {
 
   if (c.source?.type === 'artifact') {
     const label = c.source.name ? `artifact "${c.source.name}"` : 'an artifact document';
-    const attribution = `From ${label} at \`${c.source.filePath}\`:`;
+    const sel = c.source.selector;
+    const locationParts: string[] = [];
+    if (sel?.startLine !== undefined && sel?.endLine !== undefined) {
+      locationParts.push(
+        sel.startLine === sel.endLine
+          ? `line ${sel.startLine}`
+          : `lines ${sel.startLine}-${sel.endLine}`,
+      );
+    }
+    if (sel?.section) {
+      locationParts.push(`section "${sel.section}"`);
+    }
+    const locationSuffix = locationParts.length > 0
+      ? ` (${locationParts.join(', ')})`
+      : '';
+    const attribution = `From ${label} at \`${c.source.filePath}\`${locationSuffix}:`;
     const quoted = formatQuoteBlock(preview);
-    const readHint = `The full document is available at \`${c.source.filePath}\`. Read it if you need more context.`;
+    const readHint = sel?.startLine !== undefined
+      ? `The full document is available at \`${c.source.filePath}\`. Read lines ${sel.startLine}-${sel.endLine ?? sel.startLine} for the exact passage.`
+      : `The full document is available at \`${c.source.filePath}\`. Read it if you need more context.`;
     const parts = [attribution, '', quoted];
+    // Add prefix/suffix context lines for disambiguation
+    if (sel?.prefix || sel?.suffix) {
+      parts.push('');
+      if (sel?.prefix) parts.push(`Context before: "${sel.prefix}"`);
+      if (sel?.suffix) parts.push(`Context after: "${sel.suffix}"`);
+    }
     if (body) parts.push('', body);
     parts.push('', readHint);
     return parts.join('\n');

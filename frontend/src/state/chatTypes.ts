@@ -471,7 +471,17 @@ export interface PendingComment {
   /** Unix ms when added; kept for UI ordering / potential future sorting. */
   createdAt: number;
   /** When the comment targets an artifact file, carries source metadata. */
-  source?: { type: 'artifact'; name?: string; filePath: string };
+  source?: {
+    type: 'artifact';
+    name?: string;
+    filePath: string;
+    /**
+     * W3C Web Annotation-aligned text selector for precise sub-document
+     * anchoring. Carries prefix/suffix for disambiguation, character offsets,
+     * line numbers, and markdown heading ancestry.
+     */
+    selector?: import('../lib/textSelector').TextSelector;
+  };
 }
 
 /**
@@ -1072,7 +1082,7 @@ export interface ChatContextValue {
    * flushes on the next outgoing prompt. `quotedText` is the selected
    * passage, `body` is the user's reply.
    */
-  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string }) => void;
+  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string; selector?: import('../lib/textSelector').TextSelector }) => void;
   /** Update the body text of a pending comment. No-op if the id is unknown. */
   editPendingComment: (nodeId: string, commentId: string, body: string) => void;
   /** Drop one pending comment by id. No-op if the id is unknown. */

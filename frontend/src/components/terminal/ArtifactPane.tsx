@@ -7,6 +7,7 @@ import { fetchArtifactContent } from '../../services/api';
 import { backendConnectionIdForWorkspace, LOCAL_BACKEND_CONNECTION_ID } from '../../config/backendConnections';
 import { getElectron } from '../../lib/electronBridge';
 import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
+import { computeTextSelector, rangeToOffsets, type TextSelector } from '../../lib/textSelector';
 
 const PROSE_CLASSES =
   'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
@@ -120,13 +121,21 @@ export default function ArtifactPane({
   );
 
   const handleComment = useCallback(
-    (quoted: string, body: string) => {
+    (quoted: string, body: string, range?: Range) => {
       const targetId = getTargetChatNodeId();
       if (!targetId) return;
       const artPath = n?.artifact?.filePath ?? '';
       const artName = n?.title || n?.artifact?.basename || undefined;
+      const docText = n?.artifact?.content;
+      let selector: TextSelector | undefined;
+      if (range && docText && contentScrollRef.current) {
+        const offsets = rangeToOffsets(range, contentScrollRef.current, docText);
+        if (offsets) {
+          selector = computeTextSelector(docText, offsets.startOffset, offsets.endOffset);
+        }
+      }
       const source = artPath
-        ? { type: 'artifact' as const, name: artName, filePath: artPath }
+        ? { type: 'artifact' as const, name: artName, filePath: artPath, ...(selector ? { selector } : {}) }
         : undefined;
       addPendingComment(targetId, quoted, body, source);
     },

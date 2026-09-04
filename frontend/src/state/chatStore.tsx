@@ -2111,7 +2111,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const addPendingComment = useCallback(
-    (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string }) => {
+    (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string; selector?: import('../lib/textSelector').TextSelector }) => {
       const trimmedQuote = quotedText.trim();
       const trimmedBody = body.trim();
       // Guard against empty entries: a comment needs at least the body text,

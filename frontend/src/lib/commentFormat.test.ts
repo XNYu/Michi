@@ -137,6 +137,80 @@ describe('renderComment with artifact source', () => {
     expect(out).toContain('The full document is available at `doc.md`.');
     expect(out).not.toContain('\n\n\n'); // no double blank line from missing body
   });
+
+  it('includes line numbers and section when selector is provided', () => {
+    const c: PendingComment = {
+      id: 'c4',
+      quotedText: 'domainOwner field',
+      body: 'what does this do?',
+      createdAt: 0,
+      source: {
+        type: 'artifact',
+        name: 'Config Spec',
+        filePath: 'docs/config.md',
+        selector: {
+          exact: 'domainOwner field',
+          prefix: 'required for all types. ',
+          suffix: ' This determines the routing',
+          startOffset: 420,
+          endOffset: 437,
+          startLine: 42,
+          endLine: 42,
+          section: '## Configuration Fields > ### domainOwner',
+        },
+      },
+    };
+    const out = renderComment(c);
+    expect(out).toContain('line 42');
+    expect(out).toContain('section "## Configuration Fields > ### domainOwner"');
+    expect(out).toContain('Context before: "required for all types. "');
+    expect(out).toContain('Context after: " This determines the routing"');
+    expect(out).toContain('Read lines 42-42 for the exact passage.');
+  });
+
+  it('renders line range for multi-line selections', () => {
+    const c: PendingComment = {
+      id: 'c5',
+      quotedText: 'multi\nline\ntext',
+      body: 'review this',
+      createdAt: 0,
+      source: {
+        type: 'artifact',
+        name: 'Doc',
+        filePath: 'doc.md',
+        selector: {
+          exact: 'multi\nline\ntext',
+          startLine: 10,
+          endLine: 12,
+        },
+      },
+    };
+    const out = renderComment(c);
+    expect(out).toContain('lines 10-12');
+    expect(out).toContain('Read lines 10-12 for the exact passage.');
+  });
+
+  it('omits context lines when prefix/suffix are absent', () => {
+    const c: PendingComment = {
+      id: 'c6',
+      quotedText: 'simple text',
+      body: 'note',
+      createdAt: 0,
+      source: {
+        type: 'artifact',
+        name: 'Doc',
+        filePath: 'doc.md',
+        selector: {
+          exact: 'simple text',
+          startLine: 5,
+          endLine: 5,
+        },
+      },
+    };
+    const out = renderComment(c);
+    expect(out).not.toContain('Context before');
+    expect(out).not.toContain('Context after');
+  });
 });
 
 describe('formatCommentsBlock', () => {

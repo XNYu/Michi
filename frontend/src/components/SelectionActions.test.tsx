@@ -153,7 +153,7 @@ describe('SelectionActions', () => {
     fireEvent.change(textarea, { target: { value: 'my reply body' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
 
-    expect(onComment).toHaveBeenCalledWith('selected source text', 'my reply body');
+    expect(onComment).toHaveBeenCalledWith('selected source text', 'my reply body', expect.anything());
     expect(onBranch).not.toHaveBeenCalled();
     expect(onQuote).not.toHaveBeenCalled();
     // Bar closes after submit.
@@ -315,7 +315,7 @@ describe('SelectionActions', () => {
     fireEvent.mouseDown(saveBtn);
     fireEvent.click(saveBtn);
 
-    expect(onComment).toHaveBeenCalledWith('selected source text', 'my reply body');
+    expect(onComment).toHaveBeenCalledWith('selected source text', 'my reply body', expect.anything());
     expect(screen.queryByText('COMMENT ON SELECTION')).toBeNull();
   });
 
@@ -371,7 +371,7 @@ describe('SelectionActions', () => {
     fireEvent.mouseDown(branchSubmitBtn);
     fireEvent.click(branchSubmitBtn);
 
-    expect(onBranch).toHaveBeenCalledWith('selected source text', 'why does this work?', undefined);
+    expect(onBranch).toHaveBeenCalledWith('selected source text', 'why does this work?', undefined, expect.anything());
     expect(screen.queryByText('BRANCH FROM SELECTION')).toBeNull();
   });
 

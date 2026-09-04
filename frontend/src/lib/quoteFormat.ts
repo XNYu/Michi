@@ -12,6 +12,12 @@ export interface QuoteSource {
   name?: string;
   /** File path relative to the workspace cwd. */
   filePath: string;
+  /**
+   * W3C Web Annotation-aligned text selector for precise anchoring.
+   * Optional — only populated when the selection can be mapped to
+   * character offsets in the source document.
+   */
+  selector?: import('./textSelector').TextSelector;
 }
 
 export function formatQuoteBlock(quote: string): string {

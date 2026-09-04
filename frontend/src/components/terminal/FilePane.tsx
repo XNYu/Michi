@@ -7,6 +7,7 @@ import { getElectron } from '../../lib/electronBridge';
 import MarkdownContent from '../MarkdownContent';
 import SelectionActions from '../SelectionActions';
 import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
+import { computeTextSelector, rangeToOffsets, type TextSelector } from '../../lib/textSelector';
 
 const MARKDOWN_EXTS = new Set(['md', 'mdx', 'markdown']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -87,12 +88,21 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   );
 
   const handleComment = useCallback(
-    (quoted: string, body: string) => {
+    (quoted: string, body: string, range?: Range) => {
       const targetId = getTargetChatNodeId();
       if (!targetId) return;
-      addPendingComment(targetId, quoted, body, fileSource);
+      const docText = state.phase === 'loaded' ? state.content : null;
+      let sourceWithSelector = fileSource;
+      if (range && docText && fileSource && contentScrollRef.current) {
+        const offsets = rangeToOffsets(range, contentScrollRef.current, docText);
+        if (offsets) {
+          const selector = computeTextSelector(docText, offsets.startOffset, offsets.endOffset);
+          sourceWithSelector = { ...fileSource, selector };
+        }
+      }
+      addPendingComment(targetId, quoted, body, sourceWithSelector);
     },
-    [getTargetChatNodeId, addPendingComment, fileSource],
+    [getTargetChatNodeId, addPendingComment, fileSource, state],
   );
 
   useEffect(() => {

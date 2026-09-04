@@ -24,9 +24,9 @@ interface Anchor {
 export interface SelectionActionsProps {
   containerRef: React.RefObject<HTMLElement>;
   /** Quote-reply to the current pane/node. */
-  onQuote: (quoted: string) => void;
+  onQuote: (quoted: string, range?: Range) => void;
   /** Branch: create a child thread seeded with the quote + a prompt. */
-  onBranch: (quoted: string, prompt: string, anchorMessageId?: string) => void;
+  onBranch: (quoted: string, prompt: string, anchorMessageId?: string, range?: Range) => void;
   /**
    * Comment: queue a reply-to-selection on the current node. Unlike
    * Quote / Branch this does not send or branch anything - the comment
@@ -34,7 +34,7 @@ export interface SelectionActionsProps {
    * is submitted, at which point TPane flushes them all into a
    * prepended markdown block.
    */
-  onComment: (quoted: string, body: string) => void;
+  onComment: (quoted: string, body: string, range?: Range) => void;
 }
 
 type ComposerMode = 'closed' | 'branch' | 'comment';
@@ -257,9 +257,9 @@ export default function SelectionActions({
     const p = prompt.trim();
     if (!p) return;
     if (composerMode === 'branch') {
-      onBranch(anchor.text, p, findMessageIdForRange(anchor.range));
+      onBranch(anchor.text, p, findMessageIdForRange(anchor.range), anchor.range);
     } else if (composerMode === 'comment') {
-      onComment(anchor.text, p);
+      onComment(anchor.text, p, anchor.range);
     } else {
       return;
     }
@@ -268,7 +268,7 @@ export default function SelectionActions({
 
   const fireQuote = useCallback(() => {
     if (!anchor) return;
-    onQuote(anchor.text);
+    onQuote(anchor.text, anchor.range);
     close();
   }, [anchor, onQuote, close]);
 
