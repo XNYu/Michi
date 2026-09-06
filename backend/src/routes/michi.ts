@@ -489,6 +489,97 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         });
     });
 
+    // ── Copy-file: zero-encode local file import (Electron fast path) ──────
+    //
+    // Like link-file but copies instead of symlinking. Used by the Electron
+    // renderer when it can resolve a File's absolute disk path via
+    // webUtils.getPathForFile — the frontend sends just the path, we do
+    // fs.copyFile, and skip all base64 encoding / JSON serialization overhead.
+    // Desktop-only (same restriction as link-file).
+    router.post("/workspaces/copy-file", requireWorkspaceOwner, (req, res) => {
+        if (process.env.MICHI_CLOUD === "1") {
+            return res
+                .status(400)
+                .json({ error: "copy-file is not supported in cloud mode" });
+        }
+        const cwdRaw: unknown = req.body?.cwd;
+        if (typeof cwdRaw !== "string" || !path.isAbsolute(cwdRaw)) {
+            return res.status(400).json({ error: "cwd must be an absolute path" });
+        }
+        const cwd = cwdRaw;
+
+        const sourcePathRaw: unknown = req.body?.sourcePath;
+        if (typeof sourcePathRaw !== "string" || !path.isAbsolute(sourcePathRaw)) {
+            return res.status(400).json({ error: "sourcePath must be an absolute path" });
+        }
+        const sourcePath = sourcePathRaw;
+
+        try {
+            const s = fs.statSync(cwd);
+            if (!s.isDirectory()) return res.status(400).json({ error: "cwd is not a directory" });
+        } catch {
+            return res.status(400).json({ error: "cwd does not exist" });
+        }
+
+        let srcSize = 0;
+        try {
+            const s = fs.statSync(sourcePath);
+            if (!s.isFile()) return res.status(400).json({ error: "sourcePath is not a file" });
+            srcSize = s.size;
+        } catch {
+            return res.status(400).json({ error: "sourcePath does not exist" });
+        }
+
+        // 20MB cap consistent with import-file's base64 path
+        if (srcSize > 20_000_000) {
+            return res.status(413).json({ error: `file too large (${srcSize} bytes; max 20,000,000)` });
+        }
+
+        const base = path.basename(sourcePath);
+        const ext = path.extname(base);
+        const stem =
+            base.slice(0, base.length - ext.length).replace(/[^a-zA-Z0-9_-]/g, "_") || "file";
+        const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, "");
+
+        // Support the same subdir allowlist as import-file
+        const subdirRaw: unknown = req.body?.subdir;
+        const subdir =
+            subdirRaw === ".attachments" || subdirRaw === ".contexts" ? subdirRaw : ".contexts";
+
+        const dir = path.join(cwd, subdir);
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+        } catch (err) {
+            return res.status(500).json({ error: `mkdir ${subdir} failed: ${(err as Error).message}` });
+        }
+
+        let name = stem;
+        let filename = `${stem}${safeExt}`;
+        let attempt = 0;
+        while (fs.existsSync(path.join(dir, filename))) {
+            attempt += 1;
+            name = `${stem}-${attempt}`;
+            filename = `${name}${safeExt}`;
+            if (attempt > 9999) return res.status(500).json({ error: "could not allocate unique filename" });
+        }
+
+        const target = path.join(dir, filename);
+        if (!target.startsWith(dir + path.sep)) {
+            return res.status(400).json({ error: `resolved path escapes ${subdir}` });
+        }
+        try {
+            fs.copyFileSync(sourcePath, target);
+        } catch (err) {
+            return res.status(500).json({ error: `copy failed: ${(err as Error).message}` });
+        }
+        res.json({
+            name,
+            displayName: base,
+            filePath: `${subdir}/${filename}`,
+            size: srcSize,
+        });
+    });
+
     /**
      * Pre-warm a cwd's ACP client + warmed session pool.
      *

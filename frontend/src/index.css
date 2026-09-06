@@ -2267,6 +2267,14 @@ html[data-vibrancy="on"],
   background: var(--term-accent);
   transition: width 120ms ease-out;
 }
+.t-upload-progress__bar.is-indeterminate {
+  width: 30%;
+  animation: upload-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes upload-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(433%); }
+}
 
 /* Composer toolbar chip — borderless idle, bordered on hover. Used for
    the +, @, agent, and model controls in the bottom toolbar so they all

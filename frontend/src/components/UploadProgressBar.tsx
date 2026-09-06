@@ -16,10 +16,17 @@ interface Props {
 
 export default function UploadProgressBar({ progress, compact = false }: Props) {
   if (!progress) return null;
-  const percent = progress.percent == null
-    ? (progress.phase === 'preparing' ? 4 : 12)
-    : Math.max(0, Math.min(100, progress.percent));
-  const phase = progress.phase === 'preparing' ? 'preparing' : 'uploading';
+  const isCopying = progress.phase === 'copying' && progress.percent == null;
+  const percent = isCopying
+    ? 100 // fill the track for the animation
+    : progress.percent == null
+      ? (progress.phase === 'preparing' ? 4 : 12)
+      : Math.max(0, Math.min(100, progress.percent));
+  const phase = progress.phase === 'preparing'
+    ? 'preparing'
+    : progress.phase === 'copying'
+      ? 'copying'
+      : 'uploading';
   const countLabel = progress.fileCount > 1
     ? ` ${progress.fileIndex + 1}/${progress.fileCount}`
     : '';
@@ -34,13 +41,13 @@ export default function UploadProgressBar({ progress, compact = false }: Props) 
           {progress.fileName}
         </span>
         <span className="t-upload-progress__pct">
-          {progress.percent == null ? '--' : `${percent}%`}
+          {isCopying ? '' : progress.percent == null ? '--' : `${percent}%`}
         </span>
       </div>
       <div className="t-upload-progress__track" aria-hidden>
         <div
-          className="t-upload-progress__bar"
-          style={{ width: `${percent}%` }}
+          className={`t-upload-progress__bar${isCopying ? ' is-indeterminate' : ''}`}
+          style={isCopying ? undefined : { width: `${percent}%` }}
         />
       </div>
     </div>

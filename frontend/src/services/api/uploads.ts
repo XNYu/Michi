@@ -1,6 +1,6 @@
 import { workspaceBackendApiBase } from '../../config/backendConnections';
 
-export type UploadPhase = 'preparing' | 'uploading';
+export type UploadPhase = 'preparing' | 'uploading' | 'copying';
 
 export interface UploadProgress {
   phase: UploadPhase;
@@ -222,6 +222,41 @@ export async function importWorkspaceFileUpload(
   if (file.size === 0) {
     return importWorkspaceFile(workspaceId, cwd, originalName, '', options);
   }
+
+  // ── Electron fast path: copy by absolute path, skip base64 entirely ───
+  // In Electron, webUtils.getPathForFile resolves a File (from drag-drop or
+  // <input>) to its absolute disk path. We POST just the path; the backend
+  // does fs.copyFile — zero base64, zero JSON bloat, no main-thread stall.
+  const electron = typeof window !== 'undefined' ? window.electron : undefined;
+  if (electron?.getPathForFile) {
+    const absPath = electron.getPathForFile(file);
+    if (absPath) {
+      options?.onProgress?.({
+        phase: 'copying',
+        loaded: 0,
+        total: file.size,
+        percent: null, // indeterminate
+      });
+      try {
+        const result = await copyWorkspaceFile(workspaceId, cwd, absPath, {
+          subdir: options?.subdir,
+        });
+        options?.onProgress?.({
+          phase: 'copying',
+          loaded: file.size,
+          total: file.size,
+          percent: 100,
+        });
+        return result;
+      } catch {
+        // Fall through to the base64 path if the server rejects (e.g. cloud
+        // mode, or sourcePath doesn't exist). This keeps the fast path
+        // opportunistic, never breaking the existing flow.
+      }
+    }
+  }
+
+  // ── Standard path: read into memory → base64 → JSON POST ─────────────
   const readProgress = combineUploadProgress(options?.onProgress, 'preparing', 0, 10);
   const uploadProgress = combineUploadProgress(options?.onProgress, 'uploading', 10, 100);
   const bytes = await readFileAsArrayBuffer(file, readProgress);
@@ -229,6 +264,28 @@ export async function importWorkspaceFileUpload(
     onProgress: uploadProgress,
     subdir: options?.subdir,
   });
+}
+
+/**
+ * Copy a file by absolute path into <cwd>/<subdir>/. Desktop/Electron only.
+ * The backend does fs.copyFile — zero encoding, zero serialization overhead.
+ */
+export async function copyWorkspaceFile(
+  workspaceId: string,
+  cwd: string,
+  sourcePath: string,
+  options?: { subdir?: string },
+): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/copy-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceId, cwd, sourcePath, subdir: options?.subdir }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(err.error || `copyWorkspaceFile failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 /**
