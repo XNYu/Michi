@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useChatActions, useChatProjects, useStructuralSelector } from '../../state/chatStore';
+import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { useTerminalColors } from './useTerminalColors';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
@@ -9,6 +9,7 @@ import TerminalDashboard from './pages/Dashboard';
 import TerminalHome from './pages/Home';
 import NewWorkspaceDialog from '../NewWorkspaceDialog';
 import { DrawerShell } from '../ui/DrawerShell';
+import type { SettingsSection } from './pages/Settings';
 import { usePrefs } from '../../state/prefs';
 import type { PageId } from '../../state/commands';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
@@ -72,29 +73,44 @@ export default function TerminalShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const [settingsPresent, setSettingsPresent] = useState(false);
+  const [artifactsPresent, setArtifactsPresent] = useState(false);
+  const [settingsMotion, setSettingsMotion] = useState<'standard' | 'instant'>('standard');
+  const [artifactsMotion, setArtifactsMotion] = useState<'standard' | 'instant'>('standard');
+  const inputMotion = React.useRef<'standard' | 'instant'>('standard');
+  useEffect(() => {
+    const keyboard = () => { inputMotion.current = 'instant'; };
+    const pointer = () => { inputMotion.current = 'standard'; };
+    window.addEventListener('keydown', keyboard, true);
+    window.addEventListener('pointerdown', pointer, true);
+    return () => {
+      window.removeEventListener('keydown', keyboard, true);
+      window.removeEventListener('pointerdown', pointer, true);
+    };
+  }, []);
   // Branches/Map/Digest are thread-scoped views (and Workspaces a picker): a
   // second click on the same nav target — or a second ⌘M/⌘D/⌘O — drops back to
   // the conversation. Fixed destination on purpose: "back" means "back to the
   // thread", not browser-style history.
   const handleNav = React.useCallback((p: PageId) => {
-    if (p === 'settings') { setSettingsOpen((v) => !v); return; }
+    if (p === 'settings') { setSettingsMotion(inputMotion.current); setSettingsOpen((v) => !v); return; }
     const TOGGLE_PAGES: PageId[] = ['branches', 'map', 'digest', 'workspaces'];
     setPage((current) => (TOGGLE_PAGES.includes(p) && current === p ? 'dashboard' : p));
   }, []);
   const [newWsOpen, setNewWsOpen] = useState(false);
 
   useEffect(() => {
-    const visible = page === 'dashboard' && !paletteOpen && !settingsOpen && !artifactsOpen && !newWsOpen;
+    const visible = page === 'dashboard' && !paletteOpen && !settingsOpen && !settingsPresent && !artifactsOpen && !artifactsPresent && !newWsOpen;
     window.dispatchEvent(new CustomEvent('michi:native-surfaces-visible', { detail: { visible } }));
-  }, [page, paletteOpen, settingsOpen, artifactsOpen, newWsOpen]);
+  }, [page, paletteOpen, settingsOpen, settingsPresent, artifactsOpen, artifactsPresent, newWsOpen]);
   const {
-    activeProject, openPanes, selection,
-    focusedPane,
+    activeProject, selection,
     treeSelection,
     projects, hydrated,
     agentStatus,
     canNavBack, canNavForward,
   } = useChatProjects();
+  const { openPanes, focusedPane } = useChatPanes();
   const {
     createProject,
     enterChatsWorkspace,
@@ -356,6 +372,7 @@ export default function TerminalShell() {
           break;
         case ',':
           e.preventDefault();
+          setSettingsMotion('instant');
           setSettingsOpen((v) => !v);
           break;
       }
@@ -377,7 +394,7 @@ export default function TerminalShell() {
   }, []);
 
   useEffect(() => {
-    const onEvt = () => setArtifactsOpen((v) => !v);
+    const onEvt = () => { setArtifactsMotion(inputMotion.current); setArtifactsOpen((v) => !v); };
     window.addEventListener('michi:toggle-artifacts', onEvt as EventListener);
     return () => window.removeEventListener('michi:toggle-artifacts', onEvt as EventListener);
   }, []);
@@ -568,12 +585,14 @@ export default function TerminalShell() {
       />
       <SettingsDrawer
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        motion={settingsMotion}
+        onPresenceChange={setSettingsPresent}
+        onClose={() => { setSettingsMotion(inputMotion.current); setSettingsOpen(false); }}
         onNav={handleNav}
       />
-      {artifactsOpen && (
+      {(artifactsOpen || artifactsPresent) && (
         <React.Suspense fallback={null}>
-          <ArtifactsDrawer open={artifactsOpen} onClose={() => setArtifactsOpen(false)} />
+          <ArtifactsDrawer key={activeProject?.id ?? 'none'} open={artifactsOpen} motion={artifactsMotion} onPresenceChange={setArtifactsPresent} onClose={() => { setArtifactsMotion(inputMotion.current); setArtifactsOpen(false); }} />
         </React.Suspense>
       )}
     </div>
@@ -683,12 +702,13 @@ function AgentManagementEditor({ route, onNav }: { route: ReturnType<typeof useM
   return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 10 }}>CONTROL PLANE · {route.backendConnectionId}{route.workspaceId ? ` · WORKSPACE ${route.workspaceId}` : ' · GLOBAL'}</div><AgentEditorPage definition={definition} initialScope={route.scope} workspaceId={route.workspaceId} error={error} blockers={blockers} onCancel={() => onNav('agents')} onSaveDraft={(value) => execute(() => persist(value, false))} onEnable={(value) => execute(() => persist(value, true))} onDisable={identity ? () => execute(async () => { dispatch({ type: 'upsert-definitions', resources: [await disableAgentDefinition(identity)] }); }) : undefined} onDuplicate={identity ? () => execute(async () => { const copied = await duplicateAgentDefinition(identity); dispatch({ type: 'upsert-definitions', resources: [copied] }); setManageAgentRoute({ mode: 'edit', scope: copied.value.scope, workspaceId: copied.value.workspaceId, backendConnectionId: copied.backendConnectionId, definitionId: copied.value.id }); }) : undefined} onDelete={identity ? () => execute(async () => { await deleteAgentDefinition(identity); dispatch({ type: 'remove-definition', identity }); setManageAgentRoute(null); onNav('agents'); }) : undefined} /></div>;
 }
 
-function SettingsDrawer({ open, onClose, onNav }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void }) {
+function SettingsDrawer({ open, onClose, onNav, motion, onPresenceChange }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void; motion: 'standard' | 'instant'; onPresenceChange: (present: boolean) => void }) {
+  const [section, setSection] = useState<SettingsSection>('appearance');
   return (
-    <DrawerShell open={open} onClose={onClose} title="Settings">
+    <DrawerShell open={open} onClose={onClose} title="Settings" width={620} motion={motion} onPresenceChange={onPresenceChange}>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <LazyPage>
-          <TerminalSettings onNav={onNav} onClose={onClose} />
+          <TerminalSettings section={section} onSectionChange={setSection} onNav={onNav} onClose={onClose} />
         </LazyPage>
       </div>
     </DrawerShell>

@@ -63,6 +63,31 @@ const RANK: Record<OpenState, number> = { none: 0, idle: 1, streaming: 2 };
 const RANK_TO_STATE: OpenState[] = ['none', 'idle', 'streaming'];
 
 /**
+ * Build the branch-edge adjacency table once so callers that iterate
+ * multiple trees over the **same** edges array can share the result
+ * instead of rebuilding it on every call.
+ *
+ * Only follows 'branch' edges (kind === 'branch' or undefined) —
+ * digest/merge/link edges are excluded, matching `subtreeOpenState` and
+ * `treeHasUnread`.
+ */
+export function buildBranchChildrenOf(
+  edges: readonly ProjectEdge[],
+): ReadonlyMap<string, readonly string[]> {
+  const map = new Map<string, string[]>();
+  for (const e of edges) {
+    if (e.kind !== undefined && e.kind !== 'branch') continue;
+    const arr = map.get(e.source);
+    if (arr) {
+      arr.push(e.target);
+    } else {
+      map.set(e.source, [e.target]);
+    }
+  }
+  return map;
+}
+
+/**
  * Per-node contribution to the sidebar indicator.
  *
  * - 'streaming' — status === 'streaming', regardless of open panes, focus,
@@ -95,33 +120,30 @@ export function nodeOpenState(
  * (per `isAlive`) are skipped along with their entire subtree. Aggregator
  * is max under `streaming > idle > none`, so any streaming descendant
  * dominates.
+ *
+ * When multiple subtrees share the same `edges`, pass a pre-built
+ * `childrenOf` map (from `buildBranchChildrenOf`) to avoid rebuilding the
+ * adjacency table on each call.
  */
 export function subtreeOpenState(
   rootNodeId: string,
   edges: readonly ProjectEdge[],
   isAlive: (nodeId: string) => boolean,
   perNode: (nodeId: string) => OpenState,
+  childrenOf?: ReadonlyMap<string, readonly string[]>,
 ): OpenState {
   if (!isAlive(rootNodeId)) return 'none';
 
-  // Adjacency: parent -> children, only following 'branch' edges (digest /
-  // merge edges live on the same nodes table but are not part of the
-  // hierarchical tree the sidebar renders).
-  const childrenOf = new Map<string, string[]>();
-  for (const e of edges) {
-    const isBranchEdge = e.kind === 'branch' || e.kind === undefined;
-    if (!isBranchEdge) continue;
-    const arr = childrenOf.get(e.source) ?? [];
-    arr.push(e.target);
-    childrenOf.set(e.source, arr);
-  }
+  // Use the shared map when provided; otherwise build one locally.
+  const children: ReadonlyMap<string, readonly string[]> =
+    childrenOf ?? buildBranchChildrenOf(edges);
 
   let bestRank = RANK[perNode(rootNodeId)];
   const stack = [rootNodeId];
   const seen = new Set<string>([rootNodeId]);
   while (stack.length > 0) {
     const cur = stack.pop()!;
-    for (const child of childrenOf.get(cur) ?? []) {
+    for (const child of children.get(cur) ?? []) {
       if (seen.has(child)) continue;
       seen.add(child);
       if (!isAlive(child)) continue;
@@ -234,25 +256,24 @@ export function selectProjectNodeStatuses(
 /**
  * True iff any node in the subtree rooted at `tree.rootNodeId` (traversed via
  * branch edges) is unread. Mirrors the pattern used by `subtreeOpenState`.
+ *
+ * When multiple trees share the same `edges`, pass a pre-built `childrenOf`
+ * map (from `buildBranchChildrenOf`) to avoid rebuilding the adjacency table
+ * on each call.
  */
 export function treeHasUnread(
   tree: Pick<Tree, 'rootNodeId'>,
   edges: readonly ProjectEdge[],
   nodes: Record<string, ChatNodeState>,
   focusedNodeId: string | null,
+  childrenOf?: ReadonlyMap<string, readonly string[]>,
 ): boolean {
   const root = nodes[tree.rootNodeId];
   if (root && isNodeUnread(root, focusedNodeId)) return true;
-  // Build children map from branch edges only
-  const childrenOf = new Map<string, string[]>();
-  for (const e of edges) {
-    const isBranch = e.kind === 'branch' || e.kind === undefined;
-    if (!isBranch) continue;
-    const arr = childrenOf.get(e.source) ?? [];
-    arr.push(e.target);
-    childrenOf.set(e.source, arr);
-  }
-  const stack = [...(childrenOf.get(tree.rootNodeId) ?? [])];
+  // Use the shared map when provided; otherwise build one locally.
+  const children: ReadonlyMap<string, readonly string[]> =
+    childrenOf ?? buildBranchChildrenOf(edges);
+  const stack = [...(children.get(tree.rootNodeId) ?? [])];
   const seen = new Set<string>([tree.rootNodeId]);
   while (stack.length > 0) {
     const id = stack.pop()!;
@@ -260,7 +281,7 @@ export function treeHasUnread(
     seen.add(id);
     const node = nodes[id];
     if (node && isNodeUnread(node, focusedNodeId)) return true;
-    for (const child of childrenOf.get(id) ?? []) stack.push(child);
+    for (const child of children.get(id) ?? []) stack.push(child);
   }
   return false;
 }

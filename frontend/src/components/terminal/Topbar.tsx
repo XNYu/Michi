@@ -3,6 +3,7 @@ import {
   activeTreeRootNodeId,
   chatLabel,
   useChatActions,
+  useChatPanes,
   useChatProjects,
   useNodesSelector,
   useStructuralSelector,
@@ -22,6 +23,7 @@ import { findTreeIdForNode } from '../../state/tree';
 import { activeBackendApiBase, getKnownBackendConnections } from '../../config/backendConnections';
 import { backendConnectionIdFromApiBase } from '../../state/agentIdentity';
 import { useManageAgentRoute } from '../../state/manageRoute';
+import { usePaneLayout } from './usePaneLayout';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
@@ -73,13 +75,11 @@ export default function TerminalTopbar({
   const {
     activeProject,
     projects,
-    openPanes,
-    focusedPane,
     focusedNodeId,
-    paneItems = {},
     canNavBack,
     canNavForward,
   } = useChatProjects();
+  const { openPanes, focusedPane, paneItems = {} } = useChatPanes();
   const {
     focusPane,
     closePane,
@@ -147,12 +147,18 @@ export default function TerminalTopbar({
   // The Artifacts button is a plain toggle for the right-side drawer
   // (owned by TerminalShell). It reflects no open/close state of its own.
 
-  // Caption strip scroll sync — when Dashboard scrolls horizontally (overflow
-  // mode, ≥3 panes), the caption strip mirrors it so cell ↔ pane stays
+  // Caption strip scroll sync — when Dashboard scrolls horizontally, the
+  // caption strip mirrors it so cell ↔ pane stays
   // visually locked. Both sides use a programmatic-scroll guard ref to
   // suppress the echo back.
   const cellsStripRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
+  const showPaneCells = page === 'dashboard' && openPanes.length > 0;
+  const paneLayout = usePaneLayout(cellsStripRef, {
+    paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode,
+    defaultPaneWidth: prefs.defaultPaneWidth, enabled: showPaneCells,
+    scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+  });
 
   // Mirror Sidebar's isResizing so Zone 1's width transition can be suppressed
   // during drag-resize — otherwise the topbar lags the sidebar by 200ms.
@@ -302,7 +308,7 @@ export default function TerminalTopbar({
     ? 'var(--term-bg)'
     : 'var(--term-pane-bg, var(--term-surface))';
   const pageLabel =
-    page === 'branches' ? 'BRANCHES'
+    page === 'branches' ? 'OVERVIEW'
     : page === 'map' ? 'MAP'
     : page === 'digest' ? 'DIGEST'
     : page === 'workspaces' ? 'WORKSPACES'
@@ -333,19 +339,9 @@ export default function TerminalTopbar({
   const showBrowserBrand = getElectron() === null;
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
   // On dashboard, zone 2 hosts per-pane caption cells aligned to Dashboard's
-  // column template. Mirrors Dashboard.tsx logic so the cell strip resizes in
-  // lockstep with the pane grid below.
-  const showPaneCells = page === 'dashboard' && openPanes.length > 0;
-  const overflowPanes = openPanes.length > 2;
-  const cellsTemplateColumns = overflowPanes
-    ? openPanes.map((_, i) => {
-        const w = paneWidths[i];
-        return w !== undefined ? `${w}px` : `minmax(${prefs.defaultPaneWidth}px, 1fr)`;
-      }).join(' ')
-    : openPanes.map((_, i) => {
-        const w = paneWidths[i];
-        return w !== undefined ? `minmax(0, ${w}px)` : '1fr';
-      }).join(' ');
+  // column template. The shared layout hook also coordinates track animation.
+  const overflowPanes = paneLayout.overflow;
+  const cellsTemplateColumns = paneLayout.gridTemplateColumns;
   return (
     <div
       className="terminal-topbar"
@@ -485,6 +481,7 @@ export default function TerminalTopbar({
         {showPaneCells && (
           <div
             ref={cellsStripRef}
+            data-pane-captions
             onScroll={(e) => {
               if (programmaticScrollRef.current) return;
               window.dispatchEvent(
@@ -497,12 +494,14 @@ export default function TerminalTopbar({
               flex: 1,
               display: 'grid',
               gridTemplateColumns: cellsTemplateColumns,
+              gap: 'var(--term-dashboard-gap, 0px)',
+              paddingLeft: paneLayout.padding,
               minWidth: 0,
               overflowX: overflowPanes ? 'auto' : 'hidden',
               // Match Dashboard's overflow-mode right padding so the caption
               // strip has the same scrollWidth as the pane strip — required
               // for the scroll-sync to stay aligned at the right edge.
-              paddingRight: overflowPanes ? 'calc(50vw - 240px)' : 0,
+              paddingRight: paneLayout.paddingRight,
               // No mask on cells strip — masking also fades cell backgrounds,
               // revealing Zone 2's undimmed bg (the white-bleed bug). Cells
               // extend fully under the right cluster; their bg + dim is correct.
@@ -524,6 +523,7 @@ export default function TerminalTopbar({
               return (
                 <div
                   key={id}
+                  data-pane-caption-id={id}
                   onClick={() => focusPane(id)}
                   style={{
                     display: 'flex',

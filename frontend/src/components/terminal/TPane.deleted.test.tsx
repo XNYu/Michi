@@ -58,17 +58,23 @@ vi.mock('../../state/chatStore', async () => {
   });
   const projects = () => ({
     activeProject: mockProject,
-    focusedPane: 'n1',
-    openPanes: ['n1'],
     availableModes: [],
     agentStatus: null,
     refreshAgentStatus: () => {},
   });
+  const panes = () => ({
+    focusedPane: 'n1',
+    openPanes: ['n1'],
+    focusNonce: 0,
+    paneItems: {},
+    viewMode: 'single' as const,
+  });
   return {
     ...actual,
-    useChatStore: () => ({ ...projects(), ...actions() }),
+    useChatStore: () => ({ ...projects(), ...panes(), ...actions() }),
     useChatActions: () => actions(),
     useChatProjects: () => projects(),
+    useChatPanes: () => panes(),
     useStructuralSelector: (selector: (nodes: Record<string, ChatNodeState>) => unknown) =>
       selector({ n1: deletedNode }),
     useChatNodesSnapshot: () => ({ n1: deletedNode }),

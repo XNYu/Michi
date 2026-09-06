@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nodeOpenState, subtreeOpenState } from './sidebarSelectors';
+import { nodeOpenState, subtreeOpenState, buildBranchChildrenOf } from './sidebarSelectors';
 import type { OpenState } from './sidebarSelectors';
 import type { ProjectEdge } from './chatTypes';
 
@@ -86,5 +86,55 @@ describe('subtreeOpenState', () => {
   it('includes the root itself in the rollup', () => {
     const perNode = (id: string): OpenState => (id === 'root' ? 'idle' : 'none');
     expect(subtreeOpenState('root', edges, isAlive, perNode)).toBe('idle');
+  });
+});
+
+describe('buildBranchChildrenOf', () => {
+  it('builds adjacency from branch (and undefined-kind) edges only', () => {
+    const edges: ProjectEdge[] = [
+      { source: 'a', target: 'b', kind: 'branch' },
+      { source: 'a', target: 'c' },                       // undefined kind → branch
+      { source: 'b', target: 'd', kind: 'merge' },        // skipped
+      { source: 'b', target: 'e', kind: 'digest-source' },// skipped
+      { source: 'c', target: 'f', kind: 'branch' },
+    ];
+    const map = buildBranchChildrenOf(edges);
+    expect([...map.get('a')!]).toEqual(['b', 'c']);
+    expect([...map.get('c')!]).toEqual(['f']);
+    expect(map.has('b')).toBe(false); // merge/digest edges not included
+  });
+
+  it('returns an empty map for no branch edges', () => {
+    const edges: ProjectEdge[] = [
+      { source: 'a', target: 'b', kind: 'merge' },
+    ];
+    expect(buildBranchChildrenOf(edges).size).toBe(0);
+  });
+});
+
+describe('subtreeOpenState with pre-built childrenOf', () => {
+  const edges: ProjectEdge[] = [
+    { source: 'root', target: 'a', kind: 'branch' },
+    { source: 'root', target: 'b', kind: 'branch' },
+    { source: 'a', target: 'c', kind: 'branch' },
+  ];
+  const isAlive = () => true;
+  const cached = buildBranchChildrenOf(edges);
+
+  it('produces identical results when passing the cached map', () => {
+    const perNode = (id: string): OpenState =>
+      id === 'b' ? 'streaming' : 'none';
+    // Without cache
+    const r1 = subtreeOpenState('root', edges, isAlive, perNode);
+    // With cache
+    const r2 = subtreeOpenState('root', edges, isAlive, perNode, cached);
+    expect(r1).toBe(r2);
+    expect(r2).toBe('streaming');
+  });
+
+  it('returns none with empty children even with cached map', () => {
+    expect(
+      subtreeOpenState('root', edges, isAlive, () => 'none', cached),
+    ).toBe('none');
   });
 });

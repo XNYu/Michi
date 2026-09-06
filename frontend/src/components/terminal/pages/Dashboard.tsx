@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useChatActions, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
+import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import type { AgentRunPaneItem } from '../../../state/paneItems';
 import { agentResourceKey, identityOf } from '../../../state/agentIdentity';
@@ -18,6 +18,7 @@ import { getAgentRunDetail, getWebUploadCwd, importWorkspaceFileUpload, respondA
 import { notify } from '../../../services/notifications';
 import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
+import { usePaneLayout } from '../usePaneLayout';
 
 const FilePane = lazy(() => import('../FilePane'));
 const DiffPane = lazy(() => import('../DiffPane'));
@@ -103,7 +104,8 @@ export function centeredPaneScrollLeft({
 }
 
 export default function TerminalDashboard() {
-  const { activeProject, openPanes, focusedPane, paneItems = {} } = useChatProjects();
+  const { activeProject } = useChatProjects();
+  const { openPanes, focusedPane, paneItems = {} } = useChatPanes();
   const { setPaneWidth, openAgentRunPane } = useChatActions();
   const agentDomain = useAgentDomain();
   const { prefs } = usePrefs();
@@ -121,6 +123,13 @@ export default function TerminalDashboard() {
   const paneKinds = useStructuralSelector(selectPaneKinds, shallowArrayEqual);
   const stripRef = useRef<HTMLDivElement>(null);
   const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const layout = usePaneLayout(stripRef, {
+    paneIds: openPanes, customWidths: widths, mode: prefs.paneWidthMode,
+    defaultPaneWidth: prefs.defaultPaneWidth,
+    enabled: !!activeProject && openPanes.length > 0,
+    scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+  });
+  const pendingScrollRef = useRef<string | null>(null);
   // Scroll sync with Topbar's caption strip — see Topbar.tsx comment for the
   // event protocol. The guard suppresses echo when WE got moved.
   const programmaticScrollRef = useRef(false);
@@ -220,7 +229,7 @@ export default function TerminalDashboard() {
     const onResize = () => updateThumbGeometry();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [updateThumbGeometry, openPanes.length]);
+  }, [updateThumbGeometry, openPanes.length, layout.gridTemplateColumns, layout.settledVersion]);
 
   useEffect(() => () => {
     if (scrollIdleTimerRef.current !== null) {
@@ -378,7 +387,10 @@ export default function TerminalDashboard() {
       currentScrollLeft: strip.scrollLeft,
       maxScrollLeft: strip.scrollWidth - strip.clientWidth,
     });
-    strip.scrollTo({ left: clamped, behavior });
+    strip.scrollTo({
+      left: clamped,
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : behavior,
+    });
   };
 
   // This runs before the Dashboard paints after Overview navigation, so the
@@ -386,12 +398,24 @@ export default function TerminalDashboard() {
   // one frame (or waiting through a smooth-scroll animation).
   useLayoutEffect(() => {
     if (!focusedPane) return;
+    if (layout.animationRef.current) {
+      pendingScrollRef.current = focusedPane;
+      return;
+    }
+    pendingScrollRef.current = null;
     scrollToPane(focusedPane, 'auto');
-  }, [focusedPane]);
+  }, [focusedPane, prefs.paneWidthMode, layout.ready]);
+
+  useLayoutEffect(() => {
+    if (layout.animationRef.current || !pendingScrollRef.current) return;
+    const target = pendingScrollRef.current;
+    pendingScrollRef.current = null;
+    if (target === focusedPane) scrollToPane(target);
+  }, [layout.settledVersion, focusedPane]);
 
   // When new panes are appended (agent spawn_branches, fanout, manual open),
-  // scroll the newly-added one into view even if focus didn't move. Closing a
-  // pane shrinks openPanes — we skip that case so we don't yank the viewport.
+  // reveal the newly-added one only if it owns focus. Background additions
+  // and pane closures must not yank the viewport away from the active pane.
   // Also flag the new IDs for the spawn-in animation, with a stagger index so
   // multiple branches "fan out" rather than appearing simultaneously.
   // A freshly mounted Dashboard already receives a focused pane (for example
@@ -422,10 +446,15 @@ export default function TerminalDashboard() {
     // Only auto-scroll if the new pane is also focused — spawned branches that
     // don't steal focus shouldn't yank the viewport away from the active pane.
     const target = added[added.length - 1];
+    let scrollFrame: number | undefined;
     if (target === focusedPane) {
-      requestAnimationFrame(() => scrollToPane(target));
+      if (layout.animationRef.current) pendingScrollRef.current = target;
+      else scrollFrame = requestAnimationFrame(() => scrollToPane(target));
     }
-    return () => window.clearTimeout(clearAt);
+    return () => {
+      window.clearTimeout(clearAt);
+      if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally reads focusedPane without dep; we only want this to fire on openPanes change
   }, [openPanes]);
 
@@ -445,8 +474,8 @@ export default function TerminalDashboard() {
       </div>
     );
   }
-  if (activeProject.activeTreeId === null) {
-    return <EmptyThreads />;
+  if (activeProject.activeTreeId === null && openPanes.length === 0) {
+    return <EmptyThreads project={activeProject} />;
   }
   if (openPanes.length === 0) {
     return <TerminalHome onSubmitted={() => {}} />;
@@ -455,26 +484,14 @@ export default function TerminalDashboard() {
     openPanes.length === 1 && prefs.singlePaneContentWidth !== null
       ? prefs.singlePaneContentWidth
       : null;
-  const overflow = openPanes.length > 2;
-  const gridTemplateColumns = overflow
-    ? openPanes.map((_, i) => {
-        const w = widths[i];
-        return w !== undefined ? `${w}px` : `minmax(${prefs.defaultPaneWidth}px, 1fr)`;
-      }).join(' ')
-    : openPanes.map((_, i) => {
-        const w = widths[i];
-        // minmax(0, ${w}px) lets the column shrink when the viewport is
-        // narrower than the user-set width — without this, a fixed `${w}px`
-        // track stays put and the pane gets clipped (overflowX is hidden in
-        // non-overflow mode).
-        return w !== undefined ? `minmax(0, ${w}px)` : '1fr';
-      }).join(' ');
+  const { overflow, gridTemplateColumns } = layout;
   return (
     <div
-      style={{ flex: 1, position: 'relative', display: 'flex', minHeight: 0 }}
+      style={{ flex: 1, position: 'relative', display: 'flex', minHeight: 0, minWidth: 0 }}
     >
     <div
       ref={stripRef}
+      data-pane-width-mode={prefs.paneWidthMode}
       className={['terminal-dashboard', 'hide-sb'].join(' ')}
       onScroll={(e) => {
         const el = e.currentTarget;
@@ -505,6 +522,7 @@ export default function TerminalDashboard() {
         display: 'grid',
         gridTemplateColumns,
         gap: 'var(--term-dashboard-gap, 0px)',
+        minWidth: 0,
         minHeight: 0,
         height: '100%',
         overflowX: overflow ? 'auto' : 'hidden',
@@ -514,7 +532,7 @@ export default function TerminalDashboard() {
         boxSizing: 'border-box',
         // Extra right padding so the last pane can be scrolled to center
         // rather than stuck at the viewport's right edge.
-        paddingRight: overflow ? 'calc(50vw - 240px)' : 'var(--term-dashboard-padding, 0px)',
+        paddingRight: layout.paddingRight,
       }}
     >
       {openPanes.map((id, i) => {
@@ -533,8 +551,18 @@ export default function TerminalDashboard() {
           background: 'var(--term-pane-bg)',
         };
         if (stagger !== undefined) {
-          wrapStyle.animation = 'tSpawn 360ms ease-out both';
+          const anim = prefs.paneSpawnAnimation ?? 'phosphor';
+          const keyframeName =
+            anim === 'fission' ? 'tSpawnFission'
+            : anim === 'thread-pull' ? 'tSpawnThreadPull'
+            : 'tSpawn';
+          const duration = anim === 'fission' ? 320 : anim === 'thread-pull' ? 380 : 360;
+          wrapStyle.animation = `${keyframeName} ${duration}ms ease-out both`;
           wrapStyle.animationDelay = `${stagger * 80}ms`;
+          // Phosphor Bloom uses scaleY(0.02) → 1 — content must not overflow
+          // during the collapsed phase, and the scale origin must be centered.
+          wrapStyle.overflow = 'hidden';
+          wrapStyle.transformOrigin = anim === 'thread-pull' ? 'left center' : 'center';
         }
         return (
           <div

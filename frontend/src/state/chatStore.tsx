@@ -47,7 +47,7 @@ import {
   setActiveBackendConnectionId,
 } from '../config/backendConnections';
 import { toast } from 'sonner';
-import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, ChatProjectsValue, ComposerDraft, MessageAttachment, PendingQueuedMessage, Project, ProjectEdge, Theme, UserSendMeta } from './chatTypes';
+import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, ChatPaneValue, ChatProjectsValue, ComposerDraft, MessageAttachment, PendingQueuedMessage, Project, ProjectEdge, Theme, UserSendMeta } from './chatTypes';
 import { computeSurvivingMessageIds, cleanupOrphanedAnchors } from './branchAnchors';
 import { sleep } from '../utils/sleep';
 import { reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
@@ -137,6 +137,7 @@ export type {
   ChatContextValue,
   ChatMessage,
   ChatNodeState,
+  ChatPaneValue,
   ChatProjectsValue,
   ComposerDraft,
   ComposerMention,
@@ -200,6 +201,7 @@ interface ChatNodeStoreValue {
 export const ChatNodeStoreContext = createContext<ChatNodeStoreValue | null>(null);
 const ChatActionsContext = createContext<ExtendedChatActionsValue | null>(null);
 const ChatProjectsContext = createContext<ChatProjectsValue | null>(null);
+const ChatPaneContext = createContext<ChatPaneValue | null>(null);
 
 /**
  * Build a pre-rendered context block from a source node. The backend
@@ -308,6 +310,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const {
     openPanes,
     focusedPane,
+    focusNonce,
     paneItems,
     viewMode,
     setOpenPanes,
@@ -2354,7 +2357,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     };
     registerPaneItem(item);
     const treeId = project.activeTreeId;
-    if (treeId) openPaneInTree(workspaceId, treeId, id);
+    openPaneInTree(workspaceId, treeId, id);
     setFocusedNodeIdState(null);
     window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
     return id;
@@ -2679,10 +2682,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     // this effect runs.
     if (openPanes.length > 0) return;
     setFocusedNodeIdState(null);
-    const root = activeTreeRootNodeId(project) ?? project.chatIds[0];
+    const root = activeTreeRootNodeId(project);
     if (!root) {
-      // Workspace has no trees yet (e.g. freshly created — first thread is
-      // created lazily by Home composer's submit). Leave panes empty.
+      // No active tree: leave the workspace-only slot free of chat nodes,
+      // including when every existing thread is archived or deleted.
       setOpenPanes([]);
       setFocusedPane(null);
       return;
@@ -2843,11 +2846,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
-      openPanes,
-      paneItems,
-      focusedPane,
       focusedNodeId,
-      viewMode,
       selection,
       hydrated,
       treeSelection,
@@ -2865,11 +2864,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
-      openPanes,
-      paneItems,
-      focusedPane,
       focusedNodeId,
-      viewMode,
       selection,
       hydrated,
       treeSelection,
@@ -2878,6 +2873,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       canNavBack,
       canNavForward,
     ],
+  );
+
+  const paneValue = useMemo<ChatPaneValue>(
+    () => ({
+      openPanes,
+      paneItems,
+      focusedPane,
+      focusNonce,
+      viewMode,
+    }),
+    [openPanes, paneItems, focusedPane, focusNonce, viewMode],
   );
 
   const value = useMemo<ExtendedChatContextValue>(
@@ -2955,6 +2961,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       paneItems,
       openPanes,
       focusedPane,
+      focusNonce,
       focusedNodeId,
       setFocusedNodeId,
       viewMode,
@@ -3081,6 +3088,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       paneItems,
       openPanes,
       focusedPane,
+      focusNonce,
       focusedNodeId,
       setFocusedNodeId,
       viewMode,
@@ -3304,9 +3312,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   return (
     <ChatNodeStoreContext.Provider value={nodeStore}>
       <ChatProjectsContext.Provider value={projectsValue}>
-        <ChatActionsContext.Provider value={hotActions}>
-          <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
-        </ChatActionsContext.Provider>
+        <ChatPaneContext.Provider value={paneValue}>
+          <ChatActionsContext.Provider value={hotActions}>
+            <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
+          </ChatActionsContext.Provider>
+        </ChatPaneContext.Provider>
       </ChatProjectsContext.Provider>
     </ChatNodeStoreContext.Provider>
   );
@@ -3327,6 +3337,18 @@ export function useChatActions(): ExtendedChatActionsValue {
 export function useChatProjects(): ChatProjectsValue {
   const v = useContext(ChatProjectsContext);
   if (!v) throw new Error('useChatProjects must be used within ChatProvider');
+  return v;
+}
+
+/**
+ * Pane-layout slice: `openPanes`, `paneItems`, `focusedPane`, `focusNonce`,
+ * `viewMode`. Separated from {@link useChatProjects} so sidebar rows and
+ * other structural consumers don't re-render on every pane-focus click.
+ * Only components that truly need the pane layout should call this hook.
+ */
+export function useChatPanes(): ChatPaneValue {
+  const v = useContext(ChatPaneContext);
+  if (!v) throw new Error('useChatPanes must be used within ChatProvider');
   return v;
 }
 

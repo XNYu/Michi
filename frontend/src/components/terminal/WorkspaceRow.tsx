@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Row } from './primitives';
 import { usePrefs } from '../../state/prefs';
 import WorkspaceIcon, { modeForPalette } from './WorkspaceIcon';
@@ -13,13 +13,14 @@ import {
   type ContextMenuSection,
 } from '../../lib/workspaceRowContextMenu';
 import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chatTypes';
-import { useChatProjects, useStructuralSelector } from '../../state/chatStore';
+import { useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import {
   nodeOpenState,
   selectProjectNodeStatuses,
   subtreeOpenState,
   workspaceHasUnread,
   treeHasUnread,
+  buildBranchChildrenOf,
   type OpenState,
 } from '../../state/sidebarSelectors';
 import { getKnownBackendConnections } from '../../config/backendConnections';
@@ -207,7 +208,15 @@ export default function WorkspaceRow({
       )
     : [];
 
-  const { projects, openPanes, focusedPane } = useChatProjects();
+  const { projects } = useChatProjects();
+  const { openPanes, focusedPane } = useChatPanes();
+  // Pre-build the branch-edge adjacency table ONCE per edges change.
+  // All per-tree selectors (treeHasUnread, subtreeOpenState) reuse this
+  // instead of each rebuilding it internally — the core of Fix #1.
+  const branchChildrenOf = useMemo(
+    () => buildBranchChildrenOf(edges),
+    [edges],
+  );
   // Other live (not archived, not in trash) workspaces this thread can move
   // to. Computed once per render; an empty list hides the section entirely.
   const moveTargets = React.useMemo(
@@ -237,7 +246,7 @@ export default function WorkspaceRow({
   const unreadTreeIds = useStructuralSelector(
     (nodes) =>
       forceExpand
-        ? new Set(liveTrees.filter((t) => treeHasUnread(t, edges, nodes, focusedNodeId)).map((t) => t.id))
+        ? new Set(liveTrees.filter((t) => treeHasUnread(t, edges, nodes, focusedNodeId, branchChildrenOf)).map((t) => t.id))
         : null,
     (a, b) => {
       if (a === null && b === null) return true;
@@ -283,8 +292,8 @@ export default function WorkspaceRow({
 
   const getSubtreeOpenState = useCallback(
     (rootId: string): OpenState =>
-      subtreeOpenState(rootId, edges, isNodeAlive, getNodeOpenState),
-    [edges, isNodeAlive, getNodeOpenState],
+      subtreeOpenState(rootId, edges, isNodeAlive, getNodeOpenState, branchChildrenOf),
+    [edges, isNodeAlive, getNodeOpenState, branchChildrenOf],
   );
 
   // The workspace row paints a bar when collapsed and any live descendant is open.

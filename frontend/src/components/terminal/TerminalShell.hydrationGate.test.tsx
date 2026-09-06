@@ -28,10 +28,7 @@ const projectsValue = () => ({
   availableModes: [],
   agentStatus: null,
   warmFailedError: null,
-  openPanes: [],
-  focusedPane: null,
   focusedNodeId: null,
-  viewMode: 'single',
   selection: new Set<string>(),
   hydrated: gate.hydrated,
   treeSelection: new Set<string>(),
@@ -43,6 +40,7 @@ vi.mock('../../state/chatStore', async () => {
   return {
     ...actual,
     useChatProjects: () => projectsValue(),
+    useChatPanes: () => ({ openPanes: [], focusedPane: null, focusNonce: 0, paneItems: {}, viewMode: 'single' as const }),
     useChatActions: () => ({
       createProject: () => Promise.resolve('p1'),
       enterChatsWorkspace: () => Promise.resolve('chats-default'),

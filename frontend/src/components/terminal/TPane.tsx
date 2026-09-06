@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useChatActions, useChatNode, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
+import { useChatActions, useChatNode, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
 import type { ChatNodeState, ArtifactEntry, ProjectEdge } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
@@ -337,12 +337,12 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     openArtifactPane,
   } = useChatActions();
   const {
-    focusedPane,
     availableModes,
     agentStatus,
     refreshAgentStatus,
     activeProject,
   } = useChatProjects();
+  const { focusedPane } = useChatPanes();
   const { prefs } = usePrefs();
   const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
@@ -434,6 +434,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const {
     models: providerModels,
     loading: modelsLoading,
+    waiting: modelsWaiting,
     error: modelsError,
     retry: retryModels,
   } = useAgentModelCatalog({
@@ -2235,6 +2236,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         agentStatus={agentStatus}
         providerModels={providerModels}
         modelsLoading={modelsLoading}
+        modelsWaiting={modelsWaiting}
         modelsError={modelsError}
         onSwitchAgent={(modeId) => void switchAgent(nodeId, modeId)}
         onSaveModel={(model) => {

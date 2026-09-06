@@ -80,7 +80,6 @@ vi.mock('../../state/chatStore', async () => {
     useChatActions: anyFn,
     useChatStore: () => ({ focusedPane: null }),
     useChatProjects: () => ({
-      focusedPane: null,
       availableModes: [],
       agentStatus: null,
       refreshAgentStatus: vi.fn(),
@@ -88,6 +87,13 @@ vi.mock('../../state/chatStore', async () => {
         id: 'p1', name: 'P', artifacts: [], edges: [], chatIds: ['node1'],
         trees: [{ id: 't1', rootNodeId: 'node1' }], activeTreeId: 't1',
       },
+    }),
+    useChatPanes: () => ({
+      focusedPane: null,
+      openPanes: [],
+      focusNonce: 0,
+      paneItems: {},
+      viewMode: 'single' as const,
     }),
     useChatNode: () => node,
     useStructuralSelector: (sel: any) => {

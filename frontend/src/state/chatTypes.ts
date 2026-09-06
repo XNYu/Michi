@@ -991,6 +991,10 @@ export interface ChatContextValue {
   openPanes: string[];
   /** Currently-focused pane nodeId. Always one of openPanes if non-empty. */
   focusedPane: string | null;
+  /** Monotonic counter bumped on every focusPane call — lets effects fire even
+   *  when the focused pane id hasn't changed (e.g. clicking an already-focused
+   *  pane that scrolled out of view). */
+  focusNonce: number;
   /** The globally-focused chat node id (independent of open panes). null = none. */
   focusedNodeId: string | null;
   setFocusedNodeId: (nodeId: string | null) => void;
@@ -1111,7 +1115,12 @@ export interface ChatContextValue {
 /** Projects + UI-state slice of the chat store — every field that is NOT
  *  the per-node messages map and NOT a callback. Lives in its own context
  *  so streaming chunks (which only mutate `nodes`) don't re-render
- *  consumers that read project / pane / selection state. */
+ *  consumers that read project / pane / selection state.
+ *
+ *  Pane-layout fields (`openPanes`, `paneItems`, `focusedPane`,
+ *  `focusNonce`, `viewMode`) live in {@link ChatPaneValue} instead.
+ *  Splitting them out prevents every sidebar row from re-rendering on
+ *  each pane-focus click. */
 export type ChatProjectsValue = Pick<
   ChatContextValue,
   | 'projects'
@@ -1124,11 +1133,7 @@ export type ChatProjectsValue = Pick<
   | 'agentStatus'
   | 'warmFailedError'
   | 'refreshAgentStatus'
-  | 'openPanes'
-  | 'paneItems'
-  | 'focusedPane'
   | 'focusedNodeId'
-  | 'viewMode'
   | 'selection'
   | 'hydrated'
   | 'treeSelection'
@@ -1136,6 +1141,20 @@ export type ChatProjectsValue = Pick<
   | 'unreadFilterOn'
   | 'canNavBack'
   | 'canNavForward'
+>;
+
+/** Pane-layout slice of the chat store. Separated from ChatProjectsValue
+ *  because pane focus/open/close changes are high-frequency and only a
+ *  handful of components (Dashboard, Topbar, WorkspaceRow, ActivityView)
+ *  need them. Sidebar rows that only read project/selection/theme state
+ *  no longer re-render on every pane click. */
+export type ChatPaneValue = Pick<
+  ChatContextValue,
+  | 'openPanes'
+  | 'paneItems'
+  | 'focusedPane'
+  | 'focusNonce'
+  | 'viewMode'
 >;
 
 /** Callback-only slice for hot chat surfaces. It intentionally excludes the

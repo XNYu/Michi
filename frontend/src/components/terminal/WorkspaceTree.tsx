@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChatActions, useChatNodesSnapshot, useChatProjects } from '../../state/chatStore';
+import { useChatActions, useChatNodesSnapshot, useChatPanes, useChatProjects } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import type { Prefs } from '../../state/prefs';
 import {
@@ -65,11 +65,11 @@ export default function WorkspaceTree({
     activeProjectId,
     activeProject,
     focusedNodeId,
-    focusedPane,
     selection,
     treeSelection,
     unreadFilterOn,
   } = useChatProjects();
+  const { focusedPane } = useChatPanes();
   const {
     selectProject,
     activateTree,

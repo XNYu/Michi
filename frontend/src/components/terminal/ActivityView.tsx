@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { useChatProjects, useChatActions, useChatNodesSnapshot, useStructuralSelector } from '../../state/chatStore';
+import { useChatPanes, useChatProjects, useChatActions, useChatNodesSnapshot, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chatTypes';
 import { buildTree, findTreeIdForNode } from '../../state/tree';
@@ -119,7 +119,8 @@ export default function ActivityView({
 }: {
   onActivate?: () => void;
 }) {
-  const { projects, activeProjectId, activeProject, focusedNodeId, openPanes, focusedPane, selection, treeSelection } = useChatProjects();
+  const { projects, activeProjectId, activeProject, focusedNodeId, selection, treeSelection } = useChatProjects();
+  const { openPanes, focusedPane } = useChatPanes();
   const {
     selectProject,
     activateTree,

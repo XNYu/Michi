@@ -24,6 +24,8 @@ const item = {
 vi.mock('../../../state/chatStore', () => ({
   useChatProjects: () => ({
     activeProject: { id: 'workspace-1', activeTreeId: 'tree-1' },
+  }),
+  useChatPanes: () => ({
     openPanes: [paneId], focusedPane: paneId, paneItems: { [paneId]: item },
   }),
   useChatActions: () => ({ closePane: mocks.closePane, setPaneWidth: vi.fn(), openAgentRunPane: vi.fn() }),
