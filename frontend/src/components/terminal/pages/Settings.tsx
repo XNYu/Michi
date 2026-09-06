@@ -1,9 +1,7 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
-import { usePrefs } from '../../../state/prefs';
 import type { PageId } from '../../../state/commands';
 import { isArchiveGroupId } from '../../../state/trashActions';
-import { Tab, BorderBtn } from '../primitives';
 import { authClient } from '../../../services/auth';
 import { AppearancePane } from './settings/AppearancePane';
 import { ModelPane } from './settings/ModelPane';
@@ -11,19 +9,24 @@ import { NotificationsPane } from './settings/NotificationsPane';
 import { ShortcutsPane } from './settings/ShortcutsPane';
 import { AccountPane } from './settings/AccountPane';
 import { ConnectionsPane } from './settings/ConnectionsPane';
+import './Settings.css';
 
-type Section = 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
+export type SettingsSection = 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
 
 export default function TerminalSettings({
   onNav,
   onClose,
+  section: controlledSection,
+  onSectionChange,
 }: {
   onNav?: (p: PageId) => void;
   onClose?: () => void;
+  section?: SettingsSection;
+  onSectionChange?: (section: SettingsSection) => void;
 } = {}) {
-  const [section, setSection] = useState<Section>('appearance');
+  const [localSection, setLocalSection] = useState<SettingsSection>('appearance');
+  const contentId = useId();
   const { activeProject, projects } = useChatStore();
-  const { resetTerminal } = usePrefs();
 
   const trashGroupCount = useStructuralSelector((nodesMap) => {
     const gids = new Set<string>();
@@ -41,19 +44,26 @@ export default function TerminalSettings({
     return gids.size;
   });
 
-  // The Account tab only renders when the user is signed in. In desktop /
+  // The Account category only renders when the user is signed in. In desktop /
   // Electron mode useSession().data is null and we hide it entirely.
   const session = authClient.useSession();
   const signedIn = !!session.data?.user;
 
-  const sections: Array<[Section, string]> = [
+  const selectedSection = controlledSection ?? localSection;
+  const section = selectedSection === 'account' && !signedIn ? 'appearance' : selectedSection;
+  const setSection = (next: SettingsSection) => {
+    setLocalSection(next);
+    onSectionChange?.(next);
+  };
+  const sections: Array<[SettingsSection, string]> = [
+    ['appearance', 'Appearance'],
     ['model', 'Model'],
     ['connections', 'Connections'],
-    ['appearance', 'Appearance'],
     ['notifications', 'Notifications'],
     ['shortcuts', 'Shortcuts'],
-    ...(signedIn ? ([['account', 'Account']] as Array<[Section, string]>) : []),
+    ...(signedIn ? ([['account', 'Account']] as Array<[SettingsSection, string]>) : []),
   ];
+  const sectionLabel = sections.find(([key]) => key === section)?.[1];
 
   const openTrashPage = () => {
     onClose?.();
@@ -66,145 +76,57 @@ export default function TerminalSettings({
   };
 
   return (
-    <div
-      className="term-scrollbar"
-      style={{
-        flex: 1,
-        minHeight: 0,
-        /* Transparent so the drawer's .term-glass frost shows through; individual
-           controls keep their own solid surfaces (macOS-vibrancy panel look). */
-        background: 'transparent',
-        overflowY: 'auto',
-        padding: '14px 16px 20px',
-      }}
-    >
-      {/* horizontal tabs */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 0,
-          borderBottom: '1px solid var(--term-line)',
-          marginBottom: 14,
-          flexWrap: 'nowrap',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {sections.map(([k, l]) => {
-          const active = section === k;
-          return (
-            <Tab
-              key={k}
-              focused={active}
-              onClick={() => setSection(k)}
-              style={{
-                padding: '6px 7px',
-                fontSize: 11,
-                fontFamily: 'var(--ui-font)',
-                color: active ? 'var(--term-fg)' : 'var(--term-mid)',
-                borderBottom: active ? '2px solid var(--term-accent)' : '2px solid transparent',
-                marginBottom: -1,
-                fontWeight: active ? 600 : 400,
-              }}
+    <div className="terminal-settings">
+      <div className="terminal-settings-layout">
+        <aside className="terminal-settings-sidebar term-scrollbar">
+          <nav className="terminal-settings-categories" aria-label="Settings categories">
+            {sections.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className="terminal-settings-category"
+                aria-current={section === key ? 'page' : undefined}
+                aria-controls={contentId}
+                onClick={() => setSection(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+          <label className="terminal-settings-select">
+            <span>Category</span>
+            <select
+              value={section}
+              onChange={(event) => setSection(event.target.value as SettingsSection)}
+              aria-controls={contentId}
             >
-              {l}
-            </Tab>
-          );
-        })}
-        <Tab
-          focused={false}
-          onClick={openTrashPage}
-          style={{
-            padding: '6px 7px',
-            fontSize: 11,
-            fontFamily: 'var(--ui-font)',
-            color: 'var(--term-mid)',
-            borderBottom: '2px solid transparent',
-            marginBottom: -1,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-          }}
-        >
-          Trash
-          {trashCount > 0 && (
-            <span
-              style={{
-                fontFamily: 'var(--ui-font)',
-                fontSize: 9.5,
-                color: 'var(--term-surface)',
-                background: 'var(--term-muted)',
-                padding: '0 5px',
-                minWidth: 16,
-                textAlign: 'center',
-                fontWeight: 700,
-              }}
-            >
-              {trashCount}
-            </span>
+              {sections.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </label>
+          {onNav && (
+            <div className="terminal-settings-history" role="group" aria-label="History">
+              <h2>History</h2>
+              <button type="button" className="terminal-settings-history-command" onClick={openTrashPage}>
+                Trash
+                {trashCount > 0 && <span className="terminal-settings-count">{trashCount}</span>}
+              </button>
+              <button type="button" className="terminal-settings-history-command" onClick={openArchivedPage}>
+                Archived
+                {archivedCount > 0 && <span className="terminal-settings-count">{archivedCount}</span>}
+              </button>
+            </div>
           )}
-        </Tab>
-        <Tab
-          focused={false}
-          onClick={openArchivedPage}
-          style={{
-            padding: '6px 7px',
-            fontSize: 11,
-            fontFamily: 'var(--ui-font)',
-            color: 'var(--term-mid)',
-            borderBottom: '2px solid transparent',
-            marginBottom: -1,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-          }}
-        >
-          Archived
-          {archivedCount > 0 && (
-            <span
-              style={{
-                fontFamily: 'var(--ui-font)',
-                fontSize: 9.5,
-                color: 'var(--term-surface)',
-                background: 'var(--term-muted)',
-                padding: '0 5px',
-                minWidth: 16,
-                textAlign: 'center',
-                fontWeight: 700,
-              }}
-            >
-              {archivedCount}
-            </span>
-          )}
-        </Tab>
-      </div>
+        </aside>
 
-      <div>
-        {section === 'appearance' && <AppearancePane />}
-        {section === 'model' && (
-          <ModelPane activeProjectId={activeProject?.id ?? null} />
-        )}
-        {section === 'connections' && <ConnectionsPane projects={projects} />}
-        {section === 'notifications' && <NotificationsPane />}
-        {section === 'shortcuts' && <ShortcutsPane />}
-        {section === 'account' && signedIn && <AccountPane user={session.data!.user} />}
-
-        {section === 'appearance' && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-            <BorderBtn
-              onClick={resetTerminal}
-              style={{
-                padding: '6px 14px',
-                border: '1px solid var(--term-line)',
-                color: 'var(--term-mid)',
-                fontFamily: 'var(--ui-font)',
-                fontSize: 11.5,
-                background: 'transparent',
-              }}
-            >
-              reset appearance
-            </BorderBtn>
-          </div>
-        )}
+        <section className="terminal-settings-content term-scrollbar" id={contentId} aria-label={sectionLabel} key={section}>
+          {section === 'account' && <h2 className="terminal-settings-heading">Account</h2>}
+          {section === 'appearance' && <AppearancePane />}
+          {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
+          {section === 'connections' && <ConnectionsPane projects={projects} />}
+          {section === 'notifications' && <NotificationsPane />}
+          {section === 'shortcuts' && <ShortcutsPane />}
+          {section === 'account' && signedIn && <AccountPane user={session.data!.user} />}
+        </section>
       </div>
     </div>
   );

@@ -142,6 +142,11 @@ export interface Prefs {
   paneTopFadeHeight: number;
   /** When to show OS/toast notifications. 'all' = done + approval, 'approval-only' = only permission requests, 'off' = none */
   notifications: 'all' | 'approval-only' | 'off';
+  /** Pane spawn/destroy animation variant.
+   *  - 'phosphor' — CRT Phosphor Bloom (horizontal line → expand, recommended)
+   *  - 'fission' — Cell division: source shrinks, child slides in from edge
+   *  - 'thread-pull' — Thread pulls out from the sidebar with clip reveal */
+  paneSpawnAnimation: 'phosphor' | 'fission' | 'thread-pull';
   /** Default width (px) for new dashboard panes that have no explicit width set. */
   defaultPaneWidth: number;
   /** Maximum content column width when only one pane is open. null = full width. */
@@ -181,18 +186,18 @@ export const DEFAULT_PREFS: Prefs = {
   terminalPalette: 'bone',
   terminalAccentOverrides: {},
   uiFont: 'Geist',
-  messageFont: 'Source Serif 4',
-  messageFontSize: 15,
-  composerFontSize: 15,
-  codeBlockStyle: 'header',
-  agentBlockStyle: 'plain',
+  messageFont: 'Geist',
+  messageFontSize: 14.5,
+  composerFontSize: 14.5,
+  codeBlockStyle: 'hairline',
+  agentBlockStyle: 'card',
   codeWrap: false,
-  terminalDensity: 'dense',
+  terminalDensity: 'compact',
   paneRules: true,
   terminalSidebarWidth: 280,
   sidebarDensity: 'comfortable',
   sidebarInset: 2,
-  sidebarRowStyle: 'classic',
+  sidebarRowStyle: 'square-full',
   showSidebarTimestamps: false,
   sidebarTranslucency: 60,
   glassBlur: 10,
@@ -207,6 +212,7 @@ export const DEFAULT_PREFS: Prefs = {
   paneTopFadeHeight: 30,
   notifications: 'all',
   defaultPaneWidth: 600,
+  paneSpawnAnimation: 'phosphor',
   singlePaneContentWidth: 800,
   quoteMaxLines: 2,
   enableFollowUps: true,
@@ -533,6 +539,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       terminalSidebarWidth: DEFAULT_PREFS.terminalSidebarWidth,
       sidebarDensity: DEFAULT_PREFS.sidebarDensity,
       sidebarInset: DEFAULT_PREFS.sidebarInset,
+      sidebarRowStyle: DEFAULT_PREFS.sidebarRowStyle,
       paneTopFadeHeight: DEFAULT_PREFS.paneTopFadeHeight,
     }));
   }, []);

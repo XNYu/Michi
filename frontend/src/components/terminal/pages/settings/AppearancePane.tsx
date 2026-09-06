@@ -1,4 +1,5 @@
-import { usePrefs, TerminalPalette, CodeBlockStyle, AgentBlockStyle } from '../../../../state/prefs';
+import { useState } from 'react';
+import { usePrefs, TerminalPalette } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
 import { resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
@@ -7,40 +8,10 @@ import {
   SIDEBAR_ROW_STYLE_LABELS,
 } from '../../sidebarRowStyle';
 
-const CODE_BLOCK_OPTIONS: Array<{ value: CodeBlockStyle; label: string; desc: string }> = [
-  {
-    value: 'hairline',
-    label: 'Hairline',
-    desc: 'No header bar - language sits as a faint mono overline, copy reveals on hover. Quietest.',
-  },
-  {
-    value: 'header',
-    label: 'Header rule',
-    desc: 'A divider bar carrying a lowercase language label. Classic terminal.',
-  },
-];
-
-const AGENT_BLOCK_OPTIONS: Array<{ value: AgentBlockStyle; label: string; desc: string }> = [
-  {
-    value: 'plain',
-    label: 'Plain',
-    desc: 'Bare text rows with ▸/▾ glyphs and status dots. The original treatment.',
-  },
-  {
-    value: 'card',
-    label: 'Card',
-    desc: 'Hairline cards with tool-type icons and a right-hand status column (✓ / spinner / failed).',
-  },
-  {
-    value: 'terminal',
-    label: 'Terminal',
-    desc: 'Bare text with ❯ / ✓ / × glyph columns, caps section headers, and dotted leaders.',
-  },
-];
-
 export function AppearancePane() {
   const { prefs, setPref } = usePrefs();
   const currentAccent = resolveAccent(prefs.terminalAccentOverrides, prefs.terminalPalette);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const Swatch = ({
     c,
@@ -131,117 +102,12 @@ export function AppearancePane() {
         </div>
       </Row>
 
-      <Row k="theme.uiFont" label="Interface font">
-        <Radio
-          opts={['Geist', 'IBM Plex Sans', 'Inter']}
-          value={prefs.uiFont}
-          onChange={(v) => setPref('uiFont', v as typeof prefs.uiFont)}
-        />
-      </Row>
-
-      <Row k="theme.messageFont" label="Message font">
-        <Radio
-          opts={['Source Serif 4', 'Geist']}
-          value={prefs.messageFont}
-          onChange={(v) => setPref('messageFont', v as typeof prefs.messageFont)}
-        />
-      </Row>
-
-      <Row k="theme.messageFontSize" label="Message size">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            type="range"
-            min={12}
-            max={22}
-            step={0.5}
-            value={prefs.messageFontSize}
-            onChange={(e) => setPref('messageFontSize', Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-          />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
-            {prefs.messageFontSize}px
-          </span>
-        </div>
-      </Row>
-
-      <Row k="theme.composerFontSize" label="Composer size">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            type="range"
-            min={12}
-            max={22}
-            step={0.5}
-            value={prefs.composerFontSize}
-            onChange={(e) => setPref('composerFontSize', Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-          />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
-            {prefs.composerFontSize}px
-          </span>
-        </div>
-      </Row>
-
       {/* Glass material controls (Sidebar glass / blur / saturation / tint /
           depth + native Sidebar material) are intentionally hidden — the defaults
           in prefs.tsx are the tuned look. The prefs + effects still drive the
           glass; re-add these Rows to expose them again. */}
 
-      <Row k="theme.sidebarRowStyle" label="Sidebar row style">
-        <Radio
-          opts={[...SIDEBAR_ROW_STYLES]}
-          value={prefs.sidebarRowStyle}
-          onChange={(v) => setPref('sidebarRowStyle', v as any)}
-        />
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: 11,
-            lineHeight: 1.6,
-            color: 'var(--term-faint)',
-            fontFamily: 'var(--ui-font)',
-          }}
-        >
-          {SIDEBAR_ROW_STYLE_LABELS[prefs.sidebarRowStyle]}
-          <br />
-          The three card modes share one text spine (20 / 36 / 52) and differ
-          only in corner radius and fill width, so switching between them is a
-          clean comparison of the corners. They pin their own edge padding —
-          the slider below applies to <code>classic</code> only.
-        </div>
-      </Row>
-
-      <Row k="theme.sidebarDensity" label="Sidebar density">
-        <Radio
-          opts={['compact', 'comfortable', 'airy']}
-          value={prefs.sidebarDensity}
-          onChange={(v) => setPref('sidebarDensity', v as any)}
-        />
-      </Row>
-
-      <Row k="theme.sidebarInset" label="Sidebar edge padding">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            type="range"
-            min={0}
-            max={24}
-            step={1}
-            value={prefs.sidebarInset}
-            onChange={(e) => setPref('sidebarInset', Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-          />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
-            {prefs.sidebarInset}px
-          </span>
-        </div>
-      </Row>
-
-      <Row k="theme.sidebarTimestamps" label="Sidebar timestamps">
-        <Toggle
-          on={prefs.showSidebarTimestamps}
-          label="show last-active time on thread rows"
-          onChange={(v) => setPref('showSidebarTimestamps', v)}
-        />
-      </Row>
+      {/* ── Threads per workspace (always visible) ─────────────────── */}
 
       <Row k="theme.sidebarThreadLimit" label="Threads per workspace">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -260,128 +126,6 @@ export function AppearancePane() {
         </div>
       </Row>
 
-      <Row k="theme.codeBlock" label="Code block">
-        <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
-          {CODE_BLOCK_OPTIONS.map((o, i) => {
-            const sel = prefs.codeBlockStyle === o.value;
-            return (
-              <ClickableRow
-                key={o.value}
-                active={sel}
-                onClick={() => setPref('codeBlockStyle', o.value)}
-                style={{
-                  padding: '8px 12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  background: sel ? 'var(--term-alt)' : 'var(--term-surface)',
-                  borderBottom: i < CODE_BLOCK_OPTIONS.length - 1 ? '1px solid var(--term-line)' : 'none',
-                }}
-              >
-                <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    border: `1px solid ${sel ? 'var(--term-accent)' : 'var(--term-line-s)'}`,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'var(--term-surface-glass)',
-                    flexShrink: 0,
-                  }}
-                >
-                  {sel && <span style={{ width: 6, height: 6, background: 'var(--term-accent)' }} />}
-                </span>
-                <div>
-                  <span
-                    style={{
-                      fontSize: 11.5,
-                      fontFamily: 'var(--ui-font)',
-                      color: sel ? 'var(--term-fg)' : 'var(--term-mid)',
-                      fontWeight: sel ? 600 : 400,
-                    }}
-                  >
-                    {o.label}
-                  </span>
-                  <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginTop: 2, lineHeight: 1.45 }}>
-                    {o.desc}
-                  </div>
-                </div>
-              </ClickableRow>
-            );
-          })}
-        </div>
-      </Row>
-
-      <Row k="theme.agentBlocks" label="Agent blocks">
-        <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
-          {AGENT_BLOCK_OPTIONS.map((o, i) => {
-            const sel = prefs.agentBlockStyle === o.value;
-            return (
-              <ClickableRow
-                key={o.value}
-                active={sel}
-                onClick={() => setPref('agentBlockStyle', o.value)}
-                style={{
-                  padding: '8px 12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  background: sel ? 'var(--term-alt)' : 'var(--term-surface)',
-                  borderBottom: i < AGENT_BLOCK_OPTIONS.length - 1 ? '1px solid var(--term-line)' : 'none',
-                }}
-              >
-                <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    border: `1px solid ${sel ? 'var(--term-accent)' : 'var(--term-line-s)'}`,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'var(--term-surface-glass)',
-                    flexShrink: 0,
-                  }}
-                >
-                  {sel && <span style={{ width: 6, height: 6, background: 'var(--term-accent)' }} />}
-                </span>
-                <div>
-                  <span
-                    style={{
-                      fontSize: 11.5,
-                      fontFamily: 'var(--ui-font)',
-                      color: sel ? 'var(--term-fg)' : 'var(--term-mid)',
-                      fontWeight: sel ? 600 : 400,
-                    }}
-                  >
-                    {o.label}
-                  </span>
-                  <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginTop: 2, lineHeight: 1.45 }}>
-                    {o.desc}
-                  </div>
-                </div>
-              </ClickableRow>
-            );
-          })}
-        </div>
-      </Row>
-
-      <Row k="theme.codeWrap" label="Code wrap">
-        <Toggle
-          on={prefs.codeWrap}
-          label="wrap long lines instead of horizontal scroll"
-          onChange={(v) => setPref('codeWrap', v)}
-        />
-      </Row>
-
-      <Row k="theme.density" label="Density">
-        <Radio
-          opts={['comfortable', 'compact', 'dense']}
-          value={prefs.terminalDensity}
-          onChange={(v) => setPref('terminalDensity', v as any)}
-        />
-      </Row>
-
       <Row k="theme.focusDim" label="Focus dimming">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <input
@@ -398,25 +142,6 @@ export function AppearancePane() {
           </span>
         </div>
       </Row>
-
-      {import.meta.env.DEV && (
-        <Row k="theme.paneTopFade" label="Pane top fade">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input
-              type="range"
-              min={0}
-              max={60}
-              step={2}
-              value={prefs.paneTopFadeHeight}
-              onChange={(e) => setPref('paneTopFadeHeight', Number(e.target.value))}
-              style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-            />
-            <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
-              {prefs.paneTopFadeHeight}px
-            </span>
-          </div>
-        </Row>
-      )}
 
       <Row k="layout.paneWidth" label="Default pane width">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -482,12 +207,35 @@ export function AppearancePane() {
         </div>
       </Row>
 
-      <Row k="theme.rules" label="Chrome rules">
-        <Toggle
-          on={prefs.paneRules}
-          label="hairline rules between panes"
-          onChange={(v) => setPref('paneRules', v)}
-        />
+      <Row k="motion.spawn" label="Pane spawn animation">
+        <div style={{ display: 'flex', gap: 6 }}>
+          {([
+            ['phosphor', 'Phosphor Bloom'],
+            ['fission', 'Fission'],
+            ['thread-pull', 'Thread Pull'],
+          ] as const).map(([val, label]) => {
+            const sel = prefs.paneSpawnAnimation === val;
+            return (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setPref('paneSpawnAnimation', val)}
+                style={{
+                  padding: '4px 10px',
+                  border: `1px solid ${sel ? 'var(--term-accent)' : 'var(--term-line)'}`,
+                  background: sel ? 'var(--term-accent)' : 'transparent',
+                  color: sel ? 'var(--term-bg)' : 'var(--term-mid)',
+                  fontFamily: 'var(--ui-font)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  transition: 'all 120ms ease',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </Row>
 
       <Row k="theme.accent" label="Accent hue">
@@ -540,6 +288,161 @@ export function AppearancePane() {
           })}
         </div>
       </Row>
+
+      {/* ── Advanced (collapsed by default) ────────────────────────── */}
+
+      <div style={{ marginTop: 20 }}>
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 0',
+            border: 'none',
+            background: 'transparent',
+            color: 'var(--term-mid)',
+            fontFamily: 'var(--ui-font)',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          <span style={{ fontSize: 10, transition: 'transform 120ms ease', transform: advancedOpen ? 'rotate(90deg)' : 'rotate(0)' }}>▸</span>
+          Advanced
+        </button>
+
+        {advancedOpen && (
+          <div>
+            <Row k="theme.sidebarRowStyle" label="Sidebar row style">
+              <Radio
+                opts={[...SIDEBAR_ROW_STYLES]}
+                value={prefs.sidebarRowStyle}
+                onChange={(v) => setPref('sidebarRowStyle', v as any)}
+              />
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                  color: 'var(--term-faint)',
+                  fontFamily: 'var(--ui-font)',
+                }}
+              >
+                {SIDEBAR_ROW_STYLE_LABELS[prefs.sidebarRowStyle]}
+                <br />
+                The three card modes share one text spine (20 / 36 / 52) and differ
+                only in corner radius and fill width, so switching between them is a
+                clean comparison of the corners. They pin their own edge padding —
+                the slider below applies to <code>classic</code> only.
+              </div>
+            </Row>
+
+            <Row k="theme.uiFont" label="Interface font">
+              <Radio
+                opts={['Geist', 'IBM Plex Sans', 'Inter']}
+                value={prefs.uiFont}
+                onChange={(v) => setPref('uiFont', v as typeof prefs.uiFont)}
+              />
+            </Row>
+
+            <Row k="theme.messageFont" label="Message font">
+              <Radio
+                opts={['Source Serif 4', 'Geist']}
+                value={prefs.messageFont}
+                onChange={(v) => setPref('messageFont', v as typeof prefs.messageFont)}
+              />
+            </Row>
+
+            <Row k="theme.messageFontSize" label="Message size">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="range"
+                  min={12}
+                  max={22}
+                  step={0.5}
+                  value={prefs.messageFontSize}
+                  onChange={(e) => setPref('messageFontSize', Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+                />
+                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                  {prefs.messageFontSize}px
+                </span>
+              </div>
+            </Row>
+
+            <Row k="theme.composerFontSize" label="Composer size">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="range"
+                  min={12}
+                  max={22}
+                  step={0.5}
+                  value={prefs.composerFontSize}
+                  onChange={(e) => setPref('composerFontSize', Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+                />
+                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                  {prefs.composerFontSize}px
+                </span>
+              </div>
+            </Row>
+
+            <Row k="theme.sidebarDensity" label="Sidebar density">
+              <Radio
+                opts={['compact', 'comfortable', 'airy']}
+                value={prefs.sidebarDensity}
+                onChange={(v) => setPref('sidebarDensity', v as any)}
+              />
+            </Row>
+
+            <Row k="theme.sidebarInset" label="Sidebar edge padding">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={24}
+                  step={1}
+                  value={prefs.sidebarInset}
+                  onChange={(e) => setPref('sidebarInset', Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+                />
+                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                  {prefs.sidebarInset}px
+                </span>
+              </div>
+            </Row>
+
+            <Row k="theme.sidebarTimestamps" label="Sidebar timestamps">
+              <Toggle
+                on={prefs.showSidebarTimestamps}
+                label="show last-active time on thread rows"
+                onChange={(v) => setPref('showSidebarTimestamps', v)}
+              />
+            </Row>
+
+            <Row k="theme.codeWrap" label="Code wrap">
+              <Toggle
+                on={prefs.codeWrap}
+                label="wrap long lines instead of horizontal scroll"
+                onChange={(v) => setPref('codeWrap', v)}
+              />
+            </Row>
+
+            <Row k="theme.rules" label="Chrome rules">
+              <Toggle
+                on={prefs.paneRules}
+                label="hairline rules between panes"
+                onChange={(v) => setPref('paneRules', v)}
+              />
+            </Row>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

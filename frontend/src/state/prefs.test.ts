@@ -13,8 +13,8 @@ describe('DEFAULT_PREFS', () => {
     expect(DEFAULT_PREFS.terminalAccentOverrides).toEqual({});
   });
 
-  it('has dense density by default', () => {
-    expect(DEFAULT_PREFS.terminalDensity).toBe('dense');
+  it('has compact density by default', () => {
+    expect(DEFAULT_PREFS.terminalDensity).toBe('compact');
   });
 
   it('has pane hairline rules enabled by default', () => {
