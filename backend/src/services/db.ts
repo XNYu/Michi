@@ -39,8 +39,10 @@ export function initDb(): DatabaseSync {
   _db.exec('PRAGMA synchronous = NORMAL');
   _db.exec('PRAGMA foreign_keys = ON');
   // Multi-window prereq (spec §18/D12): a writer that loses the WAL write-lock
-  // race waits up to 5s for the lock instead of throwing SQLITE_BUSY at once.
-  _db.exec('PRAGMA busy_timeout = 5000');
+  // race waits up to 15s for the lock instead of throwing SQLITE_BUSY at once.
+  // 15s is generous for a desktop app; the real mitigation is the retry loop in
+  // runInTransaction() below.
+  _db.exec('PRAGMA busy_timeout = 15000');
   runMigrations(_db);
   // File-based SQL migration runner — records applied files in schema_migrations.
   // Runs after the in-process DDL block so behaviour is identical on fresh installs.
@@ -88,7 +90,7 @@ export function getAuditDb(): DatabaseSync {
   // Same multi-window prereq as initDb: audit rows are written on the hot path
   // (every turn / permission), so a second window writing concurrently would
   // otherwise hit SQLITE_BUSY here too.
-  _auditDb.exec('PRAGMA busy_timeout = 5000');
+  _auditDb.exec('PRAGMA busy_timeout = 15000');
   runSqlMigrations(_auditDb, resolveMigrationsDir('auditMigrations'));
   return _auditDb;
 }
@@ -102,15 +104,37 @@ export function closeAuditDb(): void {
 
 export function runInTransaction<T>(fn: () => T): T {
   const db = getDb();
-  db.exec('BEGIN');
-  try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+  const maxRetries = 3;
+  for (let attempt = 0; ; attempt++) {
+    db.exec('BEGIN');
+    try {
+      const result = fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      if (isSqliteBusy(err) && attempt < maxRetries) {
+        // Exponential backoff: 100ms, 200ms, 400ms.
+        // Uses Atomics.wait on a dummy SharedArrayBuffer for sync sleep.
+        sleepSyncMs(100 * Math.pow(2, attempt));
+        continue;
+      }
+      throw err;
+    }
   }
+}
+
+/** Detect SQLite BUSY / database-is-locked errors. */
+function isSqliteBusy(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('database is locked') || msg.includes('sqlite_busy');
+}
+
+/** Synchronous millisecond sleep (does not yield the event loop). */
+function sleepSyncMs(ms: number): void {
+  const buf = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(buf), 0, 0, ms);
 }
 
 function getSchemaVersion(db: DatabaseSync): number {

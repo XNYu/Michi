@@ -12,6 +12,19 @@ import {
 } from './assistantBlocks';
 import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS } from 'michi-shared';
 
+/**
+ * Replace raw transient database errors with a user-friendly message.
+ * The retry layer in the backend already makes these very rare; this is
+ * the last-resort safety net so the UI never shows "database is locked".
+ */
+function humanizeDbError(message: string | undefined): string | undefined {
+  if (!message) return message;
+  if (/database is locked|sqlite_busy/i.test(message)) {
+    return 'Momentary save conflict — your message was received but the response may need a retry.';
+  }
+  return message;
+}
+
 export const NODE_ACTIVITY_ACTIONS = new Set<ChatAction['type']>([
   'user-send',
   'done',
@@ -691,7 +704,7 @@ export function reduceNodes(
           compacting: undefined,
           visibleResponseComplete: false,
           streamingStartedAt: undefined,
-          error: action.message,
+          error: humanizeDbError(action.message),
           errorKind: action.errorKind,
           messages: msgs,
           streamingIdleMs: undefined,

@@ -32,6 +32,7 @@ function getAuthDb(): DatabaseSync {
   // Open read-write (auth DB is always present when REQUIRE_AUTH is active).
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 15000');
   return db;
 }
 

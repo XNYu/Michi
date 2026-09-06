@@ -80,6 +80,7 @@ function getDb(): DatabaseSync {
     if (!authDb) {
         authDbPath = resolveAuthDbPath();
         authDb = new DatabaseSync(authDbPath);
+        authDb.exec('PRAGMA busy_timeout = 15000');
     }
     return authDb;
 }

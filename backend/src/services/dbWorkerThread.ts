@@ -27,7 +27,7 @@ const db = new DatabaseSync(dbPath);
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA synchronous = NORMAL');
 db.exec('PRAGMA foreign_keys = ON');
-db.exec('PRAGMA busy_timeout = 5000');
+db.exec('PRAGMA busy_timeout = 15000');
 
 const stmtCache = new Map<string, StatementSync>();
 
@@ -41,15 +41,35 @@ function cached(sql: string): StatementSync {
 }
 
 function runInTransaction<T>(fn: () => T): T {
-  db.exec('BEGIN');
-  try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+  const maxRetries = 3;
+  for (let attempt = 0; ; attempt++) {
+    db.exec('BEGIN');
+    try {
+      const result = fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      db.exec('ROLLBACK');
+      if (isSqliteBusy(err) && attempt < maxRetries) {
+        sleepSyncMs(100 * Math.pow(2, attempt));
+        continue;
+      }
+      throw err;
+    }
   }
+}
+
+/** Detect SQLite BUSY / database-is-locked errors. */
+function isSqliteBusy(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('database is locked') || msg.includes('sqlite_busy');
+}
+
+/** Synchronous millisecond sleep (does not yield the event loop). */
+function sleepSyncMs(ms: number): void {
+  const buf = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(buf), 0, 0, ms);
 }
 
 // ── Helpers (replicated from dbRepository — minimal subset) ────────────────
