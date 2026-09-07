@@ -296,6 +296,17 @@ ipcMain.on('terminal:destroy', (event, surfaceId: unknown) => {
   if (validSurfaceId(surfaceId)) destroyTerminalSurface(surfaceKey(event.sender.id, surfaceId));
 });
 
+ipcMain.handle('terminal:listActive', (event) => {
+  const ownerId = event.sender.id;
+  const active: Array<{ surfaceId: string }> = [];
+  for (const [key, surface] of terminalSurfaces) {
+    if (surface.ownerId === ownerId && !surface.exited) {
+      active.push({ surfaceId: key.slice(`${ownerId}:`.length) });
+    }
+  }
+  return active;
+});
+
 ipcMain.handle('browser:create', async (event, surfaceId: unknown, projectId: unknown, rawUrl: unknown) => {
   if (!validSurfaceId(surfaceId)) throw new Error('Invalid browser surface id');
   const url = normalizeSurfaceUrl(rawUrl);
@@ -934,7 +945,36 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
   win.on('resize', () => scheduleSaveWindowState(win));
   win.on('maximize', () => scheduleSaveWindowState(win));
   win.on('unmaximize', () => scheduleSaveWindowState(win));
-  win.on('close', () => flushWindowState(win));
+
+  // Confirm close when active (non-exited) terminal surfaces are running.
+  let closingConfirmed = false;
+  win.on('close', (event) => {
+    flushWindowState(win);
+    if (closingConfirmed) return;
+
+    let activeTerminals = 0;
+    for (const [, surface] of terminalSurfaces) {
+      if (surface.ownerId === ownerWebContentsId && !surface.exited) activeTerminals++;
+    }
+
+    if (activeTerminals > 0) {
+      event.preventDefault();
+      dialog.showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Close anyway', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Active terminals',
+        message: `${activeTerminals} terminal${activeTerminals > 1 ? 's' : ''} still running`,
+        detail: 'Closing this window will terminate all running processes.',
+      }).then(({ response }) => {
+        if (response === 0) {
+          closingConfirmed = true;
+          win.close();
+        }
+      });
+    }
+  });
 
   win.once('ready-to-show', () => {
     startupMark('window_ready_to_show', { slot });

@@ -980,6 +980,8 @@ export interface ChatContextValue {
   openLauncherPane: () => string;
   /** Transform a blank multifunction pane without changing its layout slot. */
   activateLauncherPane: (paneId: string, choice: PaneLauncherChoice) => Promise<string>;
+  /** Move an existing detached terminal into a launcher slot. */
+  adoptTerminalPane: (launcherPaneId: string, terminalPaneId: string) => void;
   /** Open a standalone file viewer without inserting it into the chat graph. */
   openFilePane: (filePath: string) => string;
   /** Open a workspace-relative working-tree diff. */
@@ -1230,6 +1232,7 @@ export type ChatActionsValue = Pick<
   | 'openArtifactPane'
   | 'openLauncherPane'
   | 'activateLauncherPane'
+  | 'adoptTerminalPane'
   | 'openFilePane'
   | 'openDiffPane'
   | 'openTerminalPane'

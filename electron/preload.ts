@@ -183,6 +183,9 @@ contextBridge.exposeInMainWorld('electron', {
   terminalDestroy(surfaceId: string): void {
     ipcRenderer.send('terminal:destroy', surfaceId);
   },
+  terminalListActive(): Promise<Array<{ surfaceId: string }>> {
+    return ipcRenderer.invoke('terminal:listActive');
+  },
   onTerminalData(handler: (surfaceId: string, data: string) => void): () => void {
     const listener = (_event: Electron.IpcRendererEvent, surfaceId: string, data: string) => handler(surfaceId, data);
     ipcRenderer.on('terminal:data', listener);

@@ -720,11 +720,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // Workspace switches intentionally discard the departing workspace's pane
   // slots. Release matching native runtimes at the same boundary so hidden
   // PTYs/WebContentsViews cannot become unreachable background processes.
+  // Terminal panes are exempt: they are window-scoped and survive workspace
+  // switches. Only an explicit pane close destroys their PTY.
   useEffect(() => {
     if (!hydrated || !activeProjectId) return;
     for (const item of Object.values(paneItemsRef.current)) {
       if (item.projectId === activeProjectId) continue;
-      if (item.kind === 'terminal') getElectron()?.terminalDestroy?.(item.surfaceId);
+      if (item.kind === 'terminal') continue;
       if (item.kind === 'browser') getElectron()?.browserDestroy?.(item.surfaceId);
       removePaneItem(item.id);
     }
@@ -733,9 +735,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   useEffect(() => {
     if (!hydrated) return;
     for (const item of Object.values(paneItemsRef.current)) {
+      // Terminal panes are window-scoped; never garbage-collected by tree/project orphan checks.
+      if (item.kind === 'terminal') continue;
       const project = projects.find((candidate) => candidate.id === item.projectId);
       if (project && (item.treeId === null || project.trees.some((tree) => tree.id === item.treeId))) continue;
-      if (item.kind === 'terminal') getElectron()?.terminalDestroy?.(item.surfaceId);
       if (item.kind === 'browser') getElectron()?.browserDestroy?.(item.surfaceId);
       removePaneItem(item.id);
     }
@@ -2501,6 +2504,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const runtimeId = uniquePaneId('terminal');
       replacePaneItem(paneId, {
         ...base,
+        treeId: null, // Terminal is window-scoped, not tree-scoped
         kind: 'terminal',
         title: 'Terminal',
         surfaceId: runtimeId.slice('pane:terminal:'.length),
@@ -2535,6 +2539,26 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     removePaneItem(paneId);
     return nodeId;
   }, [createBlankChild, removePaneItem, replacePaneItem, setFocusedPane, setOpenPanes, setPaneWidth]);
+
+  /** Move an existing detached terminal into the slot currently held by a launcher pane. */
+  const adoptTerminalPane = useCallback((launcherPaneId: string, terminalPaneId: string) => {
+    const launcher = paneItemsRef.current[launcherPaneId];
+    const terminal = paneItemsRef.current[terminalPaneId];
+    if (!launcher || launcher.kind !== 'launcher') return;
+    if (!terminal || terminal.kind !== 'terminal') return;
+
+    // Replace the launcher slot with the terminal pane id.
+    setOpenPanes((prev) => prev.map((id) => (id === launcherPaneId ? terminalPaneId : id)));
+    setFocusedPane(terminalPaneId);
+
+    // Inherit the launcher's width so the pane doesn't jump.
+    if (launcher.width !== undefined) {
+      updatePaneItem(terminalPaneId, { width: launcher.width });
+    }
+
+    // Discard the launcher item — the terminal item already exists.
+    removePaneItem(launcherPaneId);
+  }, [removePaneItem, setFocusedPane, setOpenPanes, updatePaneItem]);
 
   // Compatibility name retained for artifact shelf/link callers. New opens
   // are layout-only PaneItems and no longer pollute the conversation graph;
@@ -2952,6 +2976,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openArtifactPane,
       openLauncherPane,
       activateLauncherPane,
+      adoptTerminalPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,
@@ -3079,6 +3104,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openArtifactPane,
       openLauncherPane,
       activateLauncherPane,
+      adoptTerminalPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,
@@ -3216,6 +3242,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openArtifactPane,
       openLauncherPane,
       activateLauncherPane,
+      adoptTerminalPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,
@@ -3294,6 +3321,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openArtifactPane,
       openLauncherPane,
       activateLauncherPane,
+      adoptTerminalPane,
       openFilePane,
       openDiffPane,
       openTerminalPane,

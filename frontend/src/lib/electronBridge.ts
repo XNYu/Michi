@@ -118,6 +118,7 @@ export interface ElectronBridge {
   terminalWrite?(surfaceId: string, data: string): void;
   terminalResize?(surfaceId: string, cols: number, rows: number): void;
   terminalDestroy?(surfaceId: string): void;
+  terminalListActive?(): Promise<Array<{ surfaceId: string }>>;
   onTerminalData?(handler: (surfaceId: string, data: string) => void): () => void;
   onTerminalExit?(handler: (surfaceId: string, exitCode: number) => void): () => void;
   browserCreate?(surfaceId: string, projectId: string, url: string): Promise<BrowserSurfaceState>;
