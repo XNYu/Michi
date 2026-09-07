@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import CodeBlockPlainLines from './CodeBlockPlainLines';
 
 const languageClassRe = /(?:^|\s)language-([^\s]+)/;
@@ -33,10 +33,27 @@ function LegacyCodeBlock({
   tail,
 }: LegacyCodeBlockProps) {
   const [copied, setCopied] = useState(false);
+  const elementRef = useRef<HTMLDivElement>(null);
+  const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === 'undefined');
   const copyTimer = useRef<number | null>(null);
   const source = useMemo(() => trimCodeFenceNewline(text), [text]);
   const resolvedLanguage = language || languageFromClassName(className) || 'text';
-  const shouldHighlight = !deferHighlight && resolvedLanguage !== 'text' && source.trim().length > 0;
+  const highlightable = !deferHighlight && resolvedLanguage !== 'text' && source.trim().length > 0;
+  const shouldHighlight = highlightable && nearViewport;
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element || !highlightable || nearViewport || typeof IntersectionObserver === 'undefined') return;
+    // Plain code keeps its geometry and copy behavior; offscreen tokens need
+    // neither Shiki work nor a second React commit during pane entry.
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      startTransition(() => setNearViewport(true));
+    }, { rootMargin: '200px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [highlightable, nearViewport]);
 
   useEffect(() => {
     return () => {
@@ -89,6 +106,7 @@ function LegacyCodeBlock({
 
   return (
     <div
+      ref={elementRef}
       className="michi-code-block"
       data-language={resolvedLanguage}
       data-michi-code-block

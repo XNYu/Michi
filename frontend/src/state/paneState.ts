@@ -290,7 +290,8 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
         const next = prev.filter((id) => id !== nodeId);
         setFocusedPane((cur) => {
           if (cur !== nodeId) return cur;
-          return next[next.length - 1] ?? null;
+          const index = prev.indexOf(nodeId);
+          return prev[index - 1] ?? next[0] ?? null;
         });
         return next;
       });

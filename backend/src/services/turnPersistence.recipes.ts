@@ -108,14 +108,6 @@ export const NODE_SQL = {
   clearComposerDraft:
     'UPDATE nodes SET composer_draft = NULL WHERE id = ? AND composer_draft = ?',
 
-  /** Update resume fingerprint. */
-  setResumeFingerprint:
-    'UPDATE nodes SET resume_fingerprint = ? WHERE id = ?',
-
-  /** Read messages for transcript fingerprint (Worker-side only — main thread
-   *  uses the richer `listMessages()` which includes cloud guard). */
-  listTranscriptMessages:
-    'SELECT role, content FROM messages WHERE node_id = ? ORDER BY seq ASC',
 } as const;
 
 // ── Pure Functions ─────────────────────────────────────────────────────────

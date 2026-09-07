@@ -1,0 +1,139 @@
+.workspace-manage {
+  container: workspace-manage / inline-size;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--term-page-bg, var(--term-bg));
+}
+
+.workspace-manage__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-manage__main {
+  container: workspace-manage-main / inline-size;
+  padding: 24px 32px 48px;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.workspace-manage .manage-header__title {
+  font-size: 24px;
+  line-height: 1.3;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-manage .manage-header__path {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.workspace-manage .manage-header svg,
+.workspace-manage .manage-tabs svg {
+  flex-shrink: 0;
+}
+
+/* ManageSidebar remains shared and inline-styled; override only its layout. */
+.workspace-manage__layout > aside {
+  min-width: 0;
+  padding: 24px 24px 48px 8px !important;
+}
+
+.workspace-manage .manage-tabs {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  margin: 12px 0 22px;
+  border-bottom: 1px solid var(--term-line);
+}
+
+.workspace-manage .manage-tabs__tab {
+  flex-shrink: 0;
+  padding: 10px 18px 12px;
+}
+
+.workspace-manage .manage-tabs__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  color: var(--term-muted);
+  font-size: 13px;
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 240px;
+  margin-left: auto;
+  box-sizing: border-box;
+}
+
+.workspace-manage .manage-tabs__search input {
+  width: 100%;
+  min-width: 0;
+}
+
+.workspace-manage .manage-tabs__search:focus-within {
+  outline: 1px solid var(--term-accent);
+  outline-offset: -1px;
+}
+
+@container workspace-manage (max-width: 1100px) {
+  .workspace-manage__main {
+    padding: 24px 24px 40px;
+  }
+
+  .workspace-manage__layout > aside {
+    padding: 24px 24px 40px 8px !important;
+  }
+}
+
+@container workspace-manage (max-width: 900px) {
+  /* A single scroll surface keeps the auxiliary sections reachable below lists. */
+  .workspace-manage__layout {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .workspace-manage__main {
+    overflow: visible;
+    padding-bottom: 24px;
+  }
+
+  .workspace-manage__layout > aside {
+    overflow: visible !important;
+    padding: 24px 24px 40px !important;
+    border-top: 1px solid var(--term-line);
+  }
+}
+
+@container workspace-manage (max-width: 640px) {
+  .workspace-manage__main {
+    padding: 20px 16px 24px;
+  }
+
+  .workspace-manage__layout > aside {
+    padding: 20px 16px 32px !important;
+  }
+}
+
+@container workspace-manage-main (max-width: 600px) {
+  .workspace-manage .manage-tabs__tab {
+    padding: 10px 10px 12px;
+  }
+
+  .workspace-manage .manage-tabs__search {
+    flex-basis: 100%;
+    max-width: none;
+    margin: 4px 0 8px;
+  }
+}

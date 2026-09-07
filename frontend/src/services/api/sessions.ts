@@ -126,7 +126,6 @@ export interface EnsureSessionOptions {
   reasoning?: AgentReasoning | null;
   /** Desired agent/mode to apply when a fresh session is created (pre-session pick). */
   modeId?: string | null;
-  resumeFingerprint?: string | null;
   graphPrerequisite?: Record<string, unknown>;
   agentDefinitionId?: string;
 }
@@ -192,7 +191,6 @@ export interface EnsureSessionResult {
   providerId?: string | null;
   modelId?: string | null;
   reasoning?: AgentReasoning | null;
-  resumeFingerprint?: string | null;
   resumeStrategy: ResumeStrategy;
   resumeReason?: string;
 }
@@ -247,7 +245,6 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.providerId) body.providerId = opts.providerId;
   if (opts.modelId) body.modelId = opts.modelId;
   if (opts.reasoning) body.reasoning = opts.reasoning;
-  if (opts.resumeFingerprint) body.resumeFingerprint = opts.resumeFingerprint;
   if (opts.graphPrerequisite) body.graphPrerequisite = opts.graphPrerequisite;
   const pendingPrimary = pendingPrimaryAgents.get(opts.nodeId);
   if (pendingPrimary) {
@@ -300,7 +297,6 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
     providerId: json.providerId ?? null,
     modelId: json.modelId ?? null,
     reasoning: json.reasoning ?? null,
-    resumeFingerprint: json.resumeFingerprint ?? null,
     resumeStrategy: (json.resumeStrategy ?? 'compatible') as ResumeStrategy,
     resumeReason: typeof json.resumeReason === 'string' ? json.resumeReason : undefined,
   };

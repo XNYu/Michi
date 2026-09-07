@@ -4,7 +4,7 @@ type ScrollTimelineConstructor = new (options: {
 }) => AnimationTimeline;
 
 /** The dashboard owns scrolling; captions are a non-scrolling projection. */
-export function bindPaneCaptionScroll(strip: HTMLElement, captions: HTMLElement) {
+export function bindPaneCaptionScroll(strip: HTMLElement, captions: HTMLElement, moving = false) {
   const viewport = captions.parentElement!;
   const Timeline = (window as Window & { ScrollTimeline?: ScrollTimelineConstructor }).ScrollTimeline;
   let animation: Animation | undefined;
@@ -18,7 +18,7 @@ export function bindPaneCaptionScroll(strip: HTMLElement, captions: HTMLElement)
     if (next === range) return;
     range = next;
     mirror();
-    if (!Timeline || typeof captions.animate !== 'function') return;
+    if (moving || !Timeline || typeof captions.animate !== 'function') return;
     const frames = [{ transform: 'translateX(0px)' }, { transform: `translateX(${-range}px)` }];
     if (animation) {
       (animation.effect as KeyframeEffect).setKeyframes(frames);

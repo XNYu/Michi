@@ -1,13 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeTranscriptFingerprint as computeSharedTranscriptFingerprint,
-  foldFingerprintSegments,
-} from 'michi-shared';
-import {
   buildCompatibleResumeContext,
   chooseResumeStrategy,
-  computeTranscriptFingerprint,
   type ResumeSignature,
 } from '../src/services/resumeStrategy';
 
@@ -19,82 +14,63 @@ const target: ResumeSignature = {
 };
 
 describe('resume strategy', () => {
-  test('keeps the persisted transcript fingerprint wire-compatible across shared and backend', () => {
-    const vectors = [
-      { messages: [], expected: '811c9dc5' },
-      { messages: [{ role: 'user' as const, content: 'hello' }], expected: '529ed6b6' },
-      {
-        messages: [
-          { role: 'user' as const, content: 'hello' },
-          { role: 'assistant' as const, content: 'hi' },
-        ],
-        expected: '02ae81e1',
-      },
-      {
-        messages: [
-          { role: 'user' as const, content: '你好 👋' },
-          { role: 'assistant' as const, content: 'line1\nline2\u0000x' },
-        ],
-        expected: 'f54f9ce6',
-      },
-    ];
-
-    for (const vector of vectors) {
-      assert.equal(computeSharedTranscriptFingerprint(vector.messages), vector.expected);
-      assert.equal(computeTranscriptFingerprint(vector.messages), vector.expected);
-    }
-    assert.equal(
-      foldFingerprintSegments(['user\u0000hello\u0000\u0000']),
-      Number.parseInt('529ed6b6', 16),
-    );
-  });
-
-  test('uses exact resume when signature and transcript fingerprint match', () => {
-    const fp = computeTranscriptFingerprint([
-      { role: 'user', content: 'hello' },
-      { role: 'assistant', content: 'hi' },
-    ]);
+  test('uses exact resume when signature matches', () => {
     const decision = chooseResumeStrategy({
       existingChatId: 'sid-1',
       liveSessionMatches: false,
       nativeResumeAvailable: true,
       existingSignature: target,
       targetSignature: target,
-      storedFingerprint: fp,
-      currentFingerprint: fp,
     });
     assert.deepEqual(decision, { strategy: 'exact', reason: 'native_resume_available' });
   });
 
   test('uses compatible resume when runtime/provider/model signature changes', () => {
-    const fp = computeTranscriptFingerprint([{ role: 'user', content: 'hello' }]);
     const decision = chooseResumeStrategy({
       existingChatId: 'sid-1',
       liveSessionMatches: false,
       nativeResumeAvailable: true,
       existingSignature: { ...target, modelId: 'opus' },
       targetSignature: target,
-      storedFingerprint: fp,
-      currentFingerprint: fp,
     });
     assert.equal(decision.strategy, 'compatible');
     assert.equal(decision.reason, 'signature_changed');
   });
 
-  test('uses compatible resume when visible transcript diverged from stored fingerprint', () => {
-    const oldFp = computeTranscriptFingerprint([{ role: 'user', content: 'old' }]);
-    const currentFp = computeTranscriptFingerprint([{ role: 'user', content: 'edited' }]);
+  test('live session wins over exact when both are available', () => {
     const decision = chooseResumeStrategy({
       existingChatId: 'sid-1',
       liveSessionMatches: true,
       nativeResumeAvailable: true,
       existingSignature: target,
       targetSignature: target,
-      storedFingerprint: oldFp,
-      currentFingerprint: currentFp,
+    });
+    assert.equal(decision.strategy, 'live');
+    assert.equal(decision.reason, 'live_session_matches');
+  });
+
+  test('fresh when no existing chat id', () => {
+    const decision = chooseResumeStrategy({
+      existingChatId: null,
+      liveSessionMatches: false,
+      nativeResumeAvailable: false,
+      existingSignature: null,
+      targetSignature: target,
+    });
+    assert.equal(decision.strategy, 'fresh');
+    assert.equal(decision.reason, 'no_existing_session');
+  });
+
+  test('compatible when signature is missing', () => {
+    const decision = chooseResumeStrategy({
+      existingChatId: 'sid-1',
+      liveSessionMatches: false,
+      nativeResumeAvailable: true,
+      existingSignature: null,
+      targetSignature: target,
     });
     assert.equal(decision.strategy, 'compatible');
-    assert.equal(decision.reason, 'transcript_changed');
+    assert.equal(decision.reason, 'missing_resume_signature');
   });
 
   test('pi can reuse a matching live session but otherwise falls back to compatible', () => {
@@ -104,7 +80,6 @@ describe('resume strategy', () => {
       modelId: 'deepseek-v4-pro',
       reasoning: 'high',
     };
-    const fp = computeTranscriptFingerprint([]);
     assert.equal(
       chooseResumeStrategy({
         existingChatId: 'n-1',
@@ -112,8 +87,6 @@ describe('resume strategy', () => {
         nativeResumeAvailable: false,
         existingSignature: piTarget,
         targetSignature: piTarget,
-        storedFingerprint: fp,
-        currentFingerprint: fp,
       }).strategy,
       'live',
     );
@@ -124,8 +97,6 @@ describe('resume strategy', () => {
         nativeResumeAvailable: false,
         existingSignature: piTarget,
         targetSignature: piTarget,
-        storedFingerprint: fp,
-        currentFingerprint: fp,
       }).strategy,
       'compatible',
     );

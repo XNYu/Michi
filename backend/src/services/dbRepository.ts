@@ -1608,11 +1608,6 @@ export function updateNodeResumeBinding(
   );
 }
 
-export function updateNodeResumeFingerprint(nodeId: string, fingerprint: string): void {
-  getDb().prepare('UPDATE nodes SET resume_fingerprint = ? WHERE id = ?')
-    .run(fingerprint, nodeId);
-}
-
 // --- user_agent_configs ---
 
 export interface UserAgentConfigRow {

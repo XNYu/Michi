@@ -22,7 +22,9 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import React from 'react';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, waitFor } from '@testing-library/react';
+
+const focusState = vi.hoisted(() => ({ focused: null as string | null, focus: vi.fn() }));
 
 // jsdom lacks these — without them effects crash, React tears the tree down,
 // and the teardown save contaminates the experiment.
@@ -89,7 +91,7 @@ vi.mock('../../state/chatStore', async () => {
       },
     }),
     useChatPanes: () => ({
-      focusedPane: null,
+      focusedPane: focusState.focused,
       openPanes: [],
       focusNonce: 0,
       paneItems: {},
@@ -120,7 +122,7 @@ vi.mock('./PaneMessageList', () => ({
   ),
 }));
 vi.mock('./ComposerShell', () => ({
-  ComposerShell: React.forwardRef((_p: any, _r: any) => null),
+  ComposerShell: React.forwardRef((p: any, _r: any) => p.input),
 }));
 vi.mock('./PaneComposerPreBlocks', () => ({ PaneComposerPreBlocks: () => null }));
 vi.mock('./PaneComposerActions', () => ({ PaneComposerActions: () => null }));
@@ -130,7 +132,10 @@ vi.mock('./PaneFind', () => ({ default: () => null, PaneFind: () => null }));
 vi.mock('./PermissionBanner', () => ({ default: () => null, PermissionBanner: () => null }));
 vi.mock('./MergeBanner', () => ({ default: () => null, MergeBanner: () => null }));
 vi.mock('./PaneDragOverlays', () => ({ FileDropOverlay: () => null, PaneDropIndicator: () => null }));
-vi.mock('../MentionEditor', () => ({ default: React.forwardRef(() => null) }));
+vi.mock('../MentionEditor', () => ({ default: React.forwardRef((_p, ref) => {
+  React.useImperativeHandle(ref, () => ({ editor: { commands: { focus: focusState.focus } } }));
+  return null;
+}) }));
 vi.mock('../SelectionActions', () => ({ default: () => null }));
 vi.mock('../UploadProgressBar', () => ({ default: () => null }));
 
@@ -153,7 +158,19 @@ describe('paneScrollCache save gating', () => {
   // or it leaks into the shared localStorage mid-test.
   afterEach(async () => {
     cleanup();
+    focusState.focused = null;
+    focusState.focus.mockClear();
     await new Promise((r) => setTimeout(r, 1300));
+  });
+
+  it('automatic focus fallback does not scroll the dashboard or transcript', async () => {
+    seedCache();
+    vi.resetModules();
+    const { default: TPane } = await import('./TPane');
+    const { rerender } = render(<TPane nodeId="node1" />);
+    focusState.focused = 'node1';
+    rerender(<TPane nodeId="node1" contentMaxWidth={640} />);
+    await waitFor(() => expect(focusState.focus).toHaveBeenCalledWith(undefined, { scrollIntoView: false }));
   });
 
   it('plain mount: saved entry stays intact while mounted', async () => {

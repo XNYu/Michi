@@ -3,6 +3,10 @@ import { defineConfig, devices } from '@playwright/test';
 const e2ePort = Number(process.env.E2E_PORT ?? process.env.MICHI_E2E_PORT ?? 3001);
 const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
 const isolatedPort = process.env.E2E_PORT !== undefined || process.env.MICHI_E2E_PORT !== undefined;
+const production = process.env.E2E_PRODUCTION === '1';
+// Keep performance builds separate from frontend/build, which a live backend
+// may already be serving. The same mock API isolation applies in both modes.
+const performanceBuild = 'node_modules/.cache/pane-performance-build';
 
 // Web-only e2e for the React/Vite frontend. The backend is NEVER reached —
 // every /api/** call is intercepted by fixtures/mockApi.ts. That keeps tests
@@ -42,13 +46,15 @@ export default defineConfig({
   // boot vite from the frontend workspace. We do NOT start the backend — the
   // mockApi fixture intercepts every /api/** call.
   webServer: {
-    command: `npm run shared:build && npm --prefix frontend run dev:raw -- --host 127.0.0.1 --port ${e2ePort}`,
+    command: production
+      ? `npm run shared:build && npm --prefix frontend run build:raw -- --outDir ${performanceBuild} && npm --prefix frontend run preview -- --outDir ${performanceBuild} --host 127.0.0.1 --port ${e2ePort} --strictPort`
+      : `npm run shared:build && npm --prefix frontend run dev:raw -- --host 127.0.0.1 --port ${e2ePort}`,
     cwd: '..',
     url: e2eBaseUrl,
     // A caller-supplied port is an isolation request: never reuse a server
     // from another checkout/worktree just because it happens to answer.
-    reuseExistingServer: !process.env.CI && !isolatedPort,
-    timeout: 60_000,
+    reuseExistingServer: !production && !process.env.CI && !isolatedPort,
+    timeout: production ? 120_000 : 60_000,
     stdout: 'pipe',
     stderr: 'pipe',
   },

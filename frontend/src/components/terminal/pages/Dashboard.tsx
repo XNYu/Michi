@@ -20,6 +20,9 @@ import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 import { usePaneLayout } from '../usePaneLayout';
 import { bindPaneCaptionScroll } from '../paneCaptionScroll';
+import { scrollWithPaneLayout } from '../paneReveal';
+import { paneEntrance, PANE_EASE } from '../paneMotion';
+import { RetainedPaneContent, usePresentedPanes } from '../PanePresentation';
 
 const FilePane = lazy(() => import('../FilePane'));
 const DiffPane = lazy(() => import('../DiffPane'));
@@ -106,7 +109,8 @@ export function centeredPaneScrollLeft({
 
 export default function TerminalDashboard() {
   const { activeProject } = useChatProjects();
-  const { openPanes, focusedPane, paneItems = {} } = useChatPanes();
+  const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const { paneIds: openPanes, paneItems, exitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
   const { setPaneWidth, openAgentRunPane } = useChatActions();
   const agentDomain = useAgentDomain();
   const { prefs } = usePrefs();
@@ -125,12 +129,13 @@ export default function TerminalDashboard() {
   const stripRef = useRef<HTMLDivElement>(null);
   const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const layout = usePaneLayout(stripRef, {
-    paneIds: openPanes, customWidths: widths, mode: prefs.paneWidthMode,
+    paneIds: openPanes, customWidths: widths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth,
     enabled: !!activeProject && openPanes.length > 0,
     scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+    onExitStart: holdExits,
+    onExitComplete: finishExit,
   });
-  const pendingScrollRef = useRef<string | null>(null);
   // Overlay scrollbar — native scrollbar is hidden via .hide-sb on the
   // strip; we render our own thumb as a sibling and reposition it from the
   // strip's onScroll. Idle thumb is opacity 0; we set opacity 1 while the
@@ -239,11 +244,13 @@ export default function TerminalDashboard() {
     const strip = stripRef.current;
     const captions = strip?.closest('.terminal-shell')?.querySelector<HTMLElement>('[data-pane-captions]');
     if (!strip || !captions) return;
-    return bindPaneCaptionScroll(strip, captions);
-  }, [openPanes, activeProject?.id, activeProject?.activeTreeId, layout.gridTemplateColumns, layout.paddingRight]);
-  // Map of pane id → stagger index for the spawn-in animation. Cleared after
-  // the keyframe duration so re-renders don't replay the flash.
-  const [spawnStagger, setSpawnStagger] = useState<Map<string, number>>(new Map());
+    // Translated wrappers can temporarily extend scrollWidth. Clamp to the
+    // final extent once so closing at the right edge cannot drift each frame.
+    const finalExtent = layout.padding + layout.contentWidth + layout.paddingRight;
+    const maxScroll = Math.max(0, finalExtent - strip.clientWidth);
+    if (exitingIds.size === 0 && strip.scrollLeft > maxScroll) strip.scrollLeft = maxScroll;
+    return bindPaneCaptionScroll(strip, captions, !!layout.animationRef.current);
+  }, [openPanes, exitingIds, activeProject?.id, activeProject?.activeTreeId, layout.gridTemplateColumns, layout.paddingRight, layout.settledVersion, layout.animationRef, layout.contentWidth, layout.padding]);
 
   const dashDragDepthRef = useRef(0);
   const [dashDropzoneVisible, setDashDropzoneVisible] = useState(false);
@@ -358,96 +365,94 @@ export default function TerminalDashboard() {
     }
   }, [activeProject, progressForFile]);
 
-  const scrollToPane = (id: string, behavior: ScrollBehavior = 'smooth') => {
-    const strip = stripRef.current;
-    if (!strip) return;
-    const el = strip.querySelector<HTMLDivElement>(`[data-node-id="${id}"]`);
-    if (!el) return;
-    // Horizontal-only: don't use scrollIntoView, which can scroll inner pane
-    // scrollers vertically as a side-effect.
-    const stripRect = strip.getBoundingClientRect();
-    const paneRect = el.getBoundingClientRect();
-    // Allow scrolling past the natural end so the last pane can be centered
-    // instead of stuck at the right edge. The extra scrollable room comes from
-    // paddingRight on the grid container (see below).
-    const clamped = centeredPaneScrollLeft({
-      paneLeft: paneRect.left,
-      paneWidth: paneRect.width,
-      stripLeft: stripRect.left,
-      stripWidth: strip.clientWidth,
-      currentScrollLeft: strip.scrollLeft,
-      maxScrollLeft: strip.scrollWidth - strip.clientWidth,
-    });
-    strip.scrollTo({
-      left: clamped,
-      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : behavior,
-    });
-  };
-
-  // This runs before the Dashboard paints after Overview navigation, so the
-  // newly focused node is already in view instead of showing a stale pane for
-  // one frame (or waiting through a smooth-scroll animation).
+  const revealRef = useRef<(() => void) | null>(null);
+  const lastReveal = useRef<{ scope: string; focused: string | null; mode: string; ready: boolean; ids: string[] } | null>(null);
   useLayoutEffect(() => {
-    if (!focusedPane) return;
-    if (layout.animationRef.current) {
-      pendingScrollRef.current = focusedPane;
+    if (layout.waitingForExit) {
+      revealRef.current?.();
       return;
     }
-    pendingScrollRef.current = null;
-    scrollToPane(focusedPane, 'auto');
-  }, [focusedPane, prefs.paneWidthMode, layout.ready]);
-
-  useLayoutEffect(() => {
-    if (layout.animationRef.current || !pendingScrollRef.current) return;
-    const target = pendingScrollRef.current;
-    pendingScrollRef.current = null;
-    if (target === focusedPane) scrollToPane(target);
-  }, [layout.settledVersion, focusedPane]);
-
-  // When new panes are appended (agent spawn_branches, fanout, manual open),
-  // reveal the newly-added one only if it owns focus. Background additions
-  // and pane closures must not yank the viewport away from the active pane.
-  // Also flag the new IDs for the spawn-in animation, with a stagger index so
-  // multiple branches "fan out" rather than appearing simultaneously.
-  // A freshly mounted Dashboard already receives a focused pane (for example
-  // when Branches opens a node). Treating that whole restored list as
-  // "new" would schedule a second scroll to its last pane and overwrite the
-  // focused-node landing position.
-  const prevOpenPanesRef = useRef<string[]>(openPanes);
-  useEffect(() => {
-    const prev = prevOpenPanesRef.current;
-    const added = openPanes.filter((id) => !prev.includes(id));
-    prevOpenPanesRef.current = openPanes;
-    if (added.length === 0) return;
-    setSpawnStagger((cur) => {
-      const next = new Map(cur);
-      added.forEach((id, i) => next.set(id, i));
-      return next;
-    });
-    // Clear stagger entries after the keyframe duration so subsequent
-    // re-renders don't trigger the flash again on settled panes.
-    const clearAt = window.setTimeout(() => {
-      setSpawnStagger((cur) => {
-        const next = new Map(cur);
-        added.forEach((id) => next.delete(id));
-        return next;
-      });
-    }, 600 + added.length * 80);
-    // Wait one frame so the new pane is laid out before we measure offsetLeft.
-    // Only auto-scroll if the new pane is also focused — spawned branches that
-    // don't steal focus shouldn't yank the viewport away from the active pane.
-    const target = added[added.length - 1];
-    let scrollFrame: number | undefined;
-    if (target === focusedPane) {
-      if (layout.animationRef.current) pendingScrollRef.current = target;
-      else scrollFrame = requestAnimationFrame(() => scrollToPane(target));
+    const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
+    const previous = lastReveal.current;
+    lastReveal.current = { scope, focused: focusedPane, mode: prefs.paneWidthMode, ready: layout.ready, ids: activePanes };
+    const strip = stripRef.current;
+    const index = focusedPane ? openPanes.indexOf(focusedPane) : -1;
+    if (!strip || index < 0 || !layout.ready) return;
+    const requested = !previous || previous.scope !== scope || previous.focused !== focusedPane
+      || previous.mode !== prefs.paneWidthMode || !previous.ready;
+    // Closing the focused pane reveals its predecessor on the same clock as
+    // the covering boundaries. Background closes preserve the current view.
+    const closing = previous?.scope === scope && previous.ids.some(id => !activePanes.includes(id));
+    if (!requested && !closing) return;
+    revealRef.current?.();
+    const left = layout.positions[index];
+    const total = layout.padding + layout.contentWidth + layout.paddingRight;
+    const keepPosition = closing && previous?.focused === focusedPane;
+    const target = Math.max(0, Math.min(keepPosition ? strip.scrollLeft : left + layout.widths[index] / 2 - strip.clientWidth / 2, total - strip.clientWidth));
+    const captions = strip.closest('.terminal-shell')?.querySelector<HTMLElement>('[data-pane-captions]');
+    const mirror = (left: number) => { if (captions) captions.style.transform = `translateX(${-left}px)`; };
+    if (layout.animationRef.current) {
+      const stop = scrollWithPaneLayout(strip, layout.animationRef.current, target, mirror);
+      const viewport = captions?.parentElement;
+      viewport?.addEventListener('wheel', stop, { passive: true });
+      revealRef.current = () => { stop(); viewport?.removeEventListener('wheel', stop); };
+    } else {
+      strip.scrollTo({ left: target, behavior: 'instant' });
+      mirror(strip.scrollLeft);
     }
-    return () => {
-      window.clearTimeout(clearAt);
-      if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally reads focusedPane without dep; we only want this to fire on openPanes change
-  }, [openPanes]);
+  }, [activeProject?.id, activeProject?.activeTreeId, focusedPane, openPanes, activePanes, prefs.paneWidthMode, layout]);
+
+  useLayoutEffect(() => () => { revealRef.current?.(); }, []);
+
+  const previousEntrance = useRef({ scope: '', ids: openPanes });
+  const entrances = useRef(new Map<string, Animation>());
+  const previousExits = useRef<ReadonlySet<string>>(new Set());
+  useLayoutEffect(() => {
+    const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
+    const previous = previousEntrance.current;
+    previousEntrance.current = { scope, ids: openPanes };
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    for (const [id, animation] of entrances.current) {
+      if (!openPanes.includes(id) || previous.scope !== scope || reduced) {
+        animation.cancel(); entrances.current.delete(id);
+      }
+    }
+    if (previous.scope !== scope || reduced) {
+      previousExits.current = exitingIds;
+      return;
+    }
+    for (const id of openPanes) {
+      const exiting = exitingIds.has(id);
+      const reopening = previousExits.current.has(id) && !exiting;
+      if (exiting === previousExits.current.has(id) && previous.ids.includes(id)) continue;
+      const surface = paneRefs.current[id]?.querySelector<HTMLElement>('.pane-entry-surface');
+      if (!surface || typeof surface.animate !== 'function') continue;
+      if (exiting) {
+        // Freeze an interrupted entrance. Closing is only the outer covering
+        // motion, never an independent fade with a separate removal callback.
+        const entrance = entrances.current.get(id);
+        entrance?.pause();
+        continue;
+      }
+      const { frames, duration } = paneEntrance(prefs.paneSpawnAnimation);
+      const current = reopening ? getComputedStyle(surface) : null;
+      const from = current ? { opacity: current.opacity, transform: current.transform } : frames[0];
+      entrances.current.get(id)?.cancel();
+      const animation = surface.animate([from, frames[1]], {
+        duration, easing: PANE_EASE, fill: 'both',
+      });
+      entrances.current.set(id, animation);
+      animation.onfinish = () => {
+        if (entrances.current.get(id) !== animation) return;
+        animation.cancel(); entrances.current.delete(id);
+      };
+    }
+    previousExits.current = exitingIds;
+  }, [openPanes, exitingIds, activeProject?.id, activeProject?.activeTreeId, prefs.paneSpawnAnimation]);
+  useLayoutEffect(() => {
+    const running = entrances.current;
+    return () => { for (const animation of running.values()) animation.cancel(); running.clear(); };
+  }, []);
 
   if (!activeProject) {
     return (
@@ -472,7 +477,7 @@ export default function TerminalDashboard() {
     return <TerminalHome onSubmitted={() => {}} />;
   }
   const effContentWidth =
-    openPanes.length === 1 && prefs.singlePaneContentWidth !== null
+    activePanes.length === 1 && !layout.waitingForExit && prefs.singlePaneContentWidth !== null
       ? prefs.singlePaneContentWidth
       : null;
   const { overflow, gridTemplateColumns } = layout;
@@ -509,7 +514,7 @@ export default function TerminalDashboard() {
         minWidth: 0,
         minHeight: 0,
         height: '100%',
-        overflowX: overflow ? 'auto' : 'hidden',
+        overflowX: overflow || exitingIds.size > 0 ? 'auto' : 'hidden',
         overflowY: 'hidden',
         position: 'relative', /* anchor offsetLeft for scrollToPane */
         padding: 'var(--term-dashboard-padding, 0px)',
@@ -520,7 +525,6 @@ export default function TerminalDashboard() {
       }}
     >
       {openPanes.map((id, i) => {
-        const stagger = spawnStagger.get(id);
         const wrapStyle: React.CSSProperties = {
           position: 'relative',
           minWidth: 0,
@@ -533,28 +537,21 @@ export default function TerminalDashboard() {
           // shell-bg while the caption shows through to pane-bg — same dim
           // formula yields visibly different colors.
           background: 'var(--term-pane-bg)',
+          overflow: 'clip',
+          ...layout.paneStyles[i],
         };
-        if (stagger !== undefined) {
-          const anim = prefs.paneSpawnAnimation ?? 'phosphor';
-          const keyframeName =
-            anim === 'fission' ? 'tSpawnFission'
-            : anim === 'thread-pull' ? 'tSpawnThreadPull'
-            : 'tSpawn';
-          const duration = anim === 'fission' ? 320 : anim === 'thread-pull' ? 380 : 360;
-          wrapStyle.animation = `${keyframeName} ${duration}ms ease-out both`;
-          wrapStyle.animationDelay = `${stagger * 80}ms`;
-          // Phosphor Bloom uses scaleY(0.02) → 1 — content must not overflow
-          // during the collapsed phase, and the scale origin must be centered.
-          wrapStyle.overflow = 'hidden';
-          wrapStyle.transformOrigin = anim === 'thread-pull' ? 'left center' : 'center';
-        }
         return (
           <div
             key={id}
             ref={(el) => { paneRefs.current[id] = el; }}
             data-node-id={id}
+            data-pane-exiting={exitingIds.has(id) ? '' : undefined}
+            aria-hidden={exitingIds.has(id) || undefined}
+            {...(exitingIds.has(id) ? { inert: '' } : {})}
             style={wrapStyle}
           >
+            <div className="pane-entry-surface" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
+            <RetainedPaneContent exiting={exitingIds.has(id)}>
             <PaneErrorBoundary paneId={id}>
               {paneItems[id] ? (
                 <Suspense fallback={<div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 11 }}>loading {paneItems[id].kind}…</div>}>
@@ -575,6 +572,8 @@ export default function TerminalDashboard() {
                 <TPane nodeId={id} contentMaxWidth={effContentWidth} />
               )}
             </PaneErrorBoundary>
+            </RetainedPaneContent>
+            </div>
             <ResizeHandle
                 paneRef={{ current: paneRefs.current[id] } as React.RefObject<HTMLDivElement>}
                 onResize={(w) => setPaneWidth(id, w)}
@@ -583,6 +582,9 @@ export default function TerminalDashboard() {
           </div>
         );
       })}
+      {exitingIds.size > 0 && (
+        <div aria-hidden data-pane-scroll-extent style={{ position: 'absolute', left: Math.max(0, layout.scrollExtent - 1), top: 0, width: 1, height: 1, pointerEvents: 'none' }} />
+      )}
       {dashDropzoneVisible && (
         <div
           style={{

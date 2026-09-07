@@ -1605,7 +1605,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           // Applied server-side after the fresh session is created, before this
           // first prompt streams. Ignored on resume (node already has a chatId).
           modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
-          resumeFingerprint: n.resumeFingerprint,
           graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
         });
         perf.measure('client:ensure_session', tEnsureStart, { nodeId, strategy: ensured.resumeStrategy });
@@ -1622,7 +1621,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           providerId: ensured.providerId,
           modelId: ensured.modelId,
           reasoning: ensured.reasoning,
-          resumeFingerprint: ensured.resumeFingerprint,
         });
         boundSessionsRef.current.add(nodeId);
 

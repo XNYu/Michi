@@ -11,7 +11,6 @@ import { setupPersistenceRoutes } from '../src/routes/persistence';
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions } from '../src/agents/sessionRegistry';
 import { loadAgentConfig } from '../src/services/agentConfig';
-import { computeTranscriptFingerprint } from '../src/services/resumeStrategy';
 import type {
   AgentRuntime,
   AgentSession,
@@ -27,7 +26,6 @@ interface KiroBinding {
   id: string;
   acp_session_id: string;
   model_id: string | null;
-  resume_fingerprint: string;
 }
 
 function transcriptFor(nodeId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
@@ -41,20 +39,16 @@ function transcriptFor(nodeId: string): Array<{ role: 'user' | 'assistant'; cont
 
 function findExactResumeCandidate(): KiroBinding {
   const rows = getDb().prepare(`
-    SELECT id, acp_session_id, model_id, resume_fingerprint
+    SELECT id, acp_session_id, model_id
       FROM nodes
      WHERE runtime_id = 'kiro'
        AND acp_session_id IS NOT NULL
        AND acp_session_id <> id
-       AND resume_fingerprint IS NOT NULL
        AND purged_at IS NULL
      ORDER BY created_at DESC
   `).all() as unknown as KiroBinding[];
-  const match = rows.find((row) =>
-    computeTranscriptFingerprint(transcriptFor(row.id)) === row.resume_fingerprint,
-  );
-  assert.ok(match, 'copied DB must contain a Kiro row with a current resume fingerprint');
-  return match;
+  assert.ok(rows.length > 0, 'copied DB must contain a Kiro row with an ACP session binding');
+  return rows[0];
 }
 
 class FakeKiroSession implements AgentSession {
@@ -164,7 +158,6 @@ test('unified node identity against an online backup of the real DB', { skip: !e
       body: JSON.stringify({
         model: candidate.model_id,
         priorMessages,
-        resumeFingerprint: candidate.resume_fingerprint,
       }),
     });
     assert.equal(ensure.status, 200);
@@ -195,14 +188,12 @@ test('unified node identity against an online backup of the real DB', { skip: !e
 
     clearAllSessions();
     const restartedRow = getNode(candidate.id);
-    assert.ok(restartedRow?.resume_fingerprint);
     const restartedEnsure = await fetch(`${baseUrl}/nodes/${candidate.id}/ensure-session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: restartedRow.model_id,
+        model: restartedRow?.model_id,
         priorMessages: transcriptFor(candidate.id),
-        resumeFingerprint: restartedRow.resume_fingerprint,
       }),
     });
     assert.equal(restartedEnsure.status, 200);

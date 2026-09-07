@@ -1,6 +1,5 @@
 import type { ChatAction, ChatNodeState, ComposerDraft, ArtifactEntry, Project, ProjectAction, Tree } from './chatTypes';
 import { applyTreeMessages } from './chatHydration';
-import { computeTranscriptFingerprint } from './transcriptFingerprint';
 import { deriveTitleFromUserText } from './assistantParsing';
 import {
   appendToolBlock,
@@ -290,7 +289,6 @@ export function reduceNodes(
           providerId: action.providerId !== undefined ? action.providerId : n.providerId,
           modelId: action.modelId !== undefined ? action.modelId : n.modelId,
           reasoning: action.reasoning !== undefined ? action.reasoning : n.reasoning,
-          resumeFingerprint: action.resumeFingerprint !== undefined ? action.resumeFingerprint : n.resumeFingerprint,
           // Preserve the persisted agent across re-bind: a resumed kiro session
           // reports no mode (currentModeId null), so `?? n.currentModeId` keeps
           // the restored value instead of wiping it back to the generic chip.
@@ -652,7 +650,6 @@ export function reduceNodes(
             const next = appendBranchOverviewEntry(prev, extractedBranchOverview, Date.now());
             return next === prev ? n.branchOverview : next[next.length - 1].text;
           })(),
-          resumeFingerprint: computeTranscriptFingerprint(msgs),
         },
       };
     }
@@ -772,6 +769,12 @@ export function reduceNodes(
           streamingIdleMs: undefined,
           messages: msgs,
           followUpsSourceMessageId: nextFollowUpsSrc,
+          // Break the old session binding so the next send walks the fresh
+          // path. The old session's history no longer matches after truncation;
+          // the backend creates a new session and retires the orphan via its
+          // idle-timeout sweep.
+          chatId: null,
+          resumeFingerprint: undefined,
         },
       };
     }

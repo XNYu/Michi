@@ -1544,7 +1544,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       // contenteditable composer).
       if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) return;
     }
-    requestAnimationFrame(() => inputRef.current?.focus());
+    // Dashboard owns horizontal reveal; focus fallback must not scroll it again.
+    const frame = requestAnimationFrame(() => inputRef.current?.editor?.commands.focus(undefined, { scrollIntoView: false }));
+    return () => cancelAnimationFrame(frame);
   }, [isFocused, streaming, quotedText]);
 
   const insertMentionTrigger = useCallback(() => {

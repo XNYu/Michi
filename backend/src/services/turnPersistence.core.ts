@@ -22,7 +22,6 @@
 import {
   appendBranchOverviewEntry,
   checkpointTurnContent,
-  computeTranscriptFingerprint,
   parseBranchOverviewEntries,
   serializeBranchOverviewEntries,
   type DurableMessage,
@@ -152,17 +151,6 @@ function writeTurnNodeProjection(
   );
 }
 
-function refreshResumeFingerprint(db: DbPrimitives, nodeId: string): void {
-  const messages = db.all<{ role: string; content: string }>(
-    NODE_SQL.listTranscriptMessages,
-    nodeId,
-  );
-  const transcript = messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-  db.run(NODE_SQL.setResumeFingerprint, computeTranscriptFingerprint(transcript), nodeId);
-}
-
 // ── Public core functions ──────────────────────────────────────────────────
 
 /**
@@ -285,7 +273,6 @@ export function coreFinalizeTurn(db: DbPrimitives, snapshot: DurableTurnSnapshot
 
     writeAssistantSnapshot(db, snapshot);
     writeTurnNodeProjection(db, snapshot, true);
-    refreshResumeFingerprint(db, snapshot.nodeId);
 
     const now = Date.now();
     const completedAt = snapshot.completedAt ?? now;

@@ -266,7 +266,7 @@ export interface ChatNodeState {
   providerId?: string | null;
   modelId?: string | null;
   reasoning?: AgentReasoning | null;
-  /** Fingerprint of the visible transcript at the moment the hidden session was last known to match it. */
+  /** @deprecated Fingerprint check removed. Field retained for DB hydration compatibility only; always null for new nodes. */
   resumeFingerprint?: string | null;
   projectId: string;
   /** nodeId of the parent node (used for fork transcript seeding on backend). */
@@ -647,7 +647,6 @@ export type ChatAction =
       providerId?: string | null;
       modelId?: string | null;
       reasoning?: AgentReasoning | null;
-      resumeFingerprint?: string | null;
     }
   | { type: 'unbind-chat'; nodeId: string }
   | {

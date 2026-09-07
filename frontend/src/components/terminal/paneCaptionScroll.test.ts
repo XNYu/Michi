@@ -3,7 +3,7 @@ import { bindPaneCaptionScroll } from './paneCaptionScroll';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
-function setup(native = false) {
+function setup(native = false, moving = false) {
   const strip = document.createElement('div');
   const viewport = document.createElement('div');
   const captions = document.createElement('div');
@@ -30,12 +30,21 @@ function setup(native = false) {
   const cancel = vi.fn();
   const setKeyframes = vi.fn();
   captions.animate = vi.fn(() => ({ cancel, effect: { setKeyframes } }) as unknown as Animation);
-  const dispose = bindPaneCaptionScroll(strip, captions);
+  const dispose = bindPaneCaptionScroll(strip, captions, moving);
   return { strip, captions, viewport, width, resize: () => resize([], {} as ResizeObserver),
     disconnect, observe, Timeline, timeline, cancel, setKeyframes, dispose };
 }
 
 describe('pane caption scrolling', () => {
+  it('uses the one-way fallback while transformed panes have transient overflow', () => {
+    const { strip, captions, dispose } = setup(true, true);
+    expect(captions.animate).not.toHaveBeenCalled();
+    strip.scrollLeft = 550;
+    strip.dispatchEvent(new Event('scroll'));
+    expect(captions.style.transform).toBe('translateX(-550px)');
+    expect(captions.scrollLeft).toBe(0);
+    dispose();
+  });
   it('initializes restored positions and mirrors only from the dashboard', () => {
     const { strip, captions, dispose } = setup();
     expect(captions.style.transform).toBe('translateX(-320px)');

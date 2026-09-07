@@ -24,6 +24,7 @@ import { activeBackendApiBase, getKnownBackendConnections } from '../../config/b
 import { backendConnectionIdFromApiBase } from '../../state/agentIdentity';
 import { useManageAgentRoute } from '../../state/manageRoute';
 import { usePaneLayout } from './usePaneLayout';
+import { usePresentedPanes } from './PanePresentation';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
@@ -79,7 +80,8 @@ export default function TerminalTopbar({
     canNavBack,
     canNavForward,
   } = useChatProjects();
-  const { openPanes, focusedPane, paneItems = {} } = useChatPanes();
+  const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const { paneIds: openPanes, paneItems, exitingIds } = usePresentedPanes(activePanes, activeItems);
   const {
     focusPane,
     closePane,
@@ -92,13 +94,13 @@ export default function TerminalTopbar({
   const manageAgentRoute = useManageAgentRoute();
 
   const closeOtherPanes = useCallback((keepId: string) => {
-    const others = openPanes.filter((id) => id !== keepId);
+    const others = activePanes.filter((id) => id !== keepId);
     for (const id of others) closePane(id);
     focusPane(keepId);
     // Drop any custom width so the lone surviving pane expands to fill the
     // window (a single pane with no paneWidth renders as a 1fr grid track).
     setPaneWidth(keepId, undefined);
-  }, [openPanes, closePane, focusPane, setPaneWidth]);
+  }, [activePanes, closePane, focusPane, setPaneWidth]);
 
   const unreadTotal = useStructuralSelector(
     (nodes) => selectUnreadTotal(nodes, focusedNodeId),
@@ -150,9 +152,16 @@ export default function TerminalTopbar({
   // Dashboard drives this grid's translation. It has no independent scroll
   // position, so title gestures cannot race the pane's scroll momentum.
   const cellsStripRef = useRef<HTMLDivElement>(null);
+  const retainedCaptionFocus = useRef(new Map<string, string | null>());
+  const captionFocus = new Map(openPanes.map(id => [id,
+    exitingIds.has(id) && retainedCaptionFocus.current.has(id)
+      ? retainedCaptionFocus.current.get(id)!
+      : focusedPane,
+  ]));
+  retainedCaptionFocus.current = captionFocus;
   const showPaneCells = page === 'dashboard' && openPanes.length > 0;
   const paneLayout = usePaneLayout(cellsStripRef, {
-    paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode,
+    paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth, enabled: showPaneCells,
     scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
   });
@@ -467,6 +476,7 @@ export default function TerminalTopbar({
             style={{
               flex: 1,
               display: 'grid',
+              position: 'relative',
               gridTemplateColumns: cellsTemplateColumns,
               gap: 'var(--term-dashboard-gap, 0px)',
               padding: 'var(--term-dashboard-padding, 0px)',
@@ -483,9 +493,10 @@ export default function TerminalTopbar({
             } as React.CSSProperties}
           >
             {openPanes.map((id, i) => {
-              const isFirst = i === 0;
+              const isFirst = exitingIds.has(id) ? i === 0 : id === activePanes[0];
               const status = paneStatuses[i] ?? 'idle';
-              const isCellFocused = focusedPane === id;
+              const cellFocus = captionFocus.get(id);
+              const isCellFocused = cellFocus === id;
               // First cell needs to clear the floating Zone 1 (traffic lights
               // + 3 icons) when sidebar is collapsed; otherwise the title would
               // sit under it.
@@ -496,12 +507,16 @@ export default function TerminalTopbar({
                 <div
                   key={id}
                   data-pane-caption-id={id}
+                  data-pane-exiting={exitingIds.has(id) ? '' : undefined}
+                  aria-hidden={exitingIds.has(id) || undefined}
+                  {...(exitingIds.has(id) ? { inert: '' } : {})}
                   onClick={() => focusPane(id)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     overflow: 'hidden',
                     minWidth: 0,
+                    pointerEvents: exitingIds.has(id) ? 'none' : undefined,
                     // 12px baseline so the chip never hugs the cell's left
                     // edge; first cell when sidebar is collapsed adds the
                     // traffic-light + zone-1 icon clearance on top.
@@ -522,7 +537,6 @@ export default function TerminalTopbar({
                       (isFirst && !sidebarResizing)
                         ? 'padding-left 150ms cubic-bezier(.4,0,.2,1)'
                         : null,
-                      'opacity var(--t-soft) var(--t-ease)',
                       'filter var(--t-soft) var(--t-ease)',
                     ].filter(Boolean).join(', '),
                     borderRight: !prefs.paneRules ? 'none' : '1px solid var(--term-line)',
@@ -534,7 +548,8 @@ export default function TerminalTopbar({
                     // topbar container bg (white) behind it. brightness() darkens
                     // without transparency, so the right-cluster icons area
                     // (transparent) correctly shows the dimmed cell bg.
-                    filter: focusedPane == null || isCellFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
+                    filter: cellFocus == null || isCellFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
+                    ...paneLayout.paneStyles[i],
                   }}
                 >
                   <PaneCaption

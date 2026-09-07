@@ -41,7 +41,6 @@ import {
     buildCompatibleResumeContext,
     buildTargetResumeSignature,
     chooseResumeStrategy,
-    computeTranscriptFingerprint,
     normalizeResumeSignature,
     normalizeReasoning,
     normalizeSignaturePart,
@@ -234,7 +233,7 @@ function persistResumeBinding(
     nodeId: string,
     session: AgentSession,
     signature: ResumeSignature,
-    fingerprint: string,
+    fingerprint: string | null,
 ): void {
     const fields = {
         nodeId,
@@ -243,7 +242,7 @@ function persistResumeBinding(
         provider_id: signature.providerId ?? null,
         model_id: signature.modelId ?? null,
         reasoning: signature.reasoning ?? null,
-        resume_fingerprint: fingerprint,
+        resume_fingerprint: fingerprint ?? null,
         current_mode_id: session.currentModeId ?? null,
     };
     if (isDbWorkerReady()) {
@@ -1178,10 +1177,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 );
             const row = getNode(nodeId);
             const transcript = readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
-            const currentFingerprint = computeTranscriptFingerprint(transcript);
-            const storedFingerprint =
-                normalizeSignaturePart(body.resumeFingerprint) ??
-                normalizeSignaturePart(row?.resume_fingerprint);
             const persistedBinding =
                 normalizeSignaturePart(row?.acp_session_id) ??
                 normalizeSignaturePart(row?.external_session_id);
@@ -1202,8 +1197,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 nativeResumeAvailable,
                 existingSignature,
                 targetSignature,
-                storedFingerprint,
-                currentFingerprint,
             });
 
             let session: AgentSession | undefined;
@@ -1316,7 +1309,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 }
             }
 
-            persistResumeBinding(nodeId, session, targetSignature, currentFingerprint);
+            persistResumeBinding(nodeId, session, targetSignature, null);
             startupMark("ensure_session_route_done", {
                 nodeId,
                 chatId: session.id,
@@ -1330,7 +1323,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 providerId: targetSignature.providerId,
                 modelId: targetSignature.modelId,
                 reasoning: targetSignature.reasoning,
-                resumeFingerprint: currentFingerprint,
+                resumeFingerprint: null,
                 resumeStrategy,
                 resumeReason,
             });

@@ -387,7 +387,7 @@ export default function WorkspaceRow({
                 // the accent rail are what keep it distinct from a thread.
                 fontSize: 'var(--sb-fs, 13.5px)',
                 fontWeight: 600,
-                color: 'var(--term-faint)',
+                color: 'var(--term-fg)',
                 // Translucent so it tints the sidebar glass instead of covering it.
                 background: menu ? CARD_FILL : undefined,
               }

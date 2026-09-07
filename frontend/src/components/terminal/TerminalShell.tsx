@@ -23,6 +23,7 @@ import type { AgentDefinitionDtoV1, AgentEnableBlockerV1, CreateAgentDefinitionR
 import { AgentDefinitionStatus } from 'michi-shared';
 import type { AgentDefinitionFormValue } from './agents/AgentDefinitionForm';
 import type { ChatNodeState } from '../../state/chatTypes';
+import { PanePresentationProvider } from './PanePresentation';
 
 const NARROW_THRESHOLD = 700;
 const TerminalMap = React.lazy(() => import('./pages/Map'));
@@ -110,7 +111,7 @@ export default function TerminalShell() {
     agentStatus,
     canNavBack, canNavForward,
   } = useChatProjects();
-  const { openPanes, focusedPane } = useChatPanes();
+  const { openPanes, focusedPane, paneItems } = useChatPanes();
   const {
     createProject,
     enterChatsWorkspace,
@@ -497,6 +498,7 @@ export default function TerminalShell() {
   }
 
   return (
+    <PanePresentationProvider ids={openPanes} items={paneItems} scope={`${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`} enabled={page === 'dashboard'}>
     <div
       className="terminal-shell"
       style={{
@@ -596,6 +598,7 @@ export default function TerminalShell() {
         </React.Suspense>
       )}
     </div>
+    </PanePresentationProvider>
   );
 }
 

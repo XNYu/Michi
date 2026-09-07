@@ -27,7 +27,8 @@ async function settlePanes(page: Page) {
     let stableFrames = 0;
     for (let frame = 0; frame < 180; frame++) {
       await new Promise(requestAnimationFrame);
-      stableFrames = el.scrollLeft === previous && el.getAnimations().length === 0 ? stableFrames + 1 : 0;
+      const moving = Array.from(el.children).some(child => child.getAnimations().length > 0);
+      stableFrames = el.scrollLeft === previous && !moving ? stableFrames + 1 : 0;
       previous = el.scrollLeft;
       if (stableFrames >= 10) return;
     }
@@ -98,6 +99,8 @@ for (const native of [true, false]) {
     await info.attach('scroll-frames', { body: JSON.stringify(frames), contentType: 'application/json' });
     expect(frames.some(frame => frame.scroll > 0 && frame.scroll < 800), JSON.stringify(frames)).toBe(true);
     expect(Math.max(...frames.map(frame => frame.error))).toBeLessThan(2);
+    // High-refresh displays can sample 50 frames before native scrolling ends.
+    await expect.poll(async () => (await alignment(page)).left).toBe(0);
 
     await strip.evaluate(el => el.scrollTo({ left: 550, behavior: 'instant' }));
     await expect.poll(async () => (await alignment(page)).left).toBe(550);

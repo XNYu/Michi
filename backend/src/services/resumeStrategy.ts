@@ -1,10 +1,6 @@
 import type { AgentConfig } from "./agentConfig";
 import { getBuiltinDefaultModel, getBuiltinDefaultReasoning, resolveProvider } from "./agentConfig";
 import type { AgentReasoning, AgentRuntime } from "../agents/types";
-import {
-  computeTranscriptFingerprint as computeSharedTranscriptFingerprint,
-  type TranscriptFingerprintMessage,
-} from "michi-shared";
 
 export type ResumeStrategy = "fresh" | "live" | "exact" | "compatible";
 
@@ -15,7 +11,10 @@ export interface ResumeSignature {
   reasoning: AgentReasoning | null;
 }
 
-export type TranscriptMessage = TranscriptFingerprintMessage;
+export interface TranscriptMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 export interface ResumeDecisionInput {
   existingChatId?: string | null;
@@ -23,8 +22,10 @@ export interface ResumeDecisionInput {
   nativeResumeAvailable: boolean;
   existingSignature: ResumeSignature | null;
   targetSignature: ResumeSignature;
+  /** @deprecated Fingerprint check removed — field ignored by chooseResumeStrategy. */
   storedFingerprint?: string | null;
-  currentFingerprint: string;
+  /** @deprecated Fingerprint check removed — field ignored by chooseResumeStrategy. */
+  currentFingerprint?: string;
 }
 
 export interface ResumeDecision {
@@ -111,9 +112,10 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
   if (!signaturesEqual(input.existingSignature, input.targetSignature)) {
     return { strategy: "compatible", reason: "signature_changed" };
   }
-  if (!input.storedFingerprint || input.storedFingerprint !== input.currentFingerprint) {
-    return { strategy: "compatible", reason: "transcript_changed" };
-  }
+  // Fingerprint check removed: Pane Ownership already prevents concurrent
+  // writes, edit/retry clears chatId (forcing fresh), and the fingerprint's
+  // normalization divergence caused every normal follow-up to misfire into
+  // compatible resume — losing live sessions that were perfectly fine.
   if (input.liveSessionMatches) {
     return { strategy: "live", reason: "live_session_matches" };
   }
@@ -121,10 +123,6 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
     return { strategy: "exact", reason: "native_resume_available" };
   }
   return { strategy: "compatible", reason: "native_resume_unavailable" };
-}
-
-export function computeTranscriptFingerprint(messages: readonly TranscriptMessage[]): string {
-  return computeSharedTranscriptFingerprint(messages);
 }
 
 export function buildCompatibleResumeContext(
