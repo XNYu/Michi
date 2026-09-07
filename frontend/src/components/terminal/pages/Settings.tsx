@@ -93,16 +93,6 @@ export default function TerminalSettings({
               </button>
             ))}
           </nav>
-          <label className="terminal-settings-select">
-            <span>Category</span>
-            <select
-              value={section}
-              onChange={(event) => setSection(event.target.value as SettingsSection)}
-              aria-controls={contentId}
-            >
-              {sections.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </select>
-          </label>
           {onNav && (
             <div className="terminal-settings-history" role="group" aria-label="History">
               <h2>History</h2>

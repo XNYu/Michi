@@ -24,6 +24,8 @@ export interface DrawerShellProps {
   /** Handle Escape at the drawer level. Set false when a nested overlay (e.g. a
    *  lightbox) should consume Escape first. Default true. */
   closeOnEscape?: boolean;
+  /** Override the default CSS width (440px). Applied as an inline style. */
+  width?: number;
   'aria-label'?: string;
   children: React.ReactNode;
 }
@@ -35,6 +37,7 @@ export function DrawerShell({
   headerActions,
   titleBadge,
   closeOnEscape = true,
+  width,
   children,
   ...rest
 }: DrawerShellProps) {
@@ -66,6 +69,7 @@ export function DrawerShell({
         role="dialog"
         aria-modal="true"
         aria-label={typeof title === 'string' ? title : ariaLabel}
+        style={width ? { width } : undefined}
       >
         <div className="ui-overlay-header">
           <span className="ui-overlay-title">▸ {title}</span>
