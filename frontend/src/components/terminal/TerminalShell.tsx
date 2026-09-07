@@ -498,7 +498,7 @@ export default function TerminalShell() {
   }
 
   return (
-    <PanePresentationProvider ids={openPanes} items={paneItems} scope={`${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`} enabled={page === 'dashboard'}>
+    <PanePresentationProvider ids={openPanes} items={paneItems} focusedPane={focusedPane} scope={`${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`} enabled={page === 'dashboard'}>
     <div
       className="terminal-shell"
       style={{

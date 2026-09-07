@@ -391,6 +391,7 @@ for (const motion of ['soft-fade', 'gentle-glide', 'frozen-retract', 'phosphor',
     expect(Number(frames[0].duration)).toBeLessThanOrEqual(220);
     expect(frames[0].width).toBe(600);
     expect(frames[0].frames.every(f => !String(f.transform).includes('scale') && f.filter === undefined)).toBe(true);
+    expect(frames[0].frames.every(f => Number(f.opacity) === 1)).toBe(true);
     await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true })));
     await page.getByRole('complementary').getByText('second conversation', { exact: true }).first().click();
     await page.waitForTimeout(240);

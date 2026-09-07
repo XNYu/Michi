@@ -3,7 +3,7 @@ export const PANE_EXIT_MS = 160;
 export const PANE_STAGGER_MS = 30;
 export const PANE_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
-/** Small surface entrances preserve preference identity without scaling text. */
+/** Reveal populated content, never a white wrapper behind transparent text. */
 export function paneEntrance(mode: string | undefined): { frames: Keyframe[]; duration: number } {
   const offset = mode === 'fission' ? 'translateX(-12px)'
     : mode === 'thread-pull' ? 'translateX(16px)'
@@ -11,7 +11,7 @@ export function paneEntrance(mode: string | undefined): { frames: Keyframe[]; du
     : mode === 'frozen-retract' ? 'translateY(-6px)'
     : mode === 'soft-fade' ? 'translateX(0px)' : 'translateY(4px)';
   return {
-    frames: [{ opacity: 0, transform: offset }, { opacity: 1, transform: 'translate(0px, 0px)' }],
+    frames: [{ opacity: 1, transform: offset }, { opacity: 1, transform: 'translate(0px, 0px)' }],
     duration: mode === 'soft-fade' ? 150 : mode === 'gentle-glide' ? 180 : PANE_ENTER_MS,
   };
 }

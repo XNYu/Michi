@@ -24,7 +24,7 @@ import { activeBackendApiBase, getKnownBackendConnections } from '../../config/b
 import { backendConnectionIdFromApiBase } from '../../state/agentIdentity';
 import { useManageAgentRoute } from '../../state/manageRoute';
 import { usePaneLayout } from './usePaneLayout';
-import { usePresentedPanes } from './PanePresentation';
+import { usePresentedPanes, usePresentedPaneFocus } from './PanePresentation';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
@@ -81,6 +81,7 @@ export default function TerminalTopbar({
     canNavForward,
   } = useChatProjects();
   const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const { focusedPane: visualFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: openPanes, paneItems, exitingIds } = usePresentedPanes(activePanes, activeItems);
   const {
     focusPane,
@@ -156,7 +157,7 @@ export default function TerminalTopbar({
   const captionFocus = new Map(openPanes.map(id => [id,
     exitingIds.has(id) && retainedCaptionFocus.current.has(id)
       ? retainedCaptionFocus.current.get(id)!
-      : focusedPane,
+      : visualFocus,
   ]));
   retainedCaptionFocus.current = captionFocus;
   const showPaneCells = page === 'dashboard' && openPanes.length > 0;
@@ -555,7 +556,7 @@ export default function TerminalTopbar({
                   <PaneCaption
                     nodeId={id}
                     title={paneTitles[i] || 'thread'}
-                    focused={focusedPane === id}
+                    focused={isCellFocused}
                     streaming={status === 'streaming'}
                     error={status === 'error'}
                     kind={paneKinds[i] as 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser'}

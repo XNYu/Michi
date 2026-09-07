@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { scrollWithPaneLayout } from './paneReveal';
+import { afterPaneMotion, scrollWithPaneLayout } from './paneReveal';
 
 let frame: FrameRequestCallback | undefined;
 beforeEach(() => {
@@ -21,6 +21,44 @@ function setup() {
 }
 
 describe('pane reveal', () => {
+  it('commits visual focus after the final scroll write, including a stationary expansion', async () => {
+    const { strip, animation, step } = setup();
+    const arrive = vi.fn(() => expect(strip.scrollLeft).toBe(1100));
+    afterPaneMotion(animation, arrive);
+    step(0.5);
+    expect(arrive).not.toHaveBeenCalled();
+    animation.dispatchEvent(new Event('finish'));
+    await Promise.resolve();
+    expect(arrive).toHaveBeenCalledTimes(1);
+
+    const stationary = new EventTarget() as Animation;
+    const atRest = vi.fn();
+    scrollWithPaneLayout(strip, stationary, strip.scrollLeft, vi.fn());
+    afterPaneMotion(stationary, atRest);
+    expect(atRest).not.toHaveBeenCalled();
+    stationary.dispatchEvent(new Event('finish'));
+    await Promise.resolve();
+    expect(atRest).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles immediately without motion and discards cancelled or superseded completion', async () => {
+    const arrive = vi.fn();
+    afterPaneMotion(null, arrive);
+    expect(arrive).toHaveBeenCalledTimes(1);
+    arrive.mockClear();
+    const animation = new EventTarget() as Animation;
+    const stop = afterPaneMotion(animation, arrive);
+    animation.dispatchEvent(new Event('finish'));
+    stop();
+    await Promise.resolve();
+    expect(arrive).not.toHaveBeenCalled();
+    afterPaneMotion(animation, arrive);
+    animation.dispatchEvent(new Event('cancel'));
+    animation.dispatchEvent(new Event('finish'));
+    await Promise.resolve();
+    expect(arrive).not.toHaveBeenCalled();
+  });
+
   it('does not run another clock when there is no horizontal movement', () => {
     const strip = document.createElement('div');
     strip.scrollLeft = 100;

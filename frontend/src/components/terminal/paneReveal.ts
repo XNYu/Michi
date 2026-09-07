@@ -1,3 +1,23 @@
+/** Commit visual focus only after the motion's finish listeners land the view. */
+export function afterPaneMotion(animation: Animation | null, onArrive: () => void) {
+  if (!animation || animation.playState === 'finished' || animation.playState === 'idle') {
+    onArrive();
+    return () => {};
+  }
+  let active = true;
+  const finish = () => {
+    queueMicrotask(() => { if (active) onArrive(); });
+  };
+  const stop = () => {
+    active = false;
+    animation.removeEventListener('finish', finish);
+    animation.removeEventListener('cancel', stop);
+  };
+  animation.addEventListener('finish', finish);
+  animation.addEventListener('cancel', stop);
+  return stop;
+}
+
 /** Keep horizontal reveal on the layout animation's eased clock. */
 export function scrollWithPaneLayout(
   strip: HTMLElement,

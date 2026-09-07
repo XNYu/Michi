@@ -188,5 +188,6 @@ describe('shared pane layout motion', () => {
     expect(duration).toBeLessThanOrEqual(220);
     expect(frames.every(frame => Object.keys(frame).every(key => key === 'opacity' || key === 'transform'))).toBe(true);
     expect(frames.every(frame => !String(frame.transform).includes('scale'))).toBe(true);
+    expect(frames.every(frame => frame.opacity === 1)).toBe(true);
   });
 });

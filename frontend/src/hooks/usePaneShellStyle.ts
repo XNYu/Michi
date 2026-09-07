@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react';
-import { usePaneIsExiting } from '../components/terminal/PanePresentation';
+import { usePaneIsExiting, usePresentedPaneFocus } from '../components/terminal/PanePresentation';
 import { useChatStore } from '../state/chatStore';
 import { usePrefs } from '../state/prefs';
 
@@ -21,7 +21,8 @@ import { usePrefs } from '../state/prefs';
 export function usePaneShellStyle(nodeId: string): React.CSSProperties {
   const { focusedPane } = useChatStore();
   const { prefs } = usePrefs();
-  const isFocused = focusedPane === nodeId || focusedPane == null;
+  const { focusedPane: visualFocus } = usePresentedPaneFocus(focusedPane);
+  const isFocused = visualFocus === nodeId || visualFocus == null;
   const exiting = usePaneIsExiting(nodeId);
 
   const style = useMemo<React.CSSProperties>(

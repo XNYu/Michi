@@ -20,9 +20,9 @@ import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 import { usePaneLayout } from '../usePaneLayout';
 import { bindPaneCaptionScroll } from '../paneCaptionScroll';
-import { scrollWithPaneLayout } from '../paneReveal';
+import { afterPaneMotion, scrollWithPaneLayout } from '../paneReveal';
 import { paneEntrance, PANE_EASE } from '../paneMotion';
-import { RetainedPaneContent, usePresentedPanes } from '../PanePresentation';
+import { RetainedPaneContent, usePresentedPanes, usePresentedPaneFocus } from '../PanePresentation';
 
 const FilePane = lazy(() => import('../FilePane'));
 const DiffPane = lazy(() => import('../DiffPane'));
@@ -110,6 +110,7 @@ export function centeredPaneScrollLeft({
 export default function TerminalDashboard() {
   const { activeProject } = useChatProjects();
   const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const { settleFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: openPanes, paneItems, exitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
   const { setPaneWidth, openAgentRunPane } = useChatActions();
   const agentDomain = useAgentDomain();
@@ -403,6 +404,11 @@ export default function TerminalDashboard() {
   }, [activeProject?.id, activeProject?.activeTreeId, focusedPane, openPanes, activePanes, prefs.paneWidthMode, layout]);
 
   useLayoutEffect(() => () => { revealRef.current?.(); }, []);
+
+  useLayoutEffect(() => {
+    if (!layout.ready || layout.waitingForExit) return;
+    return afterPaneMotion(layout.animationRef.current, settleFocus);
+  }, [layout, settleFocus]);
 
   const previousEntrance = useRef({ scope: '', ids: openPanes });
   const entrances = useRef(new Map<string, Animation>());

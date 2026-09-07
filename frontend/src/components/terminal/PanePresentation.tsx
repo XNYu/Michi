@@ -1,17 +1,36 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { PaneItem } from '../../state/paneItems';
 import { usePanePresence } from './usePanePresence';
 
 const PanePresentationContext = createContext<ReturnType<typeof usePanePresence> | null>(null);
 const NO_EXITS: ReadonlySet<string> = new Set();
 const finishImmediately = () => {};
+const PaneVisualFocusContext = createContext<{ focusedPane: string | null; settleFocus: () => void } | null>(null);
 
 /** Captions and transcripts share the same exiting set and removal commit. */
-export function PanePresentationProvider({ ids, items, scope, enabled, children }: {
-  ids: string[]; items: Record<string, PaneItem>; scope: string; enabled: boolean; children: React.ReactNode;
+export function PanePresentationProvider({ ids, items, scope, enabled, focusedPane, children }: {
+  ids: string[]; items: Record<string, PaneItem>; scope: string; enabled: boolean; focusedPane: string | null; children: React.ReactNode;
 }) {
   const presence = usePanePresence(ids, items, scope, enabled);
-  return <PanePresentationContext.Provider value={presence}>{children}</PanePresentationContext.Provider>;
+  const [focus, setFocus] = useState({ scope, enabled, target: focusedPane, visible: focusedPane, revision: 0 });
+  if (focus.scope !== scope || focus.enabled !== enabled || focus.target !== focusedPane) {
+    setFocus({ scope, enabled, target: focusedPane, revision: focus.revision + 1,
+      visible: focus.scope === scope && focus.enabled && enabled && focusedPane !== null ? focus.visible : focusedPane });
+  }
+  // Keyboard/input ownership changes immediately; lighting waits for arrival.
+  // The revision also rejects a late finish from a superseded focus request.
+  const settleFocus = useCallback(() => {
+    setFocus(current => current.revision !== focus.revision || current.visible === current.target
+      ? current : { ...current, visible: current.target });
+  }, [focus.revision]);
+  const visualFocus = useMemo(() => ({ focusedPane: focus.visible, settleFocus }), [focus.visible, settleFocus]);
+  return <PanePresentationContext.Provider value={presence}>
+    <PaneVisualFocusContext.Provider value={visualFocus}>{children}</PaneVisualFocusContext.Provider>
+  </PanePresentationContext.Provider>;
+}
+
+export function usePresentedPaneFocus(fallback: string | null) {
+  return useContext(PaneVisualFocusContext) ?? { focusedPane: fallback, settleFocus: finishImmediately };
 }
 
 export function usePresentedPanes(ids: string[], items: Record<string, PaneItem>) {
