@@ -92,6 +92,19 @@ export default function ContextMenu({
   const [blinkingId, setBlinkingId] = useState<string | null>(null);
   const blinkTimer = useRef<number | null>(null);
 
+  // --- Stable refs for values used inside the dismiss effect ---
+  // React 18 flushes discrete-event state updates synchronously, which means
+  // a parent re-render during a mousedown can cause useEffect cleanup to run
+  // *while the native event is still bubbling*. If `onClose` or `sections`
+  // sit in the dependency array the cleanup removes the document listener and
+  // the rAF-delayed re-registration leaves a 1-frame gap where outside clicks
+  // are silently dropped. Refs let the listener always call the latest
+  // callback without re-cycling the effect.
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  const sectionsRef = useRef(sections);
+  useLayoutEffect(() => { sectionsRef.current = sections; }, [sections]);
+
   // Fire an item's action after a short macOS-style confirm blink, then close.
   // Guards against double-fire (ignores clicks while a blink is already in
   // flight) and honors prefers-reduced-motion by running immediately.
@@ -104,17 +117,17 @@ export default function ContextMenu({
         window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       if (reduce) {
         item.run();
-        onClose();
+        onCloseRef.current();
         return;
       }
       setBlinkingId(item.id);
       blinkTimer.current = window.setTimeout(() => {
         blinkTimer.current = null;
         item.run();
-        onClose();
+        onCloseRef.current();
       }, BLINK_MS);
     },
-    [onClose],
+    [], // stable — reads onClose through ref
   );
 
   useEffect(
@@ -146,19 +159,18 @@ export default function ContextMenu({
     const ro = new ResizeObserver(reposition);
     ro.observe(el);
     return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [x, y, anchorBottom]);
 
   useEffect(() => {
     const onDocDown = (e: MouseEvent) => {
       if (!ref.current) return;
       if (e.target instanceof Node && ref.current.contains(e.target)) return;
-      onClose();
+      onCloseRef.current();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       // Single-letter accelerators (e.g. R/E/D/A). Skip while the filter input
@@ -168,7 +180,7 @@ export default function ContextMenu({
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length !== 1) return;
       const k = e.key.toUpperCase();
-      for (const section of sections) {
+      for (const section of sectionsRef.current) {
         for (const item of section.items) {
           if (item.disabled || !item.keys) continue;
           if (item.keys.toUpperCase() === k) {
@@ -192,7 +204,7 @@ export default function ContextMenu({
       document.removeEventListener('mousedown', onDocDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose, sections, searchable, fireWithBlink]);
+  }, [searchable, fireWithBlink]);
 
   const run = (item: MenuItem) => fireWithBlink(item);
 
@@ -233,7 +245,7 @@ export default function ContextMenu({
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === 'ArrowDown') {
@@ -253,7 +265,7 @@ export default function ContextMenu({
         return;
       }
     },
-    [flatItems, activeIdx, onClose, fireWithBlink],
+    [flatItems, activeIdx, fireWithBlink],
   );
 
   return (
