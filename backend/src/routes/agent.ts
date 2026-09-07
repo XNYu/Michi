@@ -26,9 +26,12 @@ import { hasProviders } from "../agents/types";
 import { getProviderInfo, providerRequiresUserKey } from "../agents/pi/piProviders";
 import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
 
+import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
+
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
-export function setupAgentRoutes(): Router {
+export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache }): Router {
+  const catalogCache = opts?.catalogCache ?? null;
   const router = Router();
 
   router.get("/agent/status", async (_req: Request, res: Response) => {
@@ -209,20 +212,42 @@ export function setupAgentRoutes(): Router {
     res.json({ ok: true });
   });
 
-  // Runtime-scoped catalog for the Agent editor: providers and models for ANY
-  // registered runtime, independent of the currently active chat runtime
-  // (/agent/status and /agent/models are both active-runtime-bound).
+  // Runtime-scoped catalog for the Agent editor and per-node composer pickers:
+  // providers, models, and capabilities for ANY registered runtime, independent
+  // of the currently active chat runtime. Cache-first with background revalidate.
   router.get("/agent/runtime-catalog", async (req: Request, res: Response) => {
     const runtimeId = typeof req.query.runtime === "string" ? req.query.runtime.trim() : "";
     const runtime = runtimeId ? getRuntime(runtimeId) : null;
     if (!runtime) {
-      res.json({ providers: [], models: [] });
+      res.json({ providers: [], models: [], capabilities: null });
       return;
     }
     const provider = typeof req.query.provider === "string" ? req.query.provider : undefined;
+
+    // Cache-first: return cached catalog immediately when available.
+    const cached = catalogCache?.loadCatalog(runtimeId, provider);
+    if (cached) {
+      res.json({
+        providers: cached.providers,
+        models: cached.models,
+        capabilities: runtime.capabilities,
+      });
+      // Background revalidate — fire-and-forget.
+      void (async () => {
+        try {
+          const freshProviders = hasProviders(runtime) ? await runtime.listProviders() : [];
+          const freshModels = runtime.listModels ? await runtime.listModels({ provider }) : [];
+          catalogCache!.saveCatalog(runtimeId, { models: freshModels, providers: freshProviders }, provider);
+        } catch { /* best effort */ }
+      })();
+      return;
+    }
+
+    // Cache miss: synchronous fetch, then cache.
     const providers = hasProviders(runtime) ? await runtime.listProviders() : [];
     const models = runtime.listModels ? await runtime.listModels({ provider }) : [];
-    res.json({ providers, models });
+    catalogCache?.saveCatalog(runtimeId, { models, providers }, provider);
+    res.json({ providers, models, capabilities: runtime.capabilities });
   });
 
   router.get("/agent/models", async (req: Request, res: Response) => {

@@ -18,9 +18,10 @@ import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
-import { saveAgentOptions, checkRuntimeHealth } from '../../services/api';
+import { checkRuntimeHealth } from '../../services/api';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
-import { useAgentModelCatalog } from '../../hooks/useAgentModelCatalog';
+import { useRuntimeCatalog } from '../../hooks/useRuntimeCatalog';
+import { resolveNodeBinding, type PendingNodeBindingOverride } from '../../state/nodeBindingResolution';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
 import MergeBanner from './MergeBanner';
@@ -427,20 +428,27 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   }, [nodeId, setComposerDraft]);
   const [agentMenu, setAgentMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
   const [modelMenu, setModelMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
-  // Load only while the menu is open; the shared hook retries transient catalog failures.
+
+  // Per-node binding: resolve runtime/model/effort from node → global fallback.
+  const [pendingBindingOverride, setPendingBindingOverride] = useState<PendingNodeBindingOverride | null>(null);
+  const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride);
+
+  // Load catalog for the *resolved* runtime (which may differ from the global active runtime).
   const shouldLoadModels = !!modelMenu && !!(
-    agentStatus?.capabilities.providerModels || agentStatus?.capabilities.models === true
+    resolvedBinding.runtime
   );
   const {
     models: providerModels,
+    providers: catalogProviders,
+    capabilities: catalogCapabilities,
     loading: modelsLoading,
     waiting: modelsWaiting,
     error: modelsError,
     retry: retryModels,
-  } = useAgentModelCatalog({
+  } = useRuntimeCatalog({
     enabled: shouldLoadModels,
-    runtime: agentStatus?.runtime,
-    provider: agentStatus?.provider,
+    runtime: resolvedBinding.runtime,
+    provider: resolvedBinding.provider,
   });
   // NB: do NOT call this `pending` — `onSubmit` already has a local
   // `const pending = n.pendingComments ?? []`.
@@ -1811,7 +1819,16 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       mentions: submitDraft.mentions.length > 0
         ? submitDraft.mentions.map(m => ({ kind: m.kind, refId: m.refId, label: m.label }))
         : undefined,
+      // Per-node runtime binding: pass resolved binding to ensureSession
+      // so it uses the right runtime/model/effort instead of the global config.
+      runtimeId: resolvedBinding.runtime || undefined,
+      providerId: resolvedBinding.provider || undefined,
+      modelId: resolvedBinding.model || undefined,
+      reasoning: resolvedBinding.reasoning || undefined,
     };
+
+    // Clear the pending override — it's been consumed by this send.
+    if (pendingBindingOverride) setPendingBindingOverride(null);
 
     // Comment-only sends do not branch: branching semantics tie to the user's
     // current turn, and flushing pending reply-to-selection comments is the
@@ -2171,11 +2188,15 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             currentModeId={n.currentModeId ?? undefined}
             availableModesCount={availableModes.length}
             agentStatus={agentStatus}
+            resolvedBinding={resolvedBinding}
+            catalogCapabilities={catalogCapabilities}
             providerModels={providerModels}
+            isStreaming={streaming}
             onPickFile={() => void onPickFile()}
             onInsertMentionTrigger={insertMentionTrigger}
             onOpenAgentMenu={setAgentMenu}
             onOpenModelMenu={openModelMenu}
+            onOpenRuntimeMenu={(anchor) => setModelMenu(anchor)}
           />
         }
         toolbarRight={
@@ -2234,20 +2255,23 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         availableModes={availableModes}
         currentModeId={n.currentModeId ?? undefined}
         agentStatus={agentStatus}
+        resolvedBinding={resolvedBinding}
+        catalogCapabilities={catalogCapabilities}
         providerModels={providerModels}
         modelsLoading={modelsLoading}
         modelsWaiting={modelsWaiting}
         modelsError={modelsError}
         onSwitchAgent={(modeId) => void switchAgent(nodeId, modeId)}
+        onSwitchRuntime={(runtimeId) => {
+          // Reset model/effort when switching runtime — new catalog will provide defaults.
+          setPendingBindingOverride({ runtime: runtimeId });
+          setModelMenu(null);
+        }}
         onSaveModel={(model) => {
-          void saveAgentOptions({ model }).then(() => {
-            refreshAgentStatus();
-          });
+          setPendingBindingOverride((prev) => ({ ...prev, model }));
         }}
         onSaveReasoning={(reasoning) => {
-          void saveAgentOptions({ reasoning }).then(() => {
-            refreshAgentStatus();
-          });
+          setPendingBindingOverride((prev) => ({ ...prev, reasoning }));
         }}
         onRetryModels={retryModels}
         onCloseAgentMenu={() => setAgentMenu(null)}

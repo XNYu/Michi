@@ -1,5 +1,6 @@
 import React from 'react';
-import type { AgentModelInfo, AgentStatus, SessionMode } from '../../services/api';
+import type { AgentCapabilities, AgentModelInfo, AgentStatus, SessionMode } from '../../services/api';
+import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 
 export const REASONING_LABELS: Record<string, string> = {
   minimal: 'Minimal',
@@ -24,11 +25,15 @@ interface PaneComposerToolbarLeftProps {
   currentModeId?: string;
   availableModesCount: number;
   agentStatus: AgentStatus | null;
+  resolvedBinding: ResolvedNodeBinding;
+  catalogCapabilities: AgentCapabilities | null;
   providerModels: readonly AgentModelInfo[];
+  isStreaming: boolean;
   onPickFile: () => void;
   onInsertMentionTrigger: () => void;
   onOpenAgentMenu: (anchor: PaneMenuAnchor) => void;
   onOpenModelMenu: (anchor: PaneMenuAnchor, shouldLoadModels: boolean) => void;
+  onOpenRuntimeMenu: (anchor: PaneMenuAnchor) => void;
 }
 
 export function PaneComposerToolbarLeft({
@@ -39,23 +44,21 @@ export function PaneComposerToolbarLeft({
   currentModeId,
   availableModesCount,
   agentStatus,
+  resolvedBinding,
+  catalogCapabilities,
   providerModels,
+  isStreaming,
   onPickFile,
   onInsertMentionTrigger,
   onOpenAgentMenu,
   onOpenModelMenu,
+  onOpenRuntimeMenu,
 }: PaneComposerToolbarLeftProps) {
-  const providerLabel =
-    (agentStatus?.providers ?? []).find((p) => p.id === agentStatus?.provider)?.label ??
-    agentStatus?.provider ??
-    'ai';
-  const showModelChip =
-    toolbarTier < 2 &&
-    !!(
-      agentStatus?.capabilities.providerModels ||
-      agentStatus?.capabilities.models === true ||
-      agentStatus?.capabilities.reasoning
-    );
+  // Effective capabilities: use catalog capabilities if available (from the
+  // resolved runtime's catalog), otherwise fall back to agentStatus (which
+  // reflects the global active runtime).
+  const caps = catalogCapabilities ?? agentStatus?.capabilities;
+
   const showAgentChip =
     enableAgentChip &&
     toolbarTier < 2 &&
@@ -66,6 +69,29 @@ export function PaneComposerToolbarLeft({
       availableModesCount > 0 ||
       agentStatus?.capabilities.modes === true
     );
+
+  // Runtime chip: always shown (users can switch runtime per-node).
+  const runtimeLabel = agentStatus?.availableRuntimes?.find(
+    (r) => r.id === resolvedBinding.runtime,
+  )?.label ?? resolvedBinding.runtime ?? 'runtime';
+  const showRuntimeChip = toolbarTier < 2;
+
+  // Model chip: shown when the resolved runtime supports models.
+  const showModelChip = toolbarTier < 2 && !!(
+    caps?.providerModels ||
+    caps?.models === true
+  );
+  const modelLabel =
+    providerModels.find((m) => m.id === resolvedBinding.model)?.label ??
+    resolvedBinding.model ??
+    'model';
+
+  // Effort chip: shown when the resolved runtime supports reasoning.
+  const showEffortChip = toolbarTier < 2 && !!caps?.reasoning;
+  const effortLabel =
+    REASONING_LABELS[resolvedBinding.reasoning ?? ''] ??
+    resolvedBinding.reasoning ??
+    '';
 
   return (
     <>
@@ -108,55 +134,58 @@ export function PaneComposerToolbarLeft({
         </span>
       )}
 
-      {toolbarTier < 2 && agentStatus?.capabilities.providerModels && (
+      {showRuntimeChip && (
         <span
           className="t-toolbar-chip"
           data-icononly={toolbarTier >= 1 ? 'true' : undefined}
-          title={`Provider — ${providerLabel}`}
-          style={{ color: 'var(--term-mauve)' }}
+          title={`Runtime — ${runtimeLabel}`}
+          aria-disabled={isStreaming || undefined}
+          onClick={(e) => {
+            if (isStreaming) return;
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onOpenRuntimeMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 });
+          }}
+          style={{
+            color: 'var(--term-mauve)',
+            opacity: resolvedBinding.source === 'global' ? 0.7 : 1,
+          }}
         >
-          <span style={{ flexShrink: 0 }}>API</span>
-          <span className="t-chip-label">{providerLabel}</span>
+          <span className="t-chip-label">{runtimeLabel}</span>
         </span>
       )}
 
-      {showModelChip && (() => {
-        const showModels =
-          !!agentStatus?.capabilities.providerModels ||
-          agentStatus?.capabilities.models === true;
-        const showReasoning = !!agentStatus?.capabilities.reasoning;
-        const modelLabel =
-          providerModels.find((m) => m.id === agentStatus?.model)?.label ||
-          agentStatus?.model ||
-          'model';
-        const reasoningLabel =
-          REASONING_LABELS[agentStatus?.reasoning ?? ''] ??
-          agentStatus?.reasoning ??
-          '';
-        const parts: string[] = [];
-        if (showModels) parts.push(modelLabel);
-        if (showReasoning && reasoningLabel) parts.push(reasoningLabel);
+      {showModelChip && (
+        <span
+          className="t-toolbar-chip"
+          title={`Model — ${modelLabel}`}
+          aria-disabled={isStreaming || undefined}
+          onClick={(e) => {
+            if (isStreaming) return;
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onOpenModelMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 }, true);
+          }}
+        >
+          <span className="t-chip-label">{modelLabel}</span>
+        </span>
+      )}
 
-        return (
-          <span
-            className="t-toolbar-chip"
-            title={
-              showModels && showReasoning
-                ? 'Change model & reasoning effort'
-                : showModels
-                  ? `Change model — ${modelLabel}`
-                  : 'Change reasoning effort'
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              onOpenModelMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 }, showModels);
-            }}
-          >
-            <span className="t-chip-label">{parts.join(' · ') || '…'}</span>
-          </span>
-        );
-      })()}
+      {showEffortChip && effortLabel && (
+        <span
+          className="t-toolbar-chip"
+          title={`Effort — ${effortLabel}`}
+          aria-disabled={isStreaming || undefined}
+          onClick={(e) => {
+            if (isStreaming) return;
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onOpenModelMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 }, false);
+          }}
+        >
+          <span className="t-chip-label">{effortLabel}</span>
+        </span>
+      )}
     </>
   );
 }

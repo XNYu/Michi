@@ -32,11 +32,15 @@ function renderToolbar(overrides: Partial<ComponentProps<typeof PaneComposerTool
       toolbarTier={0}
       availableModesCount={0}
       agentStatus={STATUS}
+      resolvedBinding={{ runtime: 'kiro', provider: undefined, model: 'claude-sonnet', reasoning: undefined, source: 'global' }}
+      catalogCapabilities={null}
       providerModels={[]}
+      isStreaming={false}
       onPickFile={vi.fn()}
       onInsertMentionTrigger={vi.fn()}
       onOpenAgentMenu={vi.fn()}
       onOpenModelMenu={vi.fn()}
+      onOpenRuntimeMenu={vi.fn()}
       {...overrides}
     />,
   );

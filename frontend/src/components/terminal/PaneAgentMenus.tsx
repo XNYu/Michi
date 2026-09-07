@@ -1,5 +1,6 @@
-import React from 'react';
-import type { AgentModelInfo, AgentReasoning, AgentStatus, SessionMode } from '../../services/api';
+import React, { useRef } from 'react';
+import type { AgentCapabilities, AgentModelInfo, AgentReasoning, AgentStatus, SessionMode } from '../../services/api';
+import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import ContextMenu, { type MenuSection } from '../ContextMenu';
 import { REASONING_LABELS } from './PaneComposerToolbarLeft';
 
@@ -15,10 +16,14 @@ interface PaneAgentMenusProps {
   availableModes: readonly SessionMode[];
   currentModeId?: string;
   agentStatus: AgentStatus | null;
+  resolvedBinding: ResolvedNodeBinding;
+  catalogCapabilities: AgentCapabilities | null;
   providerModels: readonly AgentModelInfo[];
   modelsLoading: boolean;
+  modelsWaiting?: boolean;
   modelsError: string | null;
   onSwitchAgent: (modeId: string) => void;
+  onSwitchRuntime: (runtimeId: string) => void;
   onSaveModel: (modelId: string) => void;
   onRetryModels: () => void;
   onSaveReasoning: (reasoning: AgentReasoning) => void;
@@ -45,10 +50,14 @@ export function PaneAgentMenus({
   availableModes,
   currentModeId,
   agentStatus,
+  resolvedBinding,
+  catalogCapabilities,
   providerModels,
   modelsLoading,
+  modelsWaiting = false,
   modelsError,
   onSwitchAgent,
+  onSwitchRuntime,
   onSaveModel,
   onRetryModels,
   onSaveReasoning,
@@ -116,24 +125,24 @@ export function PaneAgentMenus({
         />
       )}
 
-      {modelMenu &&
-        !!(
-          agentStatus?.capabilities.providerModels ||
-          agentStatus?.capabilities.models === true ||
-          agentStatus?.capabilities.reasoning
-        ) && (
-          <ModelReasoningMenu
-            anchor={modelMenu}
-            agentStatus={agentStatus}
-            providerModels={providerModels}
-            modelsLoading={modelsLoading}
-            modelsError={modelsError}
-            onSaveModel={onSaveModel}
-            onRetryModels={onRetryModels}
-            onSaveReasoning={onSaveReasoning}
-            onClose={onCloseModelMenu}
-          />
-        )}
+      {modelMenu && (
+        <ModelReasoningMenu
+          key={JSON.stringify([resolvedBinding.runtime, resolvedBinding.provider])}
+          anchor={modelMenu}
+          agentStatus={agentStatus}
+          resolvedBinding={resolvedBinding}
+          catalogCapabilities={catalogCapabilities}
+          providerModels={providerModels}
+          modelsLoading={modelsLoading}
+          modelsWaiting={modelsWaiting}
+          modelsError={modelsError}
+          onSwitchRuntime={onSwitchRuntime}
+          onSaveModel={onSaveModel}
+          onRetryModels={onRetryModels}
+          onSaveReasoning={onSaveReasoning}
+          onClose={onCloseModelMenu}
+        />
+      )}
     </>
   );
 }
@@ -141,67 +150,115 @@ export function PaneAgentMenus({
 function ModelReasoningMenu({
   anchor,
   agentStatus,
+  resolvedBinding,
+  catalogCapabilities,
   providerModels,
   modelsLoading,
+  modelsWaiting,
   modelsError,
+  onSwitchRuntime,
   onSaveModel,
   onRetryModels,
   onSaveReasoning,
   onClose,
 }: {
   anchor: MenuAnchor;
-  agentStatus: AgentStatus;
+  agentStatus: AgentStatus | null;
+  resolvedBinding: ResolvedNodeBinding;
+  catalogCapabilities: AgentCapabilities | null;
   providerModels: readonly AgentModelInfo[];
   modelsLoading: boolean;
+  modelsWaiting: boolean;
   modelsError: string | null;
+  onSwitchRuntime: (runtimeId: string) => void;
   onSaveModel: (modelId: string) => void;
   onRetryModels: () => void;
   onSaveReasoning: (reasoning: AgentReasoning) => void;
   onClose: () => void;
 }) {
-  const showModels =
-    !!agentStatus.capabilities.providerModels ||
-    agentStatus.capabilities.models === true;
-  const showReasoning = !!agentStatus.capabilities.reasoning;
-  const isProvider = !!agentStatus.capabilities.providerModels;
+  const reloading = useRef(false);
+  const reload = () => {
+    reloading.current = true;
+    onRetryModels();
+  };
+  const close = () => {
+    if (reloading.current) {
+      reloading.current = false;
+      return;
+    }
+    onClose();
+  };
+
+  const caps = catalogCapabilities ?? agentStatus?.capabilities;
+  const showModels = !!(caps?.providerModels || caps?.models === true);
+  const showReasoning = !!caps?.reasoning;
+  const isProvider = !!caps?.providerModels;
   const sections: MenuSection[] = [];
 
-  if (showModels) {
+  // Runtime section — always show so users can switch runtime per-node.
+  if (agentStatus?.availableRuntimes && agentStatus.availableRuntimes.length > 1) {
     sections.push({
-      label: 'Models',
+      label: 'Runtime',
       trailingGlyph: true,
-      items:
-        providerModels.length === 0
-          ? modelsError
-            ? [
-                { id: 'model-error', label: modelsError, disabled: true, run: () => {} },
-                { id: 'model-retry', label: 'Retry', run: onRetryModels },
-              ]
-            : modelsLoading
-              ? [{ id: 'loading', label: 'Loading models…', disabled: true, run: () => {} }]
-              : [{ id: 'empty', label: 'No models available', disabled: true, run: () => {} }]
-          : providerModels.map((m) => ({
-              id: `m-${m.id}`,
-              label: m.label || m.id,
-              sublabel: isProvider ? m.id : undefined,
-              glyph: agentStatus.model === m.id ? '✓' : undefined,
-              run: () => onSaveModel(m.id),
-            })),
+      items: agentStatus.availableRuntimes.map((r) => ({
+        id: `rt-${r.id}`,
+        label: r.label || r.id,
+        glyph: resolvedBinding.runtime === r.id ? '✓' : undefined,
+        run: () => {
+          if (r.id !== resolvedBinding.runtime) onSwitchRuntime(r.id);
+        },
+      })),
     });
-    if (providerModels.length > 0 && modelsError) {
+  }
+
+  if (showModels) {
+    if (resolvedBinding.model && (modelsLoading || modelsError || !providerModels.some((m) => m.id === resolvedBinding.model))) {
       sections.push({
-        label: 'Catalog refresh',
+        items: [{
+          id: 'model-current',
+          label: 'Use current model',
+          sublabel: resolvedBinding.model,
+          glyph: '✓',
+          run: () => {},
+        }],
+      });
+    }
+    if (modelsLoading || modelsError || providerModels.length === 0) {
+      sections.push({
+        label: 'Model catalog',
         items: [
-          { id: 'model-refresh-error', label: modelsError, disabled: true, run: () => {} },
-          { id: 'model-refresh-retry', label: 'Retry', run: onRetryModels },
+          {
+            id: 'model-status',
+            label: modelsError || (modelsLoading
+              ? modelsWaiting ? 'Still loading models…' : 'Loading models…'
+              : 'No models available'),
+            disabled: true,
+            run: () => {},
+          },
+          ...(modelsError || modelsWaiting || !modelsLoading
+            ? [{ id: 'model-retry', label: modelsError ? 'Retry' : 'Reload models', run: reload }]
+            : []),
         ],
+      });
+    }
+    if (providerModels.length > 0) {
+      sections.push({
+        label: 'Models',
+        trailingGlyph: true,
+        items: providerModels.map((m) => ({
+          id: `m-${m.id}`,
+          label: m.label || m.id,
+          sublabel: isProvider ? m.id : undefined,
+          glyph: resolvedBinding.model === m.id ? '✓' : undefined,
+          run: () => onSaveModel(m.id),
+        })),
       });
     }
   }
 
   if (showReasoning) {
-    const levels: AgentReasoning[] = agentStatus.capabilities.supportedReasoningLevels?.length
-      ? agentStatus.capabilities.supportedReasoningLevels
+    const levels: AgentReasoning[] = caps?.supportedReasoningLevels?.length
+      ? caps.supportedReasoningLevels
       : ['minimal', 'low', 'medium', 'high', 'xhigh'];
     sections.push({
       label: 'Effort',
@@ -209,7 +266,7 @@ function ModelReasoningMenu({
       items: levels.map((id) => ({
         id: `r-${id}`,
         label: REASONING_LABELS[id] ?? id,
-        glyph: agentStatus.reasoning === id ? '✓' : undefined,
+        glyph: resolvedBinding.reasoning === id ? '✓' : undefined,
         run: () => onSaveReasoning(id),
       })),
     });
@@ -220,11 +277,11 @@ function ModelReasoningMenu({
       x={anchor.x}
       y={anchor.y}
       anchorBottom={anchor.anchorBottom}
-      searchable={isProvider}
-      maxHeight={220}
+      searchable={isProvider || (agentStatus?.availableRuntimes?.length ?? 0) > 3}
+      maxHeight={280}
       width={isProvider ? 380 : undefined}
       sections={sections}
-      onClose={onClose}
+      onClose={close}
     />
   );
 }

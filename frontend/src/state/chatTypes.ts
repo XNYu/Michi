@@ -115,6 +115,11 @@ export interface UserSendMeta {
   displayText?: string;
   /** Structured mention records from the composer. Persisted on the ChatMessage for click navigation. */
   mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
+  /** Per-node runtime binding override from composer chips. Passed through to ensureSession. */
+  runtimeId?: string;
+  providerId?: string;
+  modelId?: string;
+  reasoning?: AgentReasoning;
 }
 
 export interface ChatMessage {

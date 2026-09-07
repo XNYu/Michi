@@ -55,7 +55,7 @@ import {
 } from './services/remoteAccess';
 import { sshTunnelManager } from './services/sshTunnelManager';
 import { listThreads, searchMessages, readNode } from './services/globalContext';
-import { FileRuntimeModelCache } from './agents/runtimeModelCache';
+import { FileRuntimeCatalogCache } from './agents/runtimeModelCache';
 import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
 import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRunAssembly';
 import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
@@ -154,7 +154,7 @@ configureRuntimeDeps({
 });
 
 const mcpRegistry = new McpSlotRegistry();
-const runtimeModelCache = new FileRuntimeModelCache(getMichiDataDir());
+const runtimeModelCache = new FileRuntimeCatalogCache(getMichiDataDir());
 
 // Register the enabled runtimes (filtered by MICHI_ENABLED_RUNTIMES, or
 // all of them locally) through a single factory loop. Each factory
@@ -612,7 +612,7 @@ const mcpRouter = express.Router();
 mountMcp(mcpRouter, mcpRegistry);
 app.use('/api', mcpRouter);
 
-app.use('/api', setupAgentRoutes());
+app.use('/api', setupAgentRoutes({ catalogCache: runtimeModelCache }));
 if (agentRunAssembly.enabled) {
   app.use('/api', setupCustomAgentRoutes({ service: agentRunAssembly.definitionService }));
   app.use('/api', setupAgentRunRoutes({ service: agentRunAssembly.routeService, sse: agentRunAssembly.sse }));

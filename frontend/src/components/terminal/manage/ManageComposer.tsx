@@ -16,6 +16,7 @@ import {
   type UploadProgress,
 } from '../../../services/api';
 import { useAgentModelCatalog } from '../../../hooks/useAgentModelCatalog';
+import { resolveNodeBinding } from '../../../state/nodeBindingResolution';
 import { appendAttachmentsSentinel } from '../../../lib/composerAttachments';
 import { toast } from 'sonner';
 import { ComposerShell } from '../ComposerShell';
@@ -186,6 +187,10 @@ export default function ManageComposer({
     runtime: agentStatus?.runtime,
     provider: agentStatus?.provider,
   });
+
+  // ManageComposer creates new threads — use global agentStatus as the binding
+  // (no node exists yet). resolveNodeBinding(null, agentStatus) returns source: 'global'.
+  const manageResolvedBinding = resolveNodeBinding(null, agentStatus);
 
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressViewState | null>(null);
@@ -617,11 +622,15 @@ export default function ManageComposer({
             currentModeId={selectedAgentLabel ? pendingPrimaryAgent!.definition.id : currentModeId}
             availableModesCount={enableAgentSelect ? availableModes.length + primaryAgents.length + 1 : 0}
             agentStatus={agentStatus}
+            resolvedBinding={manageResolvedBinding}
+            catalogCapabilities={null}
             providerModels={providerModels}
+            isStreaming={false}
             onPickFile={() => void onPickFile()}
             onInsertMentionTrigger={insertMentionTrigger}
             onOpenAgentMenu={setAgentMenu}
             onOpenModelMenu={openModelMenu}
+            onOpenRuntimeMenu={(anchor) => setModelMenu(anchor)}
           />
         </>}
         toolbarRight={
@@ -644,6 +653,8 @@ export default function ManageComposer({
         availableModes={availableModes}
         currentModeId={currentModeId}
         agentStatus={agentStatus}
+        resolvedBinding={manageResolvedBinding}
+        catalogCapabilities={null}
         providerModels={providerModels}
         modelsLoading={modelsLoading}
         modelsError={modelsError}
@@ -675,6 +686,11 @@ export default function ManageComposer({
           setPendingPrimaryAgent(undefined);
           setPendingModeId(undefined);
           setAgentMenu(null);
+        }}
+        onSwitchRuntime={(runtimeId) => {
+          void saveAgentOptions({ runtime: runtimeId }).then(() => {
+            refreshAgentStatus();
+          });
         }}
         onSaveModel={(model) => {
           void saveAgentOptions({ model }).then(() => {

@@ -1594,10 +1594,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           enableFollowUps: prefsRef.current.enableFollowUps,
           contextManifest,
           priorMessages: priorMessagesForResume,
-          runtimeId: n.runtimeId,
-          providerId: n.providerId,
-          modelId: n.modelId,
-          reasoning: n.reasoning,
+          runtimeId: meta?.runtimeId ?? n.runtimeId,
+          providerId: meta?.providerId ?? n.providerId,
+          modelId: meta?.modelId ?? n.modelId,
+          reasoning: meta?.reasoning ?? n.reasoning,
           // Desired agent for a brand-new thread (Home composer pre-selection).
           // Applied server-side after the fresh session is created, before this
           // first prompt streams. Ignored on resume (node already has a chatId).

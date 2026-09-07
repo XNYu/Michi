@@ -142,11 +142,13 @@ export async function listAgentModels(opts?: { provider?: string }): Promise<Age
 export interface RuntimeCatalogResponse {
   providers: AgentProviderInfo[];
   models: AgentModelInfo[];
+  capabilities: AgentCapabilities | null;
 }
 
 /**
- * Providers + models for an ARBITRARY runtime (the Agent editor edits
- * profiles for any runtime, not just the active chat runtime).
+ * Providers, models, and capabilities for an ARBITRARY runtime (the Agent
+ * editor and per-node composer pickers use this for any runtime, not just
+ * the active chat runtime). Backend returns cached data when available.
  */
 export async function fetchRuntimeCatalog(runtimeId: string, provider?: string): Promise<RuntimeCatalogResponse> {
   const url = new URL(`${activeBackendApiBase()}/agent/runtime-catalog`, window.location.href);
@@ -158,6 +160,7 @@ export async function fetchRuntimeCatalog(runtimeId: string, provider?: string):
   return {
     providers: Array.isArray(body.providers) ? body.providers : [],
     models: Array.isArray(body.models) ? body.models : [],
+    capabilities: body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : null,
   };
 }
 
