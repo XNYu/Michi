@@ -3,6 +3,7 @@ import { usePrefs, TerminalPalette } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
 import { resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
+import { PANE_MOTION_OPTIONS, type PaneMotion } from '../../paneMotion';
 import {
   SIDEBAR_ROW_STYLES,
   SIDEBAR_ROW_STYLE_LABELS,
@@ -143,101 +144,6 @@ export function AppearancePane() {
         </div>
       </Row>
 
-      <Row k="layout.paneWidth" label="Default pane width">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            type="range"
-            min={360}
-            max={1200}
-            step={20}
-            value={prefs.defaultPaneWidth}
-            onChange={(e) => setPref('defaultPaneWidth', Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-          />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 42, textAlign: 'right' }}>
-            {prefs.defaultPaneWidth}px
-          </span>
-        </div>
-      </Row>
-
-      <Row k="layout.singlePaneWidth" label="Single-pane reading width">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
-            type="range"
-            min={480}
-            max={1280}
-            step={20}
-            value={prefs.singlePaneContentWidth ?? 800}
-            disabled={prefs.singlePaneContentWidth === null}
-            onChange={(e) => setPref('singlePaneContentWidth', Number(e.target.value))}
-            style={{
-              flex: 1,
-              accentColor: 'var(--term-accent)',
-              opacity: prefs.singlePaneContentWidth === null ? 0.4 : 1,
-            }}
-          />
-          <span
-            style={{
-              fontSize: 11, color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)', minWidth: 56, textAlign: 'right',
-            }}
-          >
-            {prefs.singlePaneContentWidth === null
-              ? 'full'
-              : `${prefs.singlePaneContentWidth}px`}
-          </span>
-          <button
-            type="button"
-            onClick={() =>
-              setPref(
-                'singlePaneContentWidth',
-                prefs.singlePaneContentWidth === null ? 800 : null,
-              )
-            }
-            style={{
-              padding: '4px 9px',
-              border: `1px solid ${prefs.singlePaneContentWidth === null ? 'var(--term-fg)' : 'var(--term-line)'}`,
-              background: prefs.singlePaneContentWidth === null ? 'var(--term-fg)' : 'transparent',
-              color: prefs.singlePaneContentWidth === null ? 'var(--term-surface)' : 'var(--term-mid)',
-              fontFamily: 'var(--ui-font)', fontSize: 11, cursor: 'pointer',
-            }}
-          >
-            full width
-          </button>
-        </div>
-      </Row>
-
-      <Row k="motion.spawn" label="Pane spawn animation">
-        <div style={{ display: 'flex', gap: 6 }}>
-          {([
-            ['phosphor', 'Phosphor Bloom'],
-            ['fission', 'Fission'],
-            ['thread-pull', 'Thread Pull'],
-          ] as const).map(([val, label]) => {
-            const sel = prefs.paneSpawnAnimation === val;
-            return (
-              <button
-                key={val}
-                type="button"
-                onClick={() => setPref('paneSpawnAnimation', val)}
-                style={{
-                  padding: '4px 10px',
-                  border: `1px solid ${sel ? 'var(--term-accent)' : 'var(--term-line)'}`,
-                  background: sel ? 'var(--term-accent)' : 'transparent',
-                  color: sel ? 'var(--term-bg)' : 'var(--term-mid)',
-                  fontFamily: 'var(--ui-font)',
-                  fontSize: 11,
-                  cursor: 'pointer',
-                  transition: 'all 120ms ease',
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </Row>
-
       <Row k="theme.accent" label="Accent hue">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
@@ -318,6 +224,103 @@ export function AppearancePane() {
 
         {advancedOpen && (
           <div>
+            <Row k="layout.paneWidthMode" label="Pane width mode">
+              <select
+                aria-label="Pane width mode"
+                value={prefs.paneWidthMode}
+                onChange={(e) => setPref('paneWidthMode', e.target.value as typeof prefs.paneWidthMode)}
+                style={{
+                  width: '100%', minWidth: 0, padding: '8px 10px', borderRadius: 4,
+                  border: '1px solid var(--term-line)', background: 'var(--term-surface)',
+                  color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 12,
+                }}
+              >
+                <option value="fixed">Fixed width (2+ panes)</option>
+                <option value="half">Half viewport (2+ panes)</option>
+                <option value="adaptive">Half at 2, fixed at 3+</option>
+              </select>
+            </Row>
+
+            <Row k="motion.spawn" label="Pane animation">
+              <select
+                aria-label="Pane animation"
+                value={prefs.paneSpawnAnimation}
+                onChange={event => setPref('paneSpawnAnimation', event.target.value as PaneMotion)}
+                style={{
+                  maxWidth: '100%', padding: '5px 8px', border: '1px solid var(--term-line)',
+                  background: 'var(--term-surface)', color: 'var(--term-fg)',
+                  fontFamily: 'var(--ui-font)', fontSize: 11,
+                }}
+              >
+                {PANE_MOTION_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </Row>
+
+            <Row k="layout.paneWidth" label="Default pane width">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  aria-label="Default pane width"
+                  type="range"
+                  min={360}
+                  max={1200}
+                  step={20}
+                  value={prefs.defaultPaneWidth}
+                  onChange={(e) => setPref('defaultPaneWidth', Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+                />
+                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 42, textAlign: 'right' }}>
+                  {prefs.defaultPaneWidth}px
+                </span>
+              </div>
+            </Row>
+
+            <Row k="layout.singlePaneWidth" label="Single-pane reading width">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="range"
+                  min={480}
+                  max={1280}
+                  step={20}
+                  value={prefs.singlePaneContentWidth ?? 800}
+                  disabled={prefs.singlePaneContentWidth === null}
+                  onChange={(e) => setPref('singlePaneContentWidth', Number(e.target.value))}
+                  style={{
+                    flex: 1,
+                    accentColor: 'var(--term-accent)',
+                    opacity: prefs.singlePaneContentWidth === null ? 0.4 : 1,
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: 11, color: 'var(--term-fg)',
+                    fontFamily: 'var(--ui-font)', minWidth: 56, textAlign: 'right',
+                  }}
+                >
+                  {prefs.singlePaneContentWidth === null
+                    ? 'full'
+                    : `${prefs.singlePaneContentWidth}px`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPref(
+                      'singlePaneContentWidth',
+                      prefs.singlePaneContentWidth === null ? 800 : null,
+                    )
+                  }
+                  style={{
+                    padding: '4px 9px',
+                    border: `1px solid ${prefs.singlePaneContentWidth === null ? 'var(--term-fg)' : 'var(--term-line)'}`,
+                    background: prefs.singlePaneContentWidth === null ? 'var(--term-fg)' : 'transparent',
+                    color: prefs.singlePaneContentWidth === null ? 'var(--term-surface)' : 'var(--term-mid)',
+                    fontFamily: 'var(--ui-font)', fontSize: 11, cursor: 'pointer',
+                  }}
+                >
+                  full width
+                </button>
+              </div>
+            </Row>
+
             <Row k="theme.sidebarRowStyle" label="Sidebar row style">
               <Radio
                 opts={[...SIDEBAR_ROW_STYLES]}

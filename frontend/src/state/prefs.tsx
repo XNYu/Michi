@@ -3,8 +3,11 @@ import { PALETTES } from '../components/terminal/tokens';
 import { fetchPrefs, savePrefs } from '../services/api';
 import type { VibrancyMaterial } from '../lib/electronBridge';
 import { SIDEBAR_ROW_STYLES, type SidebarRowStyle } from '../components/terminal/sidebarRowStyle';
+import { normalizePaneWidthMode, type PaneWidthMode } from './paneLayout';
+import { normalizePaneMotion, type PaneMotion } from '../components/terminal/paneMotion';
 
 export type { SidebarRowStyle };
+export type { PaneWidthMode };
 
 export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
@@ -142,13 +145,12 @@ export interface Prefs {
   paneTopFadeHeight: number;
   /** When to show OS/toast notifications. 'all' = done + approval, 'approval-only' = only permission requests, 'off' = none */
   notifications: 'all' | 'approval-only' | 'off';
-  /** Pane spawn/destroy animation variant.
-   *  - 'phosphor' — CRT Phosphor Bloom (horizontal line → expand, recommended)
-   *  - 'fission' — Cell division: source shrinks, child slides in from edge
-   *  - 'thread-pull' — Thread pulls out from the sidebar with clip reveal */
-  paneSpawnAnimation: 'phosphor' | 'fission' | 'thread-pull';
+  /** Pane entrance/exit style, including quiet fades and frozen-content retraction. */
+  paneSpawnAnimation: PaneMotion;
   /** Default width (px) for new dashboard panes that have no explicit width set. */
   defaultPaneWidth: number;
+  /** Width policy for two or more panes; custom per-pane widths take precedence. */
+  paneWidthMode: PaneWidthMode;
   /** Maximum content column width when only one pane is open. null = full width. */
   singlePaneContentWidth: number | null;
   /** How many lines of quoted text to show in the composer's quote bar before clamping. 1 = single-line ellipsis. */
@@ -212,7 +214,8 @@ export const DEFAULT_PREFS: Prefs = {
   paneTopFadeHeight: 30,
   notifications: 'all',
   defaultPaneWidth: 600,
-  paneSpawnAnimation: 'phosphor',
+  paneWidthMode: 'half',
+  paneSpawnAnimation: 'soft-fade',
   singlePaneContentWidth: 800,
   quoteMaxLines: 2,
   enableFollowUps: true,
@@ -238,6 +241,8 @@ function readInitial(): Prefs {
   try {
     const parsed = JSON.parse(raw);
     const merged = { ...DEFAULT_PREFS, ...parsed };
+    merged.paneWidthMode = normalizePaneWidthMode(merged.paneWidthMode);
+    merged.paneSpawnAnimation = normalizePaneMotion(merged.paneSpawnAnimation);
     delete (merged as { theme?: string }).theme;
     if (!VALID_PALETTES.has(merged.terminalPalette)) {
       merged.terminalPalette = DEFAULT_PREFS.terminalPalette;
@@ -390,7 +395,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     fetchPrefs().then((remote) => {
       if (!remote) return;
       if (hadLocal) return;
-      setPrefs({ ...DEFAULT_PREFS, ...remote } as Prefs);
+      setPrefs({ ...DEFAULT_PREFS, ...remote, paneWidthMode: normalizePaneWidthMode(remote.paneWidthMode), paneSpawnAnimation: normalizePaneMotion(remote.paneSpawnAnimation) } as Prefs);
     });
   }, []);
 
@@ -536,6 +541,9 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       codeWrap: DEFAULT_PREFS.codeWrap,
       terminalDensity: DEFAULT_PREFS.terminalDensity,
       paneRules: DEFAULT_PREFS.paneRules,
+      paneWidthMode: DEFAULT_PREFS.paneWidthMode,
+      paneSpawnAnimation: DEFAULT_PREFS.paneSpawnAnimation,
+      defaultPaneWidth: DEFAULT_PREFS.defaultPaneWidth,
       terminalSidebarWidth: DEFAULT_PREFS.terminalSidebarWidth,
       sidebarDensity: DEFAULT_PREFS.sidebarDensity,
       sidebarInset: DEFAULT_PREFS.sidebarInset,
