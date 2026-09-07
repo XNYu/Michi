@@ -19,6 +19,7 @@ import { notify } from '../../../services/notifications';
 import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 import { usePaneLayout } from '../usePaneLayout';
+import { bindPaneCaptionScroll } from '../paneCaptionScroll';
 
 const FilePane = lazy(() => import('../FilePane'));
 const DiffPane = lazy(() => import('../DiffPane'));
@@ -130,9 +131,6 @@ export default function TerminalDashboard() {
     scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
   });
   const pendingScrollRef = useRef<string | null>(null);
-  // Scroll sync with Topbar's caption strip — see Topbar.tsx comment for the
-  // event protocol. The guard suppresses echo when WE got moved.
-  const programmaticScrollRef = useRef(false);
   // Overlay scrollbar — native scrollbar is hidden via .hide-sb on the
   // strip; we render our own thumb as a sibling and reposition it from the
   // strip's onScroll. Idle thumb is opacity 0; we set opacity 1 while the
@@ -237,19 +235,12 @@ export default function TerminalDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    const onCaptionScroll = (e: Event) => {
-      const detail = (e as CustomEvent<{ scrollLeft: number }>).detail;
-      const el = stripRef.current;
-      if (!el) return;
-      if (Math.abs(el.scrollLeft - detail.scrollLeft) < 0.5) return;
-      programmaticScrollRef.current = true;
-      el.scrollLeft = detail.scrollLeft;
-      requestAnimationFrame(() => { programmaticScrollRef.current = false; });
-    };
-    window.addEventListener('michi:caption-scroll', onCaptionScroll as EventListener);
-    return () => window.removeEventListener('michi:caption-scroll', onCaptionScroll as EventListener);
-  }, []);
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const captions = strip?.closest('.terminal-shell')?.querySelector<HTMLElement>('[data-pane-captions]');
+    if (!strip || !captions) return;
+    return bindPaneCaptionScroll(strip, captions);
+  }, [openPanes, activeProject?.id, activeProject?.activeTreeId, layout.gridTemplateColumns, layout.paddingRight]);
   // Map of pane id → stagger index for the spawn-in animation. Cleared after
   // the keyframe duration so re-renders don't replay the flash.
   const [spawnStagger, setSpawnStagger] = useState<Map<string, number>>(new Map());
@@ -493,8 +484,7 @@ export default function TerminalDashboard() {
       ref={stripRef}
       data-pane-width-mode={prefs.paneWidthMode}
       className={['terminal-dashboard', 'hide-sb'].join(' ')}
-      onScroll={(e) => {
-        const el = e.currentTarget;
+      onScroll={() => {
         const thumb = thumbRef.current;
         updateThumbGeometry();
         if (thumb) thumb.style.opacity = '1';
@@ -505,12 +495,6 @@ export default function TerminalDashboard() {
           if (thumb) thumb.style.opacity = '0';
           scrollIdleTimerRef.current = null;
         }, 600);
-        if (programmaticScrollRef.current) return;
-        window.dispatchEvent(
-          new CustomEvent('michi:dashboard-scroll', {
-            detail: { scrollLeft: el.scrollLeft },
-          }),
-        );
       }}
       onMouseDown={handlePaneSelectionMouseDown}
       onDragEnter={handleDashDragEnter}

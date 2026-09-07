@@ -147,12 +147,9 @@ export default function TerminalTopbar({
   // The Artifacts button is a plain toggle for the right-side drawer
   // (owned by TerminalShell). It reflects no open/close state of its own.
 
-  // Caption strip scroll sync — when Dashboard scrolls horizontally, the
-  // caption strip mirrors it so cell ↔ pane stays
-  // visually locked. Both sides use a programmatic-scroll guard ref to
-  // suppress the echo back.
+  // Dashboard drives this grid's translation. It has no independent scroll
+  // position, so title gestures cannot race the pane's scroll momentum.
   const cellsStripRef = useRef<HTMLDivElement>(null);
-  const programmaticScrollRef = useRef(false);
   const showPaneCells = page === 'dashboard' && openPanes.length > 0;
   const paneLayout = usePaneLayout(cellsStripRef, {
     paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode,
@@ -163,21 +160,6 @@ export default function TerminalTopbar({
   // Mirror Sidebar's isResizing so Zone 1's width transition can be suppressed
   // during drag-resize — otherwise the topbar lags the sidebar by 200ms.
   const [sidebarResizing, setSidebarResizing] = useState(false);
-
-  useEffect(() => {
-    const onPaneScroll = (e: Event) => {
-      const detail = (e as CustomEvent<{ scrollLeft: number }>).detail;
-      const el = cellsStripRef.current;
-      if (!el) return;
-      if (Math.abs(el.scrollLeft - detail.scrollLeft) < 0.5) return;
-      programmaticScrollRef.current = true;
-      el.scrollLeft = detail.scrollLeft;
-      // The scroll event fires asynchronously — clear the guard next frame.
-      requestAnimationFrame(() => { programmaticScrollRef.current = false; });
-    };
-    window.addEventListener('michi:dashboard-scroll', onPaneScroll as EventListener);
-    return () => window.removeEventListener('michi:dashboard-scroll', onPaneScroll as EventListener);
-  }, []);
 
   useEffect(() => {
     const onResizing = (e: Event) => {
@@ -340,7 +322,6 @@ export default function TerminalTopbar({
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
   // On dashboard, zone 2 hosts per-pane caption cells aligned to Dashboard's
   // column template. The shared layout hook also coordinates track animation.
-  const overflowPanes = paneLayout.overflow;
   const cellsTemplateColumns = paneLayout.gridTemplateColumns;
   return (
     <div
@@ -459,6 +440,7 @@ export default function TerminalTopbar({
       {/* Zone 2: main surface. When collapsed, this zone owns the traffic-light
           pad plus space for the absolutely-positioned sidebar toggle button. */}
       <div
+        data-pane-caption-viewport={showPaneCells ? '' : undefined}
         style={{
           flex: 1,
           // Zone 2 spans the whole over-body stretch of the topbar. When pane
@@ -473,7 +455,7 @@ export default function TerminalTopbar({
           display: 'flex',
           alignItems: 'stretch',
           minWidth: 0,
-          overflow: 'visible',
+          overflow: showPaneCells ? 'clip' : 'visible',
           paddingLeft: sidebarCollapsed ? COLLAPSED_LEFT_PAD : 0,
           transition: 'padding-left 200ms cubic-bezier(.4,0,.2,1)',
         }}
@@ -482,33 +464,23 @@ export default function TerminalTopbar({
           <div
             ref={cellsStripRef}
             data-pane-captions
-            onScroll={(e) => {
-              if (programmaticScrollRef.current) return;
-              window.dispatchEvent(
-                new CustomEvent('michi:caption-scroll', {
-                  detail: { scrollLeft: e.currentTarget.scrollLeft },
-                }),
-              );
-            }}
             style={{
               flex: 1,
               display: 'grid',
               gridTemplateColumns: cellsTemplateColumns,
               gap: 'var(--term-dashboard-gap, 0px)',
-              paddingLeft: paneLayout.padding,
+              padding: 'var(--term-dashboard-padding, 0px)',
               minWidth: 0,
-              overflowX: overflowPanes ? 'auto' : 'hidden',
-              // Match Dashboard's overflow-mode right padding so the caption
-              // strip has the same scrollWidth as the pane strip — required
-              // for the scroll-sync to stay aligned at the right edge.
+              boxSizing: 'border-box',
+              // The outer viewport clips; this grid must stay non-scrollable
+              // so translated captions remain visible beyond its own width.
+              overflow: 'visible',
               paddingRight: paneLayout.paddingRight,
               // No mask on cells strip — masking also fades cell backgrounds,
               // revealing Zone 2's undimmed bg (the white-bleed bug). Cells
               // extend fully under the right cluster; their bg + dim is correct.
-              // Text overflow is handled by PaneCaption's own ellipsis + the
-              // paddingRight below which pushes grid content left of icons.
+              // Text overflow is handled by PaneCaption's own ellipsis.
             } as React.CSSProperties}
-            className={overflowPanes ? 'hide-sb' : undefined}
           >
             {openPanes.map((id, i) => {
               const isFirst = i === 0;
