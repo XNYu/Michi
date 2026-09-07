@@ -142,3 +142,11 @@ mocks/
 /videos/
 /packages/
 /arch-shoot.mjs
+
+# Exploration, audit, and reference material
+/ux-workflow-review/
+/michi-audit/
+/stripe-audit/
+/plans/
+/*.png
+/*.html
