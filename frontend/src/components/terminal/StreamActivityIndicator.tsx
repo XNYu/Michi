@@ -88,6 +88,15 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
   );
   if (hasRunningTool) return null;
 
+  // Hidden internal tools (set_branch_overview, set_follow_ups, etc.) aren't
+  // rendered by ToolCallGroup, but ThinkingRunView's toolsActive check still
+  // detects them and shows "Working…" in the ThoughtCard header. Suppress
+  // this standalone indicator to avoid a duplicate "Working" row.
+  const hasHiddenRunningTool = last.toolCalls.some(
+    (t) => isRunningStatus(t.status) && isHiddenInternalTool(t.title),
+  );
+  if (hasHiddenRunningTool) return null;
+
   // While visible answer text streams, the blinking cursor already conveys
   // liveness — stay quiet regardless of plan state. However, if the stream has
   // gone idle for over 2s (e.g. kiro-cli writing a file without emitting a

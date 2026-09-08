@@ -101,6 +101,19 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(n)).toBeNull();
   });
 
+  it('returns null while a hidden internal tool is running (ThoughtCard shows Working)', () => {
+    const n = node({
+      messages: [assistant({
+        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'done', streaming: false }],
+        toolCalls: [
+          tool('t1', 'bash', 'completed'),
+          tool('t2', 'michi_internal____set_branch_overview', 'running'),
+        ],
+      })],
+    });
+    expect(deriveStreamActivity(n)).toBeNull();
+  });
+
   it('stays quiet while visible answer text streams (cursor conveys liveness)', () => {
     const n = node({
       messages: [assistant({
