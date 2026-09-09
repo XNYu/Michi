@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { resolvePaneRestore, type PaneScrollEntry } from './TPane';
 
 // resolvePaneRestore decides where a freshly-mounted idle pane lands:
-// first message newer than the saved lastSeen horizon ("unseen"), else the
-// saved anchor message, else the bottom. The horizon deliberately comes from
-// the pane's own save cache rather than node.viewedAt — activateTree resets
-// viewedAt to Date.now() in the same click that opens the pane, so viewedAt
-// is always "just now" by the time the pane can read it.
+// first message newer than the saved lastSeen horizon ("unseen"), else
+// the bottom. The horizon deliberately comes from the pane's own save
+// cache rather than node.viewedAt — activateTree resets viewedAt to
+// Date.now() in the same click that opens the pane, so viewedAt is
+// always "just now" by the time the pane can read it.
 
 const entry = (over: Partial<PaneScrollEntry> = {}): PaneScrollEntry => ({
   anchorId: 'm2',
@@ -39,11 +39,12 @@ describe('resolvePaneRestore', () => {
     });
   });
 
-  it('left mid-history, nothing new since → saved anchor at saved offset', () => {
+  it('left mid-history, nothing new since → bottom (no anchor restore)', () => {
+    // Previously this returned kind:'anchor' with the saved anchorId/offset.
+    // Simplified: always goes to bottom when there are no unseen messages.
     expect(resolvePaneRestore(entry(), msgs)).toEqual({
-      kind: 'anchor',
-      anchorId: 'm2',
-      offset: -40,
+      kind: 'bottom',
+      offset: 0,
     });
   });
 
@@ -61,21 +62,21 @@ describe('resolvePaneRestore', () => {
     expect(got?.anchorId).toBe('m4');
   });
 
-  it('createdAt equal to the horizon counts as seen', () => {
+  it('createdAt equal to the horizon counts as seen → bottom', () => {
     // m3.createdAt === lastSeen — strictly-newer only.
     const got = resolvePaneRestore(entry(), msgs);
-    expect(got?.kind).toBe('anchor');
+    expect(got?.kind).toBe('bottom');
   });
 
-  it('legacy save with lastSeen 0 never flags unseen (would false-positive on every message)', () => {
+  it('legacy save with lastSeen 0 never flags unseen → bottom', () => {
     const got = resolvePaneRestore(entry({ lastSeen: 0 }), msgs);
-    expect(got?.kind).toBe('anchor');
+    expect(got?.kind).toBe('bottom');
   });
 
-  it('messages without createdAt are never unseen', () => {
+  it('messages without createdAt are never unseen → bottom', () => {
     const legacyMsgs = [{ id: 'm1' }, { id: 'm2' }];
     const got = resolvePaneRestore(entry(), legacyMsgs);
-    expect(got?.kind).toBe('anchor');
+    expect(got?.kind).toBe('bottom');
   });
 
   it('saved entry with no usable anchor falls back to bottom', () => {

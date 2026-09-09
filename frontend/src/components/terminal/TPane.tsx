@@ -96,12 +96,10 @@ export interface PaneRestoreTarget {
    * unseen — anchorId is the first message newer than the saved lastSeen
    *          horizon; park it at UNSEEN_TOP_FRACTION of the viewport height
    *          (offset is unused and 0).
-   * anchor — anchorId is the message the user was looking at when they
-   *          left; put it back at its saved viewport offset.
-   * bottom — pin to the bottom (left-at-bottom, first visit on this
-   *          device, or the saved anchor is unusable).
+   * bottom — pin to the bottom (first visit on this device, left-at-bottom,
+   *          or no unseen messages).
    */
-  kind: 'unseen' | 'anchor' | 'bottom';
+  kind: 'unseen' | 'bottom';
   anchorId?: string;
   offset: number;
 }
@@ -110,6 +108,9 @@ export interface PaneRestoreTarget {
  * Decide where a freshly-mounted idle pane should land, from the anchor
  * entry saved when it was last left and the node's current messages.
  * Returns null when there is nothing to position over (no messages).
+ *
+ * Two outcomes: unseen (messages arrived after the user last saw this
+ * pane → park at first unseen) or bottom (everything else).
  */
 export function resolvePaneRestore(
   saved: PaneScrollEntry | undefined,
@@ -119,9 +120,6 @@ export function resolvePaneRestore(
   if (saved && saved.lastSeen > 0) {
     const firstUnseen = messages.find((m) => (m.createdAt ?? 0) > saved.lastSeen);
     if (firstUnseen) return { kind: 'unseen', anchorId: firstUnseen.id, offset: 0 };
-  }
-  if (saved && !saved.atBottom && saved.anchorId) {
-    return { kind: 'anchor', anchorId: saved.anchorId, offset: saved.offset };
   }
   return { kind: 'bottom', offset: 0 };
 }
@@ -817,6 +815,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // without the guard it poisons the entry the second mount restores from
   // (read chats snapped to the bottom, unread chats lost their horizon).
   const restoreInFlightRef = useRef(false);
+  // Tracks whether the mount-time restore (or its lazy-load retry below)
+  // successfully positioned the viewport. When mount fires with no messages
+  // (lazy-loaded tree), this stays false so the retry effect can run.
+  const didRestoreRef = useRef(false);
   // Capture where the user is in this pane as a message anchor plus the
   // newest message timestamp (see PaneScrollEntry). Runs on unmount,
   // debounced while scrolling, and on beforeunload so a refresh keeps it
@@ -859,7 +861,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   // Position the viewport on mount. Streaming panes are handled by follow
   // mode; idle panes land on the target picked by resolvePaneRestore()
-  // (unseen message → saved anchor → bottom).
+  // (unseen message → bottom).
   // A single scrollTop assignment cannot work here: message frames use
   // content-visibility:auto, so heights inflate from 72px estimates to real
   // values progressively after mount — and each write moves the viewport,
@@ -880,6 +882,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       ? null
       : resolvePaneRestore(paneScrollCache.get(nodeId), n?.messages ?? []);
     if (restore) {
+      didRestoreRef.current = true;
       // Follow mode stays on only when we land at the bottom — otherwise the
       // streaming-follow / resize pins would yank the restored position back
       // down (this is what previously sent every followUps-bearing pane to
@@ -887,14 +890,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       // existing follow pins take over once this restore finishes.
       followRef.current = restore.kind === 'bottom';
       const targetFor = (): number => {
-        if (restore.kind !== 'bottom' && restore.anchorId) {
+        if (restore.kind === 'unseen' && restore.anchorId) {
           const msgEl = el.querySelector<HTMLElement>(`[data-msg-id="${restore.anchorId}"]`);
           if (msgEl) {
-            const wanted = restore.kind === 'unseen'
-              ? el.clientHeight * UNSEEN_TOP_FRACTION
-              : restore.offset;
             const delta = msgEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
-            return Math.max(0, el.scrollTop + delta - wanted);
+            return Math.max(0, el.scrollTop + delta - el.clientHeight * UNSEEN_TOP_FRACTION);
           }
           // Anchor message gone (deleted/trimmed) — fall through to bottom.
         }
@@ -978,6 +978,49 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Lazy-load scroll restore retry ───────────────────────────────────
+  // When a tree is lazy-loaded, the mount effect fires with messages === []
+  // and resolvePaneRestore returns null — the pane stays at the top. Once
+  // `messages-loaded` installs the real message bodies (messagesLoaded flips
+  // to true and messages.length > 0), this effect runs the restore that the
+  // mount effect couldn't. It only fires once (guarded by didRestoreRef) and
+  // applies the same unseen-or-bottom logic.
+  const messagesLoaded = n?.messagesLoaded;
+  const messagesLen = n?.messages.length ?? 0;
+  useLayoutEffect(() => {
+    if (didRestoreRef.current) return;
+    if (!n || messagesLoaded === false || messagesLen === 0) return;
+    didRestoreRef.current = true;
+    const el = scrollRef.current;
+    if (!el) return;
+    const live = n.status === 'streaming' || !!n.followUpsGenerating;
+    if (live) return; // follow-mode handles live panes
+    const restore = resolvePaneRestore(paneScrollCache.get(nodeId), n.messages);
+    if (!restore || restore.kind === 'bottom') {
+      programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+      prevScrollTopRef.current = el.scrollTop;
+      followRef.current = true;
+    } else if (restore.kind === 'unseen' && restore.anchorId) {
+      followRef.current = false;
+      const msgEl = el.querySelector<HTMLElement>(`[data-msg-id="${restore.anchorId}"]`);
+      if (msgEl) {
+        programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+        const delta = msgEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTop = Math.max(0, el.scrollTop + delta - el.clientHeight * UNSEEN_TOP_FRACTION);
+        prevScrollTopRef.current = el.scrollTop;
+      } else {
+        // Anchor message not in DOM — fall back to bottom
+        programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+        el.scrollTop = el.scrollHeight - el.clientHeight;
+        prevScrollTopRef.current = el.scrollTop;
+        followRef.current = true;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesLoaded, messagesLen]);
+
   const composerHandle = useRef<ComposerShellHandle>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const composerToolbarRef = useRef<HTMLDivElement>(null);
@@ -2260,6 +2303,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         resolvedBinding={resolvedBinding}
         catalogCapabilities={catalogCapabilities}
         providerModels={providerModels}
+        providers={catalogProviders}
         modelsLoading={modelsLoading}
         modelsWaiting={modelsWaiting}
         modelsError={modelsError}
@@ -2268,6 +2312,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           // Reset model/effort when switching runtime — new catalog will provide defaults.
           setPendingBindingOverride({ runtime: runtimeId });
           setModelMenu(null);
+        }}
+        onSaveProvider={(provider) => {
+          // Provider change invalidates the pending model (models are
+          // provider-scoped); resolution re-derives a valid one.
+          setPendingBindingOverride((prev) => ({ ...prev, provider, model: undefined }));
         }}
         onSaveModel={(model) => {
           setPendingBindingOverride((prev) => ({ ...prev, model }));
