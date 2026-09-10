@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ManageComposer, { __resetManageComposerSessionStateForTests } from './ManageComposer';
 
 const {
-  createThread, sendMessage, bindPendingPrimaryAgent, listPrimaryAgentDefinitions, status,
+  createThread, createChildChat, sendMessage, bindPendingPrimaryAgent, listPrimaryAgentDefinitions, status,
 } = vi.hoisted(() => ({
   createThread: vi.fn(async () => 'node-primary'),
+  createChildChat: vi.fn(async () => 'child-primary'),
   sendMessage: vi.fn(),
   bindPendingPrimaryAgent: vi.fn(),
   listPrimaryAgentDefinitions: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock('../../../state/chatStore', () => ({
   useChatStore: () => ({
     activeProject: { id: 'ws-remote', name: 'Remote', backendConnectionId: 'remote-a', artifacts: [] },
     projects: [{ id: 'ws-remote', name: 'Remote', backendConnectionId: 'remote-a', artifacts: [] }],
-    selectProject: vi.fn(), createThread, sendMessage,
+    selectProject: vi.fn(), createThread, createChildChat, sendMessage,
     agentStatus: status, refreshAgentStatus: vi.fn(), availableModes: [{ id: 'build', name: 'Build' }],
   }),
 }));
@@ -58,7 +59,7 @@ const implementer = {
 describe('ManageComposer primary Agent selection', () => {
   beforeEach(() => {
     __resetManageComposerSessionStateForTests();
-    createThread.mockClear(); sendMessage.mockClear(); bindPendingPrimaryAgent.mockClear();
+    createThread.mockClear(); createChildChat.mockClear(); sendMessage.mockClear(); bindPendingPrimaryAgent.mockClear();
     listPrimaryAgentDefinitions.mockClear();
     status.customAgentsEnabled = true;
     listPrimaryAgentDefinitions.mockResolvedValue([implementer]);
@@ -86,5 +87,22 @@ describe('ManageComposer primary Agent selection', () => {
     render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
     await act(async () => { await Promise.resolve(); });
     expect(listPrimaryAgentDefinitions).not.toHaveBeenCalled();
+  });
+
+  it('passes the selected primary Agent to the digest branch before its first turn', async () => {
+    render(<ManageComposer workspaceId="ws-remote" parentNodeId="digest-1" enableAgentSelect onSubmitted={vi.fn()} />);
+    await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalled());
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(await screen.findByText('Implementer'));
+    await waitFor(() => expect(screen.getByTitle('Switch agent — Implementer')).toBeTruthy());
+    fireEvent.change(document.querySelector('textarea')!, { target: { value: 'Implement the digest decisions' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(createChildChat).toHaveBeenCalledWith(
+      'digest-1', 'Implement the digest decisions', undefined,
+      { modeId: undefined, primaryAgent: { backendConnectionId: 'remote-a', definitionId: 'agent-implementer' } },
+    ));
+    expect(createThread).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import TerminalDigest from './Digest';
+import ManageComposer from '../manage/ManageComposer';
 
 const createDigest = vi.hoisted(() => vi.fn());
 const markDigestViewed = vi.hoisted(() => vi.fn());
@@ -27,6 +28,12 @@ vi.mock('../../../state/chatStore', () => ({
 
 vi.mock('../../MarkdownContent', () => ({
   default: ({ text }: { text: string }) => <div>{text}</div>,
+}));
+
+vi.mock('../manage/ManageComposer', () => ({
+  default: vi.fn(({ onSubmitted }: { onSubmitted: () => void }) => (
+    <button onClick={onSubmitted}>Submit digest follow-up</button>
+  )),
 }));
 
 function chat(id: string, title: string, messageCount = 1) {
@@ -80,6 +87,7 @@ function project(activeTreeId = 't1') {
 beforeEach(() => {
   createDigest.mockReset().mockResolvedValue('new-digest');
   markDigestViewed.mockReset();
+  vi.mocked(ManageComposer).mockClear();
   store.project = project();
   store.nodes = {
     r1: chat('r1', 'Root one', 2),
@@ -91,6 +99,24 @@ beforeEach(() => {
 });
 
 describe('TerminalDigest thread scope', () => {
+  it('uses the Home composer with the current digest and Agent selection', () => {
+    const onNav = vi.fn();
+    render(<TerminalDigest onNav={onNav} />);
+
+    expect(vi.mocked(ManageComposer).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      workspaceId: 'p1', parentNodeId: 'd1', enableAgentSelect: true,
+    }));
+    fireEvent.click(screen.getByText('Submit digest follow-up'));
+    expect(onNav).toHaveBeenCalledWith('dashboard');
+  });
+
+  it.each(['workspace', 'thread'])('does not offer follow-up composition for an archived %s', (scope) => {
+    if (scope === 'workspace') store.project.archivedAt = 1;
+    else store.project.trees[0].archivedAt = 1;
+    render(<TerminalDigest onNav={vi.fn()} />);
+    expect(screen.queryByText('Submit digest follow-up')).toBeNull();
+  });
+
   it('opens the active thread digest directly and hides workspace-level digest cards', () => {
     render(<TerminalDigest onNav={vi.fn()} />);
 
@@ -109,6 +135,7 @@ describe('TerminalDigest thread scope', () => {
 
     expect(screen.getByText('Other digest')).toBeTruthy();
     expect(screen.queryByText('Current digest')).toBeNull();
+    expect(vi.mocked(ManageComposer).mock.calls.at(-1)?.[0].parentNodeId).toBe('d2');
   });
 
   it('shows an inline prompt and creates a digest from every chat in the active thread', async () => {

@@ -122,6 +122,15 @@ export interface UserSendMeta {
   reasoning?: AgentReasoning;
 }
 
+export interface CreateChildChatOptions {
+  anchorMessageId?: string;
+  /** Defaults to true. Background branches may opt out of taking focus. */
+  focus?: boolean;
+  /** Agent selection applied before the child's first turn starts. */
+  modeId?: string;
+  primaryAgent?: { backendConnectionId: string; definitionId: string };
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -873,7 +882,7 @@ export interface ChatContextValue {
     meta?: UserSendMeta,
     // focus defaults to true (open + focus the new pane). Pass focus:false for
     // chat-pane branch gestures that should keep the user on the current pane.
-    opts?: { anchorMessageId?: string; focus?: boolean },
+    opts?: CreateChildChatOptions,
   ) => Promise<string>;
   /** Create an empty child chat (no streaming turn) branched from the given node. Returns the new nodeId. */
   createBlankChild: (parentNodeId: string, opts?: { anchorMessageId?: string }) => Promise<string>;

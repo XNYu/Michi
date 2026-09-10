@@ -5,123 +5,9 @@ import { findTreeIdForNode, descendants } from '../../../state/tree';
 import MarkdownContent from '../../MarkdownContent';
 import { Dot, Tag } from '../primitives';
 import type { PageId } from '../../../state/commands';
+import ManageComposer from '../manage/ManageComposer';
 
 const DIGEST_PROSE = 'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
-
-function DigestInput({
-  nodeId,
-  createChildChat,
-  onNav,
-}: {
-  nodeId: string;
-  createChildChat: (parentNodeId: string, firstMessage: string) => Promise<string>;
-  onNav: (p: PageId) => void;
-}) {
-  const [text, setText] = useState('');
-  const [focused, setFocused] = useState(false);
-  const send = () => {
-    const t = text.trim();
-    if (!t) return;
-    setText('');
-    void createChildChat(nodeId, t).then(() => onNav('dashboard')).catch(() => {});
-  };
-  return (
-    <div
-      style={{
-        flexShrink: 0,
-        background: 'var(--term-surface)',
-        border: `1px solid ${focused ? 'rgba(26,25,22,.18)' : 'var(--term-line)'}`,
-        boxShadow: focused
-          ? '0 4px 16px rgba(26,25,22,.08), 0 1px 3px rgba(26,25,22,.05)'
-          : '0 4px 12px rgba(26,25,22,.05), 0 1px 2px rgba(26,25,22,.03)',
-        display: 'flex',
-        flexDirection: 'column',
-        transition: 'box-shadow 120ms ease-out, border-color 120ms ease-out',
-      }}
-    >
-      <div style={{ padding: '10px 12px 4px', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <span
-          aria-hidden
-          style={{
-            color: 'var(--term-accent)',
-            fontFamily: "'Source Serif 4', Georgia, serif",
-            fontSize: 14,
-            lineHeight: '1.5',
-            flexShrink: 0,
-            userSelect: 'none',
-          }}
-        >
-          ›_
-        </span>
-        <input
-          type="text"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          onKeyDown={(e) => {
-            if (e.nativeEvent.isComposing) return;
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-          }}
-          placeholder="Ask a follow-up about this digest…"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            border: 'none',
-            background: 'transparent',
-            outline: 'none',
-            fontFamily: "'Source Serif 4', Georgia, 'PingFang SC', serif",
-            fontSize: 14,
-            lineHeight: '1.5',
-            color: 'var(--term-fg)',
-            padding: 0,
-          }}
-        />
-      </div>
-      <div style={{ padding: '4px 10px 8px', display: 'flex', alignItems: 'center', gap: 6, minHeight: 34 }}>
-        <ChipButton label="+" />
-        <ChipButton label="@" />
-        <ChipButton label="⎇ code" color="var(--term-mauve)" />
-        <span style={{ flex: 1 }} />
-        <button
-          type="button"
-          onClick={send}
-          disabled={!text.trim()}
-          aria-label="Send"
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 2,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: text.trim() ? 'var(--term-accent)' : 'color-mix(in srgb, var(--term-accent) 40%, transparent)',
-            color: '#fff',
-            border: 'none',
-            cursor: text.trim() ? 'pointer' : 'not-allowed',
-            flexShrink: 0,
-            transition: 'background 100ms',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 13V3" /><path d="M3.5 7.5L8 3l4.5 4.5" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ChipButton({ label, color }: { label: string; color?: string }) {
-  return (
-    <span
-      className="t-text-btn"
-      style={color ? { color, letterSpacing: '.04em', height: 26 } : { letterSpacing: '.04em', height: 26 }}
-    >
-      {label}
-    </span>
-  );
-}
 
 function formatRelative(ts: number): string {
   if (!ts) return '—';
@@ -238,6 +124,7 @@ export default function TerminalDigest({
   );
 
   // --- Scroll-tracking for OUTLINE ---
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [activeOutlineIdx, setActiveOutlineIdx] = useState<number>(-1); // -1 = tldr, 0+ = section index
 
@@ -246,28 +133,26 @@ export default function TerminalDigest({
     if (!container) return;
     const sectionEls = container.querySelectorAll<HTMLElement>('[data-digest-section]');
     const tldrEl = container.querySelector<HTMLElement>('[data-digest-tldr]');
-    const scrollTop = container.scrollTop;
+    // On narrow screens the entire page scrolls; desktop scrolls the content.
+    const viewport = container.scrollHeight > container.clientHeight ? container : pageRef.current ?? container;
+    const viewportTop = viewport.getBoundingClientRect().top;
     const offset = 80; // threshold from top
 
     let active = -1; // default to TL;DR
     sectionEls.forEach((el, i) => {
-      if (el.offsetTop - container.offsetTop <= scrollTop + offset) {
+      if (el.getBoundingClientRect().top - viewportTop <= offset) {
         active = i;
       }
     });
     // If TL;DR is still mostly visible
-    if (tldrEl && tldrEl.offsetTop + tldrEl.offsetHeight - container.offsetTop > scrollTop + offset) {
+    if (tldrEl && tldrEl.getBoundingClientRect().bottom - viewportTop > offset) {
       active = -1;
     }
     setActiveOutlineIdx(active);
   }, []);
 
   useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    container.addEventListener('scroll', handleContentScroll, { passive: true });
-    handleContentScroll(); // initial
-    return () => container.removeEventListener('scroll', handleContentScroll);
+    handleContentScroll();
   }, [handleContentScroll, parsed]);
 
   const scrollToSection = useCallback((idx: number) => {
@@ -498,7 +383,7 @@ export default function TerminalDigest({
   const title = digestNode.title || 'Thread digest';
 
   return (
-    <div style={{
+    <div ref={pageRef} onScrollCapture={handleContentScroll} className="min-w-0 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden" style={{
       flex: 1,
       display: 'flex',
       minHeight: 0,
@@ -508,9 +393,9 @@ export default function TerminalDigest({
         radial-gradient(ellipse 50% 60% at 95% 90%, rgba(184,69,31,.03), transparent)
       `,
     }}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, gap: 16, padding: '18px 20px' }}>
+      <div className="flex min-w-0 shrink-0 flex-col gap-4 px-5 py-[18px] lg:min-h-0 lg:flex-1 lg:shrink">
       {/* Content card — raised independently */}
-      <div ref={scrollRef} className="term-scrollbar" style={{ flex: 1, overflowY: 'auto', minWidth: 0, background: 'var(--term-surface)', boxShadow: '0 8px 32px rgba(26,25,22,.07), 0 1px 3px rgba(26,25,22,.04)', border: '1px solid var(--term-line)' }}>
+      <div ref={scrollRef} className="term-scrollbar min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ background: 'var(--term-surface)', boxShadow: '0 8px 32px rgba(26,25,22,.07), 0 1px 3px rgba(26,25,22,.04)', border: '1px solid var(--term-line)' }}>
         <div
           style={{
             padding: '20px 28px 16px',
@@ -545,7 +430,7 @@ export default function TerminalDigest({
             </span>
             {stale.length > 0 && <Tag color="var(--term-select)">{stale.length} stale</Tag>}
           </div>
-          <div style={{ display: 'flex', gap: 18, fontSize: 11, color: 'var(--term-muted)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, fontSize: 11, color: 'var(--term-muted)' }}>
             <span><span style={{ color: 'var(--term-mid)' }}>scope</span> thread</span>
             <span>
               <span style={{ color: 'var(--term-mid)' }}>sources</span> {liveSources.length} chat
@@ -806,23 +691,18 @@ export default function TerminalDigest({
       </div>{/* end content card */}
 
       {/* Pane Composer — separate raised card */}
-      <DigestInput nodeId={digestNode.nodeId} createChildChat={createChildChat} onNav={onNav} />
+      {!activeProject.archivedAt && !activeTree.archivedAt && (
+        <ManageComposer
+          workspaceId={activeProject.id}
+          parentNodeId={digestNode.nodeId}
+          enableAgentSelect
+          onSubmitted={() => onNav('dashboard')}
+        />
+      )}
       </div>
 
       <aside
-        style={{
-          width: 280,
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 18,
-          padding: '18px 14px',
-          alignSelf: 'flex-start',
-          position: 'sticky',
-          top: 0,
-          maxHeight: '100vh',
-          overflowY: 'auto',
-        }}
+        className="flex w-full shrink-0 flex-col gap-[18px] px-[14px] py-[18px] lg:sticky lg:top-0 lg:max-h-full lg:w-[280px] lg:self-start lg:overflow-y-auto"
       >
         {/* OUTLINE card */}
         <div

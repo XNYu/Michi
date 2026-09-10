@@ -39,21 +39,23 @@ interface PendingAttachment {
 
 // In-memory draft survives unmount within a session, but successful sends
 // reset it. Cleared on full reload.
-let manageDraft: ComposerDraft = { value: '', mentions: [] };
+const composerDrafts = new Map<string, ComposerDraft>();
 // Last pre-picked agent, sticky across unmounts within a session (mirrors how
-// manageDraft persists). Lets the Home composer remember the chosen agent after
+// composer drafts persist). Lets the Home composer remember the chosen agent after
 // you send and come back. A stale id (e.g. after a runtime switch) is dropped at
 // render time once the mode list is known.
 let manageStickyModeId: string | undefined;
 const manageStickyPrimaryAgent = new Map<string, PrimaryAgentDefinitionOption>();
 
 export function __resetManageComposerSessionStateForTests() {
-  manageDraft = { value: '', mentions: [] };
+  composerDrafts.clear();
   manageStickyModeId = undefined;
   manageStickyPrimaryAgent.clear();
 }
 
 interface Props {
+  /** Create a follow-up from this digest instead of a new root thread. */
+  parentNodeId?: string;
   /** Fixed workspace target. Omit on Home where the user picks via the chip. */
   workspaceId?: string;
   /** Display name for fixed-workspace mode. Falls back to active project name. */
@@ -63,8 +65,8 @@ interface Props {
   /**
    * Show the agent (⎇) chip so the user can pre-pick an agent before the
    * thread exists. The pick is applied to the new thread's session on send.
-   * Off by default — only entry points that create a thread on submit
-   * (e.g. Home) should enable it.
+   * Off by default — entry points that create a conversation on submit
+   * (Home or digest follow-ups) can enable it.
    */
   enableAgentSelect?: boolean;
   onSubmitted: () => void;
@@ -88,7 +90,13 @@ function pendingThumbSrc(p: PendingAttachment, workspaceId?: string): string | n
   return null;
 }
 
-export default function ManageComposer({
+export default function ManageComposer(props: Props) {
+  const scope = props.parentNodeId ? `${props.workspaceId ?? ''}:${props.parentNodeId}` : '__manage__';
+  return <ScopedManageComposer key={scope} {...props} />;
+}
+
+function ScopedManageComposer({
+  parentNodeId,
   workspaceId: fixedWorkspaceId,
   toolbarLeftPrefix,
   enableAgentSelect = false,
@@ -98,6 +106,7 @@ export default function ManageComposer({
     activeProject,
     selectProject,
     createThread,
+    createChildChat,
     sendMessage,
     agentStatus,
     refreshAgentStatus,
@@ -110,7 +119,10 @@ export default function ManageComposer({
   const usesActiveBackend = workspaceBackendApiBase(workspaceId) === activeBackendApiBase();
   const customAgentsEnabled = agentStatus?.customAgentsEnabled === true;
 
-  const [draft, setDraftState] = useState<ComposerDraft>(() => manageDraft);
+  const draftKey = parentNodeId ? `${workspaceId}:${parentNodeId}` : '__manage__';
+  const [draft, setDraftState] = useState<ComposerDraft>(
+    () => composerDrafts.get(draftKey) ?? { value: '', mentions: [] },
+  );
   const draftRef = useRef<ComposerDraft>(draft);
   const setDraft = useCallback(
     (nextOrUpdater: ComposerDraft | ((prev: ComposerDraft) => ComposerDraft)) => {
@@ -118,12 +130,14 @@ export default function ManageComposer({
         ? (nextOrUpdater as (prev: ComposerDraft) => ComposerDraft)(draftRef.current)
         : nextOrUpdater;
       draftRef.current = next;
-      manageDraft = next;
+      composerDrafts.set(draftKey, next);
       setDraftState(next);
     },
-    [],
+    [draftKey],
   );
   const inputRef = useRef<MentionEditorHandle>(null);
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const [agentMenu, setAgentMenu] = useState<PaneMenuAnchor | null>(null);
   const [modelMenu, setModelMenu] = useState<PaneMenuAnchor | null>(null);
@@ -210,6 +224,11 @@ export default function ManageComposer({
   const [dragHover, setDragHover] = useState(false);
   const dragDepthRef = useRef(0);
   const webFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => () => {
+    webFileInputRef.current?.remove();
+    webFileInputRef.current = null;
+  }, [workspaceId]);
 
   useEffect(() => {
     const active = document.activeElement as HTMLElement | null;
@@ -318,7 +337,7 @@ export default function ManageComposer({
       webFileInputRef.current = input;
     }
     webFileInputRef.current.click();
-  }, [project?.id, addPendingPaths, progressForFile, resolveAttachCwd]);
+  }, [project?.id, project?.backendConnectionId, addPendingPaths, progressForFile, resolveAttachCwd]);
 
   const insertMentionTrigger = useCallback(() => {
     inputRef.current?.editor?.chain().focus().insertContent('@').run();
@@ -390,7 +409,7 @@ export default function ManageComposer({
         );
       }
     },
-    [project?.id, addPendingPaths, progressForFile, resolveAttachCwd],
+    [project?.id, project?.backendConnectionId, addPendingPaths, progressForFile, resolveAttachCwd],
   );
 
   const isFileDrag = (e: React.DragEvent) =>
@@ -470,11 +489,13 @@ export default function ManageComposer({
         );
       }
     },
-    [addPendingPaths, progressForFile, project?.id, resolveAttachCwd],
+    [addPendingPaths, progressForFile, project?.id, project?.backendConnectionId, resolveAttachCwd],
   );
 
   const submit = async () => {
-    const raw = expandMentions(draft.value, draft.mentions).trim();
+    if (submittingRef.current || uploadProgress) return;
+    const submitDraft = draftRef.current;
+    const raw = expandMentions(submitDraft.value, submitDraft.mentions).trim();
     if (!raw && pendingAttachments.length === 0) return;
     if (!workspaceId) return;
 
@@ -491,42 +512,62 @@ export default function ManageComposer({
     // to every other conversation, so sibling threads kept reading unrelated
     // screenshots.
 
-    let nodeId: string | null;
-    try {
-      nodeId = await createThread(pendingPrimaryAgent ? undefined : currentModeId);
-    } catch {
-      // The store already surfaced the allocation failure.
-      return;
-    }
-    if (!nodeId) return;
-    if (pendingPrimaryAgent) {
-      try {
-        bindPendingPrimaryAgent(nodeId, {
-          workspaceId,
-          backendConnectionId: pendingPrimaryAgent.backendConnectionId,
-          definitionId: pendingPrimaryAgent.definition.id,
-        });
-      } catch (error) {
-        toast.error('Could not select primary Agent', { description: (error as Error).message });
-        return;
-      }
-    }
     const finalText = appendAttachmentsSentinel(raw, attachmentsForSend);
-    const mentionsForMeta = draft.mentions.length > 0
-      ? draft.mentions.map(m => ({ kind: m.kind, refId: m.refId, label: m.label }))
+    const mentionsForMeta = submitDraft.mentions.length > 0
+      ? submitDraft.mentions.map(m => ({ kind: m.kind, refId: m.refId, label: m.label }))
       : undefined;
+    // A digest follow-up has a parent session. Make the visible selection
+    // explicit so that session's runtime/model cannot override the chips.
+    const bindingMeta = parentNodeId && !pendingPrimaryAgent && agentStatus ? {
+      runtimeId: manageResolvedBinding.runtime,
+      providerId: manageResolvedBinding.provider,
+      modelId: manageResolvedBinding.model,
+      reasoning: manageResolvedBinding.reasoning,
+    } : undefined;
     const meta =
-      attachmentsForSend.length > 0 || mentionsForMeta
+      attachmentsForSend.length > 0 || mentionsForMeta || bindingMeta
         ? {
+            ...bindingMeta,
             ...(attachmentsForSend.length > 0 ? { attachments: attachmentsForSend.map((a) => ({ ...a })) } : {}),
             displayText: raw,
             mentions: mentionsForMeta,
           }
         : undefined;
-    sendMessage(nodeId, finalText, meta);
-    setDraft({ value: '', mentions: [] });
-    setPendingAttachments([]);
-    onSubmitted();
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const modeId = pendingPrimaryAgent ? undefined : currentModeId;
+      const primaryAgent = pendingPrimaryAgent ? {
+        backendConnectionId: pendingPrimaryAgent.backendConnectionId,
+        definitionId: pendingPrimaryAgent.definition.id,
+      } : undefined;
+      if (parentNodeId) {
+        await createChildChat(parentNodeId, finalText, meta, { modeId, primaryAgent });
+      } else {
+        let nodeId: string | null;
+        try {
+          nodeId = await createThread(modeId);
+        } catch {
+          // The store already surfaced the allocation failure.
+          return;
+        }
+        if (!nodeId) return;
+        if (primaryAgent) {
+          bindPendingPrimaryAgent(nodeId, { workspaceId, ...primaryAgent });
+        }
+        sendMessage(nodeId, finalText, meta);
+      }
+      setDraft({ value: '', mentions: [] });
+      setPendingAttachments([]);
+      onSubmitted();
+    } catch (error) {
+      toast.error(parentNodeId ? 'Could not start digest follow-up' : 'Could not start thread', {
+        description: (error as Error).message,
+      });
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
 
   // No active thread here. When agent pre-selection is enabled, the chip
@@ -546,14 +587,14 @@ export default function ManageComposer({
 
   const canAttach = !!getElectron()?.chooseFiles || !!project;
   const sendDisabled =
-    (!draft.value.trim() && pendingAttachments.length === 0) || !workspaceId;
+    (!draft.value.trim() && pendingAttachments.length === 0) || !workspaceId || submitting || !!uploadProgress;
 
   // Same-tree mentions don't apply on the manage page (no active thread).
   // Pass the project's artifacts so @<contextName> still works.
   const artifacts = useMemo(() => project?.artifacts ?? [], [project?.artifacts]);
 
   return (
-    <div style={{ marginBottom: 18 }}>
+    <div style={{ marginBottom: parentNodeId ? 0 : 18, flexShrink: 0, minWidth: 0 }}>
       <ComposerShell
         position="static"
         dragHover={dragHover}
@@ -615,17 +656,18 @@ export default function ManageComposer({
             value={draft.value}
             mentions={draft.mentions}
             onChange={setDraft}
+            disabled={submitting}
             className="hide-sb"
             artifacts={artifacts}
             sameTreeNodes={[]}
-            currentNodeId="__manage__"
+            currentNodeId={parentNodeId ?? '__manage__'}
             enableSlash={false}
             onSubmit={() => submit()}
             onPaste={(e) => { void handlePaste(e as unknown as React.ClipboardEvent<HTMLTextAreaElement>); }}
           />
           </React.Suspense>
         }
-        toolbarLeft={<>
+        toolbarLeft={<div style={{ display: 'flex', flex: '0 1 auto', flexWrap: 'wrap', alignItems: 'center', gap: 6, minWidth: 0 }}>
           {toolbarLeftPrefix}
           <PaneComposerToolbarLeft
             canAttach={canAttach}
@@ -645,7 +687,7 @@ export default function ManageComposer({
             onOpenModelMenu={openModelMenu}
             onOpenRuntimeMenu={(anchor) => setModelMenu(anchor)}
           />
-        </>}
+        </div>}
         toolbarRight={
           <PaneComposerActions
             draftHasText={false}

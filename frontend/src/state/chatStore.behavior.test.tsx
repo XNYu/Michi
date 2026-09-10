@@ -40,11 +40,15 @@ vi.mock('../services/api', () => ({
   subscribeBackground: vi.fn(() => () => {}),
   cancelChat: () => Promise.resolve(),
   // Spied: implementation set in beforeEach.
+  bindPendingPrimaryAgent: vi.fn(),
   ensureSession: vi.fn(),
   streamMessage: vi.fn(),
 }));
 
 vi.mock('../services/notifications', () => ({ notify: vi.fn() }));
+vi.mock('../services/digestApi', () => ({
+  streamDigest: vi.fn(async () => '# Decisions\n\nKeep the source thread context.'),
+}));
 
 import * as api from '../services/api';
 import { notify } from '../services/notifications';
@@ -98,6 +102,7 @@ describe('auto-branch behavior (real provider)', () => {
     mockEnsureSession.mockReset();
     mockStreamMessage.mockReset();
     mockNotify.mockReset();
+    vi.mocked(api.bindPendingPrimaryAgent).mockReset();
     mockEnsureSession.mockImplementation(() => Promise.resolve({ chatId: 'fake-chat', currentModeId: null, resumeStrategy: 'fresh' }));
     // Real streamMessage returns a cancel fn AND starts an async stream. For
     // our guard test we only need it to be callable and return a no-op cancel.
@@ -244,6 +249,49 @@ describe('auto-branch behavior (real provider)', () => {
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
     // Parent node remains streaming; child gets its own turn.
     expect(result.current.nodes[rootId].status).toBe('streaming');
+  });
+
+  it.each(['mode', 'primary'] as const)('starts a digest follow-up with its selected %s Agent and source context', async (selection) => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test', undefined); });
+    let rootId = '';
+    await act(async () => { rootId = result.current.store.createThread()!; });
+    const projectId = result.current.store.activeProject!.id;
+    const treeId = result.current.store.activeProject!.activeTreeId;
+    let digestId = '';
+    await act(async () => { digestId = await result.current.store.createDigest(projectId, [rootId]); });
+    await waitFor(() => expect(result.current.nodes[digestId].digest?.status).toBe('idle'));
+
+    let childId = '';
+    await act(async () => {
+      childId = await result.current.store.createChildChat(digestId, 'Explain the decisions', {
+        runtimeId: 'codex', modelId: 'test-model', reasoning: 'high',
+      }, selection === 'mode' ? { modeId: 'build' } : {
+        primaryAgent: { backendConnectionId: 'local', definitionId: 'implementer' },
+      });
+    });
+
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledOnce());
+    expect(result.current.nodes[childId].parentNodeId).toBe(rootId);
+    expect(result.current.store.activeProject!.activeTreeId).toBe(treeId);
+    expect(result.current.store.focusedPane).toBe(childId);
+    expect(mockEnsureSession).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: childId,
+      workspaceId: projectId,
+      modeId: selection === 'mode' ? 'build' : undefined,
+      runtimeId: 'codex', modelId: 'test-model', reasoning: 'high',
+      mergeContexts: [expect.stringContaining('Keep the source thread context.')],
+      graphPrerequisite: expect.objectContaining({
+        node: expect.objectContaining({ id: childId, treeId }),
+      }),
+    }));
+    if (selection === 'primary') {
+      expect(api.bindPendingPrimaryAgent).toHaveBeenCalledWith(childId, {
+        workspaceId: projectId, backendConnectionId: 'local', definitionId: 'implementer',
+      });
+      expect(vi.mocked(api.bindPendingPrimaryAgent).mock.invocationCallOrder[0])
+        .toBeLessThan(mockEnsureSession.mock.invocationCallOrder[0]);
+    }
   });
 
   it('does not notify when the focused pane finishes streaming while the window is focused', async () => {

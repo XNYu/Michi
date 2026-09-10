@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat, steerChat, subscribeChat } from '../services/api';
-import type { AgentStatus, SessionMode } from '../services/api';
+import { bindPendingPrimaryAgent, type AgentStatus, type SessionMode } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
 import { DARK_PALETTES } from '../components/terminal/tokens';
@@ -52,6 +52,7 @@ import { computeSurvivingMessageIds, cleanupOrphanedAnchors } from './branchAnch
 import { sleep } from '../utils/sleep';
 import { reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
 import type { StreamHandlers } from '../services/chatStreamEvents';
+import type { CreateChildChatOptions } from './chatTypes';
 
 /**
  * Construct a branch edge with provenance fields stamped at fork time.
@@ -1745,7 +1746,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       parentNodeId: string,
       firstMessage: string,
       meta?: UserSendMeta,
-      opts?: { anchorMessageId?: string; focus?: boolean },
+      opts?: CreateChildChatOptions,
     ) => {
       const parent = nodesRef.current[parentNodeId];
       if (!parent) throw new Error('unknown parent node');
@@ -1770,7 +1771,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         }
       }
       const nodeId = newNodeId();
-      dispatch({ type: 'create', nodeId, projectId, parentNodeId: branchParentNodeId });
+      if (opts?.primaryAgent) {
+        bindPendingPrimaryAgent(nodeId, { workspaceId: projectId, ...opts.primaryAgent });
+      }
+      dispatch({
+        type: 'create', nodeId, projectId, parentNodeId: branchParentNodeId,
+        modeId: opts?.primaryAgent ? undefined : opts?.modeId,
+      });
       const createdAt = Date.now();
       setProjects((prev) =>
         prev.map((p) =>
