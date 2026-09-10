@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatPanes, useChatProjects, useChatActions, useChatNodesSnapshot, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chatTypes';
@@ -248,6 +248,72 @@ export default function ActivityView({
       subtreeOpenState(rootId, edges, isAlive, getNodeOpenState),
     [isAlive, getNodeOpenState],
   );
+
+  // ── Reveal focused pane: expand the owning thread and scroll the row
+  // into view, mirroring WorkspaceTree's reveal logic. ──
+  const revealRef = useRef({ sidebarExpanded: prefs.sidebarExpanded, setPref });
+  revealRef.current = { sidebarExpanded: prefs.sidebarExpanded, setPref };
+  useEffect(() => {
+    if (!focusedPane) return;
+    const { sidebarExpanded: cur, setPref: write } = revealRef.current;
+
+    // Find the owning project and tree for the focused node.
+    let owningProject: Project | undefined;
+    let owningTreeId: string | undefined;
+    for (const p of projects) {
+      if (p.deletedAt || p.archivedAt) continue;
+      const tid = findTreeIdForNode(focusedPane, p);
+      if (tid) { owningProject = p; owningTreeId = tid; break; }
+    }
+    if (!owningProject || !owningTreeId) return;
+
+    // Auto-expand the thread if it's collapsed so the focused row is visible.
+    const needThreadOpen = !isThreadExpanded(cur, owningTreeId, owningProject.activeTreeId ?? null);
+    if (needThreadOpen) {
+      const next = { ...cur, threads: { ...cur.threads, [owningTreeId]: true } };
+      write('sidebarExpanded', next);
+    }
+
+    // Expand ancestor branches between the focused node and the tree root.
+    const parentOf = new Map<string, string>();
+    for (const e of owningProject.edges) {
+      if (e.kind !== undefined && e.kind !== 'branch') continue;
+      parentOf.set(e.target, e.source);
+    }
+    const treeRoots = new Set(owningProject.trees.map((t) => t.rootNodeId));
+    let branchesNext = revealRef.current.sidebarExpanded.branches;
+    let branchChanged = false;
+    const seen = new Set<string>();
+    let walker: string | undefined = parentOf.get(focusedPane);
+    while (walker && !seen.has(walker)) {
+      seen.add(walker);
+      if (treeRoots.has(walker)) break;
+      if (!branchesNext[walker]) {
+        if (!branchChanged) { branchesNext = { ...branchesNext }; branchChanged = true; }
+        branchesNext[walker] = true;
+      }
+      walker = parentOf.get(walker);
+    }
+    if (branchChanged) {
+      const cur2 = revealRef.current.sidebarExpanded;
+      write('sidebarExpanded', { ...cur2, branches: branchesNext });
+    }
+
+    // Scroll the row into view after React re-renders with the new expansion.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-sidebar-row="${CSS.escape(focusedPane)}"]`,
+        ) as HTMLElement | null;
+        el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [focusedPane, projects]);
 
   // ── Navigation: clicking a tree/branch in Activity view ──
   const handleActivateTree = useCallback(
