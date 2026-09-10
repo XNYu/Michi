@@ -303,10 +303,13 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     [setFocusedPane, setOpenPanes],
   );
 
+  const [focusNonce, setFocusNonce] = useState(0);
+
   const focusPane = useCallback(
     (nodeId: string) => {
       setOpenPanes((prev) => (prev.includes(nodeId) ? prev : [...prev, nodeId]));
       setFocusedPane(nodeId);
+      setFocusNonce((n) => n + 1);
     },
     [setFocusedPane, setOpenPanes],
   );
@@ -338,6 +341,7 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   return {
     openPanes,
     focusedPane,
+    focusNonce,
     paneItems,
     viewMode,
     setOpenPanes,
