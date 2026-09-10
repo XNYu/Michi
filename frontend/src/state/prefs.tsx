@@ -566,6 +566,35 @@ export function usePrefs(): PrefsContextValue {
   return v;
 }
 
+// The sidebar shell owns visibility. Its mounted contents always see an
+// expanded sidebar, so toggling visibility does not invalidate every row.
+const SidebarContentPrefs = React.memo(function SidebarContentPrefs({
+  value,
+  children,
+}: {
+  value: PrefsContextValue;
+  children: React.ReactNode;
+}) {
+  const contentValue = useMemo(
+    () => ({ ...value, prefs: { ...value.prefs, sidebarCollapsed: false } }),
+    [value],
+  );
+  return <PrefsContext.Provider value={contentValue}>{children}</PrefsContext.Provider>;
+}, (previous, next) => (
+  previous.children === next.children &&
+  previous.value.setPref === next.value.setPref &&
+  previous.value.reset === next.value.reset &&
+  previous.value.resetTerminal === next.value.resetTerminal &&
+  (Object.keys(next.value.prefs) as (keyof Prefs)[]).every(
+    (key) => key === 'sidebarCollapsed' || Object.is(previous.value.prefs[key], next.value.prefs[key]),
+  )
+));
+
+export function SidebarContentPrefsProvider({ children }: { children: React.ReactNode }) {
+  const value = usePrefs();
+  return <SidebarContentPrefs value={value}>{children}</SidebarContentPrefs>;
+}
+
 /** Forces a specific agent-block style regardless of prefs — used by the dev
  *  specimen page to render every variant on one screen. */
 export const AgentBlockStyleOverride = createContext<AgentBlockStyle | null>(null);

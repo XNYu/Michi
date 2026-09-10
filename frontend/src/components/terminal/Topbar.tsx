@@ -373,7 +373,11 @@ export default function TerminalTopbar({
           position: 'relative',
           zIndex: sidebarCollapsed ? undefined : 1,
           overflow: 'hidden',
-          transition: sidebarResizing ? 'none' : 'width 150ms cubic-bezier(.4,0,.2,1)',
+          transition: sidebarResizing
+            ? 'none'
+            : sidebarCollapsed
+              ? 'width 180ms cubic-bezier(.4,0,1,1)'
+              : 'width 200ms cubic-bezier(0,0,.2,1)',
         }}
       />
       <div
@@ -467,7 +471,9 @@ export default function TerminalTopbar({
           minWidth: 0,
           overflow: showPaneCells ? 'clip' : 'visible',
           paddingLeft: sidebarCollapsed ? COLLAPSED_LEFT_PAD : 0,
-          transition: 'padding-left 200ms cubic-bezier(.4,0,.2,1)',
+          transition: sidebarCollapsed
+            ? 'padding-left 180ms cubic-bezier(.4,0,1,1)'
+            : 'padding-left 200ms cubic-bezier(0,0,.2,1)',
         }}
       >
         {showPaneCells && (
@@ -536,7 +542,9 @@ export default function TerminalTopbar({
                     // its left-pad to match the sidebar spacer animation.
                     transition: [
                       (isFirst && !sidebarResizing)
-                        ? 'padding-left 150ms cubic-bezier(.4,0,.2,1)'
+                        ? sidebarCollapsed
+                          ? 'padding-left 180ms cubic-bezier(.4,0,1,1)'
+                          : 'padding-left 200ms cubic-bezier(0,0,.2,1)'
                         : null,
                       'filter var(--t-soft) var(--t-ease)',
                     ].filter(Boolean).join(', '),
@@ -594,7 +602,9 @@ export default function TerminalTopbar({
               WebkitAppRegion: 'drag',
               transition: sidebarResizing
                 ? undefined
-                : 'padding-left 150ms cubic-bezier(.4,0,.2,1)',
+                : sidebarCollapsed
+                  ? 'padding-left 180ms cubic-bezier(.4,0,1,1)'
+                  : 'padding-left 200ms cubic-bezier(0,0,.2,1)',
             } as React.CSSProperties}
           >
             {threadPage && (

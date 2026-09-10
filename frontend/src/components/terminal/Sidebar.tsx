@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { usePrefs } from '../../state/prefs';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { SidebarContentPrefsProvider, usePrefs } from '../../state/prefs';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { Row } from './primitives';
 import WorkspaceTree from './WorkspaceTree';
@@ -55,6 +55,10 @@ export default function TerminalSidebar({
   const { prefs, setPref } = usePrefs();
   const asideRef = useRef<HTMLElement>(null);
   const [isResizing, setIsResizing] = useState(false);
+  const contents = useMemo(
+    () => <SidebarContents activePage={activePage} onNav={onNav} />,
+    [activePage, onNav],
+  );
 
   // Clamp persisted width to current MIN so legacy narrower values auto-correct.
   const effectiveWidth = Math.max(prefs.terminalSidebarWidth, MIN_SIDEBAR_WIDTH);
@@ -83,7 +87,7 @@ export default function TerminalSidebar({
       window.dispatchEvent(
         new CustomEvent('michi:sidebar-animating', { detail: { animating: false } }),
       );
-    }, 170);
+    }, 220);
     return () => window.clearTimeout(id);
   }, [prefs.sidebarCollapsed, narrowMode]);
 
@@ -165,20 +169,26 @@ export default function TerminalSidebar({
         pointerEvents: collapsed ? 'none' : undefined,
         transition: overlayMode || isResizing
           ? 'none'
-          : 'width 150ms cubic-bezier(.4,0,.2,1), opacity 120ms ease-out',
+          : collapsed
+            ? 'width 180ms cubic-bezier(.4,0,1,1), opacity 140ms ease-in'
+            : 'width 200ms cubic-bezier(0,0,.2,1), opacity 150ms ease-out',
         animation: overlayMode ? 'slideInLeft 200ms ease-out' : undefined,
       }}
     >
-      <TreeSelectionBar />
-      {prefs.sidebarView === 'activity' ? (
-        <ActivityView onActivate={() => onNav('dashboard')} />
-      ) : (
-        <WorkspaceTree
-          onActivate={() => onNav('dashboard')}
-          chatViewActive={activePage === 'dashboard'}
-        />
-      )}
-      <BottomNav activePage={activePage} onNav={onNav} geom={geom} />
+      <div
+        className="terminal-sidebar-content"
+        style={{
+          // Only the shell changes width during a toggle; rows never squeeze.
+          width: effectiveWidth,
+          flex: '1 0 0',
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <SidebarContentPrefsProvider>{contents}</SidebarContentPrefsProvider>
+      </div>
       {!collapsed && !overlayMode && (
         <ResizeHandle
           paneRef={asideRef}
@@ -221,6 +231,24 @@ export default function TerminalSidebar({
   }
 
   return aside;
+}
+
+function SidebarContents({ activePage, onNav }: {
+  activePage: PageId;
+  onNav: (p: PageId) => void;
+}) {
+  const { prefs } = usePrefs();
+  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
+  const onActivate = React.useCallback(() => onNav('dashboard'), [onNav]);
+  return <>
+    <TreeSelectionBar />
+    {prefs.sidebarView === 'activity' ? (
+      <ActivityView onActivate={onActivate} />
+    ) : (
+      <WorkspaceTree onActivate={onActivate} chatViewActive={activePage === 'dashboard'} />
+    )}
+    <BottomNav activePage={activePage} onNav={onNav} geom={geom} />
+  </>;
 }
 
 function BottomNav({
