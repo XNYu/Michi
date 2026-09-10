@@ -26,6 +26,9 @@ import { followUpReminder } from "../preamble";
 import { normalizeWorkspaceCwd } from "../tools/pathSandbox";
 import { resolveBedrockCredentials } from "../../services/bedrockCredentials";
 import { refreshBedrockCredentialsIfNeeded, refreshOnAuthFailure, isBedrockAuthError } from "../../services/bedrockCredentialManager";
+import { McpClientManager } from "../../services/mcpClientManager";
+import { readPiMcpServers } from "../../services/piMcpConfig";
+import { buildMcpToolsForPi } from "./mcpToolBridge";
 
 export interface PiSessionDeps {
     bridge: AgentToolBridge;
@@ -152,6 +155,13 @@ export class PiSession implements AgentSession {
     private readonly seenPaths: Set<string> = new Set();
     private agent: any | undefined;
     private destroyed = false;
+    /**
+     * Lazily created on first turn when piMcpServers config is non-empty.
+     * Disposed in destroy(). Session-scoped so each PiSession gets its own
+     * MCP child processes (isolated env, independent lifecycle).
+     */
+    private mcpManager: McpClientManager | undefined;
+    private mcpInitialized = false;
     private pendingAssistantBuf: string[] | undefined;
     /**
      * Set at the start of every runTurn so beforeToolCall (which is wired
@@ -303,6 +313,9 @@ export class PiSession implements AgentSession {
 
         // Lazily build the Agent on the first turn (and reuse on subsequent turns).
         if (!this.agent) {
+            // Connect to configured MCP servers (lazy, once per session).
+            const mcpTools = await this.initMcpTools(Type);
+
             const tools = buildPiTools({
                 bridge: this.bridge,
                 cwd: this.cwd,
@@ -329,6 +342,11 @@ export class PiSession implements AgentSession {
                 owner: this.owner,
                 toolProfile: this.toolProfile,
             }).filter((tool) => this.isToolAllowed(tool.name));
+
+            // Append tools from configured MCP servers.
+            if (mcpTools.length > 0) {
+                tools.push(...mcpTools.filter((tool) => this.isToolAllowed(tool.name)));
+            }
 
             // Per-workspace Instructions panel feeds the system prompt directly
             // here. Pi has no warm pool, so we can apply it at session creation
@@ -624,6 +642,53 @@ export class PiSession implements AgentSession {
         }
         this.pendingPermissions.clear();
         this.agent = undefined;
+        // Fire-and-forget MCP cleanup — child processes get SIGTERM.
+        if (this.mcpManager) {
+            this.mcpManager.dispose().catch(() => { /* ignore */ });
+            this.mcpManager = undefined;
+        }
+    }
+
+    /**
+     * Lazily connect to configured MCP servers and convert their tools into
+     * Pi-compatible AgentTool entries.
+     *
+     * Called once per session on the first turn — subsequent turns reuse
+     * the already-connected manager and the cached tool array.
+     *
+     * Errors are non-fatal: a failed MCP connection logs a warning but does
+     * not prevent the session from running (with built-in tools only).
+     */
+    private async initMcpTools(Type: any): Promise<any[]> {
+        if (this.mcpInitialized && this.mcpManager) {
+            return buildMcpToolsForPi({ mcpManager: this.mcpManager, Type });
+        }
+        this.mcpInitialized = true;
+
+
+        const configs = readPiMcpServers();
+        if (configs.length === 0) return [];
+
+        const manager = new McpClientManager();
+        for (const cfg of configs) {
+            try {
+                await manager.connect({ ...cfg, cwd: cfg.cwd ?? this.cwd });
+            } catch (err) {
+                console.warn(
+                    `[PiSession] MCP server "${cfg.serverName}" (${cfg.command}) failed to connect:`,
+                    (err as Error).message,
+                );
+                // Continue — don't block the session for one failed MCP server.
+            }
+        }
+
+        if (manager.connectedServers().length === 0) {
+            await manager.dispose();
+            return [];
+        }
+
+        this.mcpManager = manager;
+        return buildMcpToolsForPi({ mcpManager: manager, Type });
     }
 }
 
