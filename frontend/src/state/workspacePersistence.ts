@@ -204,6 +204,15 @@ export const HYDRATION_RETRY_DELAY_MS = 250;
 export const REMOTE_HYDRATION_RETRY_INITIAL_MS = 1_000;
 export const REMOTE_HYDRATION_RETRY_MAX_MS = 15_000;
 const REMOTE_HYDRATION_TIMEOUT_MS = 8_000;
+/**
+ * How long the hydration barrier waits for the active tree's message bodies
+ * before painting with placeholders. The eager load exists to avoid a
+ * placeholder→content flicker on first paint; a local ~5MB tree answers in
+ * well under this budget, so the common case still paints real messages. A
+ * slow answer (large tree, cold disk) hands the tree to the lazy loader
+ * instead of holding the whole UI behind "loading workspaces…".
+ */
+export const ACTIVE_TREE_EAGER_BUDGET_MS = 750;
 
 /**
  * Read the raw (pre-hydration) SavedState from localStorage. Prefers the new
@@ -1242,9 +1251,18 @@ export function useWorkspacePersistence({
         window.clearTimeout(timer);
       }
     };
-    const awaitBackendSnapshots = async (): Promise<{
-      snapshots: BackendSnapshot[];
-      unavailableConnections: BackendConnectionSummary[];
+    type RemoteFetchResult = { connection: BackendConnectionSummary; snapshot: BackendSnapshot | null };
+    /**
+     * Wait for the LOCAL backend only. Remote snapshot fetches are started here
+     * (so they overlap the local work) but returned as pending promises: the
+     * caller decides whether to block on them. In the measured real launch the
+     * remote SSH tunnel spent the full 8s timeout before the retry succeeded in
+     * 0.5s — holding the whole UI behind it turned a ~0.5s boot into ~8.5s.
+     */
+    const awaitLocalSnapshot = async (): Promise<{
+      localWorkspaces: unknown[];
+      connections: BackendConnectionSummary[];
+      remoteFetches: Promise<RemoteFetchResult>[];
     } | null> => {
       for (;;) {
         if (cancelled) return null;
@@ -1283,21 +1301,11 @@ export function useWorkspacePersistence({
               : Promise.resolve([]),
           ]);
           setKnownBackendConnections(connections);
-          const remoteResults = await Promise.all(connections.map(async (connection) => ({
+          const remoteFetches = connections.map(async (connection): Promise<RemoteFetchResult> => ({
             connection,
             snapshot: await fetchRemoteSnapshot(connection),
-          })));
-          return {
-            snapshots: [
-              { connectionId: LOCAL_BACKEND_CONNECTION_ID, workspaces: localWorkspaces },
-              ...remoteResults
-                .map((result) => result.snapshot)
-                .filter((snapshot): snapshot is BackendSnapshot => snapshot !== null),
-            ],
-            unavailableConnections: remoteResults
-              .filter((result) => result.snapshot === null)
-              .map((result) => result.connection),
-          };
+          }));
+          return { localWorkspaces, connections, remoteFetches };
         } catch {
           if (cancelled) return null;
           // Connection-level failure: the backend is still starting. Wait and
@@ -1305,6 +1313,51 @@ export function useWorkspacePersistence({
           await new Promise<void>((resolve) => window.setTimeout(resolve, HYDRATION_RETRY_DELAY_MS));
         }
       }
+    };
+    // Which project the window wanted on boot, and which one we auto-selected
+    // in its place because it was not in the local snapshot (typically: the
+    // window was last on a remote workspace). When that remote snapshot lands
+    // and the user has not navigated away from the auto-selection, restore the
+    // preference.
+    let pendingPreferredActiveId: string | null = null;
+    let autoSelectedActiveId: string | null = null;
+    // Remote snapshots may resolve before the local state is installed. Merging
+    // into projectsRef before that would be overwritten by the local install, so
+    // remote merges wait on this barrier.
+    let resolveLocalInstalled: () => void = () => {};
+    const localInstalled = new Promise<void>((resolve) => { resolveLocalInstalled = resolve; });
+    const applyRemoteSnapshot = (connection: BackendConnectionSummary, snapshot: BackendSnapshot): void => {
+      const nextState: HydratedState = {
+        projects: [...projectsRef.current],
+        activeProjectId: activeProjectIdRef.current,
+        nodes: { ...nodesRef.current },
+      };
+      const changedProjects = replaceBackendSnapshot(nextState, snapshot);
+      if (changedProjects > 0) {
+        const activeStillExists = nextState.projects.some(
+          (project) => project.id === nextState.activeProjectId,
+        );
+        if (!activeStillExists) {
+          const preferred = nextState.projects.find(
+            (project) => project.id === initialActiveProjectIdRef.current,
+          );
+          nextState.activeProjectId = preferred?.id ?? nextState.projects[0]?.id ?? null;
+        } else if (
+          pendingPreferredActiveId !== null
+          && nextState.activeProjectId === autoSelectedActiveId
+          && nextState.projects.some((project) => project.id === pendingPreferredActiveId)
+        ) {
+          nextState.activeProjectId = pendingPreferredActiveId;
+          pendingPreferredActiveId = null;
+          autoSelectedActiveId = null;
+        }
+        projectsRef.current = nextState.projects;
+        activeProjectIdRef.current = nextState.activeProjectId;
+        setProjects(nextState.projects);
+        setActiveProjectId(nextState.activeProjectId);
+        installNodes(nextState.nodes);
+      }
+      console.info(`remote backend hydrated (${connection.name}); reconciled ${changedProjects} workspace(s)`);
     };
     const retryRemoteHydration = async (connection: BackendConnectionSummary): Promise<void> => {
       let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
@@ -1318,63 +1371,88 @@ export function useWorkspacePersistence({
           retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
           continue;
         }
-
-        const nextState: HydratedState = {
-          projects: [...projectsRef.current],
-          activeProjectId: activeProjectIdRef.current,
-          nodes: { ...nodesRef.current },
-        };
-        const changedProjects = replaceBackendSnapshot(nextState, snapshot);
-        if (changedProjects > 0) {
-          const activeStillExists = nextState.projects.some(
-            (project) => project.id === nextState.activeProjectId,
-          );
-          if (!activeStillExists) {
-            const preferred = nextState.projects.find(
-              (project) => project.id === initialActiveProjectIdRef.current,
-            );
-            nextState.activeProjectId = preferred?.id ?? nextState.projects[0]?.id ?? null;
-          }
-          projectsRef.current = nextState.projects;
-          activeProjectIdRef.current = nextState.activeProjectId;
-          setProjects(nextState.projects);
-          setActiveProjectId(nextState.activeProjectId);
-          installNodes(nextState.nodes);
-        }
-        console.info(`remote backend reconnected (${connection.name}); reconciled ${changedProjects} workspace(s)`);
+        applyRemoteSnapshot(connection, snapshot);
         return;
       }
     };
+    const mergeRemoteWhenReady = async (fetch: Promise<RemoteFetchResult>): Promise<void> => {
+      const { connection, snapshot } = await fetch;
+      await localInstalled;
+      if (cancelled) return;
+      if (snapshot) applyRemoteSnapshot(connection, snapshot);
+      else void retryRemoteHydration(connection);
+    };
     (async () => {
       try {
-        const snapshotResult = await awaitBackendSnapshots();
-        if (cancelled || snapshotResult === null) return;
+        const localResult = await awaitLocalSnapshot();
+        if (cancelled || localResult === null) return;
+        const { localWorkspaces, connections, remoteFetches } = localResult;
+        const snapshots: BackendSnapshot[] = [
+          { connectionId: LOCAL_BACKEND_CONNECTION_ID, workspaces: localWorkspaces },
+        ];
+        const unavailableConnections: BackendConnectionSummary[] = [];
+        if (localWorkspaces.length === 0 && connections.length > 0) {
+          // Remote-only setup: the local DB has nothing to paint, so finishing
+          // now would flash the empty-DB "create a workspace" state and then
+          // pop the remote workspaces in. Block on the remotes (bounded by
+          // REMOTE_HYDRATION_TIMEOUT_MS each) exactly as before.
+          for (const result of await Promise.all(remoteFetches)) {
+            if (result.snapshot) snapshots.push(result.snapshot);
+            else unavailableConnections.push(result.connection);
+          }
+        } else {
+          // Local-first: paint as soon as the local backend answers. Each remote
+          // snapshot merges in when it lands (or enters the retry loop).
+          for (const fetch of remoteFetches) void mergeRemoteWhenReady(fetch);
+        }
+        if (cancelled) return;
         const backendState: HydratedState = { projects: [], activeProjectId: null, nodes: {} };
-        for (const snapshot of snapshotResult.snapshots) {
+        for (const snapshot of snapshots) {
           appendBackendSnapshot(backendState, snapshot);
         }
-        backendState.activeProjectId = backendState.projects.some(
-          (project) => project.id === initialActiveProjectIdRef.current,
-        ) ? initialActiveProjectIdRef.current : backendState.projects[0]?.id ?? null;
         if (backendState.projects.length > 0) {
+            const preferredActiveId = resolveActiveProjectForWindow(initialActiveProjectIdRef.current);
+            const preferredExists = backendState.projects.some((p) => p.id === preferredActiveId);
+            const resolvedActiveId = preferredExists
+              ? preferredActiveId
+              : backendState.projects[0]?.id ?? null;
+            if (!preferredExists && preferredActiveId !== null && connections.length > 0) {
+              // Likely a remote workspace whose snapshot has not landed yet.
+              pendingPreferredActiveId = preferredActiveId;
+              autoSelectedActiveId = resolvedActiveId;
+            }
+            backendState.activeProjectId = resolvedActiveId;
             // Eager-load the active workspace's active tree so first paint shows
-            // real messages, not placeholders. Best-effort: a failure here just
-            // leaves that tree to the on-demand path (it does not block boot).
-            const resolvedActiveId = resolveActiveProjectForWindow(backendState.activeProjectId);
+            // real messages, not placeholders — but only within a bounded budget.
+            // Past the budget, the tree stays placeholder and the lazy loader
+            // fills it in; a slow tree must not hold the whole UI. Best-effort: a
+            // failure here likewise falls through to the on-demand path.
             const activeProject = backendState.projects.find((p) => p.id === resolvedActiveId);
             let nodes = backendState.nodes;
             if (activeProject?.activeTreeId) {
+              let budgetTimer: number | undefined;
               try {
-                const rows = await fetchTreeMessages(
-                  activeProject.id,
-                  activeProject.activeTreeId,
-                  activeProject.backendConnectionId,
-                );
+                const rows = await Promise.race([
+                  fetchTreeMessages(
+                    activeProject.id,
+                    activeProject.activeTreeId,
+                    activeProject.backendConnectionId,
+                  ),
+                  new Promise<null>((resolve) => {
+                    budgetTimer = window.setTimeout(() => resolve(null), ACTIVE_TREE_EAGER_BUDGET_MS);
+                  }),
+                ]);
                 if (cancelled) return;
-                const byNode = buildMessagesByNode(rows);
-                nodes = applyTreeMessages(nodes, byNode);
+                if (rows !== null) {
+                  const byNode = buildMessagesByNode(rows);
+                  nodes = applyTreeMessages(nodes, byNode);
+                } else {
+                  console.info('active tree eager-load exceeded budget; deferring to lazy loader');
+                }
               } catch {
                 // active tree stays placeholder → loads on first open.
+              } finally {
+                if (budgetTimer !== undefined) window.clearTimeout(budgetTimer);
               }
             }
             setProjects(backendState.projects);
@@ -1401,7 +1479,8 @@ export function useWorkspacePersistence({
           }
           if (!cancelled) finishHydration(lsState.projects.length > 0 ? 'localStorage' : 'empty');
         }
-        for (const connection of snapshotResult.unavailableConnections) {
+        resolveLocalInstalled();
+        for (const connection of unavailableConnections) {
           void retryRemoteHydration(connection);
         }
       } catch {
@@ -1415,6 +1494,7 @@ export function useWorkspacePersistence({
           installNodes(lsState.nodes);
           finishHydration('fallbackLocalStorage');
         }
+        resolveLocalInstalled();
       }
     })();
     return () => {

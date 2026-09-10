@@ -40,7 +40,7 @@ vi.mock('../services/api', () => ({
   listBackendConnections: apiMocks.listBackendConnections,
 }));
 
-import { useWorkspacePersistence } from './workspacePersistence';
+import { ACTIVE_TREE_EAGER_BUDGET_MS, useWorkspacePersistence } from './workspacePersistence';
 
 const V2_CAPABILITIES = {
   protocolVersion: 2,
@@ -72,9 +72,9 @@ const backendWorkspaceRow = {
  * flip it. The two existing hydration harnesses start hydrated=true, so they
  * never drive this transition — this one does.
  */
-function useHarness() {
+function useHarness(initialActiveProjectId: string | null = null) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(initialActiveProjectId);
   const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({});
   const [hydrated, setHydrated] = useState(false);
   const [structureVersion] = useState(0);
@@ -84,7 +84,7 @@ function useHarness() {
     projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
   });
-  return { hydrated, projects, projectsCount: projects.length };
+  return { hydrated, projects, projectsCount: projects.length, activeProjectId, nodes };
 }
 
 describe('cold-start hydration barrier', () => {
@@ -199,6 +199,153 @@ describe('cold-start hydration barrier', () => {
     expect(remoteAttempts).toBeGreaterThanOrEqual(2);
     expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', 'ws-remote-late']);
     expect(result.current.projects.find((project) => project.id === 'ws-remote-late')?.backendConnectionId).toBe('remote-late');
+  });
+
+  describe('local-first: remote backends never hold the barrier', () => {
+    const remoteConnection: BackendConnectionSummary = {
+      id: 'remote-slow', name: 'Slow tunnel', transport: 'ssh', apiUrl: '', sshHost: 'build-server', remotePort: 3000, hasToken: true, createdAt: 1, updatedAt: 1,
+    } as BackendConnectionSummary;
+    const remoteWorkspace = {
+      ...backendWorkspaceRow,
+      workspace: { id: 'ws-remote-slow', name: 'Remote', created_at: 2 },
+      nodes: [{ id: 'n-remote-slow', created_at: 2 }],
+    };
+
+    it('finalizes with local workspaces while the remote snapshot is still in flight, then merges it', async () => {
+      const remote = deferred<unknown[]>();
+      apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);
+      apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
+        connectionId === 'remote-slow' ? remote.promise : [backendWorkspaceRow]
+      ));
+
+      const { result } = renderHook(() => useHarness());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      // The old barrier would sit here for up to REMOTE_HYDRATION_TIMEOUT_MS.
+      expect(result.current.hydrated).toBe(true);
+      expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1']);
+
+      remote.resolve([remoteWorkspace]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', 'ws-remote-slow']);
+      expect(result.current.projects.find((project) => project.id === 'ws-remote-slow')?.backendConnectionId).toBe('remote-slow');
+    });
+
+    it('auto-selects a local workspace, then restores the window\'s remote preference once it lands', async () => {
+      const remote = deferred<unknown[]>();
+      apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);
+      apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
+        connectionId === 'remote-slow' ? remote.promise : [backendWorkspaceRow]
+      ));
+
+      // The window was last on the remote workspace.
+      const { result } = renderHook(() => useHarness('ws-remote-slow'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      expect(result.current.hydrated).toBe(true);
+      // Not dangling: something real is active while the tunnel comes up.
+      expect(result.current.activeProjectId).toBe('ws-1');
+
+      remote.resolve([remoteWorkspace]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      expect(result.current.activeProjectId).toBe('ws-remote-slow');
+    });
+
+    it('does not override a user navigation made before the remote snapshot lands', async () => {
+      const remote = deferred<unknown[]>();
+      const secondLocal = {
+        ...backendWorkspaceRow,
+        workspace: { id: 'ws-2', name: 'Second', created_at: 1 },
+        nodes: [{ id: 'n2', created_at: 1 }],
+      };
+      apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);
+      apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
+        connectionId === 'remote-slow' ? remote.promise : [backendWorkspaceRow, secondLocal]
+      ));
+
+      const { result } = renderHook(() => {
+        const [projects, setProjects] = useState<Project[]>([]);
+        const [activeProjectId, setActiveProjectId] = useState<string | null>('ws-remote-slow');
+        const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({});
+        const [hydrated, setHydrated] = useState(false);
+        const nodesRef = useRef(nodes);
+        nodesRef.current = nodes;
+        useWorkspacePersistence({
+          projects, activeProjectId, nodes, structureVersion: 0, hydrated, nodesRef,
+          setProjects, setActiveProjectId, setNodes, setHydrated,
+        });
+        return { hydrated, activeProjectId, setActiveProjectId };
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(result.current.activeProjectId).toBe('ws-1');
+
+      // User picks another workspace while the tunnel is still connecting.
+      act(() => { result.current.setActiveProjectId('ws-2'); });
+      remote.resolve([remoteWorkspace]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      expect(result.current.activeProjectId).toBe('ws-2');
+    });
+
+    it('still waits for remote snapshots when the local DB is empty (remote-only setup)', async () => {
+      const remote = deferred<unknown[]>();
+      apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);
+      apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
+        connectionId === 'remote-slow' ? remote.promise : []
+      ));
+
+      const { result } = renderHook(() => useHarness());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      // Finalizing here would flash the empty-DB "create a workspace" state.
+      expect(result.current.hydrated).toBe(false);
+
+      remote.resolve([remoteWorkspace]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      expect(result.current.hydrated).toBe(true);
+      expect(result.current.projects.map((project) => project.id)).toEqual(['ws-remote-slow']);
+      expect(result.current.activeProjectId).toBe('ws-remote-slow');
+    });
+  });
+
+  describe('active tree eager-load budget', () => {
+    const rowWithTree = {
+      ...backendWorkspaceRow,
+      workspace: { ...backendWorkspaceRow.workspace, active_tree_id: 't-1' },
+      trees: [{ id: 't-1', workspace_id: 'ws-1', root_node_id: 'n1', created_at: 1 }],
+      nodes: [{ id: 'n1', tree_id: 't-1', created_at: 1, message_count: 2 }],
+    };
+
+    it('paints with placeholders instead of waiting on a slow active tree', async () => {
+      const slowTree = deferred<unknown[]>();
+      apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([rowWithTree]);
+      apiMocks.fetchTreeMessages.mockReturnValue(slowTree.promise as Promise<never[]>);
+
+      const { result } = renderHook(() => useHarness());
+      await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_TREE_EAGER_BUDGET_MS - 1); });
+      expect(result.current.hydrated).toBe(false);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2); });
+      expect(result.current.hydrated).toBe(true);
+      expect(result.current.projectsCount).toBe(1);
+      // The tree is left to the lazy loader — never a hard failure.
+      slowTree.resolve([]);
+      await act(async () => { await Promise.resolve(); });
+    });
+
+    it('waits for a fast active tree so first paint has real messages', async () => {
+      apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([rowWithTree]);
+      apiMocks.fetchTreeMessages.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useHarness());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+      expect(apiMocks.fetchTreeMessages).toHaveBeenCalledWith('ws-1', 't-1', undefined);
+      expect(result.current.hydrated).toBe(true);
+    });
   });
 
   it('still finalizes an empty DB when the backend answers with []', async () => {
