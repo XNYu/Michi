@@ -4,6 +4,9 @@ import { usePrefs } from '../../state/prefs';
 import { buildCommands, filterCommands, Command, PageId } from '../../state/commands';
 import { type MessageMatch } from '../../state/search';
 import { useServerSearch } from '../../state/useServerSearch';
+import { useNodeSearch } from '../../state/useNodeSearch';
+import { type NodeGroupedResult } from '../../services/api';
+import { relativeTime } from '../../lib/relativeTime';
 import { requestDigest } from '../../lib/digestPrompt';
 import { navigateToNode } from '../../state/navigateToNode';
 import { ModalShell } from '../ui/ModalShell';
@@ -100,6 +103,91 @@ const ROW_LABEL = (active: boolean): React.CSSProperties => ({
   whiteSpace: 'nowrap',
 });
 
+// ── Node-grouped search result styles ────────────────────────────────────
+
+/** Render a snippet containing `<mark>…</mark>` tags from the backend. */
+function renderHtmlSnippet(html: string): React.ReactNode {
+  // Split on <mark>…</mark> tags to produce React elements.
+  const parts: React.ReactNode[] = [];
+  let remaining = html;
+  let key = 0;
+  while (remaining.length > 0) {
+    const openIdx = remaining.indexOf('<mark>');
+    if (openIdx === -1) {
+      parts.push(remaining);
+      break;
+    }
+    if (openIdx > 0) parts.push(remaining.slice(0, openIdx));
+    const afterOpen = remaining.slice(openIdx + '<mark>'.length);
+    const closeIdx = afterOpen.indexOf('</mark>');
+    if (closeIdx === -1) {
+      parts.push(remaining);
+      break;
+    }
+    parts.push(
+      <mark key={key++} style={{ background: 'var(--term-accent)', color: 'var(--on-accent)', padding: '0 2px', borderRadius: 1 }}>
+        {afterOpen.slice(0, closeIdx)}
+      </mark>
+    );
+    remaining = afterOpen.slice(closeIdx + '</mark>'.length);
+  }
+  return parts;
+}
+
+const nodeCardStyle = (active: boolean): React.CSSProperties => ({
+  padding: '8px 14px 10px 12px', // 12px + 2px border-left = 14px total (aligns with group label)
+  cursor: 'pointer',
+  borderLeft: active ? '2px solid var(--term-accent)' : '2px solid transparent',
+  background: active ? 'var(--term-alt)' : 'transparent',
+  transition: 'background 60ms cubic-bezier(.2,0,.6,1)',
+});
+
+const NODE_CARD_SEPARATOR: React.CSSProperties = {
+  borderTop: '1px solid color-mix(in srgb, var(--term-line) 50%, transparent)',
+};
+
+const BREADCRUMB_STYLE: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  fontSize: 11.5,
+  lineHeight: 1.4,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const NODE_TIME_STYLE: React.CSSProperties = {
+  flexShrink: 0,
+  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
+  fontSize: 10.5,
+  color: 'var(--term-faint)',
+  fontVariantNumeric: 'tabular-nums',
+  whiteSpace: 'nowrap',
+};
+
+const SNIPPET_ROW_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  lineHeight: '1.55',
+  color: 'var(--term-mid)',
+  padding: '2px 0',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const SNIPPET_ROLE_STYLE: React.CSSProperties = {
+  color: 'var(--term-faint)',
+  fontSize: 9,
+  marginRight: 4,
+};
+
+const OVERFLOW_HINT_STYLE: React.CSSProperties = {
+  fontSize: 10,
+  color: 'var(--term-faint)',
+  padding: '2px 0 0 0',
+  fontStyle: 'italic',
+};
+
 export function openWorkspaceFromPalette(
   projectId: string,
   actions: {
@@ -156,9 +244,12 @@ export default function CommandPalette({
     return () => clearTimeout(t);
   }, [query]);
 
-  // Server-side FTS search — complete regardless of which trees' message
-  // bodies are lazily loaded into memory. (The old in-memory scan missed
-  // unloaded trees.)
+  // Server-side FTS search — node-grouped, time-sorted, with breadcrumbs.
+  // Each result is one unique node with up to 3 best-matching snippets.
+  const nodeSearch = useNodeSearch(debouncedQuery);
+  const nodeResults = nodeSearch.nodes;
+
+  // Keep the old flat search available for backward compat / fallback.
   const searchResult = useServerSearch(debouncedQuery, projects);
   const searchMatches = searchResult.matches;
 
@@ -174,6 +265,23 @@ export default function CommandPalette({
     }),
     [projects, activeProject, selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId],
   );
+
+  /** Navigate to a node-grouped search result (goes to the node, not a specific message). */
+  const navigateToNodeResult = useCallback((r: NodeGroupedResult, messageId?: string) => {
+    if (query.trim()) setSearchHighlightTerm({ term: query.trim(), nodeId: r.nodeId });
+    navigateToNode(navDeps, r.nodeId, r.workspaceId);
+    setPage('dashboard');
+    if (messageId) {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(
+          new CustomEvent('michi:scroll-to-message', {
+            detail: { nodeId: r.nodeId, messageId, messageIdx: -1 },
+          }),
+        );
+      });
+    }
+    onClose();
+  }, [navDeps, setPage, onClose, query, setSearchHighlightTerm]);
 
   const navigateToResult = useCallback((m: MessageMatch) => {
     if (query.trim()) setSearchHighlightTerm({ term: query.trim(), nodeId: m.nodeId });
@@ -280,8 +388,8 @@ export default function CommandPalette({
   }, [cmds, query]);
   const showRecents = !query.trim();
 
-  // Flat list of keyboard-navigable rows = commands + message matches.
-  const totalRows = visible.length + (showRecents ? 0 : searchMatches.length);
+  // Flat list of keyboard-navigable rows = commands + node search results.
+  const totalRows = visible.length + (showRecents ? 0 : nodeResults.length);
 
   // Reset the active highlight to the first row whenever the query changes so
   // the user can type a filter term and immediately press Enter to run the
@@ -330,10 +438,10 @@ export default function CommandPalette({
         return;
       }
       const matchIdx = idx - visible.length;
-      const m = searchMatches[matchIdx];
-      if (m) navigateToResult(m);
+      const nr = nodeResults[matchIdx];
+      if (nr) navigateToNodeResult(nr);
     },
-    [visible, searchMatches, totalRows, onClose, navigateToResult],
+    [visible, nodeResults, totalRows, onClose, navigateToNodeResult],
   );
 
   const runActiveRow = useCallback(() => {
@@ -455,57 +563,73 @@ export default function CommandPalette({
               </div>
             );
           })}
-          {visible.length === 0 && searchMatches.length === 0 && (
+          {visible.length === 0 && nodeResults.length === 0 && (
             <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--term-mid)', fontStyle: 'italic' }}>
               {showRecents ? 'no commands available' : 'no matches'}
             </div>
           )}
-          {/* Message search results — same source as ⌘⇧F */}
-          {!showRecents && searchMatches.length > 0 && (
+          {/* Node-grouped search results — deduped by node, time-sorted, with breadcrumbs */}
+          {!showRecents && nodeResults.length > 0 && (
             <div>
               <div style={GROUP_LABEL}>
-                MESSAGES{searchResult.truncated ? ` · capped at ${searchMatches.length}` : ''}
+                MESSAGES · {nodeResults.length} node{nodeResults.length !== 1 ? 's' : ''}
               </div>
-              {searchMatches.map((m, mi) => {
-                const rowIdx = visible.length + mi;
+              {nodeResults.map((nr, ni) => {
+                const rowIdx = visible.length + ni;
                 const isActive = rowIdx === active;
-                const quickKey = !showRecents && rowIdx < 9 ? kbd('mod', String(rowIdx + 1)) : null;
+                const overflow = nr.totalMatches - nr.snippets.length;
                 return (
                   <div
-                    key={`${m.nodeId}-${m.messageIdx}`}
+                    key={nr.nodeId}
                     data-row-idx={rowIdx}
                     onMouseEnter={() => hoverSetActive(rowIdx)}
-                    onClick={() => navigateToResult(m)}
-                    style={rowStyle(isActive)}
+                    onClick={() => navigateToNodeResult(nr)}
+                    style={{
+                      ...nodeCardStyle(isActive),
+                      ...(ni > 0 ? NODE_CARD_SEPARATOR : {}),
+                    }}
                   >
-                    <span style={ROW_GLYPH(isActive)}>⌕</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: 'var(--ui-font)', fontSize: 12, color: 'var(--term-fg)', fontWeight: isActive ? 600 : 500 }}>
-                        {m.threadName || 'Untitled'}
+                    {/* Breadcrumb + timestamp row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 20 }}>
+                      <div style={BREADCRUMB_STYLE}>
+                        <span style={{ color: 'var(--term-faint)', fontSize: 10.5, letterSpacing: '.02em' }}>
+                          {nr.workspaceName}
+                        </span>
+                        {nr.breadcrumb.length > 0 && (
+                          <span style={{ color: 'var(--term-line-s)', margin: '0 5px', fontSize: 10 }}>›</span>
+                        )}
+                        {nr.breadcrumb.map((seg, si) => {
+                          const isLast = si === nr.breadcrumb.length - 1;
+                          return (
+                            <React.Fragment key={si}>
+                              {si > 0 && (
+                                <span style={{ color: 'var(--term-faint)', margin: '0 3px', fontSize: 10 }}>/</span>
+                              )}
+                              <span style={isLast ? { color: 'var(--term-fg)', fontWeight: 500 } : { color: 'var(--term-muted)' }}>
+                                {seg}
+                              </span>
+                            </React.Fragment>
+                          );
+                        })}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--term-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {renderSnippetWithMark(m.snippet, m.matchOffsetInSnippet)}
-                      </div>
-                      <div style={{ fontSize: 9.5, color: 'var(--term-muted)' }}>{m.workspaceName}</div>
+                      <span style={NODE_TIME_STYLE}>{relativeTime(nr.lastMessageAt)}</span>
                     </div>
-                    {quickKey && (
-                      <kbd
-                        style={{
-                          fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-                          fontSize: 10.5,
-                          color: isActive ? 'var(--term-fg)' : 'var(--term-muted)',
-                          background: isActive ? 'var(--term-subtle)' : 'var(--term-alt)',
-                          border: '1px solid var(--term-line)',
-                          borderRadius: 3,
-                          padding: '1px 5px',
-                          letterSpacing: '.04em',
-                          flexShrink: 0,
-                          alignSelf: 'center',
-                        }}
-                      >
-                        {quickKey}
-                      </kbd>
-                    )}
+                    {/* Snippets */}
+                    <div style={{ marginTop: 5 }}>
+                      {nr.snippets.map((s, si) => (
+                        <div
+                          key={si}
+                          style={SNIPPET_ROW_STYLE}
+                          onClick={(e) => { e.stopPropagation(); navigateToNodeResult(nr, s.messageId); }}
+                        >
+                          <span style={SNIPPET_ROLE_STYLE}>⌕</span>
+                          <span>{renderHtmlSnippet(s.snippet)}</span>
+                        </div>
+                      ))}
+                      {overflow > 0 && (
+                        <div style={OVERFLOW_HINT_STYLE}>+ {overflow} more match{overflow !== 1 ? 'es' : ''}</div>
+                      )}
+                    </div>
                   </div>
                 );
               })}

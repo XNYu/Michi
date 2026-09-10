@@ -27,3 +27,36 @@ export async function searchMessages(
   if (!res.ok) throw new Error(`searchMessages failed: ${res.status}`);
   return res.json();
 }
+
+// ── Node-grouped search types ──
+
+export interface NodeGroupedSnippet {
+  messageId: string;
+  role: 'user' | 'assistant';
+  snippet: string;
+}
+
+export interface NodeGroupedResult {
+  nodeId: string;
+  nodeTitle: string | null;
+  workspaceId: string;
+  workspaceName: string;
+  treeId: string | null;
+  lastMessageAt: number;
+  totalMatches: number;
+  breadcrumb: string[];
+  snippets: NodeGroupedSnippet[];
+}
+
+export async function searchNodesGrouped(
+  query: string,
+  workspaceId?: string,
+  limit = 30,
+): Promise<{ results: NodeGroupedResult[]; totalNodes: number }> {
+  const params = new URLSearchParams({ q: query, mode: 'grouped', limit: String(limit) });
+  if (workspaceId) params.set('workspaceId', workspaceId);
+  const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
+  const res = await fetch(`${base}/search?${params}`);
+  if (!res.ok) throw new Error(`searchNodesGrouped failed: ${res.status}`);
+  return res.json();
+}
