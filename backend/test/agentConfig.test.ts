@@ -64,6 +64,13 @@ describe('agentConfig events', () => {
     });
 });
 
+describe('agentConfig runtime defaults', () => {
+    test('Codex defaults to extra-high reasoning effort', () => {
+        const { getBuiltinDefaultReasoning } = require('../src/services/agentConfig');
+        assert.equal(getBuiltinDefaultReasoning('codex'), 'xhigh');
+    });
+});
+
 describe('agentConfig claudeConfigDir', () => {
     beforeEach(stubFsWrite);
     afterEach(() => {

@@ -47,6 +47,45 @@ function renderToolbar(overrides: Partial<ComponentProps<typeof PaneComposerTool
 }
 
 describe('PaneComposerToolbarLeft', () => {
+  test('places the runtime chip before the agent chip', () => {
+    renderToolbar({
+      currentMode: { id: 'agent', name: 'Agent' },
+      agentStatus: {
+        ...STATUS,
+        availableRuntimes: [{ id: 'kiro', label: 'Kiro', available: true }],
+      },
+    });
+
+    const runtimeChip = screen.getByTitle('Runtime — Kiro');
+    const agentChip = screen.getByTitle('Switch agent — Agent');
+    expect(runtimeChip.compareDocumentPosition(agentChip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('shows Codex default effort in the composer', () => {
+    renderToolbar({
+      agentStatus: {
+        ...STATUS,
+        runtime: 'codex',
+        label: 'Codex',
+        capabilities: {
+          ...STATUS.capabilities,
+          reasoning: true,
+          supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+        },
+        reasoning: 'xhigh',
+      },
+      resolvedBinding: {
+        runtime: 'codex',
+        provider: undefined,
+        model: 'gpt-5-codex',
+        reasoning: 'xhigh',
+        source: 'global',
+      },
+    });
+
+    expect(screen.getByTitle('Effort — Extra high')).toBeTruthy();
+  });
+
   test('shows the agent chip while the modes list is still loading', () => {
     renderToolbar();
 

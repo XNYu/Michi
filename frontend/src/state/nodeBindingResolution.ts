@@ -53,26 +53,38 @@ export function resolveNodeBinding(
   // different runtime and would be invalid.
   const runtimeMatchesGlobal = effectiveRuntime === agentStatus?.runtime;
 
+  // Node-level fields only apply while the node's own runtime is still the
+  // effective one. A pending runtime override must NOT inherit the previous
+  // runtime's provider/model/reasoning — those ids belong to another runtime.
+  const nodeMatchesRuntime = node?.runtimeId
+    ? effectiveRuntime === node.runtimeId
+    : runtimeMatchesGlobal;
+
   const effectiveProvider =
     pendingOverride?.provider ??
-    node?.providerId ??
+    (nodeMatchesRuntime ? node?.providerId : undefined) ??
     (runtimeMatchesGlobal ? agentStatus?.provider : undefined) ??
     undefined;
 
+  // Models are provider-scoped for provider runtimes (e.g. Pi): a model bound
+  // under a different provider is not valid for the newly selected provider.
+  const nodeProviderMatches = !node?.providerId || node.providerId === effectiveProvider;
+  const globalProviderMatches = !agentStatus?.provider || agentStatus.provider === effectiveProvider;
+
   const effectiveModel =
     pendingOverride?.model ??
-    node?.modelId ??
-    (runtimeMatchesGlobal ? agentStatus?.model : undefined) ??
+    (nodeMatchesRuntime && nodeProviderMatches ? node?.modelId : undefined) ??
+    (runtimeMatchesGlobal && globalProviderMatches ? agentStatus?.model : undefined) ??
     undefined;
 
   const effectiveReasoning =
     pendingOverride?.reasoning ??
-    (node?.reasoning as AgentReasoning | undefined) ??
+    (nodeMatchesRuntime ? (node?.reasoning as AgentReasoning | undefined) : undefined) ??
     (runtimeMatchesGlobal ? agentStatus?.reasoning : undefined) ??
     undefined;
 
   const source: ResolvedNodeBinding['source'] =
-    pendingOverride?.runtime || pendingOverride?.model || pendingOverride?.reasoning
+    pendingOverride?.runtime || pendingOverride?.provider || pendingOverride?.model || pendingOverride?.reasoning
       ? 'pending'
       : node?.runtimeId
         ? 'node'

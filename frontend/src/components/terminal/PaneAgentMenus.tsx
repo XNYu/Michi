@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import type { AgentCapabilities, AgentModelInfo, AgentReasoning, AgentStatus, SessionMode } from '../../services/api';
+import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentReasoning, AgentStatus, SessionMode } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import ContextMenu, { type MenuSection } from '../ContextMenu';
 import { REASONING_LABELS } from './PaneComposerToolbarLeft';
@@ -19,11 +19,13 @@ interface PaneAgentMenusProps {
   resolvedBinding: ResolvedNodeBinding;
   catalogCapabilities: AgentCapabilities | null;
   providerModels: readonly AgentModelInfo[];
+  providers?: readonly AgentProviderInfo[];
   modelsLoading: boolean;
   modelsWaiting?: boolean;
   modelsError: string | null;
   onSwitchAgent: (modeId: string) => void;
   onSwitchRuntime: (runtimeId: string) => void;
+  onSaveProvider?: (providerId: string) => void;
   onSaveModel: (modelId: string) => void;
   onRetryModels: () => void;
   onSaveReasoning: (reasoning: AgentReasoning) => void;
@@ -53,11 +55,13 @@ export function PaneAgentMenus({
   resolvedBinding,
   catalogCapabilities,
   providerModels,
+  providers = [],
   modelsLoading,
   modelsWaiting = false,
   modelsError,
   onSwitchAgent,
   onSwitchRuntime,
+  onSaveProvider,
   onSaveModel,
   onRetryModels,
   onSaveReasoning,
@@ -133,10 +137,12 @@ export function PaneAgentMenus({
           resolvedBinding={resolvedBinding}
           catalogCapabilities={catalogCapabilities}
           providerModels={providerModels}
+          providers={providers}
           modelsLoading={modelsLoading}
           modelsWaiting={modelsWaiting}
           modelsError={modelsError}
           onSwitchRuntime={onSwitchRuntime}
+          onSaveProvider={onSaveProvider}
           onSaveModel={onSaveModel}
           onRetryModels={onRetryModels}
           onSaveReasoning={onSaveReasoning}
@@ -153,10 +159,12 @@ function ModelReasoningMenu({
   resolvedBinding,
   catalogCapabilities,
   providerModels,
+  providers = [],
   modelsLoading,
   modelsWaiting,
   modelsError,
   onSwitchRuntime,
+  onSaveProvider,
   onSaveModel,
   onRetryModels,
   onSaveReasoning,
@@ -167,10 +175,12 @@ function ModelReasoningMenu({
   resolvedBinding: ResolvedNodeBinding;
   catalogCapabilities: AgentCapabilities | null;
   providerModels: readonly AgentModelInfo[];
+  providers?: readonly AgentProviderInfo[];
   modelsLoading: boolean;
   modelsWaiting: boolean;
   modelsError: string | null;
   onSwitchRuntime: (runtimeId: string) => void;
+  onSaveProvider?: (providerId: string) => void;
   onSaveModel: (modelId: string) => void;
   onRetryModels: () => void;
   onSaveReasoning: (reasoning: AgentReasoning) => void;
@@ -206,6 +216,25 @@ function ModelReasoningMenu({
         glyph: resolvedBinding.runtime === r.id ? '✓' : undefined,
         run: () => {
           if (r.id !== resolvedBinding.runtime) onSwitchRuntime(r.id);
+        },
+      })),
+    });
+  }
+
+  // Provider section — for provider runtimes (e.g. Pi), let users pick the
+  // API provider directly from the composer menu. Selecting one reloads the
+  // model catalog for that provider.
+  if (isProvider && onSaveProvider && providers.length > 0) {
+    sections.push({
+      label: 'Provider',
+      trailingGlyph: true,
+      items: providers.map((p) => ({
+        id: `p-${p.id}`,
+        label: p.label || p.id,
+        sublabel: p.hasKey === false ? '— no API key configured' : undefined,
+        glyph: resolvedBinding.provider === p.id ? '✓' : undefined,
+        run: () => {
+          if (p.id !== resolvedBinding.provider) onSaveProvider(p.id);
         },
       })),
     });

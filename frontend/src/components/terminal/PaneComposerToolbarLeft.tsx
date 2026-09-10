@@ -117,23 +117,6 @@ export function PaneComposerToolbarLeft({
         @
       </span>
 
-      {showAgentChip && (
-        <span
-          className="t-toolbar-chip"
-          data-icononly={toolbarTier >= 1 ? 'true' : undefined}
-          title={`Switch agent — ${currentMode?.name ?? currentModeId ?? 'agent'}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onOpenAgentMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 });
-          }}
-          style={{ color: 'var(--term-mauve)' }}
-        >
-          <span style={{ flexShrink: 0 }}>⎇</span>
-          <span className="t-chip-label">{currentMode?.name ?? currentModeId ?? 'agent'}</span>
-        </span>
-      )}
-
       {showRuntimeChip && (
         <span
           className="t-toolbar-chip"
@@ -152,6 +135,22 @@ export function PaneComposerToolbarLeft({
           }}
         >
           <span className="t-chip-label">{runtimeLabel}</span>
+        </span>
+      )}
+
+      {showAgentChip && (
+        <span
+          className="t-toolbar-chip"
+          data-icononly={toolbarTier >= 1 ? 'true' : undefined}
+          title={`Switch agent — ${currentMode?.name ?? currentModeId ?? 'agent'}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onOpenAgentMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 });
+          }}
+        >
+          <span style={{ flexShrink: 0 }}>⎇</span>
+          <span className="t-chip-label">{currentMode?.name ?? currentModeId ?? 'agent'}</span>
         </span>
       )}
 

@@ -47,6 +47,7 @@ const BUILTIN_DEFAULT_MODEL_BY_RUNTIME: Record<string, string> = {
 // Hard-coded default reasoning level per runtime. Used when neither
 // agentConfig.reasoningByRuntime nor a per-call override picks one.
 const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
+  codex: "xhigh",
   claude: "high",
   pi: "high",
   kiro: "high",
