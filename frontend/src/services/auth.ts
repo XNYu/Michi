@@ -1,4 +1,5 @@
 import { createAuthClient } from "better-auth/react";
+import { createContext, useContext } from 'react';
 
 /**
  * Better-Auth client. Talks to the backend's /api/auth/* handlers via
@@ -29,6 +30,12 @@ export const authClient = createAuthClient({
     },
 });
 
+type AuthSession = ReturnType<typeof authClient.useSession>['data'];
+export const AuthSessionContext = createContext<AuthSession>(null);
+export function useAuthSession(): AuthSession {
+    return useContext(AuthSessionContext);
+}
+
 export interface AuthConfig {
     requireAuth: boolean;
 }
@@ -38,7 +45,7 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
     const apiBase = import.meta.env.VITE_API_URL || "/api";
     try {
         const res = await fetch(`${apiBase}/auth-config`, {
-            credentials: "include",
+            credentials: "omit",
         });
         if (!res.ok) return { requireAuth: false };
         const body = await res.json();

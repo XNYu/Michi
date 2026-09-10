@@ -108,7 +108,7 @@ export function centeredPaneScrollLeft({
 }
 
 export default function TerminalDashboard() {
-  const { activeProject } = useChatProjects();
+  const { activeProject, agentStatus } = useChatProjects();
   const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
   const { settleFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: openPanes, paneItems, exitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
@@ -152,10 +152,10 @@ export default function TerminalDashboard() {
   const selectionSourceRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (!activeProject?.id) return;
-    void agentDomain.loadRuns({ version: 1, workspaceId: activeProject.id });
+    if (!activeProject?.id || !agentStatus?.customAgentsEnabled) return;
+    void agentDomain.loadRuns({ version: 1, workspaceId: activeProject.id }).catch(() => {});
     return agentDomain.subscribeWorkspace(activeProject.id);
-  }, [activeProject?.id, agentDomain.loadRuns, agentDomain.subscribeWorkspace]);
+  }, [activeProject?.id, agentStatus?.customAgentsEnabled, agentDomain.loadRuns, agentDomain.subscribeWorkspace]);
 
   useEffect(() => {
     const runs = Object.values(agentDomain.state.runs).filter((resource) => resource.value.workspaceId === activeProject?.id);
@@ -477,7 +477,7 @@ export default function TerminalDashboard() {
     );
   }
   if (activeProject.activeTreeId === null && openPanes.length === 0) {
-    return <EmptyThreads project={activeProject} />;
+    return <EmptyThreads />;
   }
   if (openPanes.length === 0) {
     return <TerminalHome onSubmitted={() => {}} />;

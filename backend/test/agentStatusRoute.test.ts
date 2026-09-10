@@ -20,11 +20,26 @@ describe('/agent/status', () => {
       const r = await fetch(`http://127.0.0.1:${port}/api/agent/status`);
       const body = (await r.json()) as Record<string, unknown>;
       assert.equal(r.status, 200);
+      assert.equal(body.customAgentsEnabled, false);
       assert.ok('availableRuntimes' in body, 'response should include availableRuntimes');
       assert.ok('runtime' in body, 'response should include runtime');
       assert.ok('capabilityDescriptor' in body, 'response should include capabilityDescriptor');
       const descriptor = body.capabilityDescriptor as Record<string, { availability?: string }>;
       assert.equal(typeof descriptor.steer?.availability, 'string');
+    } finally {
+      server.close();
+    }
+  });
+
+  test('advertises Custom Agents only when their routes are enabled', async () => {
+    const app = express();
+    app.use('/api', setupAgentRoutes({ customAgentsEnabled: true }));
+    const server = app.listen(0);
+    try {
+      const port = (server.address() as { port: number }).port;
+      const response = await fetch(`http://127.0.0.1:${port}/api/agent/status`);
+      const body = await response.json() as { customAgentsEnabled: boolean };
+      assert.equal(body.customAgentsEnabled, true);
     } finally {
       server.close();
     }

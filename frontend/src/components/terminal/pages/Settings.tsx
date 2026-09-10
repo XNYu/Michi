@@ -2,7 +2,7 @@ import { useId, useState } from 'react';
 import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
 import type { PageId } from '../../../state/commands';
 import { isArchiveGroupId } from '../../../state/trashActions';
-import { authClient } from '../../../services/auth';
+import { useAuthSession } from '../../../services/auth';
 import { AppearancePane } from './settings/AppearancePane';
 import { ModelPane } from './settings/ModelPane';
 import { NotificationsPane } from './settings/NotificationsPane';
@@ -45,9 +45,9 @@ export default function TerminalSettings({
   });
 
   // The Account category only renders when the user is signed in. In desktop /
-  // Electron mode useSession().data is null and we hide it entirely.
-  const session = authClient.useSession();
-  const signedIn = !!session.data?.user;
+  // Electron mode has no session subscription or account category.
+  const session = useAuthSession();
+  const signedIn = !!session?.user;
 
   const selectedSection = controlledSection ?? localSection;
   const section = selectedSection === 'account' && !signedIn ? 'appearance' : selectedSection;
@@ -115,7 +115,7 @@ export default function TerminalSettings({
           {section === 'connections' && <ConnectionsPane projects={projects} />}
           {section === 'notifications' && <NotificationsPane />}
           {section === 'shortcuts' && <ShortcutsPane />}
-          {section === 'account' && signedIn && <AccountPane user={session.data!.user} />}
+          {section === 'account' && signedIn && <AccountPane user={session!.user} />}
         </section>
       </div>
     </div>

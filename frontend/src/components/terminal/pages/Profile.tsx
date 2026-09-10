@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { PageId } from '../../../state/commands';
-import { authClient } from '../../../services/auth';
+import { useAuthSession } from '../../../services/auth';
 import { signOutAndReset } from '../../../services/signOut';
 import { useChatStore, useNodesSelector } from '../../../state/chatStore';
 import { usePrefs, type TerminalPalette } from '../../../state/prefs';
@@ -34,8 +34,8 @@ import { confirmDialog } from '../../ui/ConfirmDialog';
  * telemetry yet.
  */
 export default function ProfilePage({ onNav }: { onNav?: (p: PageId) => void } = {}) {
-  const session = authClient.useSession();
-  const user = session.data?.user;
+  const session = useAuthSession();
+  const user = session?.user;
   const { prefs, setPref } = usePrefs();
   const { projects } = useChatStore();
   const activity = useNodesSelector(

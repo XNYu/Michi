@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePanePresence } from './usePanePresence';
 import type { PaneItem } from '../../state/paneItems';
+import React from 'react';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -13,10 +14,45 @@ function harness(initialIds = ['a', 'b']) {
   const item = { id: 'b', kind: 'launcher', title: 'New pane', projectId: 'p', treeId: 'tree', createdAt: 1 } as PaneItem;
   return renderHook(({ ids, items, scope }) => usePanePresence(ids, items, scope), {
     initialProps: { ids: initialIds, items: { b: item } as Record<string, PaneItem>, scope: 'tree' },
+    wrapper: React.StrictMode,
   });
 }
 
 describe('pane presence', () => {
+  it('clears pending exits when reduced motion changes without new pane inputs', () => {
+    const { result, rerender } = harness();
+    const next = { ids: ['a'], items: {}, scope: 'tree' };
+    rerender(next);
+    act(() => result.current.holdExits(['b']));
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    rerender(next);
+    expect(result.current.paneIds).toEqual(['a']);
+    expect(result.current.exitingIds.size).toBe(0);
+  });
+
+  it('does not restart an exit for equivalent pane arrays', () => {
+    const { result, rerender } = harness();
+    rerender({ ids: ['a'], items: {}, scope: 'tree' });
+    const exitingPanes = result.current.paneIds;
+    for (let i = 0; i < 10; i++) {
+      rerender({ ids: ['a'], items: {}, scope: 'tree' });
+      expect(result.current.paneIds).toBe(exitingPanes);
+    }
+    act(() => vi.advanceTimersByTime(192));
+    expect(result.current.paneIds).toEqual(['a']);
+  });
+
+  it('commits opened panes and tree switches under StrictMode', () => {
+    const { result, rerender } = renderHook(({ ids, scope }) => usePanePresence(ids, {}, scope), {
+      initialProps: { ids: ['a'], scope: 'tree' },
+      wrapper: React.StrictMode,
+    });
+    rerender({ ids: ['a', 'b'], scope: 'tree' });
+    expect(result.current.paneIds).toEqual(['a', 'b']);
+    rerender({ ids: ['other'], scope: 'other-tree' });
+    expect(result.current.paneIds).toEqual(['other']);
+  });
+
   it('lets a held animation own removal even after the fallback deadline', () => {
     const { result, rerender } = harness();
     rerender({ ids: ['a'], items: {}, scope: 'tree' });
@@ -49,6 +85,7 @@ describe('pane presence', () => {
   it('retains a soft fade through its fade and subsequent layout phase', () => {
     const { result, rerender } = renderHook(({ ids }) => usePanePresence(ids, {}, 'tree', true, 290), {
       initialProps: { ids: ['a', 'b'] },
+      wrapper: React.StrictMode,
     });
     rerender({ ids: ['a'] });
     act(() => vi.advanceTimersByTime(192));

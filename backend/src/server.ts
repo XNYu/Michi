@@ -612,7 +612,7 @@ const mcpRouter = express.Router();
 mountMcp(mcpRouter, mcpRegistry);
 app.use('/api', mcpRouter);
 
-app.use('/api', setupAgentRoutes({ catalogCache: runtimeModelCache }));
+app.use('/api', setupAgentRoutes({ catalogCache: runtimeModelCache, customAgentsEnabled }));
 if (agentRunAssembly.enabled) {
   app.use('/api', setupCustomAgentRoutes({ service: agentRunAssembly.definitionService }));
   app.use('/api', setupAgentRunRoutes({ service: agentRunAssembly.routeService, sse: agentRunAssembly.sse }));

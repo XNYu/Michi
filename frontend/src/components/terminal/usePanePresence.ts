@@ -7,25 +7,15 @@ export function usePanePresence(ids: readonly string[], items: Record<string, Pa
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const [state, setState] = useState(() => ({ scope, requested: ids, ids: [...ids], exiting: new Map<string, number>() }));
 
-  // Track the inputs we last processed to avoid re-triggering during the
-  // same render pass.  React 18 allows render-phase setState but it must
-  // converge in one pass — if ANY subsequent parent render changes props
-  // before the batch commits, the condition can fire again and loop.
-  // Using a ref-gated guard ensures we process each distinct input exactly
-  // once and never re-enter on the same values.
-  const processedRef = useRef<{ scope: string; ids: readonly string[]; enabled: boolean }>({ scope, ids, enabled });
-
-  const inputChanged = processedRef.current.scope !== scope
-    || processedRef.current.ids !== ids
-    || processedRef.current.enabled !== enabled;
+  // Compare with the inputs committed alongside the rendered panes, not a
+  // render-mutated ref that survives StrictMode retries. Compare ID contents
+  // so fresh but equivalent arrays cannot cause a render loop.
   const needsClear = (!enabled || reduced) && state.exiting.size > 0;
   const idsContentChanged = state.scope !== scope
     || state.requested.length !== ids.length
     || state.requested.some((id, i) => id !== ids[i]);
 
-  if (inputChanged && (idsContentChanged || needsClear)) {
-    processedRef.current = { scope, ids, enabled };
-
+  if (idsContentChanged || needsClear) {
     const exiting = new Map(state.exiting);
     const rendered = [...ids];
     const retain = enabled && !reduced && state.scope === scope;
@@ -41,10 +31,6 @@ export function usePanePresence(ids: readonly string[], items: Record<string, Pa
       }
     } else exiting.clear();
     setState({ scope, requested: ids, ids: rendered, exiting });
-  } else if (inputChanged) {
-    // Props changed but no meaningful state update needed — still record
-    // that we saw this input so we don't re-check on the next render.
-    processedRef.current = { scope, ids, enabled };
   }
   // Cache PaneItem props as well: closing native/utility panes removes their store entry.
   const cachedItems = useRef(items);

@@ -609,15 +609,26 @@ function activeControlPlaneId(activeProject: ReturnType<typeof useChatProjects>[
 }
 
 function AgentManagementLibrary({ onNav }: { onNav: (page: PageId) => void }) {
-  const { activeProject } = useChatProjects();
+  const { activeProject, agentStatus } = useChatProjects();
   const { state, loadDefinitions, dispatch } = useAgentDomain();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [featureUnavailable, setFeatureUnavailable] = React.useState(false);
   const backendConnectionId = activeControlPlaneId(activeProject);
   const backendName = getKnownBackendConnections().find((connection) => connection.id === backendConnectionId)?.name ?? backendConnectionId;
+  const customAgentsEnabled = agentStatus == null ? null : agentStatus.customAgentsEnabled === true;
   React.useEffect(() => {
     let cancelled = false;
+    if (customAgentsEnabled === null) {
+      setLoading(true);
+      return;
+    }
+    if (!customAgentsEnabled) {
+      setFeatureUnavailable(true);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     void loadDefinitions(activeProject?.id ?? null).then(() => {
       if (!cancelled) { setError(null); setFeatureUnavailable(false); }
@@ -630,7 +641,10 @@ function AgentManagementLibrary({ onNav }: { onNav: (page: PageId) => void }) {
       }
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [activeProject?.id, backendConnectionId, loadDefinitions]);
+  }, [activeProject?.id, backendConnectionId, customAgentsEnabled, loadDefinitions]);
+  if (featureUnavailable && !loading) {
+    return <div role="status" style={{ padding: 24, color: 'var(--term-muted)' }}>Custom Agents are not enabled on {backendName}.</div>;
+  }
   const definitions = featureUnavailable ? [] : Object.values(state.definitions).filter((resource) => resource.backendConnectionId === backendConnectionId && (resource.value.scope === 'global' || resource.value.workspaceId === activeProject?.id));
   const runs = Object.values(state.runs).filter((resource) => resource.backendConnectionId === backendConnectionId && resource.value.workspaceId === activeProject?.id);
   const create = (scope: 'workspace' | 'global') => {

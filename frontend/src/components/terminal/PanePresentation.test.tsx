@@ -10,28 +10,61 @@ let settleFocus: () => void;
 vi.mock('../../state/chatStore', () => ({ useChatStore: () => ({ focusedPane: logicalFocus }) }));
 vi.mock('../../state/prefs', () => ({ usePrefs: () => ({ prefs: { focusDim: 40, paneRules: true } }) }));
 
-function Contents() {
+function Contents({ settleOnCommit = false }: { settleOnCommit?: boolean }) {
   const visual = usePresentedPaneFocus(logicalFocus);
   settleFocus = visual.settleFocus;
+  React.useLayoutEffect(() => {
+    if (settleOnCommit) return afterPaneMotion(null, visual.settleFocus);
+  });
   const a = usePaneShellStyle('a');
   const b = usePaneShellStyle('b');
   return <><output data-testid="focus">{visual.focusedPane ?? 'none'}</output>
     <div data-testid="a" style={a} /><div data-testid="b" style={b} /></>;
 }
 
-function Scene({ focus = 'a', scope = 'tree', enabled = true, ids = ['a', 'b'] }: {
-  focus?: string | null; scope?: string; enabled?: boolean; ids?: string[];
+function Scene({ focus = 'a', scope = 'tree', enabled = true, ids = ['a', 'b'], settleOnCommit = false }: {
+  focus?: string | null; scope?: string; enabled?: boolean; ids?: string[]; settleOnCommit?: boolean;
 }) {
   logicalFocus = focus;
-  return <PanePresentationProvider focusedPane={focus} scope={scope} enabled={enabled} ids={ids} items={{}}>
-    <Contents />
-  </PanePresentationProvider>;
+  return <React.StrictMode><PanePresentationProvider focusedPane={focus} scope={scope} enabled={enabled} ids={ids} items={{}}>
+    <Contents settleOnCommit={settleOnCommit} />
+  </PanePresentationProvider></React.StrictMode>;
 }
 
 beforeEach(() => { logicalFocus = 'a'; });
 afterEach(cleanup);
 
 describe('pane visual focus', () => {
+  it('settles synchronously from layout effects without scheduling a commit loop', () => {
+    const { rerender, getByTestId } = render(<Scene settleOnCommit />);
+    rerender(<Scene focus="b" ids={['b']} settleOnCommit />);
+    expect(getByTestId('focus').textContent).toBe('b');
+    rerender(<Scene focus="a" ids={['a']} settleOnCommit />);
+    expect(getByTestId('focus').textContent).toBe('a');
+    rerender(<Scene focus={null} ids={[]} settleOnCommit />);
+    expect(getByTestId('focus').textContent).toBe('none');
+  });
+
+  it('converges when scope, visibility and pane IDs change together repeatedly', () => {
+    const { rerender, getByTestId } = render(<Scene />);
+    for (let i = 0; i < 20; i++) {
+      rerender(<Scene focus={null} scope={`empty-${i}`} enabled={false} ids={[]} />);
+      expect(getByTestId('focus').textContent).toBe('none');
+      rerender(<Scene focus="b" scope={`tree-${i}`} ids={['b']} />);
+      expect(getByTestId('focus').textContent).toBe('b');
+      act(() => settleFocus());
+    }
+  });
+
+  it('commits focus changes under StrictMode', () => {
+    const { rerender, getByTestId } = render(<React.StrictMode><Scene /></React.StrictMode>);
+    rerender(<React.StrictMode><Scene focus="b" scope="other-tree" /></React.StrictMode>);
+    expect(getByTestId('focus').textContent).toBe('b');
+    rerender(<React.StrictMode><Scene focus="a" scope="other-tree" /></React.StrictMode>);
+    act(() => settleFocus());
+    expect(getByTestId('focus').textContent).toBe('a');
+  });
+
   it('keeps the destination dim until motion lands, without delaying logical focus', async () => {
     const { rerender, getByTestId } = render(<Scene />);
     const dim = getByTestId('b').style.filter;

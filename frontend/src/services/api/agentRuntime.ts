@@ -1,5 +1,5 @@
 import type { CapabilityDescriptor } from 'michi-shared';
-import { activeBackendApiBase } from '../../config/backendConnections';
+import { activeBackendApiBase, backendApiBase } from '../../config/backendConnections';
 
 // === Agent runtime API ===
 
@@ -46,6 +46,8 @@ export interface AgentRuntimeOption {
 export interface AgentStatus {
   runtime: RuntimeId;
   label: string;
+  /** Optional routes must not be polled on older or feature-disabled backends. */
+  customAgentsEnabled?: boolean;
   capabilities: AgentCapabilities;
   availableRuntimes: AgentRuntimeOption[];
   provider?: string;
@@ -76,8 +78,9 @@ export interface VerifyProviderKeyResult {
   error?: string;
 }
 
-export async function fetchAgentStatus(): Promise<AgentStatus> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/status`);
+export async function fetchAgentStatus(connectionId?: string, signal?: AbortSignal): Promise<AgentStatus> {
+  const base = connectionId === undefined ? activeBackendApiBase() : backendApiBase(connectionId);
+  const res = await fetch(`${base}/agent/status`, { signal });
   if (!res.ok) throw new Error(`fetchAgentStatus failed: ${res.status}`);
   return res.json();
 }

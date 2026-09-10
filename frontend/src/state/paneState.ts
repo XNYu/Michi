@@ -9,6 +9,10 @@ const PANE_OPEN_KEY = 'michi:panes:open';
 const PANE_FOCUS_KEY = 'michi:panes:focus';
 const PANE_ITEMS_KEY = 'michi:panes:items:v1';
 
+function paneSlotKey(projectId: string, treeId: string | null): string {
+  return `${projectId}::${treeId ?? 'workspace'}`;
+}
+
 function readPaneMap<T>(key: string, fallback: T): T {
   try {
     const raw = window.sessionStorage.getItem(key);
@@ -102,8 +106,8 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     () => projects.find((p) => p.id === activeProjectId) ?? null,
     [projects, activeProjectId],
   );
-  const paneKey = activeProjectForPane?.activeTreeId
-    ? `${activeProjectForPane.id}::${activeProjectForPane.activeTreeId}`
+  const paneKey = activeProjectForPane
+    ? paneSlotKey(activeProjectForPane.id, activeProjectForPane.activeTreeId)
     : null;
 
   // Stable callbacks below read the latest active tree slot through this ref.
@@ -260,8 +264,8 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   }, []);
 
   const openPaneInTree = useCallback(
-    (projectId: string, treeId: string, nodeId: string) => {
-      const key = `${projectId}::${treeId}`;
+    (projectId: string, treeId: string | null, nodeId: string) => {
+      const key = paneSlotKey(projectId, treeId);
       setOpenPanesMap((prev) => {
         const cur = prev[key] ?? [];
         return cur.includes(nodeId) ? prev : { ...prev, [key]: [...cur, nodeId] };

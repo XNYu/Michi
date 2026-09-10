@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
+import { PrefsProvider } from '../../state/prefs';
+import { AgentDomainProvider } from '../../state/agentDomain';
+
+function renderShell() {
+  return render(<PrefsProvider><AgentDomainProvider><TerminalShell /></AgentDomainProvider></PrefsProvider>);
+}
 
 
 const closePaneSpy = vi.hoisted(() => vi.fn());
@@ -108,7 +114,7 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe('TerminalShell shortcuts', () => {
   it('Cmd+; dispatches michi:toggle-artifacts (legacy Contexts shortcut)', () => {
-    render(<TerminalShell />);
+    renderShell();
     const spy = vi.fn();
     window.addEventListener('michi:toggle-artifacts', spy);
     try {
@@ -122,7 +128,7 @@ describe('TerminalShell shortcuts', () => {
   });
 
   it('Shift+Cmd+A dispatches michi:toggle-artifacts', () => {
-    render(<TerminalShell />);
+    renderShell();
     const spy = vi.fn();
     window.addEventListener('michi:toggle-artifacts', spy);
     try {
@@ -141,7 +147,7 @@ describe('TerminalShell shortcuts', () => {
   it('Cmd+W closes the focused pane even when a textarea has focus', () => {
     storeState.focusedPane = 'L';
     storeState.openPanes = ['L', 'R'];
-    render(<TerminalShell />);
+    renderShell();
     const ta = document.createElement('textarea');
     document.body.appendChild(ta);
     ta.focus();
@@ -160,7 +166,7 @@ describe('TerminalShell shortcuts', () => {
   it('Escape clears node and tree selection together', () => {
     storeState.selection = new Set(['node-1']);
     storeState.treeSelection = new Set(['tree-1']);
-    render(<TerminalShell />);
+    renderShell();
     const focusTarget = document.createElement('button');
     document.body.appendChild(focusTarget);
     focusTarget.focus();

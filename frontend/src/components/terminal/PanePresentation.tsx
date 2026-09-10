@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { PaneItem } from '../../state/paneItems';
 import { usePanePresence } from './usePanePresence';
 
@@ -13,66 +13,34 @@ export function PanePresentationProvider({ ids, items, scope, enabled, focusedPa
 }) {
   const presence = usePanePresence(ids, items, scope, enabled);
 
-  // --- Visual focus state machine ---
-  // `target` (= focusedPane) updates immediately for keyboard/input ownership.
-  // `visible` is deferred until the pane motion animation finishes (via
-  // `settleFocus`), so the departing pane stays lit while expanding/scrolling.
-  //
-  // Previously this used render-phase setState which triggered React error
-  // #185 (maximum update depth exceeded) during rapid workspace switches
-  // where scope, enabled, and focusedPane all changed in the same batch.
-  //
-  // Now: a ref tracks the latest prop values and a monotonic revision counter.
-  // Only `visible` lives in state (for the deferred lighting update).
-  // No setState during render → no infinite loop risk.
-
-  const revisionRef = useRef(0);
-  const prevRef = useRef({ scope, enabled, target: focusedPane });
-  const [visibleState, setVisibleState] = useState({ visible: focusedPane, revision: 0 });
-
-  // Detect prop changes that affect the visual focus.
-  const prev = prevRef.current;
-  const scopeChanged = prev.scope !== scope;
-  const targetChanged = prev.target !== focusedPane;
-  const enabledChanged = prev.enabled !== enabled;
-
-  if (scopeChanged || enabledChanged || targetChanged) {
-    // Compute the new visible pane. Same logic as before:
-    // - Cross-scope or re-enable: snap visible to the new target (no deferred animation).
-    // - Same scope, same enabled: keep previous visible (wait for settleFocus).
-    const snapToTarget = scopeChanged || enabledChanged || focusedPane === null;
-    const nextVisible = snapToTarget ? focusedPane : visibleState.visible;
-    const nextRevision = ++revisionRef.current;
-
-    prevRef.current = { scope, enabled, target: focusedPane };
-
-    // Only update state when the derived visible value actually differs.
-    // This prevents a re-render cascade when only `target` changed but
-    // visible stays the same.
-    if (nextVisible !== visibleState.visible || nextRevision !== visibleState.revision) {
-      // Use the functional-update overload so React batches this with the
-      // parent's render rather than scheduling a new one.  Because the new
-      // value is purely derived from props+ref (not from `current` state),
-      // it stabilises in one pass and cannot loop.
-      setVisibleState({ visible: nextVisible, revision: nextRevision });
-    }
+  // Keep the processed inputs in the same state as their result. A render can
+  // be retried or discarded; a ref would survive it and skip the pending update.
+  const [focus, setFocus] = useState({ scope, enabled, target: focusedPane, visible: focusedPane, revision: 0 });
+  if (focus.scope !== scope || focus.enabled !== enabled || focus.target !== focusedPane) {
+    setFocus({
+      scope, enabled, target: focusedPane, revision: focus.revision + 1,
+      visible: focus.scope === scope && focus.enabled && enabled && focusedPane !== null
+        ? focus.visible
+        : focusedPane,
+    });
   }
-
-  const currentRevision = revisionRef.current;
 
   // Keyboard/input ownership changes immediately; lighting waits for arrival.
   // The revision rejects a late finish from a superseded focus request.
   const settleFocus = useCallback(() => {
-    setVisibleState(current =>
-      current.revision !== currentRevision || current.visible === focusedPane
+    // Layout effects may call this on every commit when there is no motion.
+    // Do not enqueue another update once the visual focus has already arrived.
+    if (focus.visible === focus.target) return;
+    setFocus(current =>
+      current.revision !== focus.revision || current.visible === current.target
         ? current
-        : { ...current, visible: focusedPane },
+        : { ...current, visible: current.target },
     );
-  }, [currentRevision, focusedPane]);
+  }, [focus.revision, focus.visible, focus.target]);
 
   const visualFocus = useMemo(
-    () => ({ focusedPane: visibleState.visible, settleFocus }),
-    [visibleState.visible, settleFocus],
+    () => ({ focusedPane: focus.visible, settleFocus }),
+    [focus.visible, settleFocus],
   );
 
   return <PanePresentationContext.Provider value={presence}>

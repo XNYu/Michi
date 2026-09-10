@@ -9,8 +9,7 @@ import { relativeTime } from '../../lib/relativeTime';
 import { Lightbox } from './Lightbox';
 import { manageFileType, MANAGE_COLORS } from './manage/tokens';
 import ContextMenu from '../ContextMenu';
-import type { MenuSection } from '../ContextMenu';
-import { DrawerShell } from '../ui/DrawerShell';
+import { DrawerShell, type DrawerShellProps } from '../ui/DrawerShell';
 import { Button } from '../ui/controls';
 import { confirmDialog } from '../ui/ConfirmDialog';
 
@@ -65,7 +64,7 @@ function typeForPath(path: string): 'doc' | 'file' | 'image' {
   return 'file';
 }
 
-export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChange }: Pick<DrawerShellProps, 'open' | 'onClose' | 'motion' | 'onPresenceChange'>) {
   const {
     activeProject,
     focusedNodeId,
@@ -341,14 +340,14 @@ export default function ArtifactsDrawer({ open, onClose }: { open: boolean; onCl
     }
   }, [artifacts, createContext, activeProject?.backendConnectionId, activeProject?.id, cwd]);
 
-  if (!open) return null;
-
   const total = artifacts.length;
 
   return (
     <DrawerShell
       open={open}
       onClose={onClose}
+      motion={motion}
+      onPresenceChange={onPresenceChange}
       closeOnEscape={!lightbox}
       title="Artifacts"
       titleBadge={

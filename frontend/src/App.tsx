@@ -5,7 +5,7 @@ import ApiKeyGate from './components/ApiKeyGate';
 import FirstRunSetup from './components/FirstRunSetup';
 import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
 import { LandingPage } from './components/LandingPage';
-import { authClient, fetchAuthConfig } from './services/auth';
+import { AuthSessionContext, authClient, fetchAuthConfig } from './services/auth';
 import DigestPromptDialog from './components/DigestPromptDialog';
 import type { ExportPanelState } from './components/ExportPanel';
 import { ChatProvider, useChatStore, useChatNodesSnapshot, activeTreeRootNodeId, chatLabel } from './state/chatStore';
@@ -229,9 +229,8 @@ function StartupInteractiveMark({ surface }: { surface: string }) {
  * The session check uses better-auth's useSession hook so it's reactive
  * to sign-in / sign-out happening elsewhere in the tab.
  */
-function AuthGate({ children }: { children: React.ReactNode }) {
+export function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<'loading' | 'no-auth' | 'gated'>('loading');
-  const session = authClient.useSession();
 
   useEffect(() => {
     let cancelled = false;
@@ -256,6 +255,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
+  return <AuthenticatedShell>{children}</AuthenticatedShell>;
+}
+
+function AuthenticatedShell({ children }: { children: React.ReactNode }) {
+  // Local backends do not expose /api/auth/*; only subscribe after the probe.
+  const session = authClient.useSession();
+
   // Gated path: while better-auth is still hydrating its initial session
   // request, render nothing rather than flashing the landing page.
   if (session.isPending) return null;
@@ -270,10 +276,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   }
   const userId = session.data.user.id;
   return (
-    <ChatProvider key={userId} userId={userId}>
-      <StartupInteractiveMark surface="shell" />
-      {children}
-    </ChatProvider>
+    <AuthSessionContext.Provider value={session.data}>
+      <ChatProvider key={userId} userId={userId}>
+        <StartupInteractiveMark surface="shell" />
+        {children}
+      </ChatProvider>
+    </AuthSessionContext.Provider>
   );
 }
 

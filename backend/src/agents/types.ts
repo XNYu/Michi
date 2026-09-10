@@ -193,6 +193,7 @@ export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions 
 export interface AgentStatus {
   runtime: RuntimeId;
   label: string;
+  customAgentsEnabled?: boolean;
   capabilities: AgentCapabilities;
   /** All runtimes the current build can switch between (rendered as runtime picker when length > 1). */
   availableRuntimes: AgentRuntimeOption[];

@@ -5,6 +5,7 @@ import { AgentRunStatus } from 'michi-shared';
 import { agentRunPaneId } from '../../../state/paneItems';
 
 const mocks = vi.hoisted(() => ({
+  customAgentsEnabled: true as boolean | undefined,
   closePane: vi.fn(),
   loadRuns: vi.fn(async () => undefined),
   subscribeWorkspace: vi.fn(() => vi.fn()),
@@ -24,6 +25,7 @@ const item = {
 vi.mock('../../../state/chatStore', () => ({
   useChatProjects: () => ({
     activeProject: { id: 'workspace-1', activeTreeId: 'tree-1' },
+    agentStatus: { customAgentsEnabled: mocks.customAgentsEnabled },
   }),
   useChatPanes: () => ({
     openPanes: [paneId], focusedPane: paneId, paneItems: { [paneId]: item },
@@ -56,6 +58,7 @@ import TerminalDashboard from './Dashboard';
 describe('Dashboard Agent Run panes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.customAgentsEnabled = true;
     HTMLElement.prototype.scrollTo = vi.fn();
   });
 
@@ -65,5 +68,12 @@ describe('Dashboard Agent Run panes', () => {
     fireEvent.click(pane);
     expect(mocks.closePane).toHaveBeenCalledWith(paneId);
     expect(mocks.subscribeWorkspace).toHaveBeenCalledWith('workspace-1');
+  });
+
+  it.each([false, undefined])('does not poll optional Run routes when support is %s', (enabled) => {
+    mocks.customAgentsEnabled = enabled;
+    render(<TerminalDashboard />);
+    expect(mocks.loadRuns).not.toHaveBeenCalled();
+    expect(mocks.subscribeWorkspace).not.toHaveBeenCalled();
   });
 });

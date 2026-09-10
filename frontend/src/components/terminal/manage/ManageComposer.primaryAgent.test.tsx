@@ -4,12 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ManageComposer, { __resetManageComposerSessionStateForTests } from './ManageComposer';
 
 const {
-  createThread, sendMessage, bindPendingPrimaryAgent, listPrimaryAgentDefinitions,
+  createThread, sendMessage, bindPendingPrimaryAgent, listPrimaryAgentDefinitions, status,
 } = vi.hoisted(() => ({
   createThread: vi.fn(async () => 'node-primary'),
   sendMessage: vi.fn(),
   bindPendingPrimaryAgent: vi.fn(),
   listPrimaryAgentDefinitions: vi.fn(),
+  status: {
+    customAgentsEnabled: true as boolean | undefined,
+    runtime: 'mock', label: 'Mock', availableRuntimes: [],
+    capabilities: { modes: true, providerModels: false, models: false, reasoning: false },
+  },
 }));
 
 vi.mock('../../../state/chatStore', () => ({
@@ -17,7 +22,7 @@ vi.mock('../../../state/chatStore', () => ({
     activeProject: { id: 'ws-remote', name: 'Remote', backendConnectionId: 'remote-a', artifacts: [] },
     projects: [{ id: 'ws-remote', name: 'Remote', backendConnectionId: 'remote-a', artifacts: [] }],
     selectProject: vi.fn(), createThread, sendMessage,
-    agentStatus: null, refreshAgentStatus: vi.fn(), availableModes: [{ id: 'build', name: 'Build' }],
+    agentStatus: status, refreshAgentStatus: vi.fn(), availableModes: [{ id: 'build', name: 'Build' }],
   }),
 }));
 
@@ -54,6 +59,8 @@ describe('ManageComposer primary Agent selection', () => {
   beforeEach(() => {
     __resetManageComposerSessionStateForTests();
     createThread.mockClear(); sendMessage.mockClear(); bindPendingPrimaryAgent.mockClear();
+    listPrimaryAgentDefinitions.mockClear();
+    status.customAgentsEnabled = true;
     listPrimaryAgentDefinitions.mockResolvedValue([implementer]);
   });
   it('fetches from the Workspace Backend and explicitly binds the selected Definition to the new thread', async () => {
@@ -72,5 +79,12 @@ describe('ManageComposer primary Agent selection', () => {
       workspaceId: 'ws-remote', backendConnectionId: 'remote-a', definitionId: 'agent-implementer',
     });
     expect(sendMessage).toHaveBeenCalledWith('node-primary', 'Build it', undefined);
+  });
+
+  it.each([false, undefined])('does not discover optional Agents when support is %s', async (enabled) => {
+    status.customAgentsEnabled = enabled;
+    render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(listPrimaryAgentDefinitions).not.toHaveBeenCalled();
   });
 });

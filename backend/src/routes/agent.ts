@@ -30,7 +30,7 @@ import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
 
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
-export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache }): Router {
+export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; customAgentsEnabled?: boolean }): Router {
   const catalogCache = opts?.catalogCache ?? null;
   const router = Router();
 
@@ -51,6 +51,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache }):
       const status: AgentStatus = {
         runtime: cfg.runtime,
         label: cfg.runtime,
+        customAgentsEnabled: opts?.customAgentsEnabled ?? false,
         capabilities: {
           modes: false, permissions: false, models: false, providerModels: false, reasoning: false, supportedReasoningLevels: [],
           apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false,
@@ -114,6 +115,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache }):
     const status: AgentStatus = {
       runtime: cfg.runtime,
       label: active.label,
+      customAgentsEnabled: opts?.customAgentsEnabled ?? false,
       capabilities: active.capabilities,
       capabilityDescriptor: active.capabilityDescriptor ?? describeRuntimeCapabilities(active.id),
       availableRuntimes,

@@ -10,7 +10,7 @@ function located(backendConnectionId: string, id: string, status: AgentRunStatus
     version: 1, id, ownerUserId: 'owner', workspaceId: 'ws', definitionId: null, definitionRevision: null,
     effectiveDefinition: { version: 1, name: id, description: id, instructions: id, runtimeProfile: { version: 1, runtimeId: 'pi' }, fallbackChain: [], capabilitySnapshot: { version: 1, entries: [] }, permissionPolicy: { version: 1, preset: 'research', categories: {}, maxDelegationDepth: 1, maxConcurrentRuns: 1, maxWallTimeMs: 1000, maxAttempts: 1 }, contextPolicy: { version: 1, includeWorkspaceInstructions: true, allowMessageContext: true, allowFileContext: true, allowArtifactContext: true, maxEstimatedChars: 100 } },
     invocationMode: parentMessageId ? AgentRunInvocationMode.Delegated : AgentRunInvocationMode.Manual,
-    completionMode: AgentRunCompletionMode.Detach, parentRunId: null,
+    completionMode: AgentRunCompletionMode.Detach, parentRunId: null, parentAttemptId: null,
     parentNodeId: parentMessageId ? 'node' : null, parentTurnId: parentMessageId ? 'turn' : null,
     parentMessageId, parentToolCallId: parentMessageId ? 'tool' : null, task: id,
     contextManifest: { version: 1, entries: [], assembledAt: 1, estimatedChars: 0 }, expectedResult: null,

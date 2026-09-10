@@ -172,6 +172,7 @@ export function createCustomAgentsMockController() {
       if (method === 'GET' && apiPath === '/agent/status') {
         await json(route, {
           runtime: 'mock', label: 'Mock Runtime', hasRequiredKey: true,
+          customAgentsEnabled: true,
           capabilities: { modes: true, permissions: true, models: false, providerModels: false,
             reasoning: false, apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: true },
           availableRuntimes: [{ id: 'mock', label: 'Mock Runtime', available: true }],
@@ -422,6 +423,7 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
       return json({
         runtime: 'mock',
         label: 'Mock Runtime',
+        customAgentsEnabled: false,
         capabilities: {
           modes: false,
           permissions: false,

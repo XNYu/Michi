@@ -13,6 +13,8 @@ import { createRoot, Root } from 'react-dom/client';
 import { ChatProvider, useChatStore } from './chatStore';
 import { prunePaneMaps, usePaneState } from './paneState';
 import { PrefsProvider } from './prefs';
+import { renderHook as renderStateHook } from '@testing-library/react';
+import type { Project } from './chatTypes';
 
 // Opt into React's concurrent-act environment so state updates dispatched
 // inside act(...) callbacks don't trigger the "not configured to support
@@ -140,6 +142,55 @@ describe('pane state', () => {
     expect(harness.result.current.paneItems[paneId]).toMatchObject({ kind: 'file', filePath: 'docs/brief.md' });
     expect(harness.result.current.focusedPane).toBe(paneId);
     harness.unmount();
+  });
+
+  it('opens artifacts before the workspace has any conversation tree', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('Empty workspace'); });
+    let paneId = '';
+    await act(async () => { paneId = await harness.result.current.openArtifactPane('notes.md'); });
+    expect(harness.result.current.activeProject?.activeTreeId).toBeNull();
+    expect(harness.result.current.activeProject?.chatIds).toEqual([]);
+    expect(harness.result.current.openPanes).toEqual([paneId]);
+    expect(harness.result.current.focusedPane).toBe(paneId);
+    harness.unmount();
+  });
+
+  it('opens an Agent Run in another workspace without requiring an active tree', async () => {
+    const harness = renderHook(() => useChatStore());
+    let targetId = '';
+    await act(async () => { targetId = await harness.result.current.createProject('Target'); });
+    await act(async () => { await harness.result.current.createProject('Other'); });
+    let paneId = '';
+    act(() => { paneId = harness.result.current.openAgentRunPane({ backendConnectionId: 'local', id: 'run-1' }, targetId); });
+    expect(harness.result.current.activeProject?.id).toBe(targetId);
+    expect(harness.result.current.activeProject?.activeTreeId).toBeNull();
+    expect(harness.result.current.openPanes).toEqual([paneId]);
+    expect(harness.result.current.focusedPane).toBe(paneId);
+    harness.unmount();
+  });
+
+  it('persists independent workspace and tree slots through switches and remounts', () => {
+    const project: Project = {
+      id: 'empty', name: 'Empty', activeTreeId: null, trees: [], chatIds: [], edges: [], artifacts: [], createdAt: 1,
+    };
+    const hook = renderStateHook(({ projects, activeProjectId }) => usePaneState({ projects, activeProjectId }), {
+      initialProps: { projects: [project], activeProjectId: project.id },
+    });
+    act(() => hook.result.current.openPane('file'));
+    hook.rerender({ projects: [{ ...project, activeTreeId: 'tree' }], activeProjectId: project.id });
+    expect(hook.result.current.openPanes).toEqual([]);
+    act(() => hook.result.current.openPane('root'));
+    hook.rerender({ projects: [project], activeProjectId: project.id });
+    expect(hook.result.current.openPanes).toEqual(['file']);
+    expect(hook.result.current.focusedPane).toBe('file');
+    hook.unmount();
+    const restored = renderStateHook(() => usePaneState({ projects: [project], activeProjectId: project.id }));
+    expect(restored.result.current.openPanes).toEqual(['file']);
+    expect(restored.result.current.focusedPane).toBe('file');
+    const slots = JSON.parse(sessionStorage.getItem('michi:panes:open')!);
+    expect(slots).toEqual({ 'empty::workspace': ['file'], 'empty::tree': ['root'] });
+    restored.unmount();
   });
 
   it('destroys a runtime surface only when its pane is explicitly closed', async () => {

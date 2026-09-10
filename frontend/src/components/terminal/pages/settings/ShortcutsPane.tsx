@@ -79,9 +79,9 @@ export function ShortcutsPane() {
             {g.bindings.map((b, i) => (
               <div
                 key={i}
+                className="settings-shortcut-row"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '120px 1fr',
                   alignItems: 'center',
                   gap: 12,
                   padding: '8px 14px',

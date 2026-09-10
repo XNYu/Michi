@@ -10,6 +10,7 @@ import {
   importWorkspaceFileUpload,
   saveAgentOptions,
   bindPendingPrimaryAgent,
+  fetchAgentStatus,
   listPrimaryAgentDefinitions,
   type PrimaryAgentDefinitionOption,
   type AgentReasoning,
@@ -23,7 +24,7 @@ import { ComposerShell } from '../ComposerShell';
 import { PaneComposerToolbarLeft, type PaneMenuAnchor } from '../PaneComposerToolbarLeft';
 import { PaneAgentMenus } from '../PaneAgentMenus';
 import { PaneComposerActions } from '../PaneComposerActions';
-import { workspaceBackendApiBase } from '../../../config/backendConnections';
+import { activeBackendApiBase, backendConnectionIdForWorkspace, workspaceBackendApiBase } from '../../../config/backendConnections';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 
 type ComposerDraft = { value: string; mentions: MentionRecord[] };
@@ -106,6 +107,8 @@ export default function ManageComposer({
 
   const workspaceId = fixedWorkspaceId ?? activeProject?.id ?? '';
   const project = projects.find((p) => p.id === workspaceId);
+  const usesActiveBackend = workspaceBackendApiBase(workspaceId) === activeBackendApiBase();
+  const customAgentsEnabled = agentStatus?.customAgentsEnabled === true;
 
   const [draft, setDraftState] = useState<ComposerDraft>(() => manageDraft);
   const draftRef = useRef<ComposerDraft>(draft);
@@ -152,15 +155,25 @@ export default function ManageComposer({
 
   useEffect(() => {
     setPendingPrimaryAgentState(workspaceId ? manageStickyPrimaryAgent.get(workspaceId) : undefined);
-    if (!enableAgentSelect || !workspaceId) {
+    if (!enableAgentSelect || !workspaceId || (usesActiveBackend && !customAgentsEnabled)) {
       setPrimaryAgents([]);
+      setPrimaryAgentsLoading(false);
+      setPrimaryAgentsError(null);
       return;
     }
     const controller = new AbortController();
     setPrimaryAgentsLoading(true);
     setPrimaryAgentsError(null);
-    void listPrimaryAgentDefinitions(workspaceId, controller.signal)
+    const load = async () => {
+      if (!usesActiveBackend) {
+        const status = await fetchAgentStatus(backendConnectionIdForWorkspace(workspaceId), controller.signal);
+        if (!status.customAgentsEnabled) return [];
+      }
+      return listPrimaryAgentDefinitions(workspaceId, controller.signal);
+    };
+    void load()
       .then((definitions) => {
+        if (controller.signal.aborted) return;
         setPrimaryAgents(definitions);
         const sticky = manageStickyPrimaryAgent.get(workspaceId);
         if (sticky && !definitions.some((candidate) => candidate.definition.id === sticky.definition.id && candidate.backendConnectionId === sticky.backendConnectionId)) {
@@ -173,7 +186,7 @@ export default function ManageComposer({
       })
       .finally(() => { if (!controller.signal.aborted) setPrimaryAgentsLoading(false); });
     return () => controller.abort();
-  }, [enableAgentSelect, workspaceId]);
+  }, [enableAgentSelect, workspaceId, usesActiveBackend, customAgentsEnabled]);
   const shouldLoadModels = !!modelMenu && !!(
     agentStatus?.capabilities.providerModels || agentStatus?.capabilities.models === true
   );

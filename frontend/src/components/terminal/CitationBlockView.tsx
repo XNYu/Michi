@@ -1,7 +1,4 @@
 import React from 'react';
-import type { AssistantBlock } from '../../state/chatTypes';
-
-type CitationBlock = Extract<AssistantBlock, { kind: 'citation' }>;
 
 /** Shape of the JSON payload inside a ```citation code fence. */
 export interface CitationFencePayload {
@@ -33,8 +30,8 @@ export function parseCitationFence(text: string): CitationFencePayload | null {
 
 /**
  * Renders a single citation card from a ```citation code fence embedded
- * in the assistant's markdown answer text. Uses the same CSS classes and
- * click delegation as CitationBlockView so the TPane handler picks it up.
+ * in the assistant's markdown answer text. The TPane click delegation
+ * handles the citation data attributes.
  */
 export function CitationCodeFenceView({ data }: { data: CitationFencePayload }) {
   return (
@@ -57,46 +54,6 @@ export function CitationCodeFenceView({ data }: { data: CitationFencePayload }) 
     </div>
   );
 }
-
-/**
- * Renders one or more citation blocks as clickable cards. Navigation is
- * handled by the TPane-level click delegation: the `data-mention-kind="citation"`
- * + `data-node-id` attributes are picked up by the same handler that routes
- * regular mention-chip clicks.
- */
-export function CitationBlockView({ blocks }: { blocks: readonly AssistantBlock[] }) {
-  const citations = blocks.filter((b): b is CitationBlock => b.kind === 'citation');
-  if (citations.length === 0) return null;
-
-  return (
-    <div className="t-citation-block">
-      {citations.length > 1 && (
-        <div className="t-citation-list-header">
-          <span className="t-citation-count">{citations.length}</span> related threads
-        </div>
-      )}
-      {citations.map((b) => (
-        <button
-          key={b.id}
-          type="button"
-          className="t-citation-card"
-          data-mention-kind="citation"
-          data-node-id={b.nodeId}
-          title={`Jump to: ${b.title}`}
-        >
-          <div className="t-citation-card-title">
-            <span className="t-citation-arrow">↗</span>
-            {b.title}
-          </div>
-          {b.excerpt && (
-            <div className="t-citation-card-excerpt">&ldquo;{b.excerpt}&rdquo;</div>
-          )}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 
 /**
  * Scan markdown text for ```citation code fences and extract a map of
