@@ -9,7 +9,13 @@ export function providerModelLocked(provider: Partial<AgentProviderInfo>): boole
 }
 
 export function providerOptionSuffix(provider: Partial<AgentProviderInfo>): string {
-  if (!providerRequiresUserKey(provider)) return ' - built-in';
+  if (!providerRequiresUserKey(provider)) {
+    // Distinguish Bedrock from built-in providers like openrouter-free.
+    if (provider.id === 'amazon-bedrock') {
+      return provider.hasKey ? ' - configured' : ' - not configured';
+    }
+    return ' - built-in';
+  }
   return provider.hasKey ? ' - key saved' : ' - no key';
 }
 

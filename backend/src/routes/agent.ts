@@ -23,7 +23,13 @@ import {
 import { listRuntimes, getRuntime } from "../agents/registry";
 import { describeRuntimeCapabilities } from "../agents/capabilityDescriptors";
 import { hasProviders } from "../agents/types";
-import { getProviderInfo, providerRequiresUserKey } from "../agents/pi/piProviders";
+import { getProviderInfo, providerRequiresUserKey, providerUsesAwsCredentials } from "../agents/pi/piProviders";
+import {
+  hasBedrockCredentials,
+  getBedrockConfigSanitized,
+  saveBedrockConfig,
+  clearBedrockConfig,
+} from "../services/bedrockCredentials";
 import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
@@ -85,9 +91,11 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
           )
         : listProviderKeyPresence(list.map((p) => p.id));
       const hasUsableKey = (p: (typeof list)[number]): boolean =>
-        p.requiresUserKey === false
-          ? !!getProviderApiKey(p.id)
-          : !!presence[p.id];
+        providerUsesAwsCredentials(p.id)
+          ? hasBedrockCredentials()
+          : p.requiresUserKey === false
+            ? !!getProviderApiKey(p.id)
+            : !!presence[p.id];
       providers = list.map((p) => ({ ...p, hasKey: hasUsableKey(p) }));
       // hasRequiredKey gates the welcome modal. In cloud BYOK mode the
       // global `cfg.provider` is shared across all users — another user
@@ -339,6 +347,51 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         if (key) body = { ...body, key };
       }
       const result = await active.verifyProviderKey(body);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Bedrock credential configuration
+  // -----------------------------------------------------------------------
+
+  /** Sanitized Bedrock config — never returns actual secret values. */
+  router.get("/agent/bedrock-config", (_req: Request, res: Response) => {
+    res.json(getBedrockConfigSanitized());
+  });
+
+  /** Save Bedrock credential config to ~/.michi/config.json. */
+  router.post("/agent/bedrock-config", (req: Request, res: Response) => {
+    const body = req.body;
+    if (!body || typeof body !== "object") {
+      res.status(400).json({ ok: false, error: "Missing request body" });
+      return;
+    }
+    saveBedrockConfig(body);
+    res.json({ ok: true });
+  });
+
+  /** Clear Bedrock config from ~/.michi/config.json. */
+  router.delete("/agent/bedrock-config", (_req: Request, res: Response) => {
+    clearBedrockConfig();
+    res.json({ ok: true });
+  });
+
+  /**
+   * Verify Bedrock connection using saved or supplied credentials.
+   * Re-uses the existing verifyProviderKey flow for the amazon-bedrock provider.
+   */
+  router.post("/agent/bedrock-config/verify", async (req: Request, res: Response) => {
+    const cfg = getAgentConfig();
+    const active = getRuntime(cfg.runtime);
+    if (!active || !hasProviders(active)) {
+      res.status(400).json({ ok: false, error: "Active runtime does not support verification" });
+      return;
+    }
+    try {
+      const result = await active.verifyProviderKey({ provider: "amazon-bedrock" });
       res.json(result);
     } catch (err) {
       res.status(400).json({ ok: false, error: (err as Error).message });

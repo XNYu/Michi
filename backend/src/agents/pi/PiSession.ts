@@ -14,7 +14,7 @@ import type { NormalizedEvent, PermissionOption } from "../../services/chatEvent
 import type { AgentToolBridge } from "../toolBridge";
 import { resolveAgentRunToolsForSession } from "../toolBridge";
 import { getRuntimeDeps } from "../runtimeDeps";
-import { getProviderInfo } from "./piProviders";
+import { getProviderInfo, providerUsesAwsCredentials } from "./piProviders";
 import { getModelAttemptIds, getUpstreamProviderId, resolvePiModel } from "./piProviders";
 import { loadPiAi, loadPiAgentCore } from "./piAi";
 import { buildPiTools, piToolResultErrorOverride } from "./piTools";
@@ -24,6 +24,8 @@ import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
 import { resolvePolicy } from "../permissionPolicy";
 import { followUpReminder } from "../preamble";
 import { normalizeWorkspaceCwd } from "../tools/pathSandbox";
+import { resolveBedrockCredentials } from "../../services/bedrockCredentials";
+import { refreshBedrockCredentialsIfNeeded, refreshOnAuthFailure, isBedrockAuthError } from "../../services/bedrockCredentialManager";
 
 export interface PiSessionDeps {
     bridge: AgentToolBridge;
@@ -251,15 +253,38 @@ export class PiSession implements AgentSession {
         const upstreamProvider = getUpstreamProviderId(provider);
         const requestedModel = this.requestedModel ?? deps.agentConfig.resolveModel(this.runtimeId, ownerUserId);
         const modelAttemptIds = getModelAttemptIds(provider, requestedModel);
-        const apiKey = deps.providerKeys.getProviderApiKey(provider, ownerUserId);
-        if (!apiKey) {
-            const name = getProviderInfo(provider)?.name ?? provider;
-            // Tailor the error so cloud users see "set your key in Settings"
-            // rather than the desktop-flavored "API key not configured".
-            const hint = ownerUserId
-                ? `${name} API key not set for your account — add it in Settings.`
-                : `${name} API key not configured`;
-            throw new Error(hint);
+
+        // Resolve authentication: AWS credential chain for Bedrock, API key for everything else.
+        const isAwsCred = providerUsesAwsCredentials(provider);
+        let apiKey: string | null = null;
+        let bedrockStreamOpts: Record<string, unknown> = {};
+
+        if (isAwsCred) {
+            const creds = resolveBedrockCredentials();
+            if (!creds) {
+                throw new Error(
+                    "Amazon Bedrock credentials not configured — add them in Settings or set AWS_PROFILE + AWS_REGION env vars.",
+                );
+            }
+            await refreshBedrockCredentialsIfNeeded(creds);
+            bedrockStreamOpts = { region: creds.region };
+            if (creds.bearerToken) bedrockStreamOpts.bearerToken = creds.bearerToken;
+            if (creds.profile) bedrockStreamOpts.profile = creds.profile;
+            if (creds.accessKeyId) {
+                bedrockStreamOpts.accessKeyId = creds.accessKeyId;
+                bedrockStreamOpts.secretAccessKey = creds.secretAccessKey;
+            }
+        } else {
+            apiKey = deps.providerKeys.getProviderApiKey(provider, ownerUserId);
+            if (!apiKey) {
+                const name = getProviderInfo(provider)?.name ?? provider;
+                // Tailor the error so cloud users see "set your key in Settings"
+                // rather than the desktop-flavored "API key not configured".
+                const hint = ownerUserId
+                    ? `${name} API key not set for your account — add it in Settings.`
+                    : `${name} API key not configured`;
+                throw new Error(hint);
+            }
         }
 
         const piMod: any = await loadPiAi();
@@ -332,7 +357,7 @@ export class PiSession implements AgentSession {
                     upstreamProvider,
                     modelAttempts,
                     c,
-                    { ...o, apiKey },
+                    { ...o, ...(apiKey ? { apiKey } : {}), ...bedrockStreamOpts },
                 ),
                 beforeToolCall: async (
                     bcCtx: { toolCall: { name: string }; args: unknown },

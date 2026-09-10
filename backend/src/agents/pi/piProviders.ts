@@ -14,6 +14,13 @@ export interface PiProviderInfo {
     modelLocked?: boolean;
     upstreamProviderId?: string;
     fallbackModel?: string;
+    /**
+     * How this provider authenticates. API-key-based providers use a single
+     * string key; `aws-credential-chain` providers resolve credentials through
+     * the AWS SDK default chain (profile, env vars, IAM roles, etc.).
+     * Defaults to `'api-key'` when unset.
+     */
+    credentialMode?: "api-key" | "aws-credential-chain";
 }
 
 export interface PiModelInfo {
@@ -174,6 +181,16 @@ export const PI_PROVIDERS: PiProviderInfo[] = [
         keyUrl: "https://huggingface.co/settings/tokens",
     },
     {
+        id: "amazon-bedrock",
+        name: "Amazon Bedrock",
+        apiKeyLabel: "AWS Bearer Token (optional)",
+        envVars: ["AWS_BEARER_TOKEN_BEDROCK", "AWS_PROFILE", "AWS_ACCESS_KEY_ID"],
+        defaultModel: "anthropic.claude-sonnet-5",
+        supportsReasoning: true,
+        credentialMode: "aws-credential-chain",
+        requiresUserKey: false,
+    },
+    {
         id: OPENROUTER_FREE_PROVIDER_ID,
         name: "OpenRouter Free Trial",
         apiKeyLabel: "Built-in OpenRouter trial",
@@ -202,6 +219,10 @@ export function getUpstreamProviderId(provider: string): string {
 
 export function providerRequiresUserKey(provider: string): boolean {
     return getProviderInfo(provider)?.requiresUserKey !== false;
+}
+
+export function providerUsesAwsCredentials(provider: string): boolean {
+    return getProviderInfo(provider)?.credentialMode === "aws-credential-chain";
 }
 
 export function getModelAttemptIds(provider: string, requested?: string | null): string[] {
@@ -368,6 +389,8 @@ function formatVerifyError(error: unknown): string {
     }
 }
 
+import { resolveBedrockCredentials } from "../../services/bedrockCredentials";
+
 /**
  * Verify a provider's API key by issuing a minimal streamSimple call
  * ("Reply with exactly: OK") and waiting for a "done" event. Returns
@@ -391,8 +414,31 @@ export async function verifyPiProviderKey(
             error: `Unsupported provider: ${provider}`,
         };
     }
-    const apiKey = opts.apiKey ?? opts.key;
-    if (!apiKey) {
+
+    // Bedrock: authenticate via AWS credential chain, not a single API key.
+    const isAwsCred = providerUsesAwsCredentials(provider);
+    const apiKey = isAwsCred ? null : (opts.apiKey ?? opts.key);
+    let bedrockOpts: Record<string, unknown> = {};
+
+    if (isAwsCred) {
+        const creds = resolveBedrockCredentials();
+        if (!creds) {
+            return {
+                ok: false,
+                provider,
+                model: "",
+                latencyMs: 0,
+                error: "Amazon Bedrock credentials not configured — add them in Settings or set AWS_PROFILE + AWS_REGION env vars.",
+            };
+        }
+        bedrockOpts = { region: creds.region };
+        if (creds.bearerToken) bedrockOpts.bearerToken = creds.bearerToken;
+        if (creds.profile) bedrockOpts.profile = creds.profile;
+        if (creds.accessKeyId) {
+            bedrockOpts.accessKeyId = creds.accessKeyId;
+            bedrockOpts.secretAccessKey = creds.secretAccessKey;
+        }
+    } else if (!apiKey) {
         return {
             ok: false,
             provider,
@@ -434,7 +480,8 @@ export async function verifyPiProviderKey(
             model,
             { messages, tools: [] },
             {
-                apiKey,
+                ...(apiKey ? { apiKey } : {}),
+                ...bedrockOpts,
                 reasoning: "low",
                 maxTokens: 16,
                 maxRetries: 0,

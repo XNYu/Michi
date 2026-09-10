@@ -210,3 +210,75 @@ export async function verifyProviderKey(
   if (!res.ok) return { ok: false, error: body.error ?? `status ${res.status}` };
   return body;
 }
+
+// ---------------------------------------------------------------------------
+// Bedrock credential configuration
+// ---------------------------------------------------------------------------
+
+export type BedrockCredentialSource = 'bearer-token' | 'access-keys' | 'profile' | 'auto';
+
+export interface BedrockConfigSanitized {
+  configured: boolean;
+  region: string | null;
+  credentialSource: BedrockCredentialSource | 'env' | null;
+  hasProfile: boolean;
+  hasBearerToken: boolean;
+  hasAccessKeys: boolean;
+  hasAuthRefresh: boolean;
+  envDetected: boolean;
+  envProfile?: string;
+  envRegion?: string;
+}
+
+export interface BedrockConfigInput {
+  region?: string;
+  credentialSource?: BedrockCredentialSource;
+  bearerToken?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  profile?: string;
+  authRefreshCommand?: string;
+}
+
+export async function getBedrockConfig(): Promise<BedrockConfigSanitized> {
+  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config`);
+  if (!res.ok) throw new Error(`getBedrockConfig failed: ${res.status}`);
+  return res.json();
+}
+
+export async function saveBedrockConfig(
+  cfg: BedrockConfigInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    return { ok: false, error: body.error ?? `status ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function clearBedrockConfig(): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    return { ok: false, error: body.error ?? `status ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function verifyBedrockConfig(): Promise<VerifyProviderKeyResult> {
+  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+  if (!res.ok) return { ok: false, error: body.error ?? `status ${res.status}` };
+  return body;
+}

@@ -24,6 +24,7 @@ import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
 import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { filterModelCatalog } from './modelCatalogFilter';
 import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
+import { BedrockConfigPanel } from './BedrockConfigPanel';
 
 export function ModelPane({
   activeProjectId,
@@ -96,6 +97,10 @@ export function ModelPane({
 
       {showApiKeys && agentStatus && (() => {
         const active = (agentStatus.providers ?? []).find((p) => p.id === agentStatus.provider);
+        if (!active) return null;
+        if (active.id === 'amazon-bedrock') {
+          return <BedrockConfigPanel key={active.id} provider={active} onChanged={refreshAgentStatus} />;
+        }
         return active && providerRequiresUserKey(active) ? (
           <ProviderKeyControls
             key={active.id}
