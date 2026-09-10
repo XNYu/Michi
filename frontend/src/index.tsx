@@ -9,6 +9,27 @@ startupMark('renderer_script_start', {
   href: typeof window !== 'undefined' ? window.location.href : undefined,
 });
 
+// --- P2: Global error capture ---
+// Catch uncaught errors and unhandled rejections that escape React's
+// ErrorBoundary (event handlers, async callbacks, third-party code).
+// These are logged, not displayed — the ErrorBoundary handles UI recovery.
+// De-duplicate by error message to avoid flooding the console during loops.
+const _reportedErrors = new Set<string>();
+function reportGlobalError(source: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const key = `${source}:${message}`;
+  if (_reportedErrors.has(key)) return;
+  _reportedErrors.add(key);
+  // eslint-disable-next-line no-console
+  console.error(`[GlobalErrorCapture:${source}]`, error);
+}
+window.addEventListener('error', (event) => {
+  reportGlobalError('window.onerror', event.error ?? event.message);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  reportGlobalError('unhandledrejection', event.reason);
+});
+
 // Set <html lang> so CSS :lang() selectors pick the right CJK font stack.
 const navLang = navigator.language.toLowerCase();
 document.documentElement.lang =

@@ -984,7 +984,23 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
   win.webContents.on('did-finish-load', () => {
     startupMark('renderer_did_finish_load', { slot });
   });
-  win.webContents.on('render-process-gone', () => destroyOwnedSurfaces(ownerWebContentsId));
+  win.webContents.on('render-process-gone', (_event, details) => {
+    destroyOwnedSurfaces(ownerWebContentsId);
+    // V8-level renderer crash (OOM, segfault, etc.) — not triggered by React
+    // errors, but covers extreme cases.  Must be deferred: calling reload()
+    // synchronously inside this handler can crash the main process on older
+    // Electron versions (Chromium re-enters RenderProcessHostImpl::Init
+    // while iterating the observer list).
+    if (details.reason !== 'clean-exit') {
+      setTimeout(() => {
+        if (!win.isDestroyed()) {
+          // eslint-disable-next-line no-console
+          console.log(`[main] renderer gone (${details.reason}), reloading window`);
+          win.webContents.reload();
+        }
+      }, 1000);
+    }
+  });
 
   win.webContents.on('console-message', (_event, _level, message) => {
     if (isStartupTraceLine(message)) {

@@ -20,6 +20,7 @@ import {
 } from './lib/exportWorkspace';
 import { stripSentinelsStreamingSafe } from './state/assistantParsing';
 import { startupMarkOnce } from './services/startupTrace';
+import AppErrorBoundary from './components/AppErrorBoundary';
 import './index.css';
 
 const ExportPanel = React.lazy(() => import('./components/ExportPanel'));
@@ -280,16 +281,18 @@ function App() {
   return (
     <PrefsProvider>
       <AppToaster />
-      <AuthGate>
-        <AgentDomainProvider>
-          <ShellSwitcher />
-          <FirstRunSetup />
-          <ApiKeyGate />
-          <DigestPromptListener />
-          <ExportPanelManager />
-          <ConfirmDialogHost />
-        </AgentDomainProvider>
-      </AuthGate>
+      <AppErrorBoundary>
+        <AuthGate>
+          <AgentDomainProvider>
+            <ShellSwitcher />
+            <FirstRunSetup />
+            <ApiKeyGate />
+            <DigestPromptListener />
+            <ExportPanelManager />
+            <ConfirmDialogHost />
+          </AgentDomainProvider>
+        </AuthGate>
+      </AppErrorBoundary>
     </PrefsProvider>
   );
 }
