@@ -91,10 +91,65 @@
   }
 }
 
-/* Tighten prose vertical rhythm. Unlayered so they beat the typography
-   plugin's defaults (which live in a higher cascade layer). */
-.prose hr { margin-top: 1.25em; margin-bottom: 1.25em; }
-.prose table { margin-top: 1em; margin-bottom: 1em; }
+/* ---- Global prose polish (chat, FilePane, ArtifactPane) ------------------
+   Promoted from chat-scoped rules so all three rendering surfaces share the
+   same Typora/GitHub-inspired table, blockquote, hr, and link treatment.
+   Uses currentColor-based tints so each pane's color system is respected.
+   Calibrated in mocks/markdown-rendering-comparison.html.
+   -------------------------------------------------------------------------- */
+
+.prose hr {
+  border: none;
+  height: 1px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  margin: 2em 0;
+}
+
+.prose table {
+  margin-top: 1em;
+  margin-bottom: 1em;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.prose :where(th, td) {
+  padding: 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  text-align: left;
+}
+
+.prose :where(th) {
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  font-size: 0.92em;
+  letter-spacing: 0.01em;
+}
+
+.prose tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.prose tbody tr:hover {
+  background: color-mix(in srgb, currentColor 3%, transparent);
+}
+
+.prose blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--term-accent, currentColor) 50%, transparent);
+  padding: 0.4em 1em;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+
+.prose a {
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+}
+.prose a:hover {
+  text-decoration-color: currentColor;
+}
 
 /* ----------------------------------------------------------------------------
    Message typography (Michi messages + user bubbles).
@@ -220,8 +275,6 @@
   max-width: 100%;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(th, td) {
-  padding: 5px 3px;
-  border-bottom-width: 1px;
   overflow-wrap: anywhere;
   word-break: break-word;
   min-width: 3em;         /* prevent columns from collapsing below ~4 chars */
@@ -233,9 +286,6 @@
 :is(.terminal-message-assistant, .terminal-message-user) .prose table.michi-table-settled :where(th, td) {
   word-break: normal;
   overflow-wrap: break-word;  /* still allows wrapping at word boundaries for long text */
-}
-:is(.terminal-message-assistant, .terminal-message-user) .prose th {
-  font-weight: 600;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(code, pre) {
   font-family: var(--message-code-font);
@@ -2514,9 +2564,9 @@ html[data-vibrancy="on"],
    and render a subtle chip instead. Tinted off currentColor so it works across
    terminal palettes. `:not(pre code)` keeps fenced blocks alone. */
 .prose :not(pre) > code {
-  background: color-mix(in srgb, currentColor 10%, transparent);
-  padding: 0.08em 0.35em;
-  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  padding: 0.15em 0.45em;
+  border-radius: 5px;
   font-size: 0.88em;
   font-weight: 500;
 }

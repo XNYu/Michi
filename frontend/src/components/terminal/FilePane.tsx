@@ -9,6 +9,8 @@ import SelectionActions from '../SelectionActions';
 import { formatQuotedMessage, QuoteSource } from '../../lib/quoteFormat';
 import { computeTextSelector, rangeToOffsets, type TextSelector } from '../../lib/textSelector';
 import { RetryIcon, ExternalLinkIcon } from './icons';
+import { usePrefs } from '../../state/prefs';
+import { DARK_PALETTES } from './tokens';
 
 const MARKDOWN_EXTS = new Set(['md', 'mdx', 'markdown']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -22,6 +24,17 @@ function basename(filePath: string): string {
   return filePath.split('/').filter(Boolean).pop() ?? filePath;
 }
 
+const fileProseVars: React.CSSProperties = {
+  '--tw-prose-body': 'var(--term-fg)',
+  '--tw-prose-headings': 'var(--term-fg)',
+  '--tw-prose-bold': 'var(--term-fg)',
+  '--tw-prose-code': 'var(--term-fg)',
+  '--tw-prose-quotes': 'var(--term-mid)',
+  '--tw-prose-links': 'var(--term-accent)',
+  '--tw-prose-counters': 'var(--term-mid)',
+  '--tw-prose-bullets': 'var(--term-mid)',
+} as React.CSSProperties;
+
 export default function FilePane({ item }: { item: FilePaneItem }) {
   const { projects } = useChatProjects();
   const { focusPane, setFocusedNodeId, updatePaneItem, createChildChat, addPendingComment, setComposerDraft } = useChatActions();
@@ -29,6 +42,8 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   const nodeStore = useContext(ChatNodeStoreContext)!;
   const project = projects.find((candidate) => candidate.id === item.projectId);
   const shellStyle = usePaneShellStyle(item.id);
+  const { prefs } = usePrefs();
+  const isDark = DARK_PALETTES.has(prefs.terminalPalette);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
   const loadRef = useRef<{ key: string; promise: Promise<LoadState> } | null>(null);
@@ -196,7 +211,7 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
         {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 11 }}>loading {basename(item.filePath)}…</div> : null}
         {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 11 }}>⚠ {state.message}</div> : null}
         {state.phase === 'loaded' && isMarkdown && item.viewMode === 'rendered' ? (
-          <MarkdownContent text={state.content} className="prose prose-sm max-w-none wrap-break-word" />
+          <MarkdownContent text={state.content} className={`prose prose-sm max-w-none wrap-break-word${isDark ? ' prose-invert' : ''}`} style={fileProseVars} />
         ) : null}
         {state.phase === 'loaded' && (!isMarkdown || item.viewMode === 'source') ? (
           <pre style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>
