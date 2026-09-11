@@ -177,10 +177,9 @@ describe('ArtifactsDrawer open routing', () => {
   });
 
   it('opens a symlink doc artifact via the in-app pane (falls back to OS on failure)', async () => {
-    // A symlinked file has a cwd-relative filePath. The new behavior tries the
-    // in-app pane first for doc types; ArtifactPane uses Electron readFile for
-    // absolute paths or backend fetch for relative ones. If the pane open
-    // succeeds, it stays internal.
+    // A symlinked file has a cwd-relative filePath. openArtifact resolves it to
+    // an absolute path (cwd + filePath) so FilePane takes the Electron readFile
+    // branch, bypassing the backend sandbox / realpath guard that would 404.
     mockContexts.push({
       id: 'sym-doc',
       name: 'design-notes',
@@ -195,7 +194,7 @@ describe('ArtifactsDrawer open routing', () => {
     fireEvent.click(screen.getByText('design-notes'));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await vi.waitFor(() => {
-      expect(mockActions.openArtifactPane).toHaveBeenCalledWith('.artifacts/design-notes.md');
+      expect(mockActions.openArtifactPane).toHaveBeenCalledWith('/tmp/p1/.artifacts/design-notes.md');
     });
   });
 

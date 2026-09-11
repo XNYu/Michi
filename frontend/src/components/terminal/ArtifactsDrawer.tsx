@@ -178,10 +178,14 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
       if (c.kind === 'reference' || c.kind === 'symlink') {
         if (t === 'doc') {
           const electron = getElectron();
-          const isAbsolute = c.filePath.startsWith('/');
+          // Resolve to an absolute path so FilePane takes the Electron readFile
+          // branch (which bypasses the backend sandbox / realpath guard). Symlink
+          // artifacts store a cwd-relative filePath that the HTTP route rejects
+          // because the symlink target lives outside the workspace root.
+          const resolved = absPath(c);
           // Size gate: if Electron statFile is available, check before opening
-          if (isAbsolute && electron?.statFile) {
-            const stat = await electron.statFile(c.filePath);
+          if (resolved && electron?.statFile) {
+            const stat = await electron.statFile(resolved);
             if (stat && stat.size > 5 * 1024 * 1024) {
               const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
               const confirmed = await confirmDialog({
@@ -196,7 +200,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
             }
           }
           try {
-            await openArtifactPane(c.filePath);
+            await openArtifactPane(resolved ?? c.filePath);
             onClose();
             return;
           } catch {
@@ -230,7 +234,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
       // Embedded file → hand off to the OS default app.
       openViaOS(c);
     },
-    [activeProject?.id, openArtifactPane, onClose, openViaOS],
+    [absPath, activeProject?.id, openArtifactPane, onClose, openViaOS],
   );
 
   // "Cite" — ask the focused pane to append @name to its composer. The pane
