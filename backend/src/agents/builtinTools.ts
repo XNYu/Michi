@@ -42,6 +42,7 @@ export type BuiltinToolName =
     | "list_threads"
     | "search_messages"
     | "read_node"
+    | "read_node_overview"
     | "read"
     | "ls"
     | "grep"
@@ -140,7 +141,39 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     {
         name: "read_node",
         description:
-            "Read a node's full transcript. Use AFTER list_threads/search_messages identified a relevant nodeId. Not speculatively.",
+            "Read a node's transcript. Supports pagination via from/offset/limit and role filtering. " +
+            "Without options, returns the most recent messages within a 12KB cap (tail-biased). " +
+            "Use AFTER list_threads/search_messages identified a relevant nodeId.",
+        parameters: {
+            object: {
+                nodeId: f("string"),
+                role: f("string", {
+                    optional: true,
+                    enum: ["user", "assistant"],
+                    description: "Filter to only user or assistant messages.",
+                }),
+                from: f("string", {
+                    optional: true,
+                    enum: ["head", "tail"],
+                    description: "Read direction. 'head' starts from oldest, 'tail' (default) from newest.",
+                }),
+                offset: f("number", {
+                    optional: true,
+                    description: "1-based offset from the 'from' direction. Default 1.",
+                }),
+                limit: f("number", {
+                    optional: true,
+                    description: "Max messages to return. Default: 12KB size cap.",
+                }),
+            },
+        },
+    },
+    {
+        name: "read_node_overview",
+        description:
+            "Read a node's branch overview journal — a chronological summary of each turn, plus message count. " +
+            "Much lighter than read_node; use to decide whether and what to read in detail. " +
+            "Use AFTER list_threads identified a relevant nodeId.",
         parameters: { object: { nodeId: f("string") } },
     },
     {

@@ -5,7 +5,7 @@ import type { AgentSession, ChatMessage, ExtraContext } from "./types";
 const TOOL_CAPABILITIES_SECTION = `
 Capabilities — you have these tools available and should use them proactively:
 - Workspace files: \`read\` (view file contents), \`ls\` (list directory), \`grep\` (search file contents), \`find\` (locate files by pattern). \`write\`, \`edit\`, \`bash\` — modify files or run commands (require user approval).
-- Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript.
+- Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript. \`read_node_overview\` — read a node's branch overview journal (lightweight).
 - Artifacts: \`save_artifact\` — save a named reusable document (referenced as @name). \`update_artifact\` — revise an existing artifact.
 - Branching: \`spawn_branches\` — fan out parallel child threads (only when user explicitly asks to branch/split).
 - Agent Runs: \`list_agents\`, \`spawn_agent\`, \`check_agent\`, \`wait_agent\`, \`send_agent_input\`, \`cancel_agent\`, \`watch_agent_runs\`, and \`update_agent_watch\` supervise durable workers without creating conversation branches. Use bounded \`wait_agent\` calls only; for longer work create a Watch with \`wake\` or \`notify\` and end the turn instead of polling.

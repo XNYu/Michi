@@ -3,7 +3,7 @@ import { randomBytes } from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { listThreads, searchMessages, readNode } from "./globalContext";
+import { listThreads, searchMessages, readNode, readNodeOverview } from "./globalContext";
 import { getNodeSessionBinding } from "./dbRepository";
 import {
     BUILTIN_TOOLS,
@@ -494,14 +494,44 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         "read_node",
         {
             description:
-                "Read a node's full transcript. Use AFTER list_threads/search_messages identified a relevant nodeId. Not speculatively.",
+                "Read a node's transcript. Supports pagination via from/offset/limit and role filtering. " +
+                "Without options, returns the most recent messages within a 12KB cap (tail-biased). " +
+                "Use AFTER list_threads/search_messages identified a relevant nodeId.",
+            inputSchema: {
+                nodeId: z.string().min(1),
+                role: z.enum(["user", "assistant"]).optional().describe("Filter to only user or assistant messages."),
+                from: z.enum(["head", "tail"]).optional().describe("Read direction. 'head' from oldest, 'tail' (default) from newest."),
+                offset: z.number().int().min(1).optional().describe("1-based offset from the 'from' direction. Default 1."),
+                limit: z.number().int().min(1).optional().describe("Max messages to return. Default: 12KB size cap."),
+            },
+        },
+        async (args) => {
+            const binding = resolveSlotBinding(slot);
+            const opts: { role?: "user" | "assistant"; from?: "head" | "tail"; offset?: number; limit?: number } = {};
+            if (args?.role === "user" || args?.role === "assistant") opts.role = args.role;
+            if (args?.from === "head" || args?.from === "tail") opts.from = args.from;
+            if (typeof args?.offset === "number") opts.offset = args.offset;
+            if (typeof args?.limit === "number") opts.limit = args.limit;
+            const hasOpts = Object.keys(opts).length > 0;
+            const result = readNode(binding.workspaceId, slot.ownerUserId, String(args?.nodeId ?? ""), hasOpts ? opts : undefined);
+            return { content: [{ type: "text", text: result.text }] };
+        },
+    );
+
+    server.registerTool(
+        "read_node_overview",
+        {
+            description:
+                "Read a node's branch overview journal — a chronological summary of each turn, plus message count. " +
+                "Much lighter than read_node; use to decide whether and what to read in detail. " +
+                "Use AFTER list_threads identified a relevant nodeId.",
             inputSchema: {
                 nodeId: z.string().min(1),
             },
         },
         async (args) => {
             const binding = resolveSlotBinding(slot);
-            const result = readNode(binding.workspaceId, slot.ownerUserId, String(args?.nodeId ?? ""));
+            const result = readNodeOverview(binding.workspaceId, slot.ownerUserId, String(args?.nodeId ?? ""));
             return { content: [{ type: "text", text: result.text }] };
         },
     );

@@ -42,15 +42,22 @@ export interface GlobalContextResultLike {
   text: string;
 }
 
-/** Optional: backs Pi's list_threads / search_messages / read_node tools.
- *  When omitted, Pi does not register those tools. */
+/** Optional: backs Pi's list_threads / search_messages / read_node /
+ *  read_node_overview tools. When omitted, Pi does not register those tools. */
 export interface GlobalContextProvider {
   listThreads(sessionWorkspaceId: string | null, ownerUserId: string | null | undefined,
               targetWorkspaceId?: string, currentNodeId?: string): GlobalContextResultLike;
   searchMessages(sessionWorkspaceId: string | null, ownerUserId: string | null | undefined,
                  query: string, scope?: "current" | "all", limit?: number): GlobalContextResultLike;
   readNode(sessionWorkspaceId: string | null, ownerUserId: string | null | undefined,
-           nodeId: string): GlobalContextResultLike;
+           nodeId: string, opts?: {
+             role?: "user" | "assistant";
+             from?: "head" | "tail";
+             offset?: number;
+             limit?: number;
+           }): GlobalContextResultLike;
+  readNodeOverview(sessionWorkspaceId: string | null, ownerUserId: string | null | undefined,
+                   nodeId: string): GlobalContextResultLike;
 }
 
 /** Resolves provider API keys. Default impl reads env only. */

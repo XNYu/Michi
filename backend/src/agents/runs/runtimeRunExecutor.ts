@@ -533,7 +533,7 @@ function permissionDecisionForTool(spec: AgentRunSpec, toolName: string): Runtim
     if (['write', 'edit'].includes(canonical)) return AgentPolicyCategory.FilesystemWrite;
     if (['save_artifact', 'update_artifact', 'spawn_branches'].includes(canonical)) return AgentPolicyCategory.ArtifactWrite;
     if (['grep', 'find', 'search_messages'].includes(canonical)) return AgentPolicyCategory.Search;
-    if (['read', 'ls', 'read_node', 'list_threads', 'show_image', 'list_agents', 'check_agent', 'wait_agent'].includes(canonical)) {
+    if (['read', 'ls', 'read_node', 'read_node_overview', 'list_threads', 'show_image', 'list_agents', 'check_agent', 'wait_agent'].includes(canonical)) {
       return AgentPolicyCategory.Read;
     }
     return AgentPolicyCategory.ExternalAction;

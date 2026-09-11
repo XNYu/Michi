@@ -25,9 +25,9 @@ describe("buildPiTools global-context gating", () => {
 
   test("includes them when a provider is injected", () => {
     configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test",
-      globalContext: { listThreads: () => ({ status: "ok", text: "" }), searchMessages: () => ({ status: "ok", text: "" }), readNode: () => ({ status: "ok", text: "" }) } });
+      globalContext: { listThreads: () => ({ status: "ok", text: "" }), searchMessages: () => ({ status: "ok", text: "" }), readNode: () => ({ status: "ok", text: "" }), readNodeOverview: () => ({ status: "ok", text: "" }) } });
     const names = buildPiTools(opts() as any).map((t: any) => t.name);
-    for (const n of ["list_threads", "search_messages", "read_node"]) assert.ok(names.includes(n), `${n} should be present`);
+    for (const n of ["list_threads", "search_messages", "read_node", "read_node_overview"]) assert.ok(names.includes(n), `${n} should be present`);
   });
 });
 

@@ -2,6 +2,7 @@
 // Refactor to add tests when introducing backend test infra.
 
 import type { DatabaseSync } from 'node:sqlite';
+import { parseBranchOverviewEntries } from 'michi-shared';
 
 export interface TopologyResult {
   topology: string;
@@ -25,6 +26,7 @@ interface NodeRecord {
   title: string | null;
   tree_id: string | null;
   deleted_at: number | null;
+  branch_overview: string | null;
 }
 
 interface TreeRecord {
@@ -56,6 +58,7 @@ interface ThreadJson {
   archived?: true;
   current?: true;
   node_count: number;
+  latest_overview?: string;
   /** Present only for the current thread or when the thread is small enough to fit. */
   nodes?: NodeJson[];
 }
@@ -136,7 +139,7 @@ export function buildTopology(
 
   const allNodes = db
     .prepare(`
-      SELECT id, parent_node_id, kind, title, tree_id, deleted_at
+      SELECT id, parent_node_id, kind, title, tree_id, deleted_at, branch_overview
       FROM nodes
       WHERE workspace_id = ? AND deleted_at IS NULL AND kind != 'digest'
       ORDER BY created_at ASC
@@ -195,6 +198,18 @@ export function buildTopology(
         buildNodeJson(n, incomingEdgesByTarget.get(n.id) ?? [], currentNodeId),
       ),
     };
+    // Attach the most recent overview entry (if any node in this tree has one).
+    // treeNodes are already in created_at ASC order, so walk backwards.
+    for (let i = treeNodes.length - 1; i >= 0; i--) {
+      const bo = treeNodes[i].branch_overview;
+      if (bo) {
+        const entries = parseBranchOverviewEntries(bo);
+        if (entries.length > 0) {
+          t.latest_overview = entries[entries.length - 1].text;
+          break;
+        }
+      }
+    }
     if (tree.archived_at) t.archived = true;
     if (isCurrent) {
       t.current = true;
@@ -217,21 +232,30 @@ export function buildTopology(
 
   if (topology.length > SIZE_CAP) {
     truncated = true;
-    // Drop nodes arrays from non-current threads, oldest (= last in
-    // last_active_at DESC ordering) first, until we fit.
+    // First pass: drop latest_overview from non-current threads (cheapest trim).
     const nonCurrent = threads.filter((t) => t !== currentThread);
-    let droppedCount = 0;
     for (let i = nonCurrent.length - 1; i >= 0; i--) {
-      if (nonCurrent[i].nodes !== undefined) {
-        delete nonCurrent[i].nodes;
-        droppedCount++;
-        if (droppedCount % 5 === 0 || i === 0) {
-          payload.truncated_threads = droppedCount;
-          payload.notes = [
-            'Some threads were collapsed (nodes omitted) to fit. Call list_threads with workspaceId set to a specific thread id, or search_messages, to drill in.',
-          ];
-          topology = serialize(payload);
-          if (topology.length <= SIZE_CAP) break;
+      if (nonCurrent[i].latest_overview !== undefined) {
+        delete nonCurrent[i].latest_overview;
+      }
+    }
+    topology = serialize(payload);
+
+    if (topology.length > SIZE_CAP) {
+      // Second pass: drop nodes arrays from non-current threads, oldest first.
+      let droppedCount = 0;
+      for (let i = nonCurrent.length - 1; i >= 0; i--) {
+        if (nonCurrent[i].nodes !== undefined) {
+          delete nonCurrent[i].nodes;
+          droppedCount++;
+          if (droppedCount % 5 === 0 || i === 0) {
+            payload.truncated_threads = droppedCount;
+            payload.notes = [
+              'Some threads were collapsed (nodes omitted) to fit. Call list_threads with workspaceId set to a specific thread id, or search_messages, to drill in.',
+            ];
+            topology = serialize(payload);
+            if (topology.length <= SIZE_CAP) break;
+          }
         }
       }
     }

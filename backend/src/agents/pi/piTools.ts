@@ -300,7 +300,28 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
-                        const result = gc.readNode(workspaceId, ownerUserId ?? null, String(args?.nodeId ?? ""));
+                        const opts: { role?: "user" | "assistant"; from?: "head" | "tail"; offset?: number; limit?: number } = {};
+                        if (args?.role === "user" || args?.role === "assistant") opts.role = args.role;
+                        if (args?.from === "head" || args?.from === "tail") opts.from = args.from;
+                        if (typeof args?.offset === "number") opts.offset = args.offset;
+                        if (typeof args?.limit === "number") opts.limit = args.limit;
+                        const hasOpts = Object.keys(opts).length > 0;
+                        const result = gc.readNode(workspaceId, ownerUserId ?? null, String(args?.nodeId ?? ""), hasOpts ? opts : undefined);
+                        return { content: [{ type: "text", text: result.text }], details: result };
+                    },
+                };
+            }
+
+            case "read_node_overview": {
+                const gc = getRuntimeDeps().globalContext;
+                if (!gc) return null;
+                return {
+                    name: t.name,
+                    label: "Read node overview",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        const result = gc.readNodeOverview(workspaceId, ownerUserId ?? null, String(args?.nodeId ?? ""));
                         return { content: [{ type: "text", text: result.text }], details: result };
                     },
                 };

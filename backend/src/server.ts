@@ -54,7 +54,7 @@ import {
   validateRemoteAccessConfiguration,
 } from './services/remoteAccess';
 import { sshTunnelManager } from './services/sshTunnelManager';
-import { listThreads, searchMessages, readNode } from './services/globalContext';
+import { listThreads, searchMessages, readNode, readNodeOverview } from './services/globalContext';
 import { FileRuntimeCatalogCache } from './agents/runtimeModelCache';
 import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
 import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRunAssembly';
@@ -150,7 +150,7 @@ configureRuntimeDeps({
   historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission },
   dataDir: getMichiDataDir(),
   providerKeys: { getProviderApiKey },
-  globalContext: { listThreads, searchMessages, readNode },
+  globalContext: { listThreads, searchMessages, readNode, readNodeOverview },
   agentConfig: { getAgentConfig, resolveModel, resolveReasoning },
 });
 
