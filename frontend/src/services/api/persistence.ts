@@ -2,6 +2,8 @@ import {
   backendApiBase,
   workspaceBackendApiBase,
 } from '../../config/backendConnections';
+import { configureStreamTransport } from './streamTransport';
+import { STREAM_TRANSPORT_PROTOCOL } from 'michi-shared';
 
 // ── Persistence API ──
 
@@ -33,9 +35,10 @@ export async function fetchAllWorkspacesMeta(connectionId?: string, signal?: Abo
 }
 
 /** Lazy-load: all message-body rows for one tree. Backend orders by (node, seq). */
-export async function fetchTreeMessages(workspaceId: string, treeId: string, connectionId?: string): Promise<unknown[]> {
+export async function fetchTreeMessages(workspaceId: string, treeId: string, connectionId?: string, signal?: AbortSignal): Promise<unknown[]> {
   const res = await fetch(
     `${connectionId ? backendApiBase(connectionId) : workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/trees/${encodeURIComponent(treeId)}/messages`,
+    { signal },
   );
   if (!res.ok) throw new Error(`fetchTreeMessages failed: ${res.status}`);
   const body = await res.json();
@@ -55,12 +58,19 @@ export interface PersistenceCapabilities {
   explicitCommands: boolean;
   backgroundWorkspaceSync: boolean;
   legacySyncAccepted: boolean;
+  streamTransport?: string;
 }
 
-export async function fetchPersistenceCapabilities(connectionId?: string): Promise<PersistenceCapabilities> {
-  const res = await fetch(`${backendApiBase(connectionId)}/persistence/capabilities`);
-  if (!res.ok) throw new Error(`fetchPersistenceCapabilities failed: ${res.status}`);
-  return res.json();
+export function fetchPersistenceCapabilities(connectionId?: string): Promise<PersistenceCapabilities> {
+  const base = backendApiBase(connectionId);
+  const result = fetch(`${base}/persistence/capabilities`, { signal: AbortSignal.timeout(10_000) }).then(async (res) => {
+    if (!res.ok) throw new Error(`fetchPersistenceCapabilities failed: ${res.status}`);
+    return res.json() as Promise<PersistenceCapabilities>;
+  });
+  if (!connectionId || connectionId === 'local') {
+    configureStreamTransport(base, result.then((capabilities) => capabilities.streamTransport === STREAM_TRANSPORT_PROTOCOL));
+  }
+  return result;
 }
 
 export interface WorkspaceCommand {

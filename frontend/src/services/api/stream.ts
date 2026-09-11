@@ -7,6 +7,7 @@ import type { StreamHandlers } from '../chatStreamEvents';
 import { startupMark } from '../startupTrace';
 import { backendApiBase, nodeBackendApiBase } from '../../config/backendConnections';
 import { SseHttpError, readSseStream } from './sseParser';
+import { fetchStream } from './streamTransport';
 
 let cachedStreamProbeEnabled: boolean | null = null;
 
@@ -167,7 +168,7 @@ export function streamMessage(
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
       const startedAt = Date.now();
       startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });
-      const res = await fetch(`${nodeBackendApiBase(nodeId)}/chats/${nodeId}/message`, {
+      const res = await fetchStream(`${nodeBackendApiBase(nodeId)}/chats/${nodeId}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -328,7 +329,7 @@ export function subscribeChat(
       const query = new URLSearchParams();
       query.set('fromSeq', String(from.seq ?? 0));
       if (from.turnId) query.set('fromTurnId', from.turnId);
-      const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/stream?${query.toString()}`, {
+      const res = await fetchStream(`${nodeBackendApiBase(chatId)}/chats/${chatId}/stream?${query.toString()}`, {
         signal: controller.signal,
       });
       if (!res.ok) throw new SseHttpError(res.status);
@@ -418,7 +419,7 @@ export function subscribeBackground(
   (async () => {
     let disconnect: BackgroundDisconnect = { retryable: true };
     try {
-      const res = await fetch(`${backendApiBase(connectionId)}/chats/background/subscribe`, {
+      const res = await fetchStream(`${backendApiBase(connectionId)}/chats/background/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cursors: opts.cursors ?? {} }),

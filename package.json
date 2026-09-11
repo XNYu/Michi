@@ -51,6 +51,7 @@
     "test:remote-control": "node --test scripts/remote-control.test.mjs",
     "test:electron-shortcuts": "npm run electron:build-main && node --test scripts/electron-pane-shortcut.test.mjs && node scripts/run-electron-shortcut-smoke.mjs",
     "test:dev-port": "node --test scripts/find-open-port.test.mjs",
+    "test:stream-transport": "node scripts/test-stream-transport.mjs",
     "test:perf": "node --test scripts/pane-perf-tools.test.mjs",
     "test:electron": "cd backend && node --require ts-node/register --test --test-timeout=30000 test/updateRelease.test.ts",
     "test:e2e": "npm run shared:build && playwright test --config e2e/playwright.config.ts",

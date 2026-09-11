@@ -31,6 +31,7 @@ export function setupPersistenceRoutes(): express.Router {
       explicitCommands: true,
       backgroundWorkspaceSync: false,
       legacySyncAccepted: false,
+      streamTransport: 'websocket-v1',
     });
   });
 

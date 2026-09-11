@@ -17,6 +17,7 @@ import {
   backendConnectionIdFromApiBase, locatedAgentResource,
 } from '../../state/agentIdentity';
 import { readSseStream, SseHttpError } from './sseParser';
+import { fetchStream } from './streamTransport';
 
 export interface AgentRunDetailV1 {
   run: AgentRunDtoV1;
@@ -160,7 +161,7 @@ export function subscribeAgentRuns(workspaceId: string, options: AgentRunSubscri
   void (async () => {
     let disconnectError: Error | undefined;
     try {
-      const response = await fetch(`${base}/agent-runs/subscribe?${params.toString()}`, { signal: controller.signal });
+      const response = await fetchStream(`${base}/agent-runs/subscribe?${params.toString()}`, { signal: controller.signal });
       if (!response.ok) throw new SseHttpError(response.status, 'subscribeAgentRuns failed');
       if (!response.body) throw new Error('subscribeAgentRuns response has no body');
       options.onOpen?.();

@@ -27,12 +27,14 @@
     "dotenv": "^16.4.1",
     "express": "^5.0.0",
     "ignore": "^7.0.5",
-    "minimatch": "^10.2.5"
+    "minimatch": "^10.2.5",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.28.0",
     "drizzle-orm": "^0.36.0",
     "esbuild": "^0.27.0",

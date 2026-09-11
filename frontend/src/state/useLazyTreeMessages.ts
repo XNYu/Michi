@@ -54,11 +54,14 @@ export function useLazyTreeMessages({
     if (!hydrated || !activeProject || !activeTreeId) return;
     const projectId = activeProject.id;
     const key = `${projectId}::${activeTreeId}`;
+    const loadedKeys = loadedKeysRef.current;
     let cancelled = false;
+    let inFlight = false;
+    const controller = new AbortController();
 
     const attemptLoad = () => {
-      if (cancelled) return;
-      if (loadedKeysRef.current.has(key)) {
+      if (cancelled || inFlight) return;
+      if (loadedKeys.has(key)) {
         // Already loaded or in-flight — but verify the nodes actually have
         // their messages. If not (e.g. hydration eager-load silently failed
         // but installed placeholder nodes), clear the key and retry.
@@ -69,7 +72,7 @@ export function useLazyTreeMessages({
           return findTreeIdForNode(nid, activeProject) === activeTreeId;
         });
         if (!stillPlaceholder) return;
-        loadedKeysRef.current.delete(key);
+        loadedKeys.delete(key);
       }
 
       const nodes = nodesRef.current;
@@ -79,7 +82,7 @@ export function useLazyTreeMessages({
         return findTreeIdForNode(nid, activeProject) === activeTreeId;
       });
       if (placeholderNodeIds.length === 0) {
-        loadedKeysRef.current.add(key);
+        loadedKeys.add(key);
         return;
       }
       // A streaming node with content is a live foreground turn — never install
@@ -95,10 +98,11 @@ export function useLazyTreeMessages({
       if (treeNodeIds.length === 0) return;
       const startNodes = new Map(treeNodeIds.map((nid) => [nid, nodes[nid]] as const));
 
-      loadedKeysRef.current.add(key);
+      loadedKeys.add(key);
+      inFlight = true;
       (async () => {
         try {
-          const rows = await fetchTreeMessages(projectId, activeTreeId);
+          const rows = await fetchTreeMessages(projectId, activeTreeId, undefined, controller.signal);
           if (cancelled) return;
           const byNode = buildMessagesByNode(rows);
           let skippedChangedNode = false;
@@ -132,9 +136,11 @@ export function useLazyTreeMessages({
               }
             }
           }
-          if (skippedChangedNode) loadedKeysRef.current.delete(key);
+          if (skippedChangedNode) loadedKeys.delete(key);
         } catch {
-          if (!cancelled) loadedKeysRef.current.delete(key);
+          if (!cancelled) loadedKeys.delete(key);
+        } finally {
+          inFlight = false;
         }
       })();
     };
@@ -147,7 +153,7 @@ export function useLazyTreeMessages({
     // on the ref but the rendered component hasn't received the update yet,
     // or where the eager-load result was silently lost.
     const retryTimer = setTimeout(() => {
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
       const nodes = nodesRef.current;
       const hasPlaceholders = activeProject.chatIds.some((nid) => {
         const n = nodes[nid];
@@ -155,15 +161,16 @@ export function useLazyTreeMessages({
         return findTreeIdForNode(nid, activeProject) === activeTreeId;
       });
       if (hasPlaceholders) {
-        loadedKeysRef.current.delete(key);
+        loadedKeys.delete(key);
         attemptLoad();
       }
     }, 500);
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(retryTimer);
-      loadedKeysRef.current.delete(key);
+      loadedKeys.delete(key);
     };
   }, [hydrated, activeProject, activeTreeId, nodesRef, dispatch, reconnectStreamingRef]);
 }

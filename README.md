@@ -298,6 +298,7 @@ cd backend && npm test        # Node test runner through ts-node
 npm run test:e2e              # Playwright
 npm run test:e2e:ui           # Playwright UI
 npm run test:perf             # pane benchmark tooling tests
+npm run test:stream-transport # isolated Chromium: 29 streams + file/history/upload
 
 # Diagnostics
 npm run startup:analyze -- logs/metrics.jsonl
@@ -342,4 +343,336 @@ MICHI_DEFAULT_RUNTIME=kiro
 
 ## License
 
-[ISC](LICENSE) © 2026 Nan Yu.
+# Diagnostics
+MICHI_METRICS=0
+MICHI_METRICS_RUN_ID=local-dev
+MICHI_STARTUP_TRACE=0
+MICHI_PERF=0
+```
+
+Pi provider keys can be saved through Settings or supplied as environment
+variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`DEEPSEEK_API_KEY`, and `GEMINI_API_KEY`.
+
+Important frontend variables:
+
+```env
+VITE_API_URL=http://localhost:3000/api
+VITE_MICHI_PROFILE_PAGE=0
+VITE_MICHI_METRICS=0
+VITE_MICHI_METRICS_RUN_ID=local-dev
+VITE_MICHI_FRAME_METRICS=0
+VITE_MICHI_FRAME_METRICS_WINDOW_MS=2000
+VITE_MICHI_PERF=0
+```
+
+Vite inlines `VITE_*` values at build time. Restart the dev server or rebuild
+after changing them.
+
+### Metrics and startup profiling
+
+Michi has a lightweight metrics facade in the backend, Electron main process,
+and renderer. It is disabled by default and emits JSONL rows when enabled.
+
+```bash
+MICHI_METRICS=1 \
+MICHI_FRAME_METRICS=1 \
+MICHI_STARTUP_TRACE=1 \
+MICHI_STARTUP_RUN_ID=metrics-$(date +%H%M%S) \
+npm run electron:dev 2>&1 | tee logs/metrics.jsonl
+```
+
+Analyze the result:
+
+```bash
+npm run startup:analyze -- logs/metrics.jsonl
+npm run metrics:analyze -- logs/metrics.jsonl
+```
+
+The frame sampler emits aggregate FPS, maximum frame time, long-frame, and
+dropped-frame measurements instead of logging every frame.
+
+## Architecture
+
+```text
+Electron shell (optional)
+        |
+        v
+React + Vite TerminalShell
+        |
+        | HTTP APIs + multiplexed SSE over WebSocket
+        v
+Express API + ChatHub
+        |
+        +-- SQLite: data.db / audit.db / optional auth.sqlite
+        +-- search, artifacts, uploads, diffs, digests, persistence
+        +-- per-session Michi MCP HTTP slots
+        |
+        `-- runtime registry
+              |-- Kiro         -> kiro-cli over ACP
+              |-- Pi           -> provider APIs through pi-agent-core/pi-ai
+              |-- Claude       -> Claude Code CLI warm pool
+              |-- Codex        -> codex app-server JSON-RPC
+```
+
+The `shared/` workspace owns protocol types and turn projection logic used by
+both frontend and backend.
+
+### Backend
+
+`backend/src/server.ts` boots the application:
+
+- loads `backend/.env` explicitly;
+- opens SQLite with WAL, foreign keys, a busy timeout, and file-based
+  migrations;
+- injects history, permission, provider-key, workspace, and config ports into
+  the runtime layer;
+- registers the enabled runtime factories;
+- creates the shared MCP slot registry and `ChatHub`;
+- starts runtime warm-up while routes are mounted;
+- mounts health/readiness, auth, chats, agents, artifacts, files, uploads,
+  diffs, digests, persistence, backup, search, version, and optional admin
+  routes;
+- serves `frontend/build` in production;
+- shuts down active sessions, runtime pools, HTTP servers, and databases on
+  exit.
+
+Core backend areas:
+
+```text
+backend/src/agents/          runtime interfaces, ChatHub, tools, permissions
+backend/src/agents/kiro/     ACP-backed Kiro runtime
+backend/src/agents/pi/       in-process multi-provider runtime
+backend/src/agents/claude/   Claude CLI runtime and warm pool
+backend/src/agents/codex/    Codex app-server client and generated bindings
+backend/src/routes/          HTTP/SSE route layer
+backend/src/services/        SQLite, MCP, config, search, export, persistence
+backend/src/db/migrations/   application SQL migrations
+```
+
+### Runtime and stream model
+
+Each runtime implements a common `AgentRuntime` / `AgentSession` interface and
+emits normalized events. The route layer therefore streams a runtime-neutral
+protocol containing:
+
+- assistant chunks, thoughts, plans, and tool updates;
+- titles, branch-overview entries, follow-ups, and available commands;
+- spawned branches and saved/updated artifacts;
+- permission and structured user-input requests;
+- inline images and live subagent activity;
+- context/usage summaries, heartbeats, runtime errors, and completion.
+
+`ChatHub` stamps turns with stable node, turn, assistant, and sequence IDs,
+persists authoritative turn state, and keeps a replay window for reconnecting
+subscribers. Cancelling a foreground request is distinct from a renderer
+disconnect: the latter can leave the agent running so another window or a
+refreshed pane can continue observing it.
+
+Gateways advertise `streamTransport: websocket-v1` in the persistence capability
+probe. The renderer then carries chat, replay, background, artifact-watch,
+agent-run and digest SSE bytes over one WebSocket per gateway/window. Ordinary
+file, upload and history requests keep their own HTTP connections, avoiding
+HTTP/1.1 connection-slot starvation. Older gateways retain the HTTP SSE fallback.
+
+The connection uses a short-lived, single-use ticket obtained through the normal
+authenticated API. Logical streams are forwarded only to allowlisted routes on
+the same backend, which still enforce session and workspace ownership. Remote
+streams use the existing authenticated gateway proxy, so remote execution
+backends need not support WebSocket themselves. A disconnect detaches observers;
+only the explicit cancel API stops a durable turn. The adapter limits each socket
+to 256 simultaneous logical streams (excess opens receive 429), bounds buffers,
+and times out requests waiting for headers.
+
+Reverse proxies in front of an upgraded gateway must pass WebSocket Upgrade for
+`/api/stream-transport` in addition to the existing HTTP routes. Do not silently
+retry a foreground POST through another transport after it may have started.
+
+Runtime-specific notes:
+
+- **Kiro** multiplexes sessions through cwd-keyed ACP clients and injects Michi
+  tools through per-session MCP HTTP slots.
+- **Pi** runs in-process against configured providers and exposes Michi plus
+  sandboxed file tools directly.
+- **Claude** uses a warm CLI pool, native resume bindings, permissions, and live
+  Task-subagent tracking.
+- **Codex** speaks app-server JSON-RPC, performs auth/version preflight, resumes
+  native threads, renders rich tool activity, and generates a first-turn title
+  in parallel.
+
+### Tools and permissions
+
+Shared Michi tools include:
+
+- graph and history: `spawn_branches`, `list_threads`, `search_messages`,
+  `read_node`;
+- reusable material: `save_artifact`, `update_artifact`, `show_image`;
+- structured interaction and metadata: Ask User, title, follow-ups, and branch
+  overview;
+- workspace files: `read`, `ls`, `grep`, `find`, plus gated `write`, `edit`,
+  and `bash` where the runtime supports them.
+
+The default policy allows read-only workspace and conversation lookup. Writes,
+edits, shell commands, and equivalent runtime operations ask the user unless a
+workspace grant or an explicit bypass mode applies.
+
+### Frontend
+
+`frontend/src/App.tsx` mounts preference, chat, auth/key, digest, and export
+providers, then renders `TerminalShell`.
+
+The main UI lives under `frontend/src/components/terminal/`:
+
+- **Home**: large composer, first-run runtime/model setup, and recent threads.
+- **Dashboard**: a horizontally scrollable strip of resizable chat, digest, and
+  artifact panes.
+- **Overview**: centered branch navigation backed by an append-only per-turn
+  summary journal.
+- **Map**: active-thread DAG navigation and selection actions.
+- **Digest**: active-thread synthesis with source tracking and stale detection.
+- **Artifacts drawer**: grouped documents, files, images, and links with
+  search, favorites, import, and citation.
+- **Workspace management**: chat/artifact/digest inventory, archived-node bulk
+  actions, folder relinking, trash, and archived threads.
+- **Settings**: runtime/provider/model controls, permissions, appearance,
+  sidebar density/vibrancy, typography, and developer diagnostics.
+
+The composer uses TipTap, keeps markdown structure in its draft wire format,
+supports slash and mention completion, attachments, queued sends, long-paste
+conversion, and Enter-to-send with Shift+Enter for markdown continuation.
+
+Assistant rendering uses React Markdown with GFM, KaTeX, syntax highlighting,
+stream-aware block projection, grouped tools, thinking/answer tiers, inline
+Ask User cards, diff receipts, images, and subagent activity.
+
+State is split across domain reducers, hydration/persistence helpers,
+per-window pane state, and shared turn projection. Synchronous refs remain
+intentional so a newly-created node can be streamed into before React's next
+render.
+
+### Persistence and recovery
+
+`data.db` is the durable source of truth for workspaces, trees, nodes, edges,
+messages, turns, command receipts, artifacts, permission grants, runtime
+bindings, provider metadata, and drafts.
+
+Startup uses a hydration barrier:
+
+1. wait until the backend can answer;
+2. load workspace/tree/node metadata without all message bodies;
+3. eagerly load the active tree;
+4. lazy-load other trees when opened;
+5. reconnect any node that was persisted as streaming.
+
+LocalStorage remains a scoped cache/fallback and stores small per-window UI
+state such as the active workspace. Durable workspace data is cleared from the
+mirror after a successful backend hydration. Preferences are also persisted
+through backend config storage.
+
+Native agent sessions are resumed when the runtime supports it. If an exact
+native resume is unavailable, Michi can reconstruct context from the persisted
+ancestor chain and transcript.
+
+### Electron
+
+`electron/main.ts`:
+
+- fixes the GUI-launch PATH before runtime discovery;
+- runs a single app instance with multiple BrowserWindows (`Cmd/Ctrl+N`);
+- persists each window's size and uses a stable backend port;
+- forks one bundled backend, waits for `/api/health`, and loads the
+  backend-served frontend;
+- keeps background streaming unthrottled;
+- provides folder/file pickers, external-file artifact linking, file reads,
+  path opening, markdown save, notifications, relaunch, and log helpers through
+  the preload bridge;
+- opens external links in the system browser;
+- supports macOS native vibrancy and optional sleep prevention;
+- stops the backend cleanly when the app quits.
+
+Packaged builds load `~/.michi/.env` before the backend starts. Set
+`preventSleep: true` in `~/.michi/config.json` to prevent application
+suspension during long turns.
+
+## Project Structure
+
+```text
+michi/
+|-- backend/
+|   |-- scripts/build.mjs        # typecheck + esbuild bundle + SQL copy
+|   `-- src/
+|       |-- agents/              # runtime registry and adapters
+|       |-- db/                  # schema and migrations
+|       |-- routes/              # Express/SSE endpoints
+|       `-- services/            # persistence, MCP, search, config, export
+|-- frontend/
+|   |-- src/
+|   |   |-- components/terminal/ # desktop shell, panes, pages, drawers
+|   |   |-- components/          # shared markdown, dialogs, artifact UI
+|   |   |-- lib/                 # client helpers
+|   |   |-- services/            # API clients and SSE parser
+|   |   `-- state/               # domain state, hydration, pane state
+|   |-- index.html
+|   `-- vite.config.mts
+|-- shared/                      # shared stream types and turn projection
+|-- electron/                    # Electron main, preload, startup metrics
+|-- e2e/                         # Playwright fixtures and specs
+|-- docs/                        # environment, deployment, specs, plans
+|-- scripts/                     # dev, metrics, and performance helpers
+|-- bin/michi                    # macOS/Linux launcher and updater
+|-- install.sh                   # Desktop bootstrap installer (macOS/Linux)
+`-- package.json                 # npm workspaces root
+```
+
+Generated outputs:
+
+```text
+shared/dist/
+backend/dist/
+frontend/build/
+dist-electron/
+node_modules/
+```
+
+## Data and Logs
+
+Packaged/local production defaults to `~/.michi`:
+
+- `data.db`: application state and durable turn data.
+- `audit.db`: permission and activity audit history.
+- `auth.sqlite`: Better Auth data when hosted auth is enabled.
+- `config.json`: runtime/provider/model and user preference config.
+- `.env`: optional packaged Electron environment overrides.
+- `backend-port`: stable Electron backend port.
+- `logs/`: backend, Electron, startup, and runtime logs.
+- `workspaces/`: scratch folders created by the desktop skip-folder flow.
+
+Root development commands default `MICHI_DATA_DIR` to `~/.michi-dev`. Override
+`MICHI_DATA_DIR` and `MICHI_LOG_DIR` when you need isolated test or profiling
+runs.
+
+## Development Notes
+
+- Install from the repository root so `frontend`, `backend`, and `shared`
+  dependencies are hoisted consistently.
+- Ordinary APIs use native `fetch`. Streaming callers use `fetchStream`, which
+  returns a `Response`/`ReadableStream` backed by the shared WebSocket or the
+  legacy HTTP SSE fallback. Keep long-lived feeds off ordinary HTTP connections.
+- A new stream event must stay aligned across shared protocol types, normalized
+  runtime events, SSE serialization, frontend parsing, turn projection, and
+  reducers when it mutates state.
+- Node IDs are Michi's public chat identity. Runtime-native session IDs are
+  resumable implementation details.
+- Do not use `project.chatIds[0]` as the current root. Use forest-aware helpers
+  such as `activeTreeRootNodeId(project)`.
+- Do not move synchronous `nodesRef` / `projectsRef` updates into effects;
+  create-and-stream flows depend on immediate reads.
+- Kiro ACP `session/new` MCP entries require `headers: []` even when no headers
+  are needed.
+- The Codex protocol bindings under `backend/src/agents/codex/gen/` are
+  checked in; regenerate them intentionally when the app-server protocol
+  changes.
+- SQL migrations must be copied into the backend bundle. The existing build
+  script handles this.
+- The live UI is terminal-native. Do not restore the archived React Flow canvas
+  or removed mobile shell without an explicit product decision.

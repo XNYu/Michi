@@ -61,6 +61,7 @@ import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRun
 import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
 import { chatHub } from './agents/chatHub';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
+import { createStreamTransport } from './services/streamTransport';
 
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
@@ -609,6 +610,8 @@ app.get('/api/ready', (_req, res) => {
 });
 
 const mcpRouter = express.Router();
+const streamTransport = createStreamTransport();
+app.use('/api', streamTransport.router);
 mountMcp(mcpRouter, mcpRegistry);
 app.use('/api', mcpRouter);
 
@@ -681,11 +684,14 @@ const server = app.listen(Number(port), listenHost, () => {
   }
 });
 
+streamTransport.attach(server);
+
 let shuttingDown = false;
 const gracefulShutdown = async (): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info('boot', 'shutting down');
+  streamTransport.close();
   clearInterval(agentRunCleanupTimer);
   await agentRunCleanupPass;
   await agentRunAssembly?.shutdown();

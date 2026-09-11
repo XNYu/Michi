@@ -50,29 +50,37 @@ export async function readSseStream(
 ): Promise<void> {
   const decoder = new TextDecoder();
   let buf = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (opts.shouldStop?.()) break;
-    opts.onRead?.();
-    buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
-      const block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const lines = block.split('\n');
-      let evt = 'message';
-      let data = '';
-      for (const l of lines) {
-        if (l.startsWith('event:')) evt = l.slice(6).trim();
-        else if (l.startsWith('data:')) {
-          const rest = l.slice(5);
-          data += rest.startsWith(' ') ? rest.slice(1) : rest;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (opts.shouldStop?.()) break;
+      opts.onRead?.();
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        if (opts.shouldStop?.()) return;
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const lines = block.split('\n');
+        let evt = 'message';
+        let data = '';
+        for (const l of lines) {
+          if (l.startsWith('event:')) evt = l.slice(6).trim();
+          else if (l.startsWith('data:')) {
+            const rest = l.slice(5);
+            data += rest.startsWith(' ') ? rest.slice(1) : rest;
+          }
         }
+        if (!data) continue;
+        const maybe = onFrame(evt, data);
+        if (maybe) await maybe;
       }
-      if (!data) continue;
-      const maybe = onFrame(evt, data);
-      if (maybe) await maybe;
     }
+  } finally {
+    // Parser/handler failures must detach their transport channel too. A
+    // renderer disconnect releases a subscriber, never cancels a durable turn.
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }

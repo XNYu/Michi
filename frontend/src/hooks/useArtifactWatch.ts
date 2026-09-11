@@ -1,14 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { artifactWatchStreamUrl, postArtifactWatchPaths } from '../services/api';
+import { fetchStream } from '../services/api/streamTransport';
+import { readSseStream } from '../services/api/sseParser';
 
 /**
  * useArtifactWatch — subscribe to a workspace's artifact-change notifications so
  * an open ArtifactPane can show a "Changed on disk · refresh" badge when its file changes
  * on disk (from any source: agent Edit/Write, an external editor, git checkout).
  *
- * This is the app's only `EventSource`: the per-turn chat SSE streams are closed
- * when idle and can't deliver a notification between turns. This channel is
- * independent and persistent, using EventSource's built-in auto-reconnect.
+ * This independent, persistent feed shares the gateway's WebSocket with chat
+ * streams, so idle file watches do not consume HTTP request connections.
  *
  * Contract:
  *   - `paths` is the set of stored artifact paths to watch (relative `.contexts/`
@@ -20,7 +21,7 @@ import { artifactWatchStreamUrl, postArtifactWatchPaths } from '../services/api'
  *   - `onChanged` / `onRemoved` receive the STORED filePath (byte-matching what a
  *     pane holds in `n.artifact.filePath`), so the caller can string-match open
  *     artifact nodes. They are read through refs, so updating them never churns
- *     the EventSource.
+ *     the connection.
  *
  * `enabled` should be false for cwd-less workspaces or when there is nothing to
  * watch — the hook then opens no connection.
@@ -34,7 +35,7 @@ export function useArtifactWatch(opts: {
 }): void {
   const { workspaceId, enabled, paths, onChanged, onRemoved } = opts;
 
-  // Latest callbacks + paths behind refs so the EventSource effect depends only
+  // Latest callbacks + paths behind refs so the subscription effect depends only
   // on identity (workspaceId/enabled), not on values that change every render.
   const onChangedRef = useRef(onChanged);
   const onRemovedRef = useRef(onRemoved);
@@ -46,46 +47,51 @@ export function useArtifactWatch(opts: {
   // Stable key so the declare effect fires only on a real path-set change.
   const pathsKey = paths.join('\n');
 
-  // EventSource lifecycle — one connection per (workspaceId, enabled).
+  // Subscription lifecycle: one channel per (workspaceId, enabled).
   useEffect(() => {
     if (!enabled || !workspaceId) return;
-    // No EventSource outside a browser (jsdom unit tests, SSR): skip the watch
-    // rather than throw. Real browsers and the Playwright runtime always have it.
+    // Preserve the test/SSR opt-out used by store tests without a watch server.
     if (typeof EventSource === 'undefined') return;
-
-    const es = new EventSource(artifactWatchStreamUrl(workspaceId));
-
+    let stopped = false;
+    let controller: AbortController | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     const declare = () => {
-      void postArtifactWatchPaths(workspaceId, pathsRef.current).catch(() => {
-        // Best-effort: a failed declare just means no badge until the next
-        // successful declare (stream open / path change). Not user-facing.
-      });
+      void postArtifactWatchPaths(workspaceId, pathsRef.current).catch(() => {});
     };
-
-    // Re-declare on every (re)connect: an auto-reconnect rebuilds a fresh
-    // server-side watcher entry that must be repopulated with our path set.
-    es.addEventListener('open', declare);
-
-    es.addEventListener('artifact_changed', (e) => {
+    const connect = async () => {
+      controller = new AbortController();
+      const armWatchdog = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => controller?.abort(), 60_000);
+      };
       try {
-        const data = JSON.parse((e as MessageEvent).data) as { filePath?: string };
-        if (typeof data.filePath === 'string') onChangedRef.current(data.filePath);
+        armWatchdog();
+        const response = await fetchStream(artifactWatchStreamUrl(workspaceId), { signal: controller.signal });
+        if (!response.ok || !response.body) throw new Error('File watch unavailable');
+        if (stopped) { await response.body.cancel(); return; }
+        declare();
+        await readSseStream(response.body.getReader(), (event, raw) => {
+          try {
+            const data = JSON.parse(raw) as { filePath?: string };
+            if (typeof data.filePath !== 'string') return;
+            if (event === 'artifact_changed') onChangedRef.current(data.filePath);
+            else if (event === 'artifact_removed') onRemovedRef.current(data.filePath);
+          } catch { /* malformed frame */ }
+        }, { onRead: armWatchdog, shouldStop: () => stopped });
       } catch {
-        /* malformed frame — ignore */
+        // Watching is best-effort; reconnect and re-declare the complete set.
+      } finally {
+        clearTimeout(watchdog);
+        if (!stopped) retry = setTimeout(() => void connect(), 3_000);
       }
-    });
-
-    es.addEventListener('artifact_removed', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data) as { filePath?: string };
-        if (typeof data.filePath === 'string') onRemovedRef.current(data.filePath);
-      } catch {
-        /* malformed frame — ignore */
-      }
-    });
-
+    };
+    void connect();
     return () => {
-      es.close();
+      stopped = true;
+      clearTimeout(retry);
+      clearTimeout(watchdog);
+      controller?.abort();
     };
   }, [workspaceId, enabled]);
 
@@ -95,6 +101,5 @@ export function useArtifactWatch(opts: {
     if (!enabled || !workspaceId) return;
     void postArtifactWatchPaths(workspaceId, pathsRef.current).catch(() => {});
     // pathsKey is the change signal; pathsRef.current carries the actual value.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, enabled, pathsKey]);
 }

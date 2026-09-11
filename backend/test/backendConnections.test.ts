@@ -268,3 +268,53 @@ test('streaming proxy detaches its upstream response when the renderer disconnec
     await new Promise<void>((resolve, reject) => remoteServer.close((err) => err ? reject(err) : resolve()));
   }
 });
+
+test('streaming proxy aborts upstream even before response headers arrive', async (t) => {
+  let markReceived!: () => void;
+  let markClosed!: () => void;
+  const received = new Promise<void>((resolve) => { markReceived = resolve; });
+  const closed = new Promise<void>((resolve) => { markClosed = resolve; });
+  const remote = express();
+  remote.get('/api/hold', (_req, res) => {
+    res.on('close', markClosed);
+    markReceived();
+  });
+  const remoteServer = http.createServer(remote);
+  await new Promise<void>((resolve) => remoteServer.listen(0, '127.0.0.1', resolve));
+  const remoteAddress = remoteServer.address();
+  assert.ok(remoteAddress && typeof remoteAddress === 'object');
+  const saved = saveBackendConnection({
+    name: 'Pending stream', apiUrl: `http://127.0.0.1:${remoteAddress.port}`,
+  });
+  const gateway = express();
+  gateway.use('/api', setupBackendConnectionRoutes());
+  const gatewayServer = http.createServer(gateway);
+  await new Promise<void>((resolve) => gatewayServer.listen(0, '127.0.0.1', resolve));
+  const gatewayAddress = gatewayServer.address();
+  assert.ok(gatewayAddress && typeof gatewayAddress === 'object');
+  t.after(async () => {
+    for (const server of [gatewayServer, remoteServer]) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+  const controller = new AbortController();
+  const pending = fetch(`http://127.0.0.1:${gatewayAddress.port}/api/backend-connections/${saved.id}/proxy/hold`, {
+    signal: controller.signal,
+  });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  await received;
+  controller.abort();
+  await rejected;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('upstream request stayed open before headers')), 2_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+});

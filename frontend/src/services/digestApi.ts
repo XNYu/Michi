@@ -1,4 +1,5 @@
 import { backendApiBase } from '../config/backendConnections';
+import { fetchStream } from './api/streamTransport';
 
 export interface DigestGenerationPayload {
   workspace: { name: string; cwd?: string; createdAt: number };
@@ -30,7 +31,7 @@ export async function streamDigest(
   { onChunk, signal }: StreamCallbacks,
   connectionId?: string,
 ): Promise<string> {
-  const res = await fetch(`${backendApiBase(connectionId)}/digests/stream`, {
+  const res = await fetchStream(`${backendApiBase(connectionId)}/digests/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

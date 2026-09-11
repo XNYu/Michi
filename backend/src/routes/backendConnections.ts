@@ -149,14 +149,18 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       if (!headers.has('content-type')) headers.set('content-type', 'application/json');
     }
 
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
     try {
       const apiUrl = await tunnelManager.apiUrl(connection);
+      if (controller.signal.aborted) return;
       const targetUrl = `${apiUrl}/${suffix}${query}`;
       const upstream = await fetch(targetUrl, {
         method: req.method,
         headers,
         body,
         redirect: 'manual',
+        signal: controller.signal,
       });
       res.status(upstream.status);
       upstream.headers.forEach((value, name) => {
@@ -173,6 +177,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       });
       upstreamStream.pipe(res);
     } catch (err) {
+      if (controller.signal.aborted) return;
       if (!res.headersSent) {
         res.status(502).json({ error: `Remote backend unavailable: ${(err as Error).message}` });
       } else if (!res.writableEnded) {

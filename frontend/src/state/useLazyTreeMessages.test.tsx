@@ -1,5 +1,5 @@
-import { renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MutableRefObject } from 'react';
 import type { ChatAction, ChatNodeState, Project } from './chatTypes';
 
@@ -36,6 +36,28 @@ function node(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
 }
 
 describe('useLazyTreeMessages live-turn races', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('does not duplicate an in-flight read after the deferred retry and aborts it on unmount', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<unknown[]>();
+    apiMocks.fetchTreeMessages.mockReset().mockReturnValue(pending.promise);
+    const nodesRef = { current: { n1: node() } };
+    const dispatch = vi.fn();
+    const { unmount } = renderHook(() => useLazyTreeMessages({
+      hydrated: true, activeProjectId: 'ws-1', projects: [project(1)], nodesRef, dispatch,
+    }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(1);
+    const signal = apiMocks.fetchTreeMessages.mock.calls[0][3] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    unmount();
+    expect(signal.aborted).toBe(true);
+    pending.resolve([]);
+    await pending.promise;
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('does not install an old snapshot over a live turn and retries after cancellation', async () => {
     const first = deferred<unknown[]>();
     const second = deferred<unknown[]>();
