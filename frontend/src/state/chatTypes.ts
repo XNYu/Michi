@@ -772,6 +772,7 @@ export type ChatAction =
       reasoningOutputTokens?: number;
     }
   | { type: 'cancel-phase'; nodeId: string; phase: 'requested' | 'acknowledged' | 'settled' }
+  | { type: 'optimistic-cancel'; nodeId: string }
   | { type: 'compaction'; nodeId: string; active: boolean }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }
   | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null }

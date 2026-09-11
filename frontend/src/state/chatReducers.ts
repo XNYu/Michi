@@ -1374,6 +1374,28 @@ export function reduceNodes(
       if (!n) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, cancelPhase: action.phase } };
     }
+    case 'optimistic-cancel': {
+      const n = nodes[action.nodeId];
+      if (!n || n.status !== 'streaming') return nodes;
+      // Immediately move the node to idle so the composer unlocks. The
+      // backend turn is cancelled asynchronously; if any trailing events
+      // arrive they are harmlessly absorbed by the idle node.
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          status: 'idle',
+          cancelPhase: undefined,
+          compacting: undefined,
+          visibleResponseComplete: false,
+          streamingStartedAt: undefined,
+          streamingIdleMs: undefined,
+          pendingPermission: null,
+          pendingUserInput: n.pendingUserInput?.resolved ? n.pendingUserInput : null,
+          followUpsGenerating: false,
+        },
+      };
+    }
     case 'compaction': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;

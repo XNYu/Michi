@@ -16,6 +16,7 @@ import { getDb } from "../services/db";
 import { extractBranchOverview } from "../services/messageSerialization";
 import { log as appLog } from "../services/logger";
 import { ACPError } from "../services/acpClient";
+import { CANCEL_TIMEOUT_MS } from "../config/constants";
 import type { HarnessJournal } from "../services/harnessJournal";
 import { createSqliteHarnessJournal } from "../services/harnessJournal";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
@@ -183,6 +184,8 @@ export class ChatHub {
    * cancelling turn B on the same chat. Entries may also reserve a
    * client-minted turn id when cancel wins the race against POST /message. */
   private readonly cancelledTurnIds = new Set<string>();
+  /** Force-finish timers keyed by chatId. Cleared when the turn ends naturally. */
+  private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retentionMs: number;
   private readonly persistence: TurnPersistence;
   private readonly checkpointIntervalMs: number;
@@ -513,7 +516,79 @@ export class ChatHub {
         });
       }
     }).catch(() => {});
+    // Start a force-finish timer: if the streaming generator does not end
+    // within the deadline, force the turn into a terminal state so the chat
+    // is never stuck on "Cancel requested" indefinitely.
+    this.scheduleCancelTimeout(chatId, log);
     return true;
+  }
+
+  /**
+   * Cancel the active turn and wait for it to finish (with a timeout).
+   * Returns once the turn is no longer active, either because it ended
+   * naturally, was force-finished by the timeout, or was not active to
+   * begin with.
+   */
+  async cancelAndWait(chatId: string, timeoutMs = CANCEL_TIMEOUT_MS): Promise<void> {
+    const log = this.turns.get(chatId);
+    if (!log || log.status !== "active") return;
+    const turnId = log.turnId;
+    this.cancel(chatId, turnId);
+
+    // Wait for the active turn to complete (or the force-finish timer to fire).
+    const done = this.activeTurnCompletions.get(chatId)
+      ?? this.selfTurnQueues.get(chatId);
+    if (!done) return;
+    await Promise.race([
+      done.catch(() => {}),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    // If the turn is still active after the race, the force-finish timer
+    // from cancel() will handle it. Either way, the caller can proceed.
+  }
+
+  private scheduleCancelTimeout(chatId: string, log: TurnLog): void {
+    // Clear any previous timer for this chat (idempotent cancel).
+    const prev = this.cancelTimers.get(chatId);
+    if (prev) clearTimeout(prev);
+    const timer = setTimeout(async () => {
+      this.cancelTimers.delete(chatId);
+      const current = this.turns.get(chatId);
+      if (!current || current.turnId !== log.turnId || current.status !== "active") return;
+      appLog.warn('chat', 'cancel timeout: force-finishing stuck turn', {
+        turnId: log.turnId,
+        nodeId: log.nodeId,
+        elapsedMs: Date.now() - (log.snapshot.startedAt ?? 0),
+      });
+      try {
+        await this.finishWithDone(chatId, current, 'cancelled');
+      } catch (err) {
+        appLog.warn('chat', 'cancel timeout force-finish failed', {
+          turnId: log.turnId,
+          nodeId: log.nodeId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      // Clean up the active session reference so isActive() returns false.
+      this.activeSessions.delete(chatId);
+      for (const sub of this.subscribers.get(chatId) ?? []) {
+        try { sub.close(); } catch { /* ignore */ }
+      }
+      this.scheduleEvict(chatId, current);
+    }, CANCEL_TIMEOUT_MS);
+    timer.unref?.();
+    this.cancelTimers.set(chatId, timer);
+  }
+
+  private clearCancelTimer(chatId: string): void {
+    const timer = this.cancelTimers.get(chatId);
+    if (timer) {
+      clearTimeout(timer);
+      this.cancelTimers.delete(chatId);
+    }
   }
 
   async steer(chatId: string, text: string): Promise<SteerResult> {
@@ -859,6 +934,7 @@ export class ChatHub {
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
+      this.clearCancelTimer(chatId);
       this.scheduleEvict(chatId, log);
     }
   }
@@ -1173,6 +1249,7 @@ export class ChatHub {
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
+      this.clearCancelTimer(chatId);
       this.activeSessions.delete(chatId);
       for (const sub of this.subscribers.get(chatId) ?? []) {
         try {

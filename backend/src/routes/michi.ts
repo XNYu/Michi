@@ -1372,7 +1372,19 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(403).json({ error: "not the pane owner" });
         }
         if (chatHub.isActive(nodeId)) {
-            return res.status(409).json({ error: "a turn is already active for this chat" });
+            // Instead of hard-rejecting, cancel the in-flight turn and wait
+            // for it to finish so the user can immediately send the next
+            // message. The cancel timeout (CANCEL_TIMEOUT_MS) ensures this
+            // does not block indefinitely when a runtime ignores the signal.
+            try {
+                await chatHub.cancelAndWait(nodeId);
+            } catch { /* best-effort */ }
+            // If the turn is _still_ active after cancelAndWait (should be
+            // extremely rare — the force-finish timer should have cleaned up),
+            // fall back to the old 409 so the caller retries.
+            if (chatHub.isActive(nodeId)) {
+                return res.status(409).json({ error: "a turn is already active for this chat" });
+            }
         }
 
         let started;

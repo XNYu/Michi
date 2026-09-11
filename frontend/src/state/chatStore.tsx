@@ -2025,7 +2025,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const node = nodesRef.current[nodeId];
     const activeTurnId = node?.lastAppliedTurnId ?? node?.lastAppliedBackgroundTurnId;
     if (node?.status === 'streaming') {
-      dispatch({ type: 'cancel-phase', nodeId, phase: 'requested' });
+      // Optimistic cancel: immediately transition the node to idle so the
+      // composer unlocks. The backend cancel and turn cleanup happen
+      // asynchronously — if the user sends a new message before the old turn
+      // is fully drained, the backend's cancelAndWait path handles it.
+      dispatch({ type: 'optimistic-cancel', nodeId });
     }
     if (fn) {
       fn();
@@ -2035,11 +2039,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       return;
     } else if (claimInFlightRef.current.has(nodeId) && node?.chatId) {
       // A claim is installed by the server before its response reaches this
-      // pane. A self-turn may therefore arrive on the shared feed while the
-      // local role is still unresolved; treating Stop as a foreground-only
-      // pending cancel would lose it because no startStream callback exists to
-      // consume the marker. Send the token now: it is already authoritative if
-      // the claim won, and safely rejected if another pane owns the lease.
+      // pane. Send the cancel token now: it is already authoritative if the
+      // claim won, and safely rejected if another pane owns the lease.
       cancelChat(node.chatId, ownerTokenRef.current, activeTurnId).catch(() => {});
     } else {
       // Stop was pressed before streamMessage registered its cancel fn.
