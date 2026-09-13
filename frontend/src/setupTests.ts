@@ -1,5 +1,15 @@
 // Vitest setup hook.
 
+// A synchronous React effect loop starves Vitest's timeout timer. Fail at
+// React's diagnostic instead of leaving a worker spinning indefinitely.
+const reportConsoleError = console.error.bind(console);
+console.error = (...args: unknown[]) => {
+  if (args.some((arg) => typeof arg === 'string' && arg.includes('Maximum update depth exceeded'))) {
+    throw new Error('Maximum update depth exceeded: check for unstable test props or an effect update loop.');
+  }
+  reportConsoleError(...args);
+};
+
 // Node 22+ ships a built-in `localStorage` (--localstorage-file) that shadows
 // jsdom's implementation and lacks standard methods like `clear()`.  Provide a
 // minimal Storage-compliant shim so tests can call `localStorage.clear()`.

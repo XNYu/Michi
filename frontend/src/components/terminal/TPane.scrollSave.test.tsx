@@ -20,9 +20,9 @@
  * either. These tests mount the real TPane with stubbed children; jsdom's
  * zero geometry stands in for the unsettled pre-paint layout.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render, cleanup, waitFor } from '@testing-library/react';
+import { render, cleanup, act } from '@testing-library/react';
 
 const focusState = vi.hoisted(() => ({ focused: null as string | null, focus: vi.fn() }));
 
@@ -153,6 +153,10 @@ function readCache(): Record<string, any> {
 }
 
 describe('paneScrollCache save gating', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
   // Each test's teardown unmount can trigger a save + a 1s-debounced flush
   // from THAT test's module instance. Drain it before the next test seeds,
   // or it leaks into the shared localStorage mid-test.
@@ -160,7 +164,11 @@ describe('paneScrollCache save gating', () => {
     cleanup();
     focusState.focused = null;
     focusState.focus.mockClear();
-    await new Promise((r) => setTimeout(r, 1300));
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('automatic focus fallback does not scroll the dashboard or transcript', async () => {
@@ -168,9 +176,12 @@ describe('paneScrollCache save gating', () => {
     vi.resetModules();
     const { default: TPane } = await import('./TPane');
     const { rerender } = render(<TPane nodeId="node1" />);
+    // Resolve the lazy composer before advancing its focus animation frame.
+    await act(async () => { await vi.dynamicImportSettled(); });
     focusState.focused = 'node1';
     rerender(<TPane nodeId="node1" contentMaxWidth={640} />);
-    await waitFor(() => expect(focusState.focus).toHaveBeenCalledWith(undefined, { scrollIntoView: false }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(32); });
+    expect(focusState.focus).toHaveBeenCalledWith(undefined, { scrollIntoView: false });
   });
 
   it('plain mount: saved entry stays intact while mounted', async () => {
@@ -178,9 +189,9 @@ describe('paneScrollCache save gating', () => {
     vi.resetModules();
     const { default: TPane } = await import('./TPane');
     render(<TPane nodeId="node1" />);
-    await new Promise((r) => setTimeout(r, 1300));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
     expect(readCache().node1).toEqual(SAVED_ENTRY);
-  }, 15000);
+  });
 
   it('StrictMode mount: saved entry survives the dev double-invoke', async () => {
     seedCache();
@@ -193,9 +204,9 @@ describe('paneScrollCache save gating', () => {
     );
     // paneScrollCache flushes to localStorage on a 1s debounce; if the
     // StrictMode cleanup had saved, the clobbered entry would be visible now.
-    await new Promise((r) => setTimeout(r, 1300));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
     expect(readCache().node1).toEqual(SAVED_ENTRY);
-  }, 15000);
+  });
 
   it('unmount after the restore settles still saves (guard is not stuck closed)', async () => {
     seedCache();
@@ -204,13 +215,13 @@ describe('paneScrollCache save gating', () => {
     const { unmount } = render(<TPane nodeId="node1" />);
     // Let the restore go quiet (RESTORE_QUIET_MS + slack) so restoreInFlightRef
     // clears before we unmount — this unmount save must fire.
-    await new Promise((r) => setTimeout(r, 800));
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     unmount();
-    await new Promise((r) => setTimeout(r, 1300));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
     const entry = readCache().node1;
     // jsdom's zero geometry makes the *content* of this save look like
     // "at bottom" — that's a test-environment artifact. What matters here
     // is that the save FIRED at all: lastSeen advanced past the seed.
     expect(entry.lastSeen).toBe(1200);
-  }, 15000);
+  });
 });

@@ -64,9 +64,13 @@
     "typecheck:raw": "tsc --noEmit",
     "lint": "eslint src",
     "preview": "vite preview",
-    "test": "npm --prefix .. run shared:build && npm run test:raw --",
+    "test": "vitest run",
     "test:raw": "vitest run",
-    "test:watch": "npm --prefix .. run shared:build && vitest"
+    "test:node": "vitest run --project node",
+    "test:dom": "vitest run --project dom",
+    "test:changed": "vitest run --changed",
+    "test:related": "vitest related --run",
+    "test:watch": "vitest"
   },
   "browserslist": {
     "production": [

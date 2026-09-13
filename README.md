@@ -293,8 +293,10 @@ npm run electron:build        # unsigned macOS arm64 dmg in dist-electron/
 npm run electron:install      # copy the built app into ~/Applications
 
 # Verification
-cd frontend && npm test       # Vitest + jsdom
-cd backend && npm test        # Node test runner through ts-node
+npm run test:changed -w frontend # tests affected by uncommitted Git changes
+npm run test:node -w frontend # pure logic, no jsdom
+npm test -w frontend          # full Vitest suite: Node + jsdom
+npm test -w backend           # Node test runner through ts-node
 npm run test:e2e              # Playwright
 npm run test:e2e:ui           # Playwright UI
 npm run test:perf             # pane benchmark tooling tests
@@ -309,6 +311,48 @@ npm run perf:compare
 
 `scripts/kill-stale-dev.mjs` runs before the combined dev loops and removes
 stale Michi processes tied to this checkout.
+
+### Frontend Test Workflow
+
+Use a focused run while editing, then the full suite before shipping:
+
+```bash
+npm test -w frontend -- src/state/chatStreamRunner.test.ts
+npm run test:related -w frontend -- src/components/ui/DrawerShell.tsx
+npm run test:changed -w frontend
+npm run test:watch -w frontend -- src/state/chatStreamRunner.test.ts
+npm run test:dom -w frontend
+npm test -w frontend
+npm run typecheck -w frontend
+```
+
+Paths passed to frontend scripts are relative to `frontend/`. `test:changed`
+includes staged, unstaged and untracked changes; use `--changed=main` with a
+valid base ref to include committed changes since that ref. Dependency-based
+selection is not a substitute for the full suite: common modules/configuration
+can affect many tests, and dependencies read through filesystem APIs are not
+always in the import graph. Avoid piping test output through `tail`, which hides
+progress until exit and can hide a failed exit code.
+
+Vitest resolves `michi-shared` directly to `shared/src`, so frontend test
+and watch commands do not need a shared build. Builds, typechecking, backend
+tests and E2E retain their existing shared-build steps. `test:raw` remains an
+alias for the full frontend suite.
+
+`frontend/vitest.config.mts` separates audited `state/*.test.ts`,
+`lib/*.test.ts` and chunk-policy tests into the `node` project (worker threads).
+Tests using React hooks, `window.localStorage` or browser dialogs stay in the
+`dom` project (jsdom/forks), along with all other tests by default. Add new
+browser-dependent `.ts` tests in those logic directories to the exclusions in
+that config; a `.ts` extension alone does not mean a test is DOM-free. Both
+projects retain file isolation. The default pool is capped at four workers;
+override with `--maxWorkers=2` on a busy machine or a suitable larger value in CI.
+
+Keep hook input arrays, maps and sets stable across internal renders. The DOM
+setup fails on React's maximum-update-depth warning because a synchronous
+effect loop can block the runner's ordinary timeout. For timer-based behavior,
+advance fake timers inside `act` and restore real timers after cleanup instead
+of sleeping in real time.
 
 ## Configuration
 

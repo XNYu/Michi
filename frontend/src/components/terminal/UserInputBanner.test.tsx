@@ -4,6 +4,10 @@ import { vi, describe, it, expect, afterEach } from 'vitest';
 import UserInputBanner, { ResolvedUserInput } from './UserInputBanner';
 import type { UserInputRequest } from '../../state/chatTypes';
 
+vi.mock('../../state/prefs', () => ({
+  usePrefs: () => ({ prefs: { reduceMotion: false } }),
+}));
+
 function req(overrides: Partial<UserInputRequest> = {}): UserInputRequest {
   return {
     requestId: 1,
