@@ -90,8 +90,10 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
     dataDir: '/tmp/agent-runtime-test',
   });
   patchModule(piToolsPath, 'buildPiTools', () => []);
+  patchModule(require.resolve('../src/services/piMcpConfig'), 'readPiMcpServers', () => []);
   patchModule(piAiPath, 'loadPiAi', async () => ({
     Type: {},
+    clampThinkingLevel: (_model: unknown, level: string) => level,
     getModel: (_provider: string, requestedModelId: string) => {
       modelId = requestedModelId;
       return { contextWindow: 1000 };

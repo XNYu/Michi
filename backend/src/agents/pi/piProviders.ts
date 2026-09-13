@@ -1,6 +1,7 @@
 import { loadPiAi } from "./piAi";
 import { DEFAULT_MODELS } from "../agentConfig";
 import { fetchOpenRouterModels, type OpenRouterModelInfo } from "./openrouterModels";
+import { isReasoningLevel, type ModelReasoningCapabilities } from 'michi-shared';
 
 export interface PiProviderInfo {
     id: string;
@@ -23,7 +24,7 @@ export interface PiProviderInfo {
     credentialMode?: "api-key" | "aws-credential-chain";
 }
 
-export interface PiModelInfo {
+export interface PiModelInfo extends ModelReasoningCapabilities {
     model_id: string;
     model_name: string;
     description?: string;
@@ -280,6 +281,7 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
             description: typeof model.description === "string" ? model.description : undefined,
             context_window_tokens:
                 typeof model.contextWindow === "number" ? model.contextWindow : undefined,
+            ...piModelReasoning(piMod, model, info.supportsReasoning),
         }];
     }
 
@@ -287,7 +289,10 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
     if (provider === "openrouter") {
         const apiKey = getEnvProviderApiKey(provider);
         const dynamic = await fetchOpenRouterModels(apiKey);
-        if (dynamic && dynamic.length > 0) return dynamic;
+        if (dynamic && dynamic.length > 0) {
+            const piMod = await loadPiAi();
+            return dynamic.map((model) => ({ ...model, ...piModelReasoning(piMod, dynamicOpenRouterModel(model.model_id, model), info.supportsReasoning) }));
+        }
         // fall through to static list below
     }
 
@@ -299,7 +304,14 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
         description: typeof m.description === "string" ? m.description : undefined,
         context_window_tokens:
             typeof m.contextWindow === "number" ? m.contextWindow : undefined,
+        ...piModelReasoning(piMod, m, info.supportsReasoning),
     }));
+}
+
+function piModelReasoning(piMod: Awaited<ReturnType<typeof loadPiAi>>, model: any, providerSupportsReasoning: boolean): ModelReasoningCapabilities {
+    const supportsReasoning = providerSupportsReasoning && model.reasoning === true;
+    const levels = supportsReasoning ? piMod.getSupportedThinkingLevels(model).filter(isReasoningLevel) : [];
+    return { supportsReasoning, supportedReasoningLevels: levels, ...(levels.includes('high') ? { defaultReasoning: 'high' as const } : {}) };
 }
 
 export async function resolveProviderModel(provider: string, requested?: string): Promise<string> {

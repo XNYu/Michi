@@ -1,4 +1,4 @@
-import type { CapabilityDescriptor } from 'michi-shared';
+import type { CapabilityDescriptor, ModelReasoningCapabilities } from 'michi-shared';
 import { activeBackendApiBase, backendApiBase } from '../../config/backendConnections';
 
 // === Agent runtime API ===
@@ -22,7 +22,7 @@ export interface AgentCapabilities {
   nativeResume?: boolean;
 }
 
-export interface AgentProviderInfo {
+export interface AgentProviderInfo extends ModelReasoningCapabilities {
   id: string;
   label: string;
   keyLabel: string;
@@ -64,10 +64,11 @@ export interface AgentStatus {
   capabilityDescriptor?: CapabilityDescriptor;
 }
 
-export interface AgentModelInfo {
+export interface AgentModelInfo extends ModelReasoningCapabilities {
   id: string;
   label?: string;
   description?: string;
+  isDefault?: boolean;
 }
 
 export interface VerifyProviderKeyResult {

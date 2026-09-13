@@ -3,6 +3,15 @@ import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from 'michi-shared';
 import { allocateNodeIds, ensureSession, streamMessage } from './api';
 
 describe('ensureSession', () => {
+  it('preserves an explicit cleared reasoning value on the wire', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      chatId: 'n1', currentModeId: null, resumeStrategy: 'fresh',
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await ensureSession({ nodeId: 'n1', reasoning: null });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({ reasoning: null });
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

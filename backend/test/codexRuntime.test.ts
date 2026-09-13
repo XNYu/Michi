@@ -21,6 +21,7 @@ function makeStubClient(overrides: Partial<Record<string, unknown>> = {}): Codex
       return () => { set!.delete(handler); };
     },
     onServerRequest: (_h: unknown) => {},
+    onGlobalNotification: (_h: unknown) => () => {},
     onExit: (_cb: () => void) => () => {},
     shutdown: async () => {},
     isRunning: () => true,
@@ -74,7 +75,7 @@ function makeRuntime(
 test('listModels filters hidden models and marks isDefault', async () => {
   const modelListResult = {
     data: [
-      { id: 'model-a', displayName: 'Model A', description: 'Fast', hidden: false, isDefault: true, supportedReasoningEfforts: [], defaultReasoningEffort: 'medium' },
+      { id: 'model-a', displayName: 'Model A', description: 'Fast', hidden: false, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'low', description: '' }, { reasoningEffort: 'medium', description: '' }, { reasoningEffort: 'max', description: '' }], defaultReasoningEffort: 'medium' },
       { id: 'model-b', displayName: 'Model B', description: 'Slow', hidden: false, isDefault: false, supportedReasoningEfforts: [], defaultReasoningEffort: 'low' },
       { id: 'model-hidden', displayName: 'Hidden', description: '', hidden: true, isDefault: false, supportedReasoningEfforts: [], defaultReasoningEffort: 'low' },
     ],
@@ -94,10 +95,14 @@ test('listModels filters hidden models and marks isDefault', async () => {
   assert.ok(modelA, 'model-a should be present');
   assert.equal(modelA!.label, 'Model A');
   assert.equal(modelA!.isDefault, true, 'model-a should be marked as default');
+  assert.deepEqual(modelA!.supportedReasoningLevels, ['low', 'medium', 'max']);
+  assert.equal(modelA!.defaultReasoning, 'medium');
 
   const modelB = models.find((m) => m.id === 'model-b');
   assert.ok(modelB, 'model-b should be present');
   assert.equal(modelB!.isDefault, undefined, 'model-b should not be marked as default');
+  assert.deepEqual(modelB!.supportedReasoningLevels, []);
+  assert.equal(modelB!.supportsReasoning, false);
 
   assert.ok(!models.find((m) => m.id === 'model-hidden'), 'hidden model should not appear');
 });

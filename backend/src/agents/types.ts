@@ -1,4 +1,4 @@
-import type { CapabilityDescriptor, JsonValue } from "michi-shared";
+import type { CapabilityDescriptor, JsonValue, ModelReasoningCapabilities } from "michi-shared";
 import type { NormalizedEvent } from "../services/chatEvents";
 
 export type RuntimeId = string;
@@ -51,7 +51,7 @@ export interface AgentCapabilities {
   nativeResume: boolean;
 }
 
-export interface AgentProviderInfo {
+export interface AgentProviderInfo extends ModelReasoningCapabilities {
   id: string;
   label: string;
   keyLabel: string;
@@ -78,7 +78,7 @@ export interface AgentRuntimeOption {
   requiresApiKey?: boolean;
 }
 
-export interface ModelInfo {
+export interface ModelInfo extends ModelReasoningCapabilities {
   id: string;
   label?: string;
   description?: string;
@@ -244,6 +244,12 @@ export interface AgentSession {
   cancelPermission?(requestId: number): void;
   respondToUserInput?(requestId: number, answers: Array<{ question: string; answer: string }>): void;
   skipUserInput?(requestId: number): void;
+  /**
+   * Execute a runtime-native command (e.g. Kiro slash command via ACP
+   * `_kiro.dev/commands/execute`). Optional; when absent, commands are
+   * sent as prompt text. Returns structured result.
+   */
+  executeCommand?(command: string, args?: Record<string, unknown>): Promise<{ success: boolean; message?: string; data?: unknown }>;
 }
 
 export interface CancelAck {

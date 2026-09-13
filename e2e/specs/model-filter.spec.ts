@@ -71,7 +71,12 @@ test('Pi model picker filters the live provider catalog', async ({ page }, testI
 
   const filter = page.getByRole('searchbox', { name: 'Filter models' });
   await expect(filter).toBeVisible();
+  const borderBeforeFocus = await filter.evaluate((element) => getComputedStyle(element).borderColor);
   await filter.fill('ox');
+  await expect(filter).toBeFocused();
+  await expect(filter).toHaveCSS('outline-style', 'none');
+  await expect(filter).toHaveCSS('box-shadow', 'none');
+  await expect(filter).toHaveCSS('border-color', borderBeforeFocus);
 
   const modelSelect = page.locator('select').filter({ has: page.locator('option[value="stealth/ox-alpha"]') });
   await expect(modelSelect.locator('option')).toHaveCount(1);

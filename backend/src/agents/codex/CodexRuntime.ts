@@ -1,4 +1,4 @@
-import type { CapabilityDescriptor } from 'michi-shared';
+import { isReasoningLevel, sanitizeReasoningLevels, type CapabilityDescriptor } from 'michi-shared';
 import type {
   AgentCapabilities,
   AgentRuntime,
@@ -244,7 +244,7 @@ export class CodexRuntime implements AgentRuntime {
           workspaceInstructions,
         });
 
-    const effort = opts.reasoning ?? resolveReasoning('codex') ?? null;
+    const effort = opts.reasoning !== undefined ? opts.reasoning : resolveReasoning('codex', opts.ownerUserId ?? undefined) ?? null;
     const enableFollowUps = opts.enableFollowUps !== false;
 
     // Create MCP slot (session pre-wires the callbacks but MCP slot created here)
@@ -368,7 +368,7 @@ export class CodexRuntime implements AgentRuntime {
       modelId = def?.id ?? '';
     }
 
-    const effort = resolveReasoning('codex') ?? null;
+    const effort = opts.reasoning !== undefined ? opts.reasoning : resolveReasoning('codex', opts.ownerUserId ?? undefined) ?? null;
 
     const session = new CodexSession({
       nodeId: publicId,
@@ -496,6 +496,11 @@ export class CodexRuntime implements AgentRuntime {
           label: m.displayName || m.id,
           description: m.description || undefined,
           isDefault: m.isDefault || undefined,
+          ...(Array.isArray(m.supportedReasoningEfforts) ? {
+            supportedReasoningLevels: sanitizeReasoningLevels(m.supportedReasoningEfforts.map((entry) => entry.reasoningEffort)),
+            supportsReasoning: m.supportedReasoningEfforts.length > 0,
+          } : {}),
+          ...(isReasoningLevel(m.defaultReasoningEffort) ? { defaultReasoning: m.defaultReasoningEffort } : {}),
         }));
 
       // A transient empty response must not erase the last usable snapshot.

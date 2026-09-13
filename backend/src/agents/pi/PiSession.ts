@@ -362,11 +362,10 @@ export class PiSession implements AgentSession {
                     systemPrompt,
                     model,
                     tools,
-                    // pi thinkingLevel doesn't accept "max"; clamp to xhigh.
                     thinkingLevel: (() => {
+                        if (getProviderInfo(provider)?.supportsReasoning === false) return 'off';
                         const r = this.requestedReasoning ?? deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
-                        if (r === "max") return "xhigh";
-                        return r ?? "off";
+                        return piMod.clampThinkingLevel(model, r ?? 'off');
                     })(),
                     messages: [],
                 },

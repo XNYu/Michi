@@ -212,6 +212,9 @@ export class ClaudeRuntime implements AgentRuntime {
       id,
       label: id,
       description: `Context: ${(entry.contextWindow / 1000).toFixed(0)}K tokens`,
+      supportsReasoning: entry.supportsReasoning,
+      supportedReasoningLevels: entry.supportedReasoningLevels,
+      defaultReasoning: entry.defaultReasoning,
     }));
   }
 

@@ -14,6 +14,23 @@ afterEach(() => {
   openRouterModels.invalidateOpenRouterCache();
 });
 
+test('Pi model catalogs preserve SDK model-specific effort capabilities', async () => {
+  const actual = await originalLoadPiAi() as { getSupportedThinkingLevels: (model: unknown) => string[] };
+  piAiModule.loadPiAi = async () => ({
+    getSupportedThinkingLevels: actual.getSupportedThinkingLevels,
+    getModels: () => [
+      { id: 'plain', name: 'Plain', reasoning: false },
+      { id: 'thinking', name: 'Thinking', reasoning: true, thinkingLevelMap: { xhigh: 'xhigh', max: 'max', minimal: null } },
+    ],
+  });
+  const { listPiModels } = require('../src/agents/pi/piProviders') as typeof import('../src/agents/pi/piProviders');
+  const models = await listPiModels('openai');
+  assert.equal(models[0].supportsReasoning, false);
+  assert.deepEqual(models[0].supportedReasoningLevels, []);
+  assert.deepEqual(models[1].supportedReasoningLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(models[1].defaultReasoning, 'high');
+});
+
 test("resolves an OpenRouter live-catalog model missing from pi-ai's static catalog", async () => {
   piAiModule.loadPiAi = async () => ({ getModel: () => undefined });
   global.fetch = async () => new Response(JSON.stringify({

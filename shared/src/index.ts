@@ -5,3 +5,4 @@ export * from './harness';
 export * from './toolPurpose';
 export * from './turnProjection';
 export * from './streamTransport';
+export * from './reasoning';

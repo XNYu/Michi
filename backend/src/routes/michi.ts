@@ -12,6 +12,7 @@ import { ChatManager, ExtraContext, PrimaryAgentBindingError, primaryAgentSessio
 import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
 import { getRuntime } from "../agents/registry";
+import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider } from "../services/agentConfig";
 import { startupMark } from "../services/startupTrace";
 import * as sessionRegistry from "../agents/sessionRegistry";
@@ -1073,6 +1074,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const parentChatId = normalizeSignaturePart(body.parentChatId) ?? undefined;
         const workspaceId = normalizeSignaturePart(body.workspaceId) ?? getNodeWorkspaceId(nodeId);
         const modelRaw = body.model;
+        for (const field of ['runtimeId', 'providerId', 'modelId']) {
+            if (body[field] !== undefined && (typeof body[field] !== 'string' || !(body[field] as string).trim())) {
+                return res.status(400).json({ error: `${field} must be a non-empty string` });
+            }
+        }
+        if (body.reasoning !== undefined && body.reasoning !== null && !normalizeReasoning(body.reasoning)) {
+            return res.status(400).json({ error: 'Invalid reasoning level' });
+        }
         if (modelRaw !== undefined && typeof modelRaw !== "string") {
             return res.status(400).json({ error: "model must be a string" });
         }
@@ -1158,7 +1167,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             });
             const primaryProfile = primaryAgent?.effectiveDefinition.runtimeProfile;
             const requestedModeId = normalizeSignaturePart(primaryProfile?.modeId) ?? desiredModeId;
-            const runtimeId = primaryProfile?.runtimeId ?? cfg.runtime;
+            const runtimeId = primaryProfile?.runtimeId ?? normalizeSignaturePart(body.runtimeId) ?? cfg.runtime;
             const runtime = getRuntime(runtimeId);
             if (!runtime) {
                 return res.status(500).json({ error: `Unknown agent runtime: ${runtimeId}` });
@@ -1171,10 +1180,25 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     reasoning: normalizeReasoning(primaryProfile.reasoning),
                 }
                 : buildTargetResumeSignature(
-                    cfg,
+                    { ...cfg, runtime: runtimeId },
                     runtime,
-                    typeof modelRaw === "string" ? modelRaw : undefined,
+                    normalizeSignaturePart(body.modelId) ?? (typeof modelRaw === "string" ? modelRaw : undefined),
                 );
+            if (!primaryProfile) {
+                targetSignature.providerId = runtime.capabilities.providerModels
+                    ? normalizeSignaturePart(body.providerId) ?? resolveProvider(runtimeId, michiUserId)
+                    : null;
+                if (runtime.capabilities.providerModels && body.providerId !== undefined
+                    && body.providerId !== resolveProvider(runtimeId, michiUserId)
+                    && body.modelId === undefined && modelRaw === undefined) {
+                    targetSignature.modelId = null;
+                }
+                const requestedReasoning = body.reasoning !== undefined
+                    ? normalizeReasoning(body.reasoning) : targetSignature.reasoning;
+                const effort = await getModelReasoningOptions(runtime, targetSignature.modelId, targetSignature.providerId, requestedReasoning);
+                targetSignature.modelId = effort.modelId ?? targetSignature.modelId;
+                targetSignature.reasoning = effort.value ?? null;
+            }
             const row = getNode(nodeId);
             const transcript = readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
             const persistedBinding =
@@ -1803,6 +1827,34 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         try {
             await session.setModel(modelId);
             res.json({ ok: true, currentModelId: modelId });
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message });
+        }
+    });
+
+    /**
+     * Execute a runtime-native command (e.g. Kiro slash command) without
+     * consuming a prompt turn. The command is dispatched via the ACP
+     * `_kiro.dev/commands/execute` RPC. Only allowlisted commands are
+     * routed here; the frontend falls back to prompt text for unknown
+     * or unsupported commands.
+     *
+     * Side effects (e.g. compaction/clear notifications) arrive on the
+     * session queue and are delivered as SSE events during the next turn
+     * or via the background observer.
+     */
+    router.post("/chats/:chatId/execute-command", requireChatOwner, async (req, res) => {
+        const { command, args } = req.body ?? {};
+        if (typeof command !== "string" || !command) {
+            return res.status(400).json({ error: "command is required" });
+        }
+        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
+        if (!session?.executeCommand) {
+            return res.status(400).json({ error: "Active session does not support command execution" });
+        }
+        try {
+            const result = await session.executeCommand(command, args ?? undefined);
+            res.json(result);
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }

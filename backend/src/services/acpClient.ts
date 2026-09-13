@@ -617,6 +617,42 @@ export class AcpClient {
             }
         }
 
+        // _kiro.dev/compaction/status — compaction lifecycle notification.
+        // Emitted by kiro-cli when `/compact` is executed (either via
+        // commands/execute or as a prompt-text slash command). The agent
+        // pushes { type: "started" } then { type: "completed", summary }.
+        if (msg?.method === "_kiro.dev/compaction/status") {
+            const params = msg.params ?? {};
+            const sid: string | undefined = typeof params.sessionId === "string" ? params.sessionId : undefined;
+            const statusType = params.status?.type; // "started" | "completed"
+            if (sid) {
+                const q = this.sessionQueues.get(sid);
+                if (q) {
+                    if (statusType === "started") {
+                        q.push({ update: { sessionUpdate: "compaction_start" } });
+                    } else if (statusType === "completed") {
+                        q.push({ update: {
+                            sessionUpdate: "compaction_end",
+                            summary: typeof params.summary === "string" ? params.summary : undefined,
+                        }});
+                    }
+                }
+            }
+        }
+
+        // _kiro.dev/clear/status — session history cleared notification.
+        // Emitted after `/clear` completes via commands/execute.
+        if (msg?.method === "_kiro.dev/clear/status") {
+            const params = msg.params ?? {};
+            const sid: string | undefined = typeof params.sessionId === "string" ? params.sessionId : undefined;
+            if (sid) {
+                const q = this.sessionQueues.get(sid);
+                if (q) {
+                    q.push({ update: { sessionUpdate: "clear_status" } });
+                }
+            }
+        }
+
         // _kiro.dev/mcp/server_initialized — skipped, noisy
         // _kiro.dev/commands/available — skipped, future command palette feature
 
@@ -965,6 +1001,34 @@ export class AcpClient {
                 this.cancelPermission(reqId);
             }
         }
+    }
+
+    /**
+     * Execute a Kiro slash command via the ACP `_kiro.dev/commands/execute`
+     * request instead of sending it as prompt text. Returns the structured
+     * response `{ success, message?, data? }`.
+     *
+     * Only verified-safe commands should use this path; commands that hang
+     * (e.g. `/help`, `/model`) must fall back to prompt text.
+     *
+     * Side-effects like `_kiro.dev/compaction/status` are delivered as
+     * separate notifications and routed to the session queue by dispatch().
+     */
+    async executeCommand(
+        sessionId: string,
+        command: string,
+        args?: Record<string, unknown>,
+    ): Promise<{ success: boolean; message?: string; data?: unknown }> {
+        const payload: Record<string, unknown> = {
+            sessionId,
+            command: { command, ...(args ? { args } : {}) },
+        };
+        return this.send(
+            "_kiro.dev/commands/execute",
+            payload,
+            DEFAULT_TIMEOUT_MS,
+            sessionId,
+        );
     }
 
     async cancel(sessionId: string): Promise<void> {

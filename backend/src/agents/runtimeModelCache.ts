@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentProviderInfo, ModelInfo, RuntimeId } from './types';
+import { isReasoningLevel, sanitizeReasoningLevels } from 'michi-shared';
 
 const CACHE_VERSION = 2;
 
@@ -53,6 +54,9 @@ function sanitizeModels(value: unknown): ModelInfo[] | null {
         label: typeof raw.label === 'string' ? raw.label : undefined,
         description: typeof raw.description === 'string' ? raw.description : undefined,
         isDefault: raw.isDefault === true ? true : undefined,
+        ...(typeof raw.supportsReasoning === 'boolean' ? { supportsReasoning: raw.supportsReasoning } : {}),
+        ...(Array.isArray(raw.supportedReasoningLevels) ? { supportedReasoningLevels: sanitizeReasoningLevels(raw.supportedReasoningLevels) } : {}),
+        ...(isReasoningLevel(raw.defaultReasoning) ? { defaultReasoning: raw.defaultReasoning } : {}),
       };
     })
     .filter((model): model is ModelInfo => model !== null);
@@ -69,10 +73,7 @@ function sanitizeProviders(value: unknown): AgentProviderInfo[] {
 }
 
 function computeContentHash(models: ModelInfo[], providers: AgentProviderInfo[]): string {
-  const modelIds = models.map((m) => m.id).sort();
-  const providerIds = providers.map((p) => p.id).sort();
-  const defaultModel = models.find((m) => m.isDefault)?.id ?? '';
-  const payload = [...modelIds, '|', ...providerIds, '|', defaultModel].join(',');
+  const payload = JSON.stringify({ models, providers });
   return createHash('sha256').update(payload).digest('hex').slice(0, 16);
 }
 

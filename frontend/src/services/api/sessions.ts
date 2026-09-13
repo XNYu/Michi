@@ -244,7 +244,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.modeId) body.modeId = opts.modeId;
   if (opts.providerId) body.providerId = opts.providerId;
   if (opts.modelId) body.modelId = opts.modelId;
-  if (opts.reasoning) body.reasoning = opts.reasoning;
+  if (opts.reasoning !== undefined) body.reasoning = opts.reasoning;
   if (opts.graphPrerequisite) body.graphPrerequisite = opts.graphPrerequisite;
   const pendingPrimary = pendingPrimaryAgents.get(opts.nodeId);
   if (pendingPrimary) {
@@ -314,4 +314,26 @@ export async function setChatMode(chatId: string, modeId: string): Promise<strin
   }
   const json = await res.json();
   return json.currentModeId as string;
+}
+
+/**
+ * Execute a runtime-native command (e.g. Kiro slash command) without
+ * consuming a prompt turn. Returns the structured response from the
+ * runtime.
+ */
+export async function executeChatCommand(
+  chatId: string,
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<{ success: boolean; message?: string; data?: unknown }> {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/execute-command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, ...(args ? { args } : {}) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(err.error || `executeCommand failed: ${res.status}`);
+  }
+  return res.json();
 }

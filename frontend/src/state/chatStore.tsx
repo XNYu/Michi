@@ -1601,7 +1601,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           runtimeId: meta?.runtimeId ?? n.runtimeId,
           providerId: meta?.providerId ?? n.providerId,
           modelId: meta?.modelId ?? n.modelId,
-          reasoning: meta?.reasoning ?? n.reasoning,
+          reasoning: meta?.reasoning !== undefined ? meta.reasoning : n.reasoning,
           // Desired agent for a brand-new thread (Home composer pre-selection).
           // Applied server-side after the fresh session is created, before this
           // first prompt streams. Ignored on resume (node already has a chatId).
@@ -1663,7 +1663,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         const nodeBlocks = mentionedNodes.map(mn => buildNodeTranscriptBlock(mn));
         const cleanText = stripNodeMentionTokens(outgoingText);
         outgoingText =
-          `The user referenced the following chat nodes. Use their full conversation as context:\n\n` +
+          `The user referenced the following chat nodes. Short conversations are ` +
+          `included in full; for longer ones, use read_node or read_node_overview ` +
+          `to retrieve full content when needed:\n\n` +
           nodeBlocks.join('\n\n') +
           `\n\n---\n\n${cleanText}`;
       }

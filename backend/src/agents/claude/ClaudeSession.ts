@@ -31,9 +31,11 @@ import { buildClaudeMcpConfig } from './claudeMcpConfig';
 import { resolveShowImage } from './showImage';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission, setNodeExternalSessionId } from '../../services/dbRepository';
-import { getAgentConfig, resolveReasoning, resolveClaudeConfigDir } from '../../services/agentConfig';
+import { resolveReasoning, resolveClaudeConfigDir } from '../../services/agentConfig';
 import * as perf from '../../services/perf';
 import type { AgentReasoning } from '../types';
+import { resolveReasoningOptions } from 'michi-shared';
+import { getClaudeReasoningCapabilities } from './claudeModelCatalog';
 import { EventQueue } from '../eventQueue';
 import { AsyncGate } from '../asyncGate';
 import { log } from '../../services/logger';
@@ -1067,7 +1069,10 @@ export class ClaudeSession implements AgentSession {
         ? true
         : (this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1'),
       model: this.model,
-      effort: reasoningToClaudeEffort(this.reasoning ?? resolveReasoning(getAgentConfig().runtime)),
+      effort: reasoningToClaudeEffort(resolveReasoningOptions(
+        { reasoning: true }, getClaudeReasoningCapabilities(this.model ?? 'sonnet'), undefined,
+        this.reasoning ?? resolveReasoning('claude', this.ownerUserId ?? undefined),
+      ).value),
       // Opt-in override for multi-profile setups (agent.claudeConfigDir in
       // ~/.michi/config.json). Undefined for everyone else — claude keeps
       // its ~/.claude default.

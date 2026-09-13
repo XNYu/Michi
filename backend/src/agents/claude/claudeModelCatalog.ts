@@ -1,3 +1,5 @@
+import type { ModelReasoningCapabilities } from 'michi-shared';
+
 export interface ClaudeModelRates {
   input: number;          // USD per million tokens
   output: number;
@@ -5,7 +7,7 @@ export interface ClaudeModelRates {
   cacheRead: number;
 }
 
-export interface ClaudeModelEntry {
+export interface ClaudeModelEntry extends ModelReasoningCapabilities {
   contextWindow: number;
   rates: ClaudeModelRates;
 }
@@ -21,11 +23,22 @@ const CONTEXT_200K = 200_000;
 const ZERO_RATES: ClaudeModelRates = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
 
 export const CLAUDE_MODEL_CATALOG: Record<string, ClaudeModelEntry> = {
-  fable:  { contextWindow: CONTEXT_1M,   rates: ZERO_RATES },
-  opus:   { contextWindow: CONTEXT_1M,   rates: ZERO_RATES },
-  sonnet: { contextWindow: CONTEXT_1M,   rates: ZERO_RATES },
-  haiku:  { contextWindow: CONTEXT_200K, rates: ZERO_RATES },
+  fable:  { contextWindow: CONTEXT_1M, rates: ZERO_RATES, supportsReasoning: true, supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoning: 'high' },
+  opus:   { contextWindow: CONTEXT_1M, rates: ZERO_RATES, supportsReasoning: true, supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoning: 'high' },
+  sonnet: { contextWindow: CONTEXT_1M, rates: ZERO_RATES, supportsReasoning: true, supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoning: 'high' },
+  haiku:  { contextWindow: CONTEXT_200K, rates: ZERO_RATES, supportedReasoningLevels: [] },
 };
+
+export function getClaudeReasoningCapabilities(model: string): ModelReasoningCapabilities {
+  const normalized = model.toLowerCase().replace(/\[\d+m\]$/, '');
+  const entry = CLAUDE_MODEL_CATALOG[normalized];
+  if (entry) return entry;
+  if (/^claude-(opus|sonnet)-4-6(?:-|$)/.test(normalized)) {
+    return { supportsReasoning: true, supportedReasoningLevels: ['low', 'medium', 'high', 'max'], defaultReasoning: 'high' };
+  }
+  if (/^claude-(fable-5|opus-(?:5|4-[78])|sonnet-5)(?:-|$)/.test(normalized)) return CLAUDE_MODEL_CATALOG.opus;
+  return { supportedReasoningLevels: [] };
+}
 
 // Fallback for unknown models — contextWindow matters for the percentage bar;
 // rates are zero (cost tracking disabled).

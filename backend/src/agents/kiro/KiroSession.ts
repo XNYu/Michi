@@ -493,6 +493,18 @@ export class KiroSession implements AgentSession {
                 if (Number.isFinite(pct)) {
                     yield { kind: "context_usage" as const, contextUsagePercentage: pct };
                 }
+            } else if (kind === "compaction_start") {
+                yield { kind: "compaction_start" as const, detail: "compact" };
+            } else if (kind === "compaction_end") {
+                yield {
+                    kind: "compaction_end" as const,
+                    detail: typeof update.summary === "string" ? update.summary : "compact",
+                };
+            } else if (kind === "clear_status") {
+                // Session history was cleared. Emit as a compaction pair so the
+                // UI can show a brief "cleared" indicator without a new event kind.
+                yield { kind: "compaction_start" as const, detail: "clear" };
+                yield { kind: "compaction_end" as const, detail: "clear" };
             } else if (kind === "usage_summary") {
                 const pct = Number(update.contextUsagePercentage);
                 const credits = (update.meteringUsage ?? []).reduce(
@@ -561,6 +573,21 @@ export class KiroSession implements AgentSession {
     async cancel(): Promise<void> {
         const c = this.runtime.getClient(this.cwd);
         await c?.cancel(this.nativeSessionId);
+    }
+
+    /**
+     * Execute a Kiro slash command via the dedicated ACP RPC instead of
+     * sending it as prompt text. Returns the structured response. Side
+     * effects (compaction/clear notifications) arrive on the session queue
+     * and will be yielded during the next prompt turn, or can be consumed
+     * by polling the session queue directly.
+     */
+    async executeCommand(
+        command: string,
+        args?: Record<string, unknown>,
+    ): Promise<{ success: boolean; message?: string; data?: unknown }> {
+        const c = await this.runtime.ensureClient(this.cwd);
+        return c.executeCommand(this.nativeSessionId, command, args);
     }
 
     async setMode(modeId: string): Promise<void> {

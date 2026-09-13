@@ -52,8 +52,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         models: true,
         providerModels: true,
         reasoning: true,
-        // Pi thinkingLevel: minimal | low | medium | high | xhigh
-        supportedReasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+        supportedReasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
         apiKeys: true,
         warmSessions: false,
         saveContext: true,
@@ -267,6 +266,9 @@ export class PiRuntime implements AgentRuntimeWithProviders {
                 id: m.model_id,
                 label: m.model_name,
                 description: m.description,
+                supportsReasoning: m.supportsReasoning,
+                supportedReasoningLevels: m.supportedReasoningLevels,
+                defaultReasoning: m.defaultReasoning,
             }));
         } catch (err) {
             console.warn(`[piRuntime] listPiModels(${provider}) failed:`, err);

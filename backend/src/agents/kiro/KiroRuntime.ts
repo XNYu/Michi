@@ -1185,6 +1185,25 @@ export class KiroRuntime implements AgentRuntime {
         client?.respondToPermission(requestId, optionId);
     }
 
+    /**
+     * Execute a Kiro slash command via `_kiro.dev/commands/execute`.
+     *
+     * Only commands verified to complete cleanly (see EXECUTE_ALLOWLIST)
+     * should be routed here. Commands that hang or require interactive
+     * sub-prompts must remain as prompt text fallback.
+     */
+    async executeCommand(
+        sid: string,
+        command: string,
+        args?: Record<string, unknown>,
+    ): Promise<{ success: boolean; message?: string; data?: unknown }> {
+        const cwd = this.getCwdForSession(sid);
+        if (!cwd) throw new Error("unknown session");
+        const c = this.pool.get(cwd);
+        if (!c) throw new Error("client not running");
+        return c.executeCommand(sid, command, args);
+    }
+
     /** Forward a user's permission denial/cancellation to the ACP client. */
     cancelPermission(sid: string, requestId: number): void {
         const cwd = this.getCwdForSession(sid);

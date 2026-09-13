@@ -23,6 +23,7 @@ import {
 import { listRuntimes, getRuntime } from "../agents/registry";
 import { describeRuntimeCapabilities } from "../agents/capabilityDescriptors";
 import { hasProviders } from "../agents/types";
+import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getProviderInfo, providerRequiresUserKey, providerUsesAwsCredentials } from "../agents/pi/piProviders";
 import {
   hasBedrockCredentials,
@@ -210,6 +211,18 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       }
       if (patch.provider !== undefined && modelToSet === undefined) {
         modelToSet = providerInfo.defaultModel;
+      }
+    }
+    if (reasoningToSet !== undefined && runtimeForModel) {
+      try {
+        const options = await getModelReasoningOptions(runtimeForModel, modelToSet ?? resolveModel(effectiveRuntime, userId), providerForModel, reasoningToSet);
+        if (!options.levels.includes(reasoningToSet)) {
+          res.status(400).json({ ok: false, error: 'This model does not support the selected thinking effort' });
+          return;
+        }
+      } catch {
+        res.status(503).json({ ok: false, error: 'Unable to verify model capabilities. Please retry.' });
+        return;
       }
     }
     updateAgentConfig(patch, userId);

@@ -119,7 +119,7 @@ export interface UserSendMeta {
   runtimeId?: string;
   providerId?: string;
   modelId?: string;
-  reasoning?: AgentReasoning;
+  reasoning?: AgentReasoning | null;
 }
 
 export interface CreateChildChatOptions {
@@ -719,6 +719,8 @@ export type ChatAction =
   | { type: 'create-digest'; nodeId: string; projectId: string; sources: string[] }
   | { type: 'digest-started'; nodeId: string }
   | { type: 'digest-chunk'; nodeId: string; text: string }
+  | { type: 'digest-thought'; nodeId: string; text: string }
+  | { type: 'digest-status'; nodeId: string; text: string }
   | {
       type: 'digest-generated';
       nodeId: string;
