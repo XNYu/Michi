@@ -8,6 +8,7 @@ import { getElectron } from '../../../lib/electronBridge';
 import {
   getWebUploadCwd,
   importWorkspaceFileUpload,
+  copyWorkspaceFile,
   saveAgentOptions,
   bindPendingPrimaryAgent,
   fetchAgentStatus,
@@ -22,6 +23,8 @@ import { appendAttachmentsSentinel } from '../../../lib/composerAttachments';
 import { toast } from 'sonner';
 import { ComposerShell } from '../ComposerShell';
 import { PaneComposerToolbarLeft, type PaneMenuAnchor } from '../PaneComposerToolbarLeft';
+import { ComposerModelTrigger } from '../ComposerModelTrigger';
+import { resolveComposerReasoning } from '../composerReasoning';
 import { PaneAgentMenus } from '../PaneAgentMenus';
 import { PaneComposerActions } from '../PaneComposerActions';
 import { activeBackendApiBase, backendConnectionIdForWorkspace, workspaceBackendApiBase } from '../../../config/backendConnections';
@@ -218,6 +221,7 @@ function ScopedManageComposer({
   // ManageComposer creates new threads — use global agentStatus as the binding
   // (no node exists yet). resolveNodeBinding(null, agentStatus) returns source: 'global'.
   const manageResolvedBinding = resolveNodeBinding(null, agentStatus);
+  const composerEffort = resolveComposerReasoning(manageResolvedBinding, agentStatus, null, providerModels, agentStatus?.providers);
 
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressViewState | null>(null);
@@ -290,8 +294,39 @@ function ScopedManageComposer({
     const electron = getElectron();
     if (electron?.chooseFiles && !project?.backendConnectionId) {
       const res = await electron.chooseFiles();
-      if (res.canceled || !res.paths) return;
-      addPendingPaths(res.paths);
+      if (res.canceled || !res.paths?.length) return;
+      const cwd = await resolveAttachCwd();
+      if (!cwd || !project?.id) {
+        toast.error('No workspace folder for file attachment');
+        return;
+      }
+      const items: Array<{ abs: string; displayName: string; relPath: string }> = [];
+      const errors: string[] = [];
+      for (const sourcePath of res.paths) {
+        try {
+          const result = await copyWorkspaceFile(project.id, cwd, sourcePath, {
+            subdir: '.attachments',
+          });
+          const abs = result.filePath.startsWith('/')
+            ? result.filePath
+            : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
+          items.push({
+            abs,
+            displayName: result.displayName || sourcePath.split('/').pop() || sourcePath,
+            relPath: result.filePath,
+          });
+        } catch (err) {
+          const name = sourcePath.split('/').pop() || sourcePath;
+          errors.push(`${name}: ${(err as Error).message}`);
+        }
+      }
+      if (items.length > 0) addPendingPaths(items);
+      if (errors.length > 0) {
+        toast.error(
+          `${errors.length} file${errors.length === 1 ? '' : 's'} failed`,
+          { description: errors.join('\n'), style: { whiteSpace: 'pre-line' } },
+        );
+      }
       return;
     }
     if (!webFileInputRef.current) {
@@ -344,8 +379,9 @@ function ScopedManageComposer({
   }, []);
 
   const openModelMenu = useCallback(
-    (anchor: PaneMenuAnchor, _shouldLoadModels: boolean) => {
-      setModelMenu(anchor);
+    (anchor: PaneMenuAnchor) => {
+      setAgentMenu(null);
+      setModelMenu((current) => current ? null : anchor);
     },
     [],
   );
@@ -363,16 +399,10 @@ function ScopedManageComposer({
       if (items.length === 0) return;
       e.preventDefault();
 
-      const electron = getElectron();
       const pendingItems: Array<string | { abs: string; displayName?: string; relPath?: string }> = [];
       const errors: string[] = [];
       for (const [fileIndex, file] of items.entries()) {
-        const path = electron?.getPathForFile?.(file) ?? null;
         try {
-        if (path && !project?.backendConnectionId) {
-            pendingItems.push(path);
-            continue;
-          }
           const cwd = await resolveAttachCwd();
           if (!cwd || !project?.id) {
             errors.push(`${file.name || 'pasted file'}: no workspace folder`);
@@ -449,16 +479,10 @@ function ScopedManageComposer({
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
 
-      const electron = getElectron();
       const absPaths: Array<string | { abs: string; relPath?: string }> = [];
       const errors: string[] = [];
       for (const [fileIndex, file] of files.entries()) {
-        const path = electron?.getPathForFile?.(file) ?? null;
         try {
-        if (path && !project?.backendConnectionId) {
-            absPaths.push(path);
-            continue;
-          }
           const cwd = await resolveAttachCwd();
           if (!cwd) {
             errors.push(`${file.name}: no workspace folder`);
@@ -522,7 +546,7 @@ function ScopedManageComposer({
       runtimeId: manageResolvedBinding.runtime,
       providerId: manageResolvedBinding.provider,
       modelId: manageResolvedBinding.model,
-      reasoning: manageResolvedBinding.reasoning,
+      reasoning: composerEffort.value ?? null,
     } : undefined;
     const meta =
       attachmentsForSend.length > 0 || mentionsForMeta || bindingMeta
@@ -677,18 +701,24 @@ function ScopedManageComposer({
             currentModeId={selectedAgentLabel ? pendingPrimaryAgent!.definition.id : currentModeId}
             availableModesCount={enableAgentSelect ? availableModes.length + primaryAgents.length + 1 : 0}
             agentStatus={agentStatus}
-            resolvedBinding={manageResolvedBinding}
-            catalogCapabilities={null}
-            providerModels={providerModels}
-            isStreaming={false}
             onPickFile={() => void onPickFile()}
             onInsertMentionTrigger={insertMentionTrigger}
             onOpenAgentMenu={setAgentMenu}
-            onOpenModelMenu={openModelMenu}
-            onOpenRuntimeMenu={(anchor) => setModelMenu(anchor)}
           />
         </div>}
         toolbarRight={
+          <>
+          <ComposerModelTrigger
+            toolbarTier={0}
+            agentStatus={agentStatus}
+            resolvedBinding={manageResolvedBinding}
+            catalogCapabilities={null}
+            providerModels={providerModels}
+            providers={agentStatus?.providers}
+            isStreaming={submitting}
+            modelMenuOpen={!!modelMenu}
+            onOpenModelMenu={openModelMenu}
+          />
           <PaneComposerActions
             draftHasText={false}
             sendMode="send"
@@ -699,18 +729,21 @@ function ScopedManageComposer({
             onStop={() => { /* never reached: streaming=false */ }}
             onRetry={() => { /* never reached: sendMode='send' */ }}
           />
+          </>
         }
       />
 
       <PaneAgentMenus
         agentMenu={agentMenu}
         modelMenu={modelMenu}
+        disabled={submitting}
         availableModes={availableModes}
         currentModeId={currentModeId}
         agentStatus={agentStatus}
         resolvedBinding={manageResolvedBinding}
         catalogCapabilities={null}
         providerModels={providerModels}
+        providers={agentStatus?.providers}
         modelsLoading={modelsLoading}
         modelsError={modelsError}
         onSwitchAgent={(modeId) => {
@@ -742,20 +775,25 @@ function ScopedManageComposer({
           setPendingModeId(undefined);
           setAgentMenu(null);
         }}
-        onSwitchRuntime={(runtimeId) => {
-          void saveAgentOptions({ runtime: runtimeId }).then(() => {
-            refreshAgentStatus();
-          });
+        onSwitchRuntime={async (runtimeId) => {
+          const result = await saveAgentOptions({ runtime: runtimeId });
+          if (!result.ok) throw new Error(result.error);
+          refreshAgentStatus();
         }}
-        onSaveModel={(model) => {
-          void saveAgentOptions({ model }).then(() => {
-            refreshAgentStatus();
-          });
+        onSaveProvider={async (provider) => {
+          const result = await saveAgentOptions({ provider });
+          if (!result.ok) throw new Error(result.error);
+          refreshAgentStatus();
         }}
-        onSaveReasoning={(reasoning) => {
-          void saveAgentOptions({ reasoning: reasoning as AgentReasoning }).then(() => {
-            refreshAgentStatus();
-          });
+        onSaveModel={async (model) => {
+          const result = await saveAgentOptions({ model });
+          if (!result.ok) throw new Error(result.error);
+          refreshAgentStatus();
+        }}
+        onSaveReasoning={async (reasoning) => {
+          const result = await saveAgentOptions({ reasoning: reasoning as AgentReasoning });
+          if (!result.ok) throw new Error(result.error);
+          refreshAgentStatus();
         }}
         onRetryModels={retryModels}
         onCloseAgentMenu={() => setAgentMenu(null)}

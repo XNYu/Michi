@@ -15,10 +15,11 @@ import { formatQuotedMessage } from '../../lib/quoteFormat';
 import { buildAnchorMap, type ChildAnchor } from '../../state/branchAnchors';
 import { formatCommentsBlock, joinMessageParts } from '../../lib/commentFormat';
 import { getElectron } from '../../lib/electronBridge';
-import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, type UploadProgress } from '../../services/api';
+import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, copyWorkspaceFile, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
 import { checkRuntimeHealth } from '../../services/api';
+import { executeChatCommand } from '../../services/api/sessions';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
 import { useRuntimeCatalog } from '../../hooks/useRuntimeCatalog';
 import { resolveNodeBinding, type PendingNodeBindingOverride } from '../../state/nodeBindingResolution';
@@ -30,7 +31,9 @@ import { ComposerShell, type ComposerShellHandle } from './ComposerShell';
 import { PaneMessageList } from './PaneMessageList';
 import { PaneComposerPreBlocks, type PanePendingAttachment } from './PaneComposerPreBlocks';
 import { PaneComposerActions, type PaneComposerSendMode } from './PaneComposerActions';
-import { PaneComposerToolbarLeft } from './PaneComposerToolbarLeft';
+import { PaneComposerToolbarLeft, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
+import { ComposerModelTrigger } from './ComposerModelTrigger';
+import { resolveComposerReasoning } from './composerReasoning';
 import { PaneAgentMenus } from './PaneAgentMenus';
 import { FileDropOverlay, PaneDropIndicator } from './PaneDragOverlays';
 import { nextFollowScrollTop } from './scrollPinning';
@@ -425,7 +428,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setComposerDraft(nodeId, null);
   }, [nodeId, setComposerDraft]);
   const [agentMenu, setAgentMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
-  const [modelMenu, setModelMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
+  const [modelMenu, setModelMenu] = useState<PaneMenuAnchor | null>(null);
 
   // Per-node binding: resolve runtime/model/effort from node → global fallback.
   const [pendingBindingOverride, setPendingBindingOverride] = useState<PendingNodeBindingOverride | null>(null);
@@ -448,6 +451,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     runtime: resolvedBinding.runtime,
     provider: resolvedBinding.provider,
   });
+  const composerEffort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, catalogProviders);
   // NB: do NOT call this `pending` — `onSubmit` already has a local
   // `const pending = n.pendingComments ?? []`.
   const [pendingAttachments, setPendingAttachments] = useState<PanePendingAttachment[]>([]);
@@ -567,17 +571,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
     focusPane(nodeId);
 
-    const electron = getElectron();
     const items: Array<string | { abs: string; displayName: string; relPath?: string }> = [];
     const errors: string[] = [];
 
     for (const [fileIndex, file] of files.entries()) {
-      const path = electron?.getPathForFile?.(file) ?? null;
       try {
-        if (path && !activeProject?.backendConnectionId) {
-          items.push(path);
-          continue;
-        }
         const cwd = await resolveAttachCwd();
         if (!cwd || !activeProject?.id) {
           errors.push(`${file.name}: no workspace folder`);
@@ -655,17 +653,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     if (items.length === 0) return;
     e.preventDefault();
 
-    const electron = getElectron();
     const pendingItems: Array<string | { abs: string; displayName: string; relPath?: string }> = [];
     const errors: string[] = [];
 
     for (const [fileIndex, file] of items.entries()) {
-      const path = electron?.getPathForFile?.(file) ?? null;
       try {
-        if (path && !activeProject?.backendConnectionId) {
-          pendingItems.push(path);
-          continue;
-        }
         const cwd = await resolveAttachCwd();
         if (!cwd || !activeProject?.id) {
           errors.push(`${file.name || 'pasted file'}: no workspace folder`);
@@ -717,8 +709,39 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     const electron = getElectron();
     if (electron?.chooseFiles && !activeProject?.backendConnectionId) {
       const res = await electron.chooseFiles();
-      if (res.canceled || !res.paths) return;
-      addPendingPaths(res.paths);
+      if (res.canceled || !res.paths?.length) return;
+      const cwd = await resolveAttachCwd();
+      if (!cwd || !activeProject?.id) {
+        toast.error('No workspace folder for file attachment');
+        return;
+      }
+      const items: Array<{ abs: string; displayName: string; relPath: string }> = [];
+      const errors: string[] = [];
+      for (const sourcePath of res.paths) {
+        try {
+          const result = await copyWorkspaceFile(activeProject.id, cwd, sourcePath, {
+            subdir: '.attachments',
+          });
+          const abs = result.filePath.startsWith('/')
+            ? result.filePath
+            : `${cwd.replace(/\/$/, '')}/${result.filePath}`;
+          items.push({
+            abs,
+            displayName: result.displayName || sourcePath.split('/').pop() || sourcePath,
+            relPath: result.filePath,
+          });
+        } catch (err) {
+          const name = sourcePath.split('/').pop() || sourcePath;
+          errors.push(`${name}: ${(err as Error).message}`);
+        }
+      }
+      if (items.length > 0) addPendingPaths(items);
+      if (errors.length > 0) {
+        toast.error(
+          `${errors.length} file${errors.length === 1 ? '' : 's'} failed`,
+          { description: errors.join('\n'), style: { whiteSpace: 'pre-line' } },
+        );
+      }
       return;
     }
     // Web: open a hidden <input type="file"> picker. Files are imported
@@ -766,7 +789,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       webFileInputRef.current = input;
     }
     webFileInputRef.current.click();
-  }, [activeProject?.id, addPendingPaths, progressForFile, resolveAttachCwd]);
+  }, [activeProject?.id, activeProject?.backendConnectionId, addPendingPaths, progressForFile, resolveAttachCwd]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // "Follow mode": while true and the agent is streaming, new content
@@ -1034,8 +1057,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // we don't render a 0-height spacer on the very first paint.
   const [viewportH, setViewportH] = useState(600);
   // Width-driven compaction tier for the toolbar:
-  // 0 = full labels, 1 = drop agent/model labels (keep glyph),
-  // 2 = also hide agent + model chips entirely.
+  // 0 = full labels, 1 = compact model settings and agent glyph,
+  // 2 = hide the agent chip; model settings remain reachable.
   const [toolbarTier, setToolbarTier] = useState<0 | 1 | 2>(0);
   const [findOpen, setFindOpen] = useState(false);
   const [findFocusNonce, setFindFocusNonce] = useState(0);
@@ -1616,10 +1639,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   }, [nodeId]);
 
   const openModelMenu = useCallback((
-    anchor: { x: number; y: number; anchorBottom: number },
-    _shouldLoadModels: boolean,
+    anchor: PaneMenuAnchor,
   ) => {
-    setModelMenu(anchor);
+    setAgentMenu(null);
+    setModelMenu((current) => current ? null : anchor);
   }, []);
 
   const handleOpenBranch = useCallback((childNodeId: string) => {
@@ -1807,6 +1830,39 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       }
     }
 
+    // Kiro command-execute path: when the user submits a bare slash command
+    // that is in the allowlist and the session supports `executeCommand`,
+    // dispatch it via the dedicated ACP RPC instead of consuming a prompt
+    // turn. Commands not in the allowlist (or commands with args that the
+    // allowlist doesn't cover) fall through to the normal prompt-text path.
+    //
+    // Commands submitted during streaming are NOT queued here — they fall
+    // through to the normal queue path below, which sends them as prompt
+    // text on the next idle turn. This matches kiro-cli's native behavior:
+    // commands are deferred while streaming and executed once idle.
+    if (raw && !streaming && resolvedBinding.runtime === 'kiro') {
+      const EXECUTE_ALLOWLIST = new Set(['compact', 'tools', 'context', 'effort', 'clear']);
+      const cmdMatch = raw.match(/^\/(\S+)(?:\s+(.*))?$/);
+      if (cmdMatch) {
+        const cmdName = cmdMatch[1];
+        const cmdArgs = cmdMatch[2]?.trim();
+        if (EXECUTE_ALLOWLIST.has(cmdName)) {
+          try {
+            const args = cmdArgs ? { value: cmdArgs } : undefined;
+            const result = await executeChatCommand(nodeId, cmdName, args);
+            if (!result.success && result.message) {
+              toast.error(`/${cmdName} failed`, { description: result.message });
+            }
+          } catch (err) {
+            // Fallback: if execute fails (e.g. session gone), the user can
+            // retry or send as a normal prompt.
+            toast.error(`/${cmdName} failed`, { description: (err as Error).message });
+          }
+          return;
+        }
+      }
+    }
+
     const { branched: slashBranched, text } = raw
       ? stripBranchPrefix(raw)
       : { branched: false, text: '' };
@@ -1869,7 +1925,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       runtimeId: resolvedBinding.runtime || undefined,
       providerId: resolvedBinding.provider || undefined,
       modelId: resolvedBinding.model || undefined,
-      reasoning: resolvedBinding.reasoning || undefined,
+      reasoning: composerEffort.known ? composerEffort.value ?? null : resolvedBinding.reasoning,
     };
 
     // Clear the pending override — it's been consumed by this send.
@@ -2149,17 +2205,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           e.preventDefault();
           e.stopPropagation();
           setDragHover(false);
-          const electron = getElectron();
-          if (!electron?.getPathForFile || activeProject?.backendConnectionId) {
-            void handleDrop(e);
-            return;
-          }
-          const paths: string[] = [];
-          for (const f of Array.from(e.dataTransfer.files)) {
-            const p = electron.getPathForFile(f);
-            if (p) paths.push(p);
-          }
-          if (paths.length > 0) addPendingPaths(paths);
+          void handleDrop(e);
         }}
         preBlocks={
           <>
@@ -2233,18 +2279,24 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             currentModeId={n.currentModeId ?? undefined}
             availableModesCount={availableModes.length}
             agentStatus={agentStatus}
-            resolvedBinding={resolvedBinding}
-            catalogCapabilities={catalogCapabilities}
-            providerModels={providerModels}
-            isStreaming={streaming}
             onPickFile={() => void onPickFile()}
             onInsertMentionTrigger={insertMentionTrigger}
             onOpenAgentMenu={setAgentMenu}
-            onOpenModelMenu={openModelMenu}
-            onOpenRuntimeMenu={(anchor) => setModelMenu(anchor)}
           />
         }
         toolbarRight={
+          <>
+          <ComposerModelTrigger
+            toolbarTier={toolbarTier}
+            agentStatus={agentStatus}
+            resolvedBinding={resolvedBinding}
+            catalogCapabilities={catalogCapabilities}
+            providerModels={providerModels}
+            providers={catalogProviders}
+            isStreaming={streaming}
+            modelMenuOpen={!!modelMenu && !streaming}
+            onOpenModelMenu={openModelMenu}
+          />
           <PaneComposerActions
             draftHasText={draftHasText}
             sendMode={sendMode}
@@ -2257,6 +2309,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             contextUsagePercentage={n.contextUsagePercentage}
             usageSummary={n.usageSummary}
           />
+          </>
         }
       />
       )}
@@ -2297,6 +2350,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       <PaneAgentMenus
         agentMenu={agentMenu}
         modelMenu={modelMenu}
+        disabled={streaming}
         availableModes={availableModes}
         currentModeId={n.currentModeId ?? undefined}
         agentStatus={agentStatus}
@@ -2311,7 +2365,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         onSwitchRuntime={(runtimeId) => {
           // Reset model/effort when switching runtime — new catalog will provide defaults.
           setPendingBindingOverride({ runtime: runtimeId });
-          setModelMenu(null);
         }}
         onSaveProvider={(provider) => {
           // Provider change invalidates the pending model (models are
