@@ -18,6 +18,7 @@ interface Props {
   focused: boolean;
   streaming: boolean;
   error: boolean;
+  isNew?: boolean;
   kind?: 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser';
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
@@ -32,6 +33,7 @@ export default function PaneCaption({
   focused,
   streaming,
   error,
+  isNew = false,
   kind = 'chat',
   onFocus,
   onClose,
@@ -63,6 +65,14 @@ export default function PaneCaption({
       : kind === 'diff' || kind === 'review' || kind === 'terminal'
         ? 'var(--term-digest)'
       : dotColorFor(streaming, error, focused);
+
+  // Entrance animation for the Dot when the pane is newly opened in background.
+  // isNew overrides to accent color with a one-shot spring scale animation.
+  const dotStyle: React.CSSProperties = isNew && !isDigest && !isArtifact
+    && kind !== 'file' && kind !== 'files' && kind !== 'browser' && kind !== 'launcher'
+    && kind !== 'diff' && kind !== 'review' && kind !== 'terminal'
+    ? { animation: 'pane-entrance-dot 600ms cubic-bezier(.34, 1.56, .64, 1) forwards' }
+    : {};
 
   const titleColor = focused ? 'var(--term-fg)' : 'var(--term-mid)';
   const titleWeight = focused ? 600 : 400;
@@ -107,7 +117,7 @@ export default function PaneCaption({
           transition: 'background var(--t-quick) var(--t-ease)',
         } as React.CSSProperties}
       >
-        <Dot color={dotColor} size={6} pulse={streaming && !isDigest} />
+        <Dot color={dotColor} size={6} pulse={streaming && !isDigest} extraStyle={dotStyle} />
         {kindGlyph ? (
           <span aria-hidden style={{ color: dotColor, fontFamily: 'var(--mono-font)', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{kindGlyph}</span>
         ) : null}

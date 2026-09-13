@@ -7,6 +7,7 @@ import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
 import type { TreeNode } from '../../state/tree';
 import { isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
 import { relativeTime } from '../../lib/relativeTime';
+import { useNewPanePulse } from './useNewPanePulse';
 
 interface Props {
   /** This branch node and its descendants. */
@@ -62,6 +63,7 @@ export default function BranchRow({
 }: Props) {
   const n = useChatNode(node.nodeId);
   const { prefs } = usePrefs();
+  const newPanePulse = useNewPanePulse(node.nodeId);
   const hasChildren = node.children.length > 0;
   const title =
     n?.title ||
@@ -299,7 +301,9 @@ export default function BranchRow({
               animation:
                 openState === 'streaming'
                   ? 'tpulse 1.4s ease-in-out infinite'
-                  : undefined,
+                  : newPanePulse
+                    ? 'bar-pulse-once 600ms ease-in-out 2'
+                    : undefined,
               pointerEvents: 'none',
             }}
           />

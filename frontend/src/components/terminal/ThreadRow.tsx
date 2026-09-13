@@ -11,6 +11,7 @@ import type { ProjectEdge, Tree } from '../../state/chatTypes';
 import type { OpenState } from '../../state/sidebarSelectors';
 import { treeHasUnread, buildBranchChildrenOf } from '../../state/sidebarSelectors';
 import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
+import { useNewPanePulse } from './useNewPanePulse';
 
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 
@@ -124,6 +125,7 @@ export default function ThreadRow({
   const suppressNextBlurCommitRef = useRef(false);
   const label = tree.name || n?.title || 'Untitled';
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
+  const newPanePulse = useNewPanePulse(tree.rootNodeId);
   // Same rule in every mode: the rail is a SUMMARY for a collapsed subtree, so
   // it's suppressed once the row is expanded and each branch speaks for itself.
   const showIdleMark = !expanded && openState === 'idle';
@@ -444,7 +446,9 @@ export default function ThreadRow({
               animation:
                 openState === 'streaming'
                   ? 'tpulse 1.4s ease-in-out infinite'
-                  : undefined,
+                  : newPanePulse
+                    ? 'bar-pulse-once 600ms ease-in-out 2'
+                    : undefined,
               pointerEvents: 'none',
             }}
           />

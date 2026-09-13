@@ -1,7 +1,7 @@
 import React from 'react';
 
 /** Small filled circle; animates with the pulse keyframe when `pulse` is set. */
-export function Dot({ color, size = 6, pulse = false }: { color: string; size?: number; pulse?: boolean }) {
+export function Dot({ color, size = 6, pulse = false, extraStyle }: { color: string; size?: number; pulse?: boolean; extraStyle?: React.CSSProperties }) {
   return (
     <span
       style={{
@@ -14,6 +14,7 @@ export function Dot({ color, size = 6, pulse = false }: { color: string; size?: 
         flexShrink: 0,
         boxShadow: pulse ? '0 0 6px 0 currentColor' : undefined,
         animation: pulse ? 'tpulse 1.4s ease-in-out infinite' : 'none',
+        ...extraStyle,
       }}
     />
   );

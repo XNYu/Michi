@@ -165,6 +165,7 @@ export default function TerminalTopbar({
     paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth, enabled: showPaneCells,
     scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+    appReduceMotion: prefs.reduceMotion,
   });
 
   // Mirror Sidebar's isResizing so Zone 1's width transition can be suppressed
@@ -330,6 +331,82 @@ export default function TerminalTopbar({
   const archivedCount = useNodesSelector(archivedCountSelector);
   const showBrowserBrand = getElectron() === null;
   const zone1Width = showBrowserBrand ? BROWSER_ZONE1_WIDTH : ZONE1_WIDTH;
+
+  // ── New-pane entrance tracking ──────────────────────────────
+  // When a pane is added to activePanes but NOT focused, mark it as "new"
+  // for the entrance animation. The transient set lives in state so caption
+  // cells can read it; cleared on animation-end or when the pane receives
+  // focus. Scope resets (workspace/tree change) clear all marks.
+  const [newPaneIds, setNewPaneIds] = useState<ReadonlySet<string>>(new Set());
+  const prevActivePanesRef = useRef<{ scope: string; ids: string[] }>({
+    scope: '',
+    ids: [],
+  });
+  const prevReduceMotion = useRef(prefs.reduceMotion);
+  useEffect(() => {
+    const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
+    const prev = prevActivePanesRef.current;
+    prevActivePanesRef.current = { scope, ids: activePanes };
+    prevReduceMotion.current = prefs.reduceMotion;
+
+    // Scope changed — clear all marks, no entrance animation for hydration.
+    if (prev.scope !== scope) {
+      setNewPaneIds((s) => s.size > 0 ? new Set() : s);
+      return;
+    }
+
+    // Respect reduced motion.
+    if (prefs.reduceMotion || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+
+    // Diff: find panes that appeared and are NOT the focused pane.
+    const added = activePanes.filter(
+      (id) => !prev.ids.includes(id) && id !== focusedPane,
+    );
+    if (added.length === 0) return;
+
+    setNewPaneIds((s) => {
+      const next = new Set(s);
+      for (const id of added) next.add(id);
+      return next;
+    });
+
+    // Notify sidebar components so they can pulse the indicator bar.
+    window.dispatchEvent(new CustomEvent('michi:new-background-panes', {
+      detail: { nodeIds: added },
+    }));
+
+    // Safety timeout: clear marks after 1.2s in case animationend doesn't fire
+    // (element not in viewport, etc.)
+    const timer = window.setTimeout(() => {
+      setNewPaneIds((s) => {
+        if (added.every((id) => !s.has(id))) return s;
+        const next = new Set(s);
+        for (const id of added) next.delete(id);
+        return next;
+      });
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [activePanes, activeProject?.id, activeProject?.activeTreeId, focusedPane, prefs.reduceMotion]);
+
+  // When a new pane gets focused, clear its "new" mark immediately.
+  useEffect(() => {
+    if (!focusedPane) return;
+    setNewPaneIds((s) => {
+      if (!s.has(focusedPane)) return s;
+      const next = new Set(s);
+      next.delete(focusedPane);
+      return next;
+    });
+  }, [focusedPane]);
+
+  const clearNewMark = useCallback((id: string) => {
+    setNewPaneIds((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   // On dashboard, zone 2 hosts per-pane caption cells aligned to Dashboard's
   // column template. The shared layout hook also coordinates track animation.
   const cellsTemplateColumns = paneLayout.gridTemplateColumns;
@@ -504,6 +581,7 @@ export default function TerminalTopbar({
               const status = paneStatuses[i] ?? 'idle';
               const cellFocus = captionFocus.get(id);
               const isCellFocused = cellFocus === id;
+              const isCellNew = newPaneIds.has(id);
               // First cell needs to clear the floating Zone 1 (traffic lights
               // + 3 icons) when sidebar is collapsed; otherwise the title would
               // sit under it.
@@ -518,6 +596,7 @@ export default function TerminalTopbar({
                   aria-hidden={exitingIds.has(id) || undefined}
                   {...(exitingIds.has(id) ? { inert: '' } : {})}
                   onClick={() => focusPane(id)}
+                  onAnimationEnd={isCellNew ? () => clearNewMark(id) : undefined}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -558,6 +637,8 @@ export default function TerminalTopbar({
                     // without transparency, so the right-cluster icons area
                     // (transparent) correctly shows the dimmed cell bg.
                     filter: cellFocus == null || isCellFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
+                    // Layer 1: entrance animation — accent bg highlight fade-out.
+                    ...(isCellNew ? { animation: 'pane-entrance-bg 900ms ease-out forwards' } : {}),
                     ...paneLayout.paneStyles[i],
                   }}
                 >
@@ -567,6 +648,7 @@ export default function TerminalTopbar({
                     focused={isCellFocused}
                     streaming={status === 'streaming'}
                     error={status === 'error'}
+                    isNew={isCellNew}
                     kind={paneKinds[i] as 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser'}
                     onFocus={focusPane}
                     onClose={closePane}
@@ -587,9 +669,12 @@ export default function TerminalTopbar({
               gap: 8,
               // When the sidebar is collapsed, the floating Zone 1 (traffic
               // lights / brand + toggle + new + search) is absolutely
-              // positioned over zone 2's left edge. Mirror the dashboard's
-              // firstCellLeftPad so MAP/DIGEST · name doesn't slide under it.
-              paddingLeft: (sidebarCollapsed ? zone1Width : 0) + 14,
+              // positioned over zone 2's left edge. Use marginLeft (not
+              // paddingLeft) so this div's box starts AFTER the Zone 1
+              // cluster — otherwise its -webkit-app-region: drag covers
+              // Zone 1's no-drag buttons and swallows their clicks.
+              marginLeft: sidebarCollapsed ? zone1Width : 0,
+              paddingLeft: 14,
               // Extra right padding clears the absolutely-positioned right
               // cluster so the title/breadcrumb text doesn't run under icons.
               paddingRight: 160,
@@ -603,8 +688,8 @@ export default function TerminalTopbar({
               transition: sidebarResizing
                 ? undefined
                 : sidebarCollapsed
-                  ? 'padding-left 180ms cubic-bezier(.4,0,1,1)'
-                  : 'padding-left 200ms cubic-bezier(0,0,.2,1)',
+                  ? 'margin-left 180ms cubic-bezier(.4,0,1,1)'
+                  : 'margin-left 200ms cubic-bezier(0,0,.2,1)',
             } as React.CSSProperties}
           >
             {threadPage && (
@@ -735,6 +820,33 @@ export default function TerminalTopbar({
               maskImage: 'linear-gradient(to right, transparent, black 16px)',
             } as React.CSSProperties}
           />
+        )}
+        {showPaneCells && newPaneIds.size > 0 && (
+          <button
+            type="button"
+            aria-label={`${newPaneIds.size} new background pane${newPaneIds.size === 1 ? '' : 's'}`}
+            onClick={() => {
+              // Focus the first new pane — this also clears its "new" mark.
+              const firstNew = activePanes.find((id) => newPaneIds.has(id));
+              if (firstNew) focusPane(firstNew);
+            }}
+            style={{
+              fontFamily: 'var(--ui-font)',
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '2px 7px',
+              borderRadius: 10,
+              background: 'var(--term-accent)',
+              color: 'var(--term-bg)',
+              border: 'none',
+              cursor: 'pointer',
+              flexShrink: 0,
+              animation: 'overflow-badge-enter 400ms cubic-bezier(.34, 1.56, .64, 1) forwards',
+              WebkitAppRegion: 'no-drag',
+            } as React.CSSProperties}
+          >
+            +{newPaneIds.size}
+          </button>
         )}
         {updateAvailable && !updateDismissed && (
             <span
