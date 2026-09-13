@@ -360,7 +360,7 @@ export function serializeNodeRow(
     spawned_by_agent: n.spawnedByAgent ? 1 : 0,
     current_mode_id: n.currentModeId ?? null,
     pane_width: n.paneWidth ?? null,
-    digest: n.digest ? JSON.stringify({ ...n.digest, status: 'idle', error: undefined }) : null,
+    digest: n.digest ? JSON.stringify({ ...n.digest, status: 'idle', error: undefined, generation: undefined }) : null,
     follow_ups: n.followUps.length > 0 ? JSON.stringify(n.followUps) : null,
     follow_ups_source_message_id: n.followUpsSourceMessageId ?? null,
     // Runtime session bindings are server-owned. In particular, never write
@@ -815,7 +815,9 @@ export function writeScopedLocalStorage({
     const subset: Record<string, ChatNodeState> = {};
     for (const nid of project.chatIds) {
       const n = nodes[nid];
-      if (n) subset[nid] = n;
+      if (n) subset[nid] = n.digest?.generation
+        ? { ...n, digest: { ...n.digest, generation: undefined } }
+        : n;
     }
     try {
       ls.setItem(stateProjectKey(baseKey, pid), JSON.stringify({ project, nodes: subset }));

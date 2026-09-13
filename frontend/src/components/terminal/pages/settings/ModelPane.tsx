@@ -304,7 +304,7 @@ function ProviderModelPicker({
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
             color: 'var(--term-fg)',
-            outlineColor: 'var(--term-accent)',
+            outline: 'none',
           }}
         />
       )}

@@ -238,7 +238,7 @@ describe('ManageComposer', () => {
   it('sends the visible runtime, model and reasoning with a digest follow-up', async () => {
     storeState.agentStatus = {
       runtime: 'codex', model: 'test-model', reasoning: 'high',
-      capabilities: { models: true, reasoning: true },
+      capabilities: { models: true, reasoning: true, supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'] },
     };
     render(<ManageComposer workspaceId="ws1" parentNodeId="digest-1" enableAgentSelect onSubmitted={vi.fn()} />);
     fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Explain this' } });

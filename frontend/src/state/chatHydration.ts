@@ -746,7 +746,7 @@ export function hydrateSavedState(saved: unknown): HydratedState {
       // Persist digest state across reloads; force status idle so a stuck
       // 'streaming' flag from a crashed generation doesn't look live.
       digest: (raw as any).digest
-        ? { ...(raw as any).digest, status: 'idle', error: undefined }
+        ? { ...(raw as any).digest, status: 'idle', error: undefined, generation: undefined }
         : undefined,
       // Preserve chatId from saved state so session/load can restore the ACP
       // session without re-sending PREAMBLE. Falls back to null if missing.
