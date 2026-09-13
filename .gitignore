@@ -123,6 +123,9 @@ ds-bundle/
 # Chat attachments (screenshots, pastes)
 .attachments/
 
+# Development UI reference screenshots
+.artifacts/
+
 # TokenSave code-graph index
 .tokensave/
 
