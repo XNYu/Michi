@@ -507,6 +507,10 @@ export default function TerminalDashboard() {
           if (thumb) thumb.style.opacity = '0';
           scrollIdleTimerRef.current = null;
         }, 600);
+        // Notify native overlay surfaces (BrowserPane) that the strip
+        // scrolled so they can re-sync their bounds. The DOM scroll event
+        // on this container does not bubble to `window`.
+        window.dispatchEvent(new Event('michi:dashboard-scroll'));
       }}
       onMouseDown={handlePaneSelectionMouseDown}
       onDragEnter={handleDashDragEnter}

@@ -103,9 +103,30 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
       schedule();
     };
     window.addEventListener('michi:native-surfaces-visible', onNativeVisibility as EventListener);
+
+    // Drift-detection fallback: poll the viewport rect every frame and
+    // re-sync bounds when the position changes for any reason not covered by
+    // the explicit events above (e.g. CSS animations, layout shifts).
+    let lastRect = { x: 0, y: 0, w: 0, h: 0 };
+    let driftRaf = 0;
+    const checkDrift = () => {
+      const rect = element.getBoundingClientRect();
+      const x = Math.round(rect.x);
+      const y = Math.round(rect.y);
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      if (x !== lastRect.x || y !== lastRect.y || w !== lastRect.w || h !== lastRect.h) {
+        lastRect = { x, y, w, h };
+        publishBounds();
+      }
+      driftRaf = requestAnimationFrame(checkDrift);
+    };
+    driftRaf = requestAnimationFrame(checkDrift);
+
     schedule();
     return () => {
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(driftRaf);
       observer.disconnect();
       for (const event of events) window.removeEventListener(event, schedule);
       document.removeEventListener('visibilitychange', schedule);
