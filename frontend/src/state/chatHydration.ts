@@ -407,7 +407,8 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
           const attachment = item as Record<string, unknown>;
           const name = asString(attachment.name);
           const absPath = asString(attachment.absPath);
-          return name && absPath ? [{ name, absPath }] : [];
+          const relPath = asString(attachment.relPath);
+          return name && absPath ? [{ name, absPath, ...(relPath ? { relPath } : {}) }] : [];
         })
       : undefined,
     comments: Array.isArray(metadata.comments)
