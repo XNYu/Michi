@@ -147,8 +147,7 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
           <span
             style={{
               color: 'var(--term-accent)',
-              fontFamily:
-                'var(--message-latin-font, var(--ui-font)), var(--message-cjk-font, sans-serif)',
+              fontFamily: 'var(--ui-font)',
               fontSize: 'var(--composer-body-size, var(--message-body-size, 12.5px))',
               lineHeight: 'var(--message-body-leading, 19px)',
               flexShrink: 0,

@@ -1321,6 +1321,30 @@ html[data-vibrancy="on"],
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* ── Background pane entrance indicators ─────────────────────────
+   Layer 1: caption cell entrance — accent bg highlight fade-out.
+   Layer 1b: sidebar bar pulse (2 cycles then stop).
+   Layer 2: overflow badge spring entrance.
+   All compositor-friendly (opacity/transform only on pulsing
+   elements). Callers apply these via transient className. */
+@keyframes pane-entrance-bg {
+  0%   { background: color-mix(in srgb, var(--term-accent) 14%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes pane-entrance-dot {
+  0%   { transform: scale(1.5); }
+  30%  { transform: scale(0.85); }
+  60%  { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+@keyframes bar-pulse-once {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+@keyframes overflow-badge-enter {
+  0%   { opacity: 0; transform: translateY(-50%) scale(0.6); }
+  100% { opacity: 1; transform: translateY(-50%) scale(1); }
+}
 [data-sd-animate] {
   animation: var(--sd-animation, sd-fadeIn) var(--sd-duration, 150ms)
     var(--sd-easing, ease) var(--sd-delay, 0ms) both;
@@ -2326,7 +2350,17 @@ html[data-vibrancy="on"],
   100% { transform: translateX(433%); }
 }
 
-/* Composer toolbar chip — borderless idle, bordered on hover. Used for
+/* Composer controls share the model trigger's quiet fill and the topbar's
+   4px corners. Send/stop/queue buttons keep their existing treatment. */
+.t-toolbar-chip,
+.t-action-btn.is-outline {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  transition: background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease), opacity var(--t-quick) var(--t-ease);
+}
+
+/* Composer toolbar chip — borderless idle and on hover. Used for
    the +, @, agent, and model controls in the bottom toolbar so they all
    share one visual rhythm. Labels clip with ellipsis instead of wrapping
    so the right-side action buttons never get pushed off-screen. */
@@ -2341,19 +2375,15 @@ html[data-vibrancy="on"],
   padding: 0 var(--composer-chip-h-pad, 12px);
   font-family: var(--ui-font);
   font-size: var(--composer-chip-size, 11px);
+  font-weight: var(--composer-chip-weight, 500);
   letter-spacing: var(--composer-chip-tracking, .04em);
   color: var(--term-mid);
-  border: 1px solid transparent;
-  border-radius: 2px;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
   min-width: 0;
   flex-shrink: 1;
-  transition: border-color var(--t-quick) var(--t-ease),
-              background var(--t-quick) var(--t-ease),
-              color var(--t-quick) var(--t-ease);
 }
 .t-toolbar-chip > .t-chip-label {
   overflow: hidden;
@@ -2361,8 +2391,8 @@ html[data-vibrancy="on"],
   white-space: nowrap;
   min-width: 0;
 }
-.t-toolbar-chip:hover {
-  border-color: var(--term-line);
+.t-toolbar-chip:not(:disabled):not([aria-disabled="true"]):is(:hover, :active),
+.t-action-btn.is-outline:not(:disabled):not([aria-disabled="true"]):is(:hover, :active) {
   background: var(--term-hover-bg, var(--term-alt));
   color: var(--term-fg);
 }
@@ -2380,13 +2410,12 @@ html[data-vibrancy="on"],
   color: var(--term-faint);
 }
 .t-toolbar-chip[aria-disabled="true"]:hover {
-  border-color: transparent;
   background: transparent;
   color: var(--term-faint);
 }
 
-/* Composer action buttons — square, icon-only, fixed size. Three roles:
-   primary (Send, accent fill), outline (Branch, neutral), and queue
+/* Composer action buttons — icon-only, fixed size. Three roles:
+   primary (Send, accent fill), outline (Branch, borderless neutral), and queue
    (streaming-state Send: accent border + surface fill, no fill weight).
    Hover reveals the kbd badge that lives inside the button. */
 .t-action-btn {
@@ -2413,13 +2442,7 @@ html[data-vibrancy="on"],
   cursor: not-allowed;
 }
 .t-action-btn.is-outline {
-  border-color: var(--term-line);
   color: var(--term-mid);
-}
-.t-action-btn.is-outline:hover {
-  border-color: var(--term-line);
-  background: var(--term-hover-bg, var(--term-alt));
-  color: var(--term-fg);
 }
 .t-action-btn.is-primary {
   background: var(--term-accent);
@@ -2438,6 +2461,10 @@ html[data-vibrancy="on"],
   border-color: var(--term-accent);
   color: var(--term-accent);
 }
+@media (prefers-reduced-motion: reduce) {
+  .t-toolbar-chip,
+  .t-action-btn.is-outline { transition: none; }
+}
 .t-action-btn .t-action-kbd {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -2447,8 +2474,9 @@ html[data-vibrancy="on"],
   align-items: center;
   gap: 5px;
   font-family: var(--ui-font);
-  font-size: 10.5px;
-  letter-spacing: .03em;
+  font-size: var(--composer-chip-size, 11px);
+  font-weight: var(--composer-chip-weight, 500);
+  letter-spacing: var(--composer-chip-tracking, .04em);
   color: var(--term-fg);
   background: var(--term-surface);
   border: 1px solid var(--term-line);
@@ -3460,6 +3488,10 @@ html[data-vibrancy="on"],
   border-color: color-mix(in srgb, var(--term-accent) 70%, var(--term-line));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--term-accent) 22%, transparent);
 }
+.ui-input[type='search']:focus {
+  border-color: var(--term-line);
+  box-shadow: none;
+}
 .ui-input::placeholder {
   color: var(--term-faint);
 }
@@ -3710,3 +3742,16 @@ html[data-page-hidden] .t-branch-anchor-pulse {
 /* Floating topbar back link. */
 .map-topbar__back { transition: color .15s; }
 .map-topbar__back:hover { color: var(--term-fg); }
+
+/* ── App-level reduce motion ────────────────────────────────────── */
+/* Mirrors @media (prefers-reduced-motion: reduce) but fires from the
+   user's in-app "Reduce motion" toggle (data-reduce-motion="on" on <html>).
+   This catches any CSS transition/animation we haven't handled in JS. */
+:root[data-reduce-motion='on'] *,
+:root[data-reduce-motion='on'] *::before,
+:root[data-reduce-motion='on'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
