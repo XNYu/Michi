@@ -97,7 +97,7 @@ describe('PaneMessageList render performance', () => {
     expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
   });
 
-  it('shows completed follow-ups while the wider runtime turn is still finishing', () => {
+  it('hides follow-ups while the node is still streaming even when visibleResponseComplete', () => {
     const u1 = makeMsg('u1', 'user', 'question');
     const a1 = makeMsg('a1', 'assistant', 'complete visible answer');
     const node = {
@@ -110,8 +110,7 @@ describe('PaneMessageList render performance', () => {
 
     render(renderList(node, vi.fn()));
 
-    expect(screen.getByText('Which risk would most likely create a production incident?')).toBeTruthy();
-    expect(screen.getByText('▸ FOLLOW-UPS')).toBeTruthy();
-    expect((screen.getByRole('button', { name: /Continue follow-up 1/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
+    expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
   });
 });

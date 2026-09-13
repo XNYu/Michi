@@ -107,17 +107,14 @@ function PaneMessageListInner({
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);
   }, []);
-  // Suppress follow-ups if the last assistant message is still receiving chunks.
-  // This prevents the race where `set_follow_ups` MCP tool delivers all 3
-  // follow-ups (triggering visibleResponseComplete) before the final text
-  // chunks arrive via the parallel ACP stream.
-  const lastMsg = node.messages[node.messages.length - 1];
-  const lastAssistantStillStreaming =
-    lastMsg?.role === 'assistant' && lastMsg.streaming;
+  // Suppress follow-ups while the turn is still running. node.status is
+  // persisted in the DB and survives hydration, unlike message-level
+  // m.streaming which mapMessageRow() resets to false on load.
+  const turnStillRunning = node.status === 'streaming';
 
   const showFollowUps = node.messagesLoaded === false
     ? false
-    : lastAssistantStillStreaming
+    : turnStillRunning
     ? false
     : node.visibleResponseComplete
     ? node.followUps.length > 0
@@ -199,6 +196,7 @@ function PaneMessageListInner({
                 index={i}
                 isDark={isDark}
                 editing={m.id === editingMessageId}
+                hideActions={isStreamingTail}
                 onEditSave={m.id === editingMessageId ? (newText) => onEditSave?.(i, newText) : undefined}
                 onEditCancel={m.id === editingMessageId ? onEditCancel : undefined}
                 onCopy={() => {
@@ -473,7 +471,15 @@ function TailSpacer({ node, viewportHeight }: { node: ChatNodeState; viewportHei
 }
 
 function McpServerError({ node }: { node: ChatNodeState }) {
-  if (!node.mcpServerError) return null;
+  const [dismissed, setDismissed] = React.useState(false);
+
+  // Reset local dismiss when the error identity changes (new failure on same node).
+  const errorKey = node.mcpServerError
+    ? `${node.mcpServerError.serverName}::${node.mcpServerError.error}`
+    : null;
+  React.useEffect(() => { setDismissed(false); }, [errorKey]);
+
+  if (!node.mcpServerError || dismissed) return null;
 
   return (
     <div
@@ -485,9 +491,33 @@ function McpServerError({ node }: { node: ChatNodeState }) {
         border: '1px solid var(--term-danger)',
         borderRadius: 4,
         opacity: 0.8,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
       }}
     >
-      ⚠ MCP server &quot;{node.mcpServerError.serverName}&quot; failed: {node.mcpServerError.error}
+      <span style={{ flex: 1 }}>
+        ⚠ MCP server &quot;{node.mcpServerError.serverName}&quot; failed: {node.mcpServerError.error}
+      </span>
+      <button
+        type="button"
+        aria-label="Dismiss"
+        onClick={() => setDismissed(true)}
+        style={{
+          cursor: 'pointer',
+          color: 'var(--term-danger)',
+          background: 'none',
+          border: 'none',
+          padding: '0 4px',
+          font: 'inherit',
+          fontSize: 13,
+          lineHeight: 1,
+          opacity: 0.7,
+          flexShrink: 0,
+        }}
+      >
+        ×
+      </button>
     </div>
   );
 }

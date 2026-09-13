@@ -1512,6 +1512,11 @@ interface MessageBlockProps {
   onMentionClick?: (name: string, kind: string, nodeId?: string) => void;
   /** Reports whether the visible typewriter is still catching up to raw text. */
   onVisibleSmoothingChange?: (isSmoothing: boolean) => void;
+  /** Hide the MessageActions row (copy/retry/edit/branch/time) for the
+   *  streaming-tail message. Used by PaneMessageList to suppress completion
+   *  UI when the node is still streaming after hydration (m.streaming is
+   *  false but the turn has not finished). */
+  hideActions?: boolean;
 }
 
 function MessageBlockInner({
@@ -1540,6 +1545,7 @@ function MessageBlockInner({
   editing,
   onEditSave,
   onEditCancel,
+  hideActions,
 }: MessageBlockProps) {
   const [hover, setHover] = useState(false);
   const [editText, setEditText] = useState(m.text);
@@ -1773,7 +1779,7 @@ function MessageBlockInner({
           ))}
         </>
       )}
-      {!m.streaming && (
+      {!(m.streaming || hideActions) && (
         isUser ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <MessageActions
