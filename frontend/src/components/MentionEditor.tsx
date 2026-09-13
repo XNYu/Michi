@@ -2,6 +2,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Mention from '@tiptap/extension-mention';
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion';
+import { exitSuggestion } from '@tiptap/suggestion';
 import type { EditorState } from '@tiptap/pm/state';
 import type { ArtifactEntry, ChatNodeState } from '../state/chatStore';
 import type { AgentCommand, SessionMode } from '../services/api';
@@ -22,6 +24,7 @@ import {
   type SlashItem,
 } from './slashItems';
 import { PopoverSurface, MenuItem } from './ui/Popover';
+import { useMenuConfirm } from './ui/useMenuConfirm';
 import { docToDraft, draftToDoc } from './mentionDoc';
 
 /**
@@ -144,14 +147,22 @@ function SuggestionPopup({
   selected,
   anchor,
   onHover,
+  onPick,
+  blinkingId,
 }: {
   state: PopupState | null;
   selected: number;
   anchor: HTMLElement | null;
   onHover: (i: number) => void;
+  onPick: (i: number) => void;
+  blinkingId: string | null;
 }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  useLayoutEffect(() => {
+    listRef.current?.children[selected]?.scrollIntoView?.({ block: 'nearest' });
+  }, [selected]);
   if (!state || state.items.length === 0) return null;
-  const { items, command, rect } = state;
+  const { items, rect } = state;
   // Horizontal: anchor at the @ caret (the suggestion decoration's rect),
   // clamped so a near-right-edge @ doesn't push the popup off-screen.
   // Vertical: above the composer card (same as the slash popup), via the host.
@@ -164,48 +175,45 @@ function SuggestionPopup({
   const anchorTop = hostRect ? hostRect.top : rect ? rect.top : window.innerHeight;
   return (
     <PopoverSurface
+      menuKind="mentions"
+      className="michi-menu-autocomplete"
       left={left}
       bottom={window.innerHeight - anchorTop + 6}
-      minWidth={280}
-      maxWidth={POPUP_MAX}
+      minWidth="min(280px, calc(100vw - 16px))"
+      maxWidth={`min(${POPUP_MAX}px, calc(100vw - 16px))`}
+      maxHeight={`max(80px, ${anchorTop - 14}px)`}
       zIndex={60}
       role="listbox"
       aria-label="Mentions"
       style={{ overflow: 'hidden' }}
     >
-      <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: 240, overflowY: 'auto' }}>
+      <ul ref={listRef} className="michi-menu-list">
         {items.map((it, i) => (
           <MenuItem
             key={it.id}
+            role="option"
+            className={blinkingId === `mention-${it.id}` ? 'ui-menu-blink' : undefined}
             active={i === selected}
             aria-selected={i === selected}
             onMouseEnter={() => onHover(i)}
             onMouseDown={(e) => {
               e.preventDefault();
-              command(it);
+              onPick(i);
             }}
           >
-            <span style={{ fontSize: 10, opacity: 0.6 }}>{it.kind === 'context' ? '📄' : '💬'}</span>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span className="michi-menu-glyph" aria-hidden="true">{it.kind === 'context' ? '📄' : '💬'}</span>
+            <span className="michi-menu-label">
               {it.label}
             </span>
             {it.description && (
-              <span
-                style={{
-                  color: 'var(--term-muted)',
-                  fontSize: 9,
-                  border: '1px solid var(--term-line)',
-                  padding: '0 4px',
-                  borderRadius: 2,
-                }}
-              >
+              <span className="michi-menu-badge">
                 {it.description}
               </span>
             )}
           </MenuItem>
         ))}
       </ul>
-      <div style={{ padding: '4px 10px', borderTop: '1px solid var(--term-line)', fontSize: 10, color: 'var(--term-muted)' }}>
+      <div className="michi-menu-footer">
         ↑↓ navigate · ↵/⇥ accept · esc cancel
       </div>
     </PopoverSurface>
@@ -220,30 +228,41 @@ function SlashCommandPopup({
   anchor,
   onHover,
   onPick,
+  blinkingId,
 }: {
   items: SlashItem[];
   selected: number;
   anchor: HTMLElement | null;
   onHover: (i: number) => void;
   onPick: (i: number) => void;
+  blinkingId: string | null;
 }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  useLayoutEffect(() => {
+    listRef.current?.children[selected]?.scrollIntoView?.({ block: 'nearest' });
+  }, [selected]);
   if (items.length === 0 || !anchor) return null;
   const rect = anchor.getBoundingClientRect();
   return (
     <PopoverSurface
-      left={rect.left}
+      menuKind="slash"
+      className="michi-menu-autocomplete"
+      left={Math.max(8, Math.min(rect.left, window.innerWidth - 488))}
       bottom={window.innerHeight - rect.top + 6}
-      minWidth={Math.max(320, Math.min(420, rect.width))}
-      maxWidth={480}
+      minWidth={`min(${Math.max(320, Math.min(420, rect.width))}px, calc(100vw - 16px))`}
+      maxWidth="min(480px, calc(100vw - 16px))"
+      maxHeight={`max(80px, ${rect.top - 14}px)`}
       zIndex={60}
       role="listbox"
       aria-label="Slash commands"
       style={{ overflow: 'hidden' }}
     >
-      <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: 192, overflowY: 'auto' }}>
+      <ul ref={listRef} className="michi-menu-list">
         {items.map((it, i) => (
           <MenuItem
             key={`${it.source}-${it.name}`}
+            role="option"
+            className={blinkingId === `slash-${it.source}-${it.name}` ? 'ui-menu-blink' : undefined}
             active={i === selected}
             aria-selected={i === selected}
             onMouseEnter={() => onHover(i)}
@@ -252,39 +271,21 @@ function SlashCommandPopup({
               onPick(i);
             }}
           >
-            <span style={{ opacity: 0.9 }}>/{it.name}</span>
+            <span className="michi-menu-command">/{it.name}</span>
             {it.description && (
-              <span
-                style={{
-                  color: 'var(--term-muted)',
-                  fontSize: 10.5,
-                  flex: 1,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
+              <span className="michi-menu-label michi-menu-caption">
                 {it.description}
               </span>
             )}
             {it.source !== 'agent' && (
-              <span
-                style={{
-                  color: 'var(--term-muted)',
-                  fontSize: 9,
-                  border: '1px solid var(--term-line)',
-                  padding: '0 4px',
-                  borderRadius: 2,
-                  textTransform: 'uppercase',
-                }}
-              >
+              <span className="michi-menu-badge">
                 {it.source}
               </span>
             )}
           </MenuItem>
         ))}
       </ul>
-      <div style={{ padding: '4px 10px', borderTop: '1px solid var(--term-line)', fontSize: 10, color: 'var(--term-muted)' }}>
+      <div className="michi-menu-footer">
         ↑↓ navigate · ↵/⇥ accept · esc cancel
       </div>
     </PopoverSurface>
@@ -345,8 +346,15 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   const selectedRef = useRef(0);
   const popupRef = useRef<PopupState | null>(null);
   const suggestionOpenRef = useRef(false);
+  const { blinkingId, confirm, cancel: cancelConfirmation } = useMenuConfirm();
   selectedRef.current = selected;
   popupRef.current = popup;
+  const acceptMentionRef = useRef<(index: number) => void>(() => {});
+  acceptMentionRef.current = (index) => {
+    const current = popupRef.current;
+    const item = current?.items[index];
+    if (current && item) confirm(`mention-${item.id}`, () => current.command(item));
+  };
 
   // ---- /-command state. Driven by the editor's value + caret (not a textarea).
   const [slashCtx, setSlashCtx] = useState<{ query: string; command?: string } | null>(null);
@@ -394,6 +402,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
           },
           render: () => ({
             onStart: (sp: SuggestionProps) => {
+              cancelConfirmation();
               suggestionOpenRef.current = true;
               setSelected(0);
               setPopup({
@@ -403,6 +412,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
               });
             },
             onUpdate: (sp: SuggestionProps) => {
+              cancelConfirmation();
               setSelected(0);
               setPopup({
                 items: sp.items as AtMentionItem[],
@@ -415,22 +425,29 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
               if (!cur || cur.items.length === 0) return false;
               const n = cur.items.length;
               if (sp.event.key === 'ArrowDown') {
+                cancelConfirmation();
                 setSelected((i) => (i + 1) % n);
                 return true;
               }
               if (sp.event.key === 'ArrowUp') {
+                cancelConfirmation();
                 setSelected((i) => (i - 1 + n) % n);
                 return true;
               }
               if (sp.event.key === 'Enter' || sp.event.key === 'Tab') {
-                const pick = cur.items[selectedRef.current];
-                if (pick) cur.command(pick);
+                if (sp.view.composing || sp.event.isComposing) return false;
+                acceptMentionRef.current(selectedRef.current);
                 return true;
               }
-              if (sp.event.key === 'Escape') return true;
+              if (sp.event.key === 'Escape') {
+                cancelConfirmation();
+                exitSuggestion(sp.view);
+                return true;
+              }
               return false;
             },
             onExit: () => {
+              cancelConfirmation();
               suggestionOpenRef.current = false;
               setPopup(null);
             },
@@ -455,10 +472,12 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
         if (slashOpenRef.current) {
           const n = slashItemsRef.current.length;
           if (event.key === 'ArrowDown') {
+            cancelConfirmation();
             setSlashSelected((s) => (s + 1) % n);
             return true;
           }
           if (event.key === 'ArrowUp') {
+            cancelConfirmation();
             setSlashSelected((s) => (s - 1 + n) % n);
             return true;
           }
@@ -547,8 +566,9 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   }, [editor, value, mentions]);
 
   useEffect(() => {
+    if (disabled) cancelConfirmation();
     editor?.setEditable(!disabled);
-  }, [editor, disabled]);
+  }, [editor, disabled, cancelConfirmation]);
 
   // Recompute /-command context from the editor's text + caret on every doc or
   // selection change. The caret's TEXT offset is derived with the same leaf
@@ -557,6 +577,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   useEffect(() => {
     if (!editor) return;
     const recompute = () => {
+      cancelConfirmation();
       const v = docToDraft(editor.getJSON() as Parameters<typeof docToDraft>[0]).value;
       const before = editor.state.doc.textBetween(0, editor.state.selection.from, '\n', (node) =>
         node.type.name === 'mention'
@@ -570,35 +591,45 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     };
     editor.on('update', recompute);
     editor.on('selectionUpdate', recompute);
+    const blur = () => {
+      cancelConfirmation();
+      exitSuggestion(editor.view);
+      setSlashCtx(null);
+    };
+    editor.on('blur', blur);
     recompute();
     return () => {
       editor.off('update', recompute);
       editor.off('selectionUpdate', recompute);
+      editor.off('blur', blur);
     };
-  }, [editor]);
+  }, [editor, cancelConfirmation]);
 
   // Bind slash actions once the editor exists.
   useEffect(() => {
     acceptSlashRef.current = (idx: number) => {
       const it = slashItemsRef.current[idx];
       if (!it || !editor) return;
-      // Agent picker: invoke the switch and clear the composer.
-      if (it.source === 'agent' && it.modeId) {
-        onSwitchAgentRef.current?.(it.modeId);
-        editor.commands.clearContent();
+      confirm(`slash-${it.source}-${it.name}`, () => {
+        // Agent picker: invoke the switch and clear the composer.
+        if (it.source === 'agent' && it.modeId) {
+          onSwitchAgentRef.current?.(it.modeId);
+          editor.commands.clearContent();
+          editor.commands.focus('end');
+          return;
+        }
+        // Replace the whole composer with `/<name> ` (slash is always at start).
+        const text = `/${it.name}${it.takesArgs ? ' ' : ''}`;
+        editor.commands.setContent(draftToDoc(text, []));
         editor.commands.focus('end');
-        return;
-      }
-      // Replace the whole composer with `/<name> ` (slash is always at start).
-      const text = `/${it.name}${it.takesArgs ? ' ' : ''}`;
-      editor.commands.setContent(draftToDoc(text, []));
-      editor.commands.focus('end');
+      });
     };
     escapeSlashRef.current = () => {
+      cancelConfirmation();
       editor?.commands.clearContent();
       editor?.commands.focus();
     };
-  }, [editor]);
+  }, [editor, confirm, cancelConfirmation]);
 
   useImperativeHandle(
     ref,
@@ -612,13 +643,15 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   return (
     <div ref={hostRef} style={{ position: 'relative', flex: 1, minWidth: 0 }} className="mention-editor-host">
       <EditorContent editor={editor} className={className} data-testid={props['data-testid']} />
-      <SuggestionPopup state={popup} selected={selected} anchor={hostRef.current} onHover={setSelected} />
+      <SuggestionPopup state={popup} selected={selected} anchor={hostRef.current} onHover={setSelected}
+        onPick={(i) => acceptMentionRef.current(i)} blinkingId={blinkingId} />
       <SlashCommandPopup
         items={slashItems}
         selected={slashSelected}
         anchor={hostRef.current}
         onHover={setSlashSelected}
         onPick={(i) => acceptSlashRef.current(i)}
+        blinkingId={blinkingId}
       />
     </div>
   );

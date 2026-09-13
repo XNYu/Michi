@@ -1,13 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PopoverSurface, MenuItem as MenuRow } from './ui/Popover';
-
-/**
- * macOS-style confirm blink: on click the row's highlight flashes once
- * (off → on → off), THEN the action fires and the menu closes. Must match the
- * `ui-menu-blink` animation duration in index.css so the run/close lands right
- * as the flash finishes. Skipped under prefers-reduced-motion.
- */
-const BLINK_MS = 160;
+import { useMenuConfirm } from './ui/useMenuConfirm';
 
 export interface MenuItem {
   id: string;
@@ -47,6 +40,7 @@ export interface ContextMenuProps {
   y: number;
   sections: MenuSection[];
   onClose: () => void;
+  menuKind?: 'context' | 'workspace' | 'agents';
   /** Optional fixed width in px. */
   width?: number;
   /** Optional max-height in px; overflows scroll. */
@@ -76,6 +70,7 @@ export default function ContextMenu({
   y,
   sections,
   onClose,
+  menuKind = 'context',
   width,
   maxHeight,
   searchable,
@@ -88,9 +83,7 @@ export default function ContextMenu({
   const [filter, setFilter] = useState('');
   // Keyboard-navigable active index for searchable menus (-1 = nothing highlighted).
   const [activeIdx, setActiveIdx] = useState(-1);
-  // id of the row currently playing the confirm blink (null = none).
-  const [blinkingId, setBlinkingId] = useState<string | null>(null);
-  const blinkTimer = useRef<number | null>(null);
+  const { blinkingId, confirm, cancel } = useMenuConfirm();
 
   // --- Stable refs for values used inside the dismiss effect ---
   // React 18 flushes discrete-event state updates synchronously, which means
@@ -104,6 +97,10 @@ export default function ContextMenu({
   useLayoutEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   const sectionsRef = useRef(sections);
   useLayoutEffect(() => { sectionsRef.current = sections; }, [sections]);
+  const dismiss = useCallback(() => {
+    cancel();
+    onCloseRef.current();
+  }, [cancel]);
 
   // Fire an item's action after a short macOS-style confirm blink, then close.
   // Guards against double-fire (ignores clicks while a blink is already in
@@ -111,30 +108,14 @@ export default function ContextMenu({
   const fireWithBlink = useCallback(
     (item: MenuItem) => {
       if (item.disabled) return;
-      if (blinkTimer.current !== null) return;
-      const reduce =
-        typeof window !== 'undefined' &&
-        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      if (reduce) {
-        item.run();
+      confirm(item.id, () => {
+        const current = sectionsRef.current.flatMap((section) => section.items).find((candidate) => candidate.id === item.id);
+        if (!current || current.disabled) return;
+        current.run();
         onCloseRef.current();
-        return;
-      }
-      setBlinkingId(item.id);
-      blinkTimer.current = window.setTimeout(() => {
-        blinkTimer.current = null;
-        item.run();
-        onCloseRef.current();
-      }, BLINK_MS);
+      });
     },
-    [], // stable — reads onClose through ref
-  );
-
-  useEffect(
-    () => () => {
-      if (blinkTimer.current !== null) window.clearTimeout(blinkTimer.current);
-    },
-    [],
+    [confirm],
   );
 
   useLayoutEffect(() => {
@@ -147,6 +128,7 @@ export default function ContextMenu({
       let nx = x;
       let ny = anchorBottom !== undefined ? anchorBottom - rect.height : y;
       if (nx + rect.width > vw - 8) nx = Math.max(8, vw - rect.width - 8);
+      nx = Math.max(8, nx);
       if (ny + rect.height > vh - 8) ny = Math.max(8, vh - rect.height - 8);
       if (ny < 8) ny = 8;
       setPos((prev) => (prev.x !== nx || prev.y !== ny ? { x: nx, y: ny } : prev));
@@ -158,19 +140,20 @@ export default function ContextMenu({
     // small-content position.
     const ro = new ResizeObserver(reposition);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener('resize', reposition);
+    return () => { ro.disconnect(); window.removeEventListener('resize', reposition); };
   }, [x, y, anchorBottom]);
 
   useEffect(() => {
     const onDocDown = (e: MouseEvent) => {
       if (!ref.current) return;
       if (e.target instanceof Node && ref.current.contains(e.target)) return;
-      onCloseRef.current();
+      dismiss();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCloseRef.current();
+        dismiss();
         return;
       }
       // Single-letter accelerators (e.g. R/E/D/A). Skip while the filter input
@@ -204,9 +187,13 @@ export default function ContextMenu({
       document.removeEventListener('mousedown', onDocDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [searchable, fireWithBlink]);
+  }, [searchable, fireWithBlink, dismiss]);
 
   const run = (item: MenuItem) => fireWithBlink(item);
+
+  useLayoutEffect(() => {
+    ref.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIdx]);
 
   useEffect(() => {
     if (searchable) searchRef.current?.focus();
@@ -245,16 +232,19 @@ export default function ContextMenu({
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCloseRef.current();
+        e.stopPropagation();
+        dismiss();
         return;
       }
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        cancel();
         setActiveIdx((i) => Math.min(flatItems.length - 1, i + 1));
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
+        cancel();
         setActiveIdx((i) => Math.max(0, i - 1));
         return;
       }
@@ -265,49 +255,41 @@ export default function ContextMenu({
         return;
       }
     },
-    [flatItems, activeIdx, fireWithBlink],
+    [flatItems, activeIdx, fireWithBlink, dismiss, cancel],
   );
 
   return (
     <PopoverSurface
       ref={ref}
+      menuKind={menuKind}
+      role="menu"
+      aria-label={menuKind === 'workspace' ? 'Workspaces' : menuKind === 'agents' ? 'Agents' : 'Actions'}
       left={pos.x}
       top={pos.y}
-      width={width}
-      minWidth={width ? undefined : 200}
+      width={width ?? 'var(--m-width)'}
+      maxWidth="calc(100vw - 16px)"
+      maxHeight="calc(100dvh - 16px)"
       // Right-click menus historically sit above every other popover (eg
       // the Contexts popover hosts one internally). Preserve that.
       zIndex={1100}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ padding: '4px 0', userSelect: 'none' }}
+      style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', userSelect: 'none' }}
     >
       {searchable && (
-        <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--term-line)' }}>
+        <div className="michi-menu-search">
           <input
             ref={searchRef}
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => { cancel(); setFilter(e.target.value); }}
             onKeyDown={onSearchKeyDown}
             placeholder={searchPlaceholder ?? 'filter…'}
-            style={{
-              width: '100%',
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)',
-              fontSize: 11,
-            }}
+            aria-label={searchPlaceholder ?? 'Filter options'}
           />
         </div>
       )}
       <ul
-        style={{
-          margin: 0,
-          padding: 0,
-          listStyle: 'none',
-          ...(maxHeight ? { maxHeight, overflowY: 'auto' } : null),
-        }}
+        className="michi-menu-list"
+        style={{ maxHeight: maxHeight ?? 'var(--m-maxHeight)' }}
       >
         {(() => {
           let flatIdx = 0;
@@ -322,26 +304,13 @@ export default function ContextMenu({
                   {si > 0 && (
                     <li
                       aria-hidden="true"
-                      style={{
-                        height: 1,
-                        background: 'var(--term-line)',
-                        margin: '4px 0',
-                        listStyle: 'none',
-                      }}
+                      className="michi-menu-divider"
                     />
                   )}
                   {section.label && (
                     <li
                       aria-hidden="true"
-                      style={{
-                        padding: '4px 10px 2px',
-                        fontSize: 9,
-                        letterSpacing: '.16em',
-                        textTransform: 'uppercase',
-                        color: 'var(--term-faint)',
-                        fontFamily: 'var(--ui-font)',
-                        listStyle: 'none',
-                      }}
+                      className="michi-menu-section"
                     >
                       {section.label}
                     </li>
@@ -353,6 +322,7 @@ export default function ContextMenu({
                     return (
                       <MenuRow
                         key={item.id}
+                        role="menuitem"
                         onClick={() => run(item)}
                         danger={item.danger}
                         disabled={item.disabled}
@@ -365,54 +335,25 @@ export default function ContextMenu({
                         }
                       >
                         {!trailing && item.glyph && (
-                          <span
-                            style={{
-                              width: 14,
-                              textAlign: 'center',
-                              color: 'var(--term-mid)',
-                              fontSize: 11,
-                            }}
-                          >
+                          <span className="michi-menu-glyph" aria-hidden="true">
                             {item.glyph}
                           </span>
                         )}
-                        <span
-                          style={{
-                            flex: 1,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <span style={{ fontWeight: 600 }}>{item.label}</span>
+                        <span className="michi-menu-label">
+                          <span>{item.label}</span>
                           {item.sublabel && (
-                            <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
+                            <span className="michi-menu-caption michi-menu-sublabel">
                               {item.sublabel}
                             </span>
                           )}
                         </span>
                         {item.keys && (
-                          <span
-                            style={{
-                              fontFamily: 'var(--ui-font)',
-                              fontSize: 11,
-                              color: 'var(--term-faint)',
-                              minWidth: 12,
-                              textAlign: 'right',
-                            }}
-                          >
+                          <span className="michi-menu-keys">
                             {item.keys}
                           </span>
                         )}
                         {trailing && item.glyph && (
-                          <span
-                            style={{
-                              width: 14,
-                              textAlign: 'center',
-                              color: 'var(--term-mid)',
-                              fontSize: 11,
-                            }}
-                          >
+                          <span className="michi-menu-glyph" aria-hidden="true">
                             {item.glyph}
                           </span>
                         )}
@@ -425,14 +366,7 @@ export default function ContextMenu({
         })()}
       </ul>
       {filtered.some((s) => s.pinned) && (
-        <ul
-          style={{
-            margin: 0,
-            padding: 0,
-            listStyle: 'none',
-            borderTop: '1px solid var(--term-line)',
-          }}
-        >
+        <ul className="michi-menu-list michi-menu-pinned">
           {filtered
             .filter((s) => s.pinned)
             .map((section, si) => {
@@ -442,15 +376,7 @@ export default function ContextMenu({
                   {section.label && (
                     <li
                       aria-hidden="true"
-                      style={{
-                        padding: '4px 10px 2px',
-                        fontSize: 9,
-                        letterSpacing: '.16em',
-                        textTransform: 'uppercase',
-                        color: 'var(--term-faint)',
-                        fontFamily: 'var(--ui-font)',
-                        listStyle: 'none',
-                      }}
+                      className="michi-menu-section"
                     >
                       {section.label}
                     </li>
@@ -458,60 +384,32 @@ export default function ContextMenu({
                   {section.items.map((item) => (
                     <MenuRow
                       key={item.id}
+                      role="menuitem"
                       onClick={() => run(item)}
                       danger={item.danger}
                       disabled={item.disabled}
                       className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
                     >
                       {!trailing && item.glyph && (
-                        <span
-                          style={{
-                            width: 14,
-                            textAlign: 'center',
-                            color: 'var(--term-mid)',
-                            fontSize: 11,
-                          }}
-                        >
+                        <span className="michi-menu-glyph" aria-hidden="true">
                           {item.glyph}
                         </span>
                       )}
-                      <span
-                        style={{
-                          flex: 1,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        <span style={{ fontWeight: 600 }}>{item.label}</span>
+                      <span className="michi-menu-label">
+                        <span>{item.label}</span>
                         {item.sublabel && (
-                          <span style={{ color: 'var(--term-muted)', marginLeft: 6 }}>
+                          <span className="michi-menu-caption michi-menu-sublabel">
                             {item.sublabel}
                           </span>
                         )}
                       </span>
                       {item.keys && (
-                        <span
-                          style={{
-                            fontFamily: 'var(--ui-font)',
-                            fontSize: 11,
-                            color: 'var(--term-faint)',
-                            minWidth: 12,
-                            textAlign: 'right',
-                          }}
-                        >
+                        <span className="michi-menu-keys">
                           {item.keys}
                         </span>
                       )}
                       {trailing && item.glyph && (
-                        <span
-                          style={{
-                            width: 14,
-                            textAlign: 'center',
-                            color: 'var(--term-mid)',
-                            fontSize: 11,
-                          }}
-                        >
+                        <span className="michi-menu-glyph" aria-hidden="true">
                           {item.glyph}
                         </span>
                       )}

@@ -45,3 +45,8 @@
     transform: none;
   }
 }
+
+:root[data-reduce-motion='on'] .ui-drawer-panel.drawer-shell-panel {
+  transition: none;
+  transform: none;
+}

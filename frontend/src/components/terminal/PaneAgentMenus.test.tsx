@@ -46,6 +46,7 @@ const baseProps = {
 describe('PaneAgentMenus model catalog states', () => {
   it('shows a loading row while models are being fetched', () => {
     render(<PaneAgentMenus {...baseProps} modelsLoading />);
+    fireEvent.click(screen.getByRole('button', { name: /Select model/ }));
     expect(screen.getByText('Loading models…')).toBeTruthy();
   });
 
@@ -59,8 +60,9 @@ describe('PaneAgentMenus model catalog states', () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: /Select model/ }));
     expect(screen.getByText('catalog unavailable')).toBeTruthy();
-    fireEvent.click(screen.getByText('Retry'));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(onRetryModels).toHaveBeenCalledTimes(1));
   });
 });

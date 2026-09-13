@@ -1,18 +1,14 @@
-import React, { useRef } from 'react';
+import React, { useEffect } from 'react';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentReasoning, AgentStatus, SessionMode } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import ContextMenu, { type MenuSection } from '../ContextMenu';
-import { REASONING_LABELS } from './PaneComposerToolbarLeft';
-
-interface MenuAnchor {
-  x: number;
-  y: number;
-  anchorBottom?: number;
-}
+import type { PaneMenuAnchor } from './PaneComposerToolbarLeft';
+import { ComposerModelPicker } from './ComposerModelPicker';
 
 interface PaneAgentMenusProps {
-  agentMenu: MenuAnchor | null;
-  modelMenu: MenuAnchor | null;
+  agentMenu: PaneMenuAnchor | null;
+  modelMenu: PaneMenuAnchor | null;
+  disabled?: boolean;
   availableModes: readonly SessionMode[];
   currentModeId?: string;
   agentStatus: AgentStatus | null;
@@ -24,11 +20,11 @@ interface PaneAgentMenusProps {
   modelsWaiting?: boolean;
   modelsError: string | null;
   onSwitchAgent: (modeId: string) => void;
-  onSwitchRuntime: (runtimeId: string) => void;
-  onSaveProvider?: (providerId: string) => void;
-  onSaveModel: (modelId: string) => void;
+  onSwitchRuntime: (runtimeId: string) => void | Promise<void>;
+  onSaveProvider?: (providerId: string) => void | Promise<void>;
+  onSaveModel: (modelId: string) => void | Promise<void>;
   onRetryModels: () => void;
-  onSaveReasoning: (reasoning: AgentReasoning) => void;
+  onSaveReasoning: (reasoning: AgentReasoning) => void | Promise<void>;
   onCloseAgentMenu: () => void;
   onCloseModelMenu: () => void;
   primaryAgents?: readonly PrimaryAgentMenuOption[];
@@ -49,6 +45,7 @@ export interface PrimaryAgentMenuOption {
 export function PaneAgentMenus({
   agentMenu,
   modelMenu,
+  disabled = false,
   availableModes,
   currentModeId,
   agentStatus,
@@ -74,10 +71,13 @@ export function PaneAgentMenus({
   onSelectPrimaryAgent,
   onSelectDefaultAgent,
 }: PaneAgentMenusProps) {
+  useEffect(() => {
+    if (disabled && modelMenu) onCloseModelMenu();
+  }, [disabled, modelMenu, onCloseModelMenu]);
+
   const primarySections: MenuSection[] = onSelectPrimaryAgent && onSelectDefaultAgent
     ? [
         {
-          label: 'Conversation Agent',
           items: [{
             id: 'primary-default',
             label: selectedPrimaryAgentId ? 'Default Michi Agent' : '✓ Default Michi Agent',
@@ -105,8 +105,7 @@ export function PaneAgentMenus({
           x={agentMenu.x}
           y={agentMenu.y}
           anchorBottom={agentMenu.anchorBottom}
-          width={525}
-          maxHeight={192}
+          menuKind="agents"
           searchable
           sections={[
             ...primarySections,
@@ -129,9 +128,8 @@ export function PaneAgentMenus({
         />
       )}
 
-      {modelMenu && (
-        <ModelReasoningMenu
-          key={JSON.stringify([resolvedBinding.runtime, resolvedBinding.provider])}
+      {modelMenu && !disabled && (
+        <ComposerModelPicker
           anchor={modelMenu}
           agentStatus={agentStatus}
           resolvedBinding={resolvedBinding}
@@ -150,167 +148,5 @@ export function PaneAgentMenus({
         />
       )}
     </>
-  );
-}
-
-function ModelReasoningMenu({
-  anchor,
-  agentStatus,
-  resolvedBinding,
-  catalogCapabilities,
-  providerModels,
-  providers = [],
-  modelsLoading,
-  modelsWaiting,
-  modelsError,
-  onSwitchRuntime,
-  onSaveProvider,
-  onSaveModel,
-  onRetryModels,
-  onSaveReasoning,
-  onClose,
-}: {
-  anchor: MenuAnchor;
-  agentStatus: AgentStatus | null;
-  resolvedBinding: ResolvedNodeBinding;
-  catalogCapabilities: AgentCapabilities | null;
-  providerModels: readonly AgentModelInfo[];
-  providers?: readonly AgentProviderInfo[];
-  modelsLoading: boolean;
-  modelsWaiting: boolean;
-  modelsError: string | null;
-  onSwitchRuntime: (runtimeId: string) => void;
-  onSaveProvider?: (providerId: string) => void;
-  onSaveModel: (modelId: string) => void;
-  onRetryModels: () => void;
-  onSaveReasoning: (reasoning: AgentReasoning) => void;
-  onClose: () => void;
-}) {
-  const reloading = useRef(false);
-  const reload = () => {
-    reloading.current = true;
-    onRetryModels();
-  };
-  const close = () => {
-    if (reloading.current) {
-      reloading.current = false;
-      return;
-    }
-    onClose();
-  };
-
-  const caps = catalogCapabilities ?? agentStatus?.capabilities;
-  const showModels = !!(caps?.providerModels || caps?.models === true);
-  const showReasoning = !!caps?.reasoning;
-  const isProvider = !!caps?.providerModels;
-  const sections: MenuSection[] = [];
-
-  // Runtime section — always show so users can switch runtime per-node.
-  if (agentStatus?.availableRuntimes && agentStatus.availableRuntimes.length > 1) {
-    sections.push({
-      label: 'Runtime',
-      trailingGlyph: true,
-      items: agentStatus.availableRuntimes.map((r) => ({
-        id: `rt-${r.id}`,
-        label: r.label || r.id,
-        glyph: resolvedBinding.runtime === r.id ? '✓' : undefined,
-        run: () => {
-          if (r.id !== resolvedBinding.runtime) onSwitchRuntime(r.id);
-        },
-      })),
-    });
-  }
-
-  // Provider section — for provider runtimes (e.g. Pi), let users pick the
-  // API provider directly from the composer menu. Selecting one reloads the
-  // model catalog for that provider.
-  if (isProvider && onSaveProvider && providers.length > 0) {
-    sections.push({
-      label: 'Provider',
-      trailingGlyph: true,
-      items: providers.map((p) => ({
-        id: `p-${p.id}`,
-        label: p.label || p.id,
-        sublabel: p.hasKey === false ? '— no API key configured' : undefined,
-        glyph: resolvedBinding.provider === p.id ? '✓' : undefined,
-        run: () => {
-          if (p.id !== resolvedBinding.provider) onSaveProvider(p.id);
-        },
-      })),
-    });
-  }
-
-  if (showModels) {
-    if (resolvedBinding.model && (modelsLoading || modelsError || !providerModels.some((m) => m.id === resolvedBinding.model))) {
-      sections.push({
-        items: [{
-          id: 'model-current',
-          label: 'Use current model',
-          sublabel: resolvedBinding.model,
-          glyph: '✓',
-          run: () => {},
-        }],
-      });
-    }
-    if (modelsLoading || modelsError || providerModels.length === 0) {
-      sections.push({
-        label: 'Model catalog',
-        items: [
-          {
-            id: 'model-status',
-            label: modelsError || (modelsLoading
-              ? modelsWaiting ? 'Still loading models…' : 'Loading models…'
-              : 'No models available'),
-            disabled: true,
-            run: () => {},
-          },
-          ...(modelsError || modelsWaiting || !modelsLoading
-            ? [{ id: 'model-retry', label: modelsError ? 'Retry' : 'Reload models', run: reload }]
-            : []),
-        ],
-      });
-    }
-    if (providerModels.length > 0) {
-      sections.push({
-        label: 'Models',
-        trailingGlyph: true,
-        items: providerModels.map((m) => ({
-          id: `m-${m.id}`,
-          label: m.label || m.id,
-          sublabel: isProvider ? m.id : undefined,
-          glyph: resolvedBinding.model === m.id ? '✓' : undefined,
-          run: () => onSaveModel(m.id),
-        })),
-      });
-    }
-  }
-
-  if (showReasoning) {
-    const levels: AgentReasoning[] = caps?.supportedReasoningLevels?.length
-      ? caps.supportedReasoningLevels
-      : ['minimal', 'low', 'medium', 'high', 'xhigh'];
-    sections.push({
-      label: 'Effort',
-      trailingGlyph: true,
-      items: levels.map((id) => ({
-        id: `r-${id}`,
-        label: REASONING_LABELS[id] ?? id,
-        glyph: resolvedBinding.reasoning === id ? '✓' : undefined,
-        run: () => onSaveReasoning(id),
-      })),
-    });
-  }
-
-  return (
-    <ContextMenu
-      x={anchor.x}
-      y={anchor.y}
-      anchorBottom={anchor.anchorBottom}
-      searchable={isProvider || (agentStatus?.availableRuntimes?.length ?? 0) > 3}
-      maxHeight={280}
-      width={isProvider ? 380 : undefined}
-      sections={sections}
-      onClose={close}
-    />
   );
 }

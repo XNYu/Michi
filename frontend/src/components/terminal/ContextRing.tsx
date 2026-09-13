@@ -147,7 +147,8 @@ function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
     if (!el) return;
     const r = el.getBoundingClientRect();
     // Position above the ring, centered horizontally
-    setPos({ left: r.left + r.width / 2, top: r.top - 8 });
+    const width = Math.min(288, window.innerWidth - 16);
+    setPos({ left: Math.max(8, Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - 8)), top: r.top - 8 });
   }, [anchorRef]);
 
   if (!pos) return null;
@@ -160,29 +161,20 @@ function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
   return (
     <PopoverSurface
       variant="tooltip"
+      menuKind="usage"
+      className="michi-menu-usage"
+      width="var(--m-width)"
+      maxWidth="calc(100vw - 16px)"
       left={pos.left}
       top={pos.top}
       role="tooltip"
       style={{
-        transform: 'translate(-50%, -100%)',
-        padding: '6px 10px',
-        pointerEvents: 'none',
-        whiteSpace: 'nowrap',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 3,
+        transform: 'translateY(-100%)',
       }}
     >
       {/* Primary: percentage with color-matched value */}
       <span
-        style={{
-          fontSize: 11.5,
-          fontWeight: 500,
-          color: 'var(--term-fg)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-        }}
+        className="michi-menu-usage-primary"
         data-testid="context-ring-tooltip-pct"
       >
         <span style={{ color: 'var(--term-mid)' }}>Context:</span>
@@ -194,13 +186,7 @@ function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
       {/* Secondary: token details when available */}
       {hasDetails && (
         <span
-          style={{
-            fontSize: 10,
-            color: 'var(--term-faint)',
-            display: 'flex',
-            gap: 8,
-            fontVariantNumeric: 'tabular-nums',
-          }}
+          className="michi-menu-usage-details"
           data-testid="context-ring-tooltip-details"
         >
           {summary!.totalTokens !== undefined && (
@@ -213,11 +199,7 @@ function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
       )}
       {hasDetails && summary!.cachedInputTokens !== undefined && summary!.cachedInputTokens > 0 && (
         <span
-          style={{
-            fontSize: 10,
-            color: 'var(--term-faint)',
-            fontVariantNumeric: 'tabular-nums',
-          }}
+          className="michi-menu-usage-details"
         >
           cached {formatTokens(summary!.cachedInputTokens)}
           {summary!.reasoningOutputTokens ? ` · reasoning ${formatTokens(summary!.reasoningOutputTokens)}` : ''}
