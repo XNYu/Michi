@@ -134,6 +134,7 @@ export default function TerminalDashboard() {
     defaultPaneWidth: prefs.defaultPaneWidth,
     enabled: !!activeProject && openPanes.length > 0,
     scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+    appReduceMotion: prefs.reduceMotion,
     onExitStart: holdExits,
     onExitComplete: finishExit,
   });
@@ -417,7 +418,7 @@ export default function TerminalDashboard() {
     const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
     const previous = previousEntrance.current;
     previousEntrance.current = { scope, ids: openPanes };
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const reduced = prefs.reduceMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
     for (const [id, animation] of entrances.current) {
       if (!openPanes.includes(id) || previous.scope !== scope || reduced) {
         animation.cancel(); entrances.current.delete(id);

@@ -3,8 +3,8 @@ import type { PaneItem } from '../../state/paneItems';
 import { PANE_EXIT_MS } from './paneMotion';
 
 /** Keep only the visual slot alive during exit; store close semantics stay immediate. */
-export function usePanePresence(ids: readonly string[], items: Record<string, PaneItem>, scope: string, enabled = true, exitMs = PANE_EXIT_MS) {
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+export function usePanePresence(ids: readonly string[], items: Record<string, PaneItem>, scope: string, enabled = true, exitMs = PANE_EXIT_MS, appReduceMotion = false) {
+  const reduced = appReduceMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
   const [state, setState] = useState(() => ({ scope, requested: ids, ids: [...ids], exiting: new Map<string, number>() }));
 
   // Compare with the inputs committed alongside the rendered panes, not a

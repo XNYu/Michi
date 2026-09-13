@@ -17,13 +17,15 @@ interface Options {
   scope: string;
   exitingIds?: ReadonlySet<string>;
   motion?: PaneMotion;
+  /** App-level reduce-motion pref (combines with OS media query). */
+  appReduceMotion?: boolean;
   onExitStart?: (ids: readonly string[]) => void;
   onExitComplete?: (id: string) => void;
 }
 
 /** Final text widths are committed once; only the pane surfaces move. */
 export function usePaneLayout(ref: RefObject<HTMLDivElement>, options: Options) {
-  const { paneIds, customWidths, mode = 'adaptive', defaultPaneWidth, enabled, scope, exitingIds = NO_EXITS, motion, onExitStart, onExitComplete } = options;
+  const { paneIds, customWidths, mode = 'adaptive', defaultPaneWidth, enabled, scope, exitingIds = NO_EXITS, motion, appReduceMotion, onExitStart, onExitComplete } = options;
   const [geometry, setGeometry] = useState({ width: 0, gap: 0, padding: 0 });
   const [settledVersion, setSettledVersion] = useState(0);
   const animationRef = useRef<Animation | null>(null);
@@ -149,7 +151,7 @@ export function usePaneLayout(ref: RefObject<HTMLDivElement>, options: Options) 
     const canAnimate = prev && prev.scope === scope && prev.geometry === geometry && geometry.width > 0
       && prev.defaultPaneWidth === defaultPaneWidth && (changedPanes || prev.mode !== mode || changedExits)
       && children.length > 0 && typeof children[0].animate === 'function'
-      && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      && !appReduceMotion && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (!canAnimate) {
       if (wasAnimating) setSettledVersion(version => version + 1);
       for (const id of exitingIds) onExitComplete?.(id);
