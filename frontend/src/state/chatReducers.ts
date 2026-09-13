@@ -622,6 +622,7 @@ export function reduceNodes(
           streamingStartedAt: undefined,
           error: undefined,
           streamingIdleMs: undefined,
+          mcpServerError: undefined,
           pendingPermission: null,
           pendingUserInput: n.pendingUserInput?.resolved ? n.pendingUserInput : null,
           messages: msgs,
@@ -995,7 +996,13 @@ export function reduceNodes(
         ...nodes,
         [action.nodeId]: {
           ...n,
-          digest: { ...n.digest, status: 'streaming', error: undefined, content: '' },
+          digest: {
+            ...n.digest,
+            status: 'streaming',
+            error: undefined,
+            content: '',
+            generation: { startedAt: Date.now(), thought: '', activity: 'Preparing digest...' },
+          },
         },
       };
     }
@@ -1007,7 +1014,31 @@ export function reduceNodes(
         ...nodes,
         [action.nodeId]: {
           ...n,
-          digest: { ...n.digest, content: n.digest.content + action.text },
+          digest: {
+            ...n.digest,
+            content: n.digest.content + action.text,
+            generation: n.digest.generation
+              ? { ...n.digest.generation, activity: 'Writing digest...' }
+              : undefined,
+          },
+        },
+      };
+    }
+    case 'digest-thought':
+    case 'digest-status': {
+      const n = nodes[action.nodeId];
+      if (!n?.digest?.generation || n.digest.status !== 'streaming') return nodes;
+      const generation = n.digest.generation;
+      return {
+        ...nodes,
+        [action.nodeId]: {
+          ...n,
+          digest: {
+            ...n.digest,
+            generation: action.type === 'digest-thought'
+              ? { ...generation, thought: generation.thought + action.text, activity: 'Thinking...' }
+              : { ...generation, activity: action.text },
+          },
         },
       };
     }
@@ -1022,6 +1053,7 @@ export function reduceNodes(
             ...n.digest,
             status: 'idle',
             error: undefined,
+            generation: undefined,
             content: action.content,
             sourceFingerprints: action.sourceFingerprints,
             generatedAt: action.generatedAt,
@@ -1037,7 +1069,7 @@ export function reduceNodes(
         ...nodes,
         [action.nodeId]: {
           ...n,
-          digest: { ...n.digest, status: 'error', error: action.message },
+          digest: { ...n.digest, status: 'error', error: action.message, generation: undefined },
         },
       };
     }

@@ -33,25 +33,33 @@ export function useDigestOrchestration({
       if (abortPrev) abortPrev.abort();
       const ctl = new AbortController();
       digestAbortRef.current[nodeId] = ctl;
+      const previousDigest = nodesRef.current[nodeId]?.digest;
       dispatch({ type: 'digest-started', nodeId });
 
-      const { streamDigest } = await import('../services/digestApi');
-      const { buildDigestPayload } = await import('../lib/digestPayload');
-      // Use the prior content snapshot (before reset) for incremental refresh.
-      const previousContent = nodesRef.current[nodeId]?.digest?.content;
-      const snapshot = buildDigestPayload(
-        project,
-        sources,
-        nodesRef.current,
-        previousContent,
-        nodesRef.current[nodeId]?.digest?.customPrompt,
-      );
       try {
+        const { streamDigest } = await import('../services/digestApi');
+        const { buildDigestPayload } = await import('../lib/digestPayload');
+        if (ctl.signal.aborted) return;
+        const snapshot = buildDigestPayload(
+          project,
+          sources,
+          nodesRef.current,
+          previousDigest?.content,
+          previousDigest?.customPrompt,
+        );
         const markdown = await streamDigest(snapshot, {
           signal: ctl.signal,
           onChunk: (text) => {
             if (ctl.signal.aborted) return;
             dispatch({ type: 'digest-chunk', nodeId, text });
+          },
+          onThought: (text) => {
+            if (ctl.signal.aborted) return;
+            dispatch({ type: 'digest-thought', nodeId, text });
+          },
+          onStatus: (text) => {
+            if (ctl.signal.aborted) return;
+            dispatch({ type: 'digest-status', nodeId, text });
           },
         }, project.backendConnectionId);
         if (ctl.signal.aborted) return;

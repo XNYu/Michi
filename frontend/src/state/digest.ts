@@ -22,6 +22,12 @@ export interface DigestState {
   error?: string;
   /** Optional user-supplied prompt appended to the digest preamble. */
   customPrompt?: string;
+  /** Ephemeral generation activity, never persisted or included in the result. */
+  generation?: {
+    startedAt: number;
+    thought: string;
+    activity: string;
+  };
 }
 
 /**

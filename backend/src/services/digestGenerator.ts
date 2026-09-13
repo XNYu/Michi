@@ -135,27 +135,40 @@ async function runGeneration(
     return stripScaffolding(chunks.join(""));
 }
 
-/**
- * Stream digest generation chunk-by-chunk. Yields raw assistant chunks as
- * they arrive; the caller is responsible for stripping scaffolding from
- * the accumulated final text once streaming ends.
- */
+export type DigestGenerationEvent =
+    | { kind: "chunk" | "thought" | "status"; text: string }
+    | { kind: "done"; finalMarkdown: string };
+
+/** Stream activity separately from the markdown that becomes the saved digest. */
 export async function* streamDigestGeneration(
     chatManager: ChatManager,
     req: GenerationRequest,
-): AsyncGenerator<{ kind: "chunk"; text: string } | { kind: "done"; finalMarkdown: string }> {
-    const chatId = await chatManager.newChat(undefined, req.cwd);
+): AsyncGenerator<DigestGenerationEvent> {
+    yield { kind: "status", text: "Preparing digest..." };
+    const chatId = await chatManager.newChat(undefined, req.cwd, undefined, undefined, undefined, false);
     const firstMessage = composePrompt(req, DIGEST_PREAMBLE);
     const chunks: string[] = [];
+    yield { kind: "status", text: "Generating digest..." };
     for await (const ev of chatManager.sendMessage(chatId, firstMessage)) {
         if (ev.kind === "chunk") {
             chunks.push(ev.text);
             yield { kind: "chunk", text: ev.text };
+        } else if (ev.kind === "thought") {
+            yield { kind: "thought", text: ev.text };
+        } else if (ev.kind === "tool_call" || ev.kind === "tool_call_update") {
+            yield { kind: "status", text: `${ev.title} (${ev.status})` };
+        } else if (ev.kind === "plan") {
+            const current = ev.entries.find((entry) => entry.status === "in_progress");
+            if (current) yield { kind: "status", text: current.content };
+        } else if (ev.kind === "runtime_error") {
+            throw new Error(ev.error);
         } else if (ev.kind === "turn_end") {
             break;
         }
     }
-    yield { kind: "done", finalMarkdown: stripScaffolding(chunks.join("")) };
+    const finalMarkdown = stripScaffolding(chunks.join(""));
+    if (!finalMarkdown) throw new Error("Digest generation returned no content. Please rebuild to try again.");
+    yield { kind: "done", finalMarkdown };
 }
 
 export function runExportGeneration(

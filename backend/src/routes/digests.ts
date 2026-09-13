@@ -61,6 +61,7 @@ export function setupDigestRoutes(chatManager: ChatManager) {
         res.on("close", onClose);
 
         const send = (event: string, data: unknown) => {
+            if (aborted || res.writableEnded) return;
             res.write(`event: ${event}\n`);
             res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
@@ -68,8 +69,8 @@ export function setupDigestRoutes(chatManager: ChatManager) {
         try {
             for await (const ev of streamDigestGeneration(chatManager, body)) {
                 if (aborted) break;
-                if (ev.kind === "chunk") {
-                    send("chunk", { text: ev.text });
+                if (ev.kind === "chunk" || ev.kind === "thought" || ev.kind === "status") {
+                    send(ev.kind, { text: ev.text });
                 } else if (ev.kind === "done") {
                     send("done", { markdown: ev.finalMarkdown });
                     break;

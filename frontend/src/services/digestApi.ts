@@ -18,6 +18,8 @@ export interface DigestGenerationPayload {
 
 export interface StreamCallbacks {
   onChunk: (text: string) => void;
+  onThought?: (text: string) => void;
+  onStatus?: (text: string) => void;
   signal?: AbortSignal;
 }
 
@@ -28,7 +30,7 @@ export interface StreamCallbacks {
  */
 export async function streamDigest(
   payload: DigestGenerationPayload,
-  { onChunk, signal }: StreamCallbacks,
+  { onChunk, onThought, onStatus, signal }: StreamCallbacks,
   connectionId?: string,
 ): Promise<string> {
   const res = await fetchStream(`${backendApiBase(connectionId)}/digests/stream`, {
@@ -72,6 +74,10 @@ export async function streamDigest(
       }
       if (event === 'chunk' && typeof parsed?.text === 'string') {
         onChunk(parsed.text);
+      } else if (event === 'thought' && typeof parsed?.text === 'string') {
+        onThought?.(parsed.text);
+      } else if (event === 'status' && typeof parsed?.text === 'string') {
+        onStatus?.(parsed.text);
       } else if (event === 'done' && typeof parsed?.markdown === 'string') {
         finalMarkdown = parsed.markdown;
       } else if (event === 'error') {

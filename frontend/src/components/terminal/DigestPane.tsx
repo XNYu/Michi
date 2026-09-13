@@ -3,6 +3,7 @@ import { useChatStore, useChatNode, useChatNodesSnapshot } from '../../state/cha
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { parseDigestStructure, staleSources } from '../../state/digest';
 import MarkdownContent from '../MarkdownContent';
+import DigestGenerationStatus from './DigestGenerationStatus';
 import { Tag } from './primitives';
 
 const DIGEST_PROSE =
@@ -31,9 +32,10 @@ export default function DigestPane({
   const nodesSnapshot = useChatNodesSnapshot();
   const paneShellStyle = usePaneShellStyle(nodeId);
 
+  const content = n?.digest?.content;
   const parsed = useMemo(
-    () => (n?.digest ? parseDigestStructure(n.digest.content) : null),
-    [n?.digest],
+    () => (content !== undefined ? parseDigestStructure(content) : null),
+    [content],
   );
   const stale = useMemo(
     () => (n?.digest ? staleSources(n.digest, nodesSnapshot) : []),
@@ -188,6 +190,7 @@ export default function DigestPane({
         }}
       >
         <div style={innerWrap}>
+          <DigestGenerationStatus key={nodeId} digest={d} />
           {parsed?.tldr && (
             <div
               style={{
@@ -264,19 +267,15 @@ export default function DigestPane({
                 );
               })}
             </>
-          ) : (
+          ) : !parsed?.tldr && !parsed?.openThreads.length ? (
             <div style={{ color: 'var(--term-mid)' }}>
               {d.content ? (
                 <MarkdownContent text={d.content} className={DIGEST_PROSE} />
-              ) : d.status === 'streaming' ? (
-                <span style={{ color: 'var(--term-muted)' }}>
-                  <span style={{ color: 'var(--term-digest)' }}>⟳</span> generating digest…
-                </span>
-              ) : (
+              ) : d.status === 'idle' ? (
                 <span style={{ color: 'var(--term-muted)' }}>— digest is empty —</span>
-              )}
+              ) : null}
             </div>
-          )}
+          ) : null}
 
           {parsed && parsed.openThreads.length > 0 && (
             <div style={{ marginTop: 16 }}>

@@ -9,7 +9,7 @@ async function bootDigest(page: Page) {
   const status = {
     runtime: 'mock', label: 'Mock Runtime', model: 'fast', reasoning: 'medium',
     customAgentsEnabled: false, hasRequiredKey: true,
-    capabilities: { modes: true, models: true, providerModels: false, reasoning: true },
+    capabilities: { modes: true, models: true, providerModels: false, reasoning: true, supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'] },
     availableRuntimes: [{ id: 'mock', label: 'Mock Runtime', available: true }],
   };
   await installMockApi(page, {
@@ -86,12 +86,16 @@ test('Digest uses the Home editor, uploads files, selects an Agent/model and sen
   await page.locator('[title^="Switch agent"]').click();
   await page.getByText('Build', { exact: true }).click();
   await expect(page.getByTitle('Switch agent — Build', { exact: true })).toBeVisible();
-  await page.locator('[title^="Model —"]').click();
-  await page.getByText('Deep', { exact: true }).click();
-  await expect(page.getByTitle('Model — Deep', { exact: true })).toBeVisible();
-  await page.locator('[title^="Effort —"]').click();
-  await page.getByText('High', { exact: true }).click();
-  await expect(page.getByTitle('Effort — High', { exact: true })).toBeVisible();
+  const modelSettings = page.getByRole('button', { name: /^Model settings:/ });
+  await modelSettings.click();
+  await page.getByRole('button', { name: /Select model:/ }).click();
+  await page.getByRole('menuitemradio', { name: 'Deep', exact: true }).click();
+  await expect(modelSettings).toContainText('Deep');
+  const effort = page.getByRole('slider', { name: 'Thinking effort' });
+  await effort.focus();
+  await effort.press('ArrowRight');
+  await expect(modelSettings).toContainText('High');
+  await page.keyboard.press('Escape');
 
   await page.screenshot({ path: process.env.DIGEST_SCREENSHOT ?? testInfo.outputPath('digest-composer-desktop.png'), fullPage: true });
   await page.locator('.terminal-composer').screenshot({

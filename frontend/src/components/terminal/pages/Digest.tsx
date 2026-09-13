@@ -3,6 +3,7 @@ import { useChatStore, useChatNodesSnapshot, useChatNode, chatLabel } from '../.
 import { parseDigestStructure, staleSources } from '../../../state/digest';
 import { findTreeIdForNode, descendants } from '../../../state/tree';
 import MarkdownContent from '../../MarkdownContent';
+import DigestGenerationStatus from '../DigestGenerationStatus';
 import { Dot, Tag } from '../primitives';
 import type { PageId } from '../../../state/commands';
 import ManageComposer from '../manage/ManageComposer';
@@ -114,9 +115,10 @@ export default function TerminalDigest({
       ? focusedDigestNode
       : null;
 
+  const content = digestNode?.digest?.content;
   const parsed = useMemo(
-    () => (digestNode ? parseDigestStructure(digestNode.digest!.content) : null),
-    [digestNode],
+    () => (content !== undefined ? parseDigestStructure(content) : null),
+    [content],
   );
   const stale = useMemo(
     () => (digestNode ? staleSources(digestNode.digest!, nodesSnapshot) : []),
@@ -446,28 +448,35 @@ export default function TerminalDigest({
           </div>
 
           {/* Custom prompt editor — inside header area */}
-          <div style={{ marginTop: 10 }}>
-            <div
+          <div style={{ marginTop: 10, WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <button
+              type="button"
               onClick={() => setPromptOpen((v) => !v)}
+              aria-expanded={promptOpen}
+              aria-controls={`digest-custom-prompt-${digestNode.nodeId}`}
               style={{
                 padding: '6px 0',
+                border: 'none',
+                background: 'transparent',
+                fontFamily: 'var(--ui-font)',
                 fontSize: 10,
                 color: 'var(--term-muted)',
                 cursor: 'pointer',
-                letterSpacing: '.14em',
+                letterSpacing: 0,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
               }}
             >
-              {promptOpen ? '▾' : '▸'} CUSTOM PROMPT
+              <span aria-hidden>{promptOpen ? '▾' : '▸'}</span> CUSTOM PROMPT
               {d.customPrompt && !promptOpen && (
-                <span style={{ color: 'var(--term-accent)', fontSize: 8 }}>●</span>
+                <span aria-hidden style={{ color: 'var(--term-accent)', fontSize: 8 }}>●</span>
               )}
-            </div>
+            </button>
             {promptOpen && (
-              <div style={{ paddingBottom: 6 }}>
+              <div id={`digest-custom-prompt-${digestNode.nodeId}`} style={{ paddingBottom: 6 }}>
                 <textarea
+                  aria-label="Custom digest prompt"
                   value={d.customPrompt || ''}
                   onChange={(e) => setDigestPrompt(digestNode.nodeId, e.target.value)}
                   placeholder="e.g. Focus on architecture decisions, summarize in Chinese…"
@@ -493,6 +502,12 @@ export default function TerminalDigest({
             )}
           </div>
         </div>
+
+        {d.status !== 'idle' && (
+          <div style={{ padding: '6px 28px' }}>
+            <DigestGenerationStatus key={digestNode.nodeId} digest={d} />
+          </div>
+        )}
 
         {parsed?.tldr && (
           <div
@@ -595,7 +610,7 @@ export default function TerminalDigest({
               );
             })}
           </div>
-        ) : (
+        ) : !parsed?.tldr && !parsed?.openThreads.length ? (
           <div
             style={{
               padding: '18px 28px 24px',
@@ -607,15 +622,11 @@ export default function TerminalDigest({
           >
             {d.content ? (
               <MarkdownContent text={d.content} className={DIGEST_PROSE} />
-            ) : d.status === 'streaming' ? (
-              <span style={{ color: 'var(--term-muted)' }}>
-                <span style={{ color: 'var(--term-digest)' }}>⟳</span> generating digest…
-              </span>
-            ) : (
+            ) : d.status === 'idle' ? (
               <span>— digest is empty —</span>
-            )}
+            ) : null}
           </div>
-        )}
+        ) : null}
 
         {parsed && parsed.openThreads.length > 0 && (
           <div style={{ padding: '0 28px 28px' }}>

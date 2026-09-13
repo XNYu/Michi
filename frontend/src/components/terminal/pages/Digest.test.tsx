@@ -6,6 +6,7 @@ import ManageComposer from '../manage/ManageComposer';
 
 const createDigest = vi.hoisted(() => vi.fn());
 const markDigestViewed = vi.hoisted(() => vi.fn());
+const setDigestPrompt = vi.hoisted(() => vi.fn());
 const store = vi.hoisted(() => ({
   project: null as any,
   nodes: {} as Record<string, any>,
@@ -16,7 +17,7 @@ vi.mock('../../../state/chatStore', () => ({
     activeProject: store.project,
     createDigest,
     refreshDigest: vi.fn(),
-    setDigestPrompt: vi.fn(),
+    setDigestPrompt,
     markDigestViewed,
     openPane: vi.fn(),
     createChildChat: vi.fn(),
@@ -87,6 +88,7 @@ function project(activeTreeId = 't1') {
 beforeEach(() => {
   createDigest.mockReset().mockResolvedValue('new-digest');
   markDigestViewed.mockReset();
+  setDigestPrompt.mockReset();
   vi.mocked(ManageComposer).mockClear();
   store.project = project();
   store.nodes = {
@@ -99,6 +101,57 @@ beforeEach(() => {
 });
 
 describe('TerminalDigest thread scope', () => {
+  it('keeps custom prompt controls out of the Electron drag region and accepts edits', () => {
+    render(<TerminalDigest onNav={vi.fn()} />);
+    const toggle = screen.getByRole('button', { name: 'CUSTOM PROMPT' });
+    expect(toggle.parentElement?.style.getPropertyValue('-webkit-app-region')
+      || (toggle.parentElement?.style as any).WebkitAppRegion).toBe('no-drag');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Custom digest prompt' }), {
+      target: { value: 'Summarize in Chinese' },
+    });
+    expect(setDigestPrompt).toHaveBeenCalledWith('d1', 'Summarize in Chinese');
+  });
+
+  it('shows live thoughts beside partial output and removes them after generation', () => {
+    store.nodes.d1.digest = {
+      ...store.nodes.d1.digest,
+      status: 'streaming',
+      content: 'Partial digest output',
+      generation: { startedAt: Date.now(), thought: 'Comparing source conversations', activity: 'Writing digest...' },
+    };
+    const view = render(<TerminalDigest onNav={vi.fn()} />);
+    expect(screen.getByRole('region', { name: 'Digest thinking' }).textContent).toBe('Comparing source conversations');
+    expect(screen.getByText('Partial digest output')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /Rebuild/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(markDigestViewed).not.toHaveBeenCalled();
+
+    store.nodes.d1 = { ...store.nodes.d1, digest: {
+      ...store.nodes.d1.digest, status: 'idle', content: 'Final digest output', generatedAt: 30, generation: undefined,
+    } };
+    view.rerender(<TerminalDigest onNav={vi.fn()} />);
+    expect(screen.queryByRole('region', { name: 'Digest generation' })).toBeNull();
+    expect(screen.queryByText('Comparing source conversations')).toBeNull();
+    expect(screen.getByText('Final digest output')).toBeTruthy();
+    expect(markDigestViewed).toHaveBeenCalledWith('d1');
+  });
+
+  it('shows generation errors instead of an empty digest', () => {
+    store.nodes.d1.digest = { ...store.nodes.d1.digest, status: 'error', content: '', error: 'Runtime unavailable' };
+    render(<TerminalDigest onNav={vi.fn()} />);
+    expect(screen.getByRole('alert').textContent).toBe('Runtime unavailable');
+    expect(screen.queryByText(/digest is empty/)).toBeNull();
+  });
+
+  it('does not render the same summary twice before section headings arrive', () => {
+    store.nodes.d1.digest = { ...store.nodes.d1.digest, status: 'streaming', content: '# Title\n\nSummary so far' };
+    render(<TerminalDigest onNav={vi.fn()} />);
+    expect(screen.getAllByText('Summary so far')).toHaveLength(1);
+    expect(screen.queryByText('# Title\n\nSummary so far')).toBeNull();
+  });
+
   it('uses the Home composer with the current digest and Agent selection', () => {
     const onNav = vi.fn();
     render(<TerminalDigest onNav={onNav} />);
