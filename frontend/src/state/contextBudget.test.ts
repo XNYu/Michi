@@ -86,7 +86,7 @@ describe('resolveAtNodeMentions', () => {
 });
 
 describe('buildNodeTranscriptBlock', () => {
-    it('builds a full transcript with title', () => {
+    it('inlines a short transcript in full', () => {
         const node = mkNode('n1', 'Research', [
             { role: 'user', text: 'What is X?' },
             { role: 'assistant', text: 'X is Y.' },
@@ -95,12 +95,56 @@ describe('buildNodeTranscriptBlock', () => {
         expect(block).toContain('=== Referenced node: Research ===');
         expect(block).toContain('User: What is X?');
         expect(block).toContain('Assistant: X is Y.');
+        // Short transcript should NOT contain tool-call hints.
+        expect(block).not.toContain('read_node');
     });
 
     it('falls back to first user message when no title', () => {
         const node = mkNode('n1', '', [{ role: 'user', text: 'My question' }]);
         const block = buildNodeTranscriptBlock(node);
         expect(block).toContain('=== Referenced node: My question ===');
+    });
+
+    it('emits a compact reference for long transcripts', () => {
+        const longMsg = 'A'.repeat(2000);
+        const node = mkNode('n1', 'Long thread', [
+            { role: 'user', text: 'Start' },
+            { role: 'assistant', text: longMsg },
+        ]);
+        const block = buildNodeTranscriptBlock(node);
+        // Should NOT contain the full assistant text.
+        expect(block).not.toContain(longMsg);
+        // Should contain reference metadata.
+        expect(block).toContain('=== Referenced node: Long thread (n1, 2 messages) ===');
+        expect(block).toContain('Summary:');
+        expect(block).toContain('read_node_overview("n1")');
+        expect(block).toContain('read_node("n1")');
+    });
+
+    it('uses branchOverviewEntries for the summary when available', () => {
+        const longMsg = 'B'.repeat(2000);
+        const node: ChatNodeState = {
+            ...mkNode('n1', 'Explored topic', [
+                { role: 'user', text: 'Start' },
+                { role: 'assistant', text: longMsg },
+            ]),
+            branchOverviewEntries: [
+                { at: 1000, text: 'Investigated X and discovered Y.' },
+                { at: 2000, text: 'Confirmed approach Z.' },
+            ],
+        };
+        const block = buildNodeTranscriptBlock(node);
+        expect(block).toContain('Summary: Investigated X and discovered Y. Confirmed approach Z.');
+    });
+
+    it('falls back to first user message for summary when no overview entries', () => {
+        const longMsg = 'C'.repeat(2000);
+        const node = mkNode('n1', 'Thread', [
+            { role: 'user', text: 'This is the original question that was asked' },
+            { role: 'assistant', text: longMsg },
+        ]);
+        const block = buildNodeTranscriptBlock(node);
+        expect(block).toContain('Summary: This is the original question that was asked');
     });
 });
 

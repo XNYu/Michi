@@ -49,14 +49,51 @@ export function resolveAtNodeMentions(
 }
 
 /**
- * Build a full transcript block from a node's messages for injection.
+ * Approximate character threshold below which a referenced node's full
+ * transcript is inlined.  Above this, only a summary + tool-call hint is
+ * injected so the agent can fetch details on demand.
+ *
+ * ~2 KB covers a typical 3-4 turn quick Q&A.  Anything bigger usually
+ * contains tool output that bloats the prompt without proportional value.
+ */
+const INLINE_TRANSCRIPT_THRESHOLD = 2048;
+
+/**
+ * Build an injection block for a referenced node.
+ *
+ * Short conversations (≤ INLINE_TRANSCRIPT_THRESHOLD chars) are inlined in
+ * full so the agent can use them without a tool call.  Longer conversations
+ * are summarised from the branch-overview journal (or the first user message
+ * as fallback) with a hint to call `read_node` / `read_node_overview`.
  */
 export function buildNodeTranscriptBlock(node: ChatNodeState): string {
     const title = node.title || node.messages.find(m => m.role === 'user')?.text.slice(0, 80) || 'thread';
+    const nodeId = node.nodeId;
+
+    // Build the full transcript — we need it to measure length anyway.
     const transcript = node.messages
         .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${visibleMessageText(m)}`)
         .join('\n\n');
-    return `=== Referenced node: ${title} ===\n${transcript}`;
+    const fullBlock = `=== Referenced node: ${title} ===\n${transcript}`;
+
+    // Short conversation — inline everything.
+    if (fullBlock.length <= INLINE_TRANSCRIPT_THRESHOLD) {
+        return fullBlock;
+    }
+
+    // Long conversation — compact reference with summary.
+    const msgCount = node.messages
+        .filter(m => m.role === 'user' || m.role === 'assistant').length;
+    const entries = node.branchOverviewEntries ?? [];
+    const summary = entries.length > 0
+        ? entries.map(e => e.text).join(' ')
+        : node.messages.find(m => m.role === 'user')?.text.slice(0, 200) || '(no summary)';
+
+    return [
+        `=== Referenced node: ${title} (${nodeId}, ${msgCount} messages) ===`,
+        `Summary: ${summary}`,
+        `To read the full conversation, use: read_node_overview("${nodeId}") for the journal, or read_node("${nodeId}") for the transcript.`,
+    ].join('\n');
 }
 
 /**
