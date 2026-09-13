@@ -12,6 +12,8 @@ import type { ChatNodeState } from '../../../state/chatTypes';
 import type { BranchOverviewEntry } from 'michi-shared';
 import { buildTree, type TreeNode } from '../../../state/tree';
 import type { PageId } from '../../../state/commands';
+import { prefersReducedMotion } from '../../../hooks/useReducedMotion';
+import { usePrefs } from '../../../state/prefs';
 
 const OVERVIEW_MAX_CHARS = 720;
 const PROSE_CLASS =
@@ -187,6 +189,7 @@ export function buildBranchDirectoryRows(rows: readonly BranchDocumentRow[]): Br
 export default function Branches({ onNav }: { onNav?: (page: PageId) => void } = {}) {
   const { activeProject } = useChatProjects();
   const { openPane } = useChatActions();
+  const { prefs } = usePrefs();
   const rootId = activeTreeRootNodeId(activeProject);
   const activeTree = activeProject?.trees.find((tree) => tree.id === activeProject.activeTreeId) ?? null;
 
@@ -217,9 +220,8 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
   const navigateDirectory = useCallback((nodeId: string) => {
     setSelectedDirectoryNodeId(nodeId);
     const section = document.getElementById(`branch-${nodeId}`);
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    section?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
-  }, []);
+    section?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion(prefs.reduceMotion) ? 'auto' : 'smooth' });
+  }, [prefs.reduceMotion]);
 
   if (!activeProject) {
     return <BranchesEmpty title="No workspace selected" body="Choose a workspace to read its active thread." />;

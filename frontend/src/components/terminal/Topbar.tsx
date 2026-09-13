@@ -28,6 +28,7 @@ import { usePresentedPanes, usePresentedPaneFocus } from './PanePresentation';
 
 import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
+import { pageBackground } from '../../lib/pageBackground';
 import { ArtifactsIcon, BranchesIcon, DigestIcon, MapIcon } from './icons';
 import {
   selectArchivedGroupCountForPage,
@@ -293,13 +294,10 @@ export default function TerminalTopbar({
     page === 'workspaces' || page === 'trash' || page === 'archived' ||
     page === 'workspace-manage' || page === 'agents' || page === 'agent-manage' ||
     (!!activeProject && threadPage);
-  // Home page body inherits --term-bg from the shell; the rest of the app
-  // paints panes with --term-pane-bg (≈ --term-surface), which is lighter.
-  // On Home, align the topbar to --term-bg so there's no white band above
-  // the cream body. Other pages keep the pane-bg topbar.
-  const topbarBg = page === 'home'
-    ? 'var(--term-bg)'
-    : 'var(--term-pane-bg, var(--term-surface))';
+  // Each page paints its own body background. The topbar must match so
+  // there is no visible seam between the two. pageBackground() is the
+  // single source of truth for both; see lib/pageBackground.ts.
+  const topbarBg = pageBackground(page);
   const pageLabel =
     page === 'branches' ? 'OVERVIEW'
     : page === 'map' ? 'MAP'

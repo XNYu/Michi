@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { UserInputRequest } from '../../state/chatTypes';
 import type { UserInputAnswer } from '../../services/chatStreamEvents';
+import { usePrefs } from '../../state/prefs';
 
 interface UserInputBannerProps {
   userInput: UserInputRequest;
@@ -45,6 +46,7 @@ export function ResolvedUserInput({ userInput }: { userInput: UserInputRequest }
 
 export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly = false }: UserInputBannerProps) {
   const { questions } = userInput;
+  const { prefs } = usePrefs();
   const isMultiQuestion = questions.length > 1;
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selections, setSelections] = useState<Map<number, Set<string>>>(() => new Map());
@@ -100,9 +102,10 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
     if (!measuredRef.current) {
       measuredRef.current = true;
       const reduce =
+        prefs.reduceMotion || (
         typeof window !== 'undefined' &&
         typeof window.matchMedia === 'function' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
       // Enable transitions only after the first paint-ready measure so the
       // initial layout doesn't animate from empty.
       if (!reduce) setSlideAnim(true);

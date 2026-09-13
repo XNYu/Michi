@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { PaneItem } from '../../state/paneItems';
 import { usePanePresence } from './usePanePresence';
+import { usePrefs } from '../../state/prefs';
 
 const PanePresentationContext = createContext<ReturnType<typeof usePanePresence> | null>(null);
 const NO_EXITS: ReadonlySet<string> = new Set();
@@ -11,7 +12,8 @@ const PaneVisualFocusContext = createContext<{ focusedPane: string | null; settl
 export function PanePresentationProvider({ ids, items, scope, enabled, focusedPane, children }: {
   ids: string[]; items: Record<string, PaneItem>; scope: string; enabled: boolean; focusedPane: string | null; children: React.ReactNode;
 }) {
-  const presence = usePanePresence(ids, items, scope, enabled);
+  const { prefs } = usePrefs();
+  const presence = usePanePresence(ids, items, scope, enabled, undefined, prefs.reduceMotion);
 
   // Keep the processed inputs in the same state as their result. A render can
   // be retried or discarded; a ref would survive it and skip the pending update.

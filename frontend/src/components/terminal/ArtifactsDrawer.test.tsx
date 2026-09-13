@@ -58,6 +58,19 @@ beforeEach(() => {
 });
 
 describe('ArtifactsDrawer + button', () => {
+  it('closes the context menu before the drawer on Escape', () => {
+    mockContexts.push({ id: 'notes', name: 'Menu notes', filePath: 'notes.md', type: 'doc', source: 'user', createdAt: 1, updatedAt: 1 });
+    const onClose = vi.fn();
+    render(<ArtifactsDrawer open onClose={onClose} />);
+    fireEvent.contextMenu(screen.getByText('Menu notes'), { clientX: 40, clientY: 60 });
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('reveals the paste bar when + is clicked', () => {
     render(<ArtifactsDrawer open onClose={() => {}} />);
     expect(screen.queryByPlaceholderText(/Paste a URL/i)).toBeNull();

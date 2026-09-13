@@ -76,25 +76,12 @@ export default function TerminalShell() {
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [settingsPresent, setSettingsPresent] = useState(false);
   const [artifactsPresent, setArtifactsPresent] = useState(false);
-  const [settingsMotion, setSettingsMotion] = useState<'standard' | 'instant'>('standard');
-  const [artifactsMotion, setArtifactsMotion] = useState<'standard' | 'instant'>('standard');
-  const inputMotion = React.useRef<'standard' | 'instant'>('standard');
-  useEffect(() => {
-    const keyboard = () => { inputMotion.current = 'instant'; };
-    const pointer = () => { inputMotion.current = 'standard'; };
-    window.addEventListener('keydown', keyboard, true);
-    window.addEventListener('pointerdown', pointer, true);
-    return () => {
-      window.removeEventListener('keydown', keyboard, true);
-      window.removeEventListener('pointerdown', pointer, true);
-    };
-  }, []);
   // Branches/Map/Digest are thread-scoped views (and Workspaces a picker): a
   // second click on the same nav target — or a second ⌘M/⌘D/⌘O — drops back to
   // the conversation. Fixed destination on purpose: "back" means "back to the
   // thread", not browser-style history.
   const handleNav = React.useCallback((p: PageId) => {
-    if (p === 'settings') { setSettingsMotion(inputMotion.current); setSettingsOpen((v) => !v); return; }
+    if (p === 'settings') { setSettingsOpen((v) => !v); return; }
     const TOGGLE_PAGES: PageId[] = ['branches', 'map', 'digest', 'workspaces'];
     setPage((current) => (TOGGLE_PAGES.includes(p) && current === p ? 'dashboard' : p));
   }, []);
@@ -127,6 +114,7 @@ export default function TerminalShell() {
     navForward,
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
+  const drawerMotion = prefs.reduceMotion ? 'instant' as const : 'standard' as const;
 
   const focusedLastMessageId = useStructuralSelector(
     React.useCallback((nodesMap: Record<string, ChatNodeState>) => {
@@ -373,7 +361,6 @@ export default function TerminalShell() {
           break;
         case ',':
           e.preventDefault();
-          setSettingsMotion('instant');
           setSettingsOpen((v) => !v);
           break;
       }
@@ -395,7 +382,7 @@ export default function TerminalShell() {
   }, []);
 
   useEffect(() => {
-    const onEvt = () => { setArtifactsMotion(inputMotion.current); setArtifactsOpen((v) => !v); };
+    const onEvt = () => { setArtifactsOpen((v) => !v); };
     window.addEventListener('michi:toggle-artifacts', onEvt as EventListener);
     return () => window.removeEventListener('michi:toggle-artifacts', onEvt as EventListener);
   }, []);
@@ -587,14 +574,14 @@ export default function TerminalShell() {
       />
       <SettingsDrawer
         open={settingsOpen}
-        motion={settingsMotion}
+        motion={drawerMotion}
         onPresenceChange={setSettingsPresent}
-        onClose={() => { setSettingsMotion(inputMotion.current); setSettingsOpen(false); }}
+        onClose={() => { setSettingsOpen(false); }}
         onNav={handleNav}
       />
       {(artifactsOpen || artifactsPresent) && (
         <React.Suspense fallback={null}>
-          <ArtifactsDrawer key={activeProject?.id ?? 'none'} open={artifactsOpen} motion={artifactsMotion} onPresenceChange={setArtifactsPresent} onClose={() => { setArtifactsMotion(inputMotion.current); setArtifactsOpen(false); }} />
+          <ArtifactsDrawer key={activeProject?.id ?? 'none'} open={artifactsOpen} motion={drawerMotion} onPresenceChange={setArtifactsPresent} onClose={() => { setArtifactsOpen(false); }} />
         </React.Suspense>
       )}
     </div>

@@ -391,13 +391,14 @@ export default function CommandPalette({
   // Flat list of keyboard-navigable rows = commands + node search results.
   const totalRows = visible.length + (showRecents ? 0 : nodeResults.length);
 
-  // Reset the active highlight to the first row whenever the query changes so
-  // the user can type a filter term and immediately press Enter to run the
-  // top match. Without this, the active index stays wherever it was before
-  // the filter, which may now point at an unrelated row.
+  // Reset the active highlight whenever the query changes so the user can
+  // type a filter term and immediately press Enter to run the top match.
+  // When the results include a workspace match, auto-focus it so Enter
+  // switches workspaces without extra arrow-key navigation.
   useEffect(() => {
-    setActive(0);
-  }, [query]);
+    const wsIdx = visible.findIndex((c) => c.group === 'workspace');
+    setActive(wsIdx >= 0 ? wsIdx : 0);
+  }, [query, visible]);
 
   useEffect(() => {
     if (active >= totalRows) setActive(0);

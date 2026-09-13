@@ -85,7 +85,7 @@ export function HomeWorkspaceChip({
           y={menu.y}
           anchorBottom={menu.anchorBottom}
           sections={sections}
-          maxHeight={148}
+          menuKind="workspace"
           searchable
           searchPlaceholder="Search workspaces…"
           onClose={() => setMenu(null)}

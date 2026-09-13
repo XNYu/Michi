@@ -131,10 +131,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
     setRenameId(null);
   }, [updateContext]);
 
-  // Escape handling is owned by DrawerShell (drawer) and Lightbox (image
-  // viewer). DrawerShell's Escape is disabled while the lightbox is open
-  // (closeOnEscape={!lightbox}) so the first Escape closes the lightbox, the
-  // next closes the drawer — the original behavior, now without a local handler.
+  // Let the innermost overlay consume Escape before closing the drawer.
 
   const filtered = useMemo(() => {
     const norm = filter.trim().toLowerCase();
@@ -352,7 +349,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
       onClose={onClose}
       motion={motion}
       onPresenceChange={onPresenceChange}
-      closeOnEscape={!lightbox}
+      closeOnEscape={!lightbox && !ctxMenu}
       title="Artifacts"
       titleBadge={
         <span style={{ fontSize: 11, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)' }}>{total}</span>
@@ -386,6 +383,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
         {/* Search */}
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--term-line)' }}>
           <input
+            type="search"
             className="ui-input"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
