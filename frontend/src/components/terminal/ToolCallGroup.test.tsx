@@ -156,38 +156,35 @@ describe('ToolCallGroup — empty', () => {
 
 describe('ToolCallGroup — auto-collapse', () => {
   it('auto-collapses when running tools transition to terminal', () => {
-    const running = [tool('1', 'Read a', 'running', 'read')];
+    const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
     const { rerender, getByText, queryByText } = render(
       <ToolCallGroup tools={running} defaultExpanded={true} />,
     );
     expect(getByText('Read a')).toBeTruthy();
 
-    const done = [tool('1', 'Read a', 'completed', 'read')];
+    const done = [tool('1', 'Read a', 'completed', 'read'), tool('2', 'Read b', 'completed', 'read')];
     rerender(<ToolCallGroup tools={done} defaultExpanded={true} />);
 
     // After auto-collapse the header shows the collapsed disclosure marker ▸.
-    // (queryByText('Read a') can't be used here because the collapsed chip for
-    //  a single-tool group also shows "Read a" as the summary text.)
     expect(getByText('▸')).toBeTruthy();
     expect(queryByText('▾')).toBeNull();
   });
 
   it('does not auto-collapse if user expanded a group that started collapsed', () => {
     // started collapsed → user clicks to expand → tools transition is irrelevant
-    const tools = [tool('1', 'Read a', 'completed', 'read')];
+    const tools = [tool('1', 'Read a', 'completed', 'read'), tool('2', 'Read b', 'completed', 'read')];
     const { getByText, container } = render(
       <ToolCallGroup tools={tools} defaultExpanded={false} />,
     );
-    fireEvent.click(getByText(/Read a/));
+    fireEvent.click(getByText(/read 2 files/));
     // After click, expanded list is showing.
     expect(container.querySelector('[data-toolgroup-header]')).toBeTruthy();
     // Re-render with same tools should not collapse.
-    // (No rerender call needed; absence of auto-collapse is what we verify.)
     expect(getByText('Read a')).toBeTruthy();
   });
 
   it('does not auto-collapse after user manually toggles', () => {
-    const running = [tool('1', 'Read a', 'running', 'read')];
+    const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
     const { rerender, container, getByText } = render(
       <ToolCallGroup tools={running} defaultExpanded={true} />,
     );
@@ -199,22 +196,43 @@ describe('ToolCallGroup — auto-collapse', () => {
     fireEvent.click(header2);
     expect(getByText('Read a')).toBeTruthy();
     // Now tools transition to terminal — should NOT auto-collapse.
-    const done = [tool('1', 'Read a', 'completed', 'read')];
+    const done = [tool('1', 'Read a', 'completed', 'read'), tool('2', 'Read b', 'completed', 'read')];
     rerender(<ToolCallGroup tools={done} defaultExpanded={true} />);
     expect(getByText('Read a')).toBeTruthy();
   });
 
   it('failed group still auto-collapses (no exemption)', () => {
-    const running = [tool('1', 'Read a', 'running', 'read')];
+    const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
     const { rerender, getByText, queryByText } = render(
       <ToolCallGroup tools={running} defaultExpanded={true} />,
     );
-    const failed = [tool('1', 'Read a', 'error', 'read')];
+    const failed = [tool('1', 'Read a', 'error', 'read'), tool('2', 'Read b', 'error', 'read')];
     rerender(<ToolCallGroup tools={failed} defaultExpanded={true} />);
     // Collapsed: header shows the ▸ marker and the expanded list is gone.
-    // (The collapsed summary itself still reads "Read a · failed", so text
-    // absence can't be asserted — the summary base is now its own span.)
     expect(getByText('▸')).toBeTruthy();
+    expect(queryByText('▾')).toBeNull();
+  });
+});
+
+describe('ToolCallGroup — single tool direct render', () => {
+  it('renders a single tool directly without a group header', () => {
+    const tools = [tool('1', 'Read package.json', 'completed', 'read')];
+    const { getByText, container } = render(
+      <ToolCallGroup tools={tools} defaultExpanded={false} />,
+    );
+    // The tool title should be visible without clicking a group header.
+    expect(getByText(/Read package\.json/)).toBeTruthy();
+    // There should be no group header button.
+    expect(container.querySelector('[data-toolgroup-header]')).toBeNull();
+  });
+
+  it('single tool has no collapse chevrons', () => {
+    const tools = [tool('1', 'Read a', 'completed', 'read')];
+    const { queryByText } = render(
+      <ToolCallGroup tools={tools} defaultExpanded={true} />,
+    );
+    // No group-level chevrons — the tool row renders directly.
+    expect(queryByText('▸')).toBeNull();
     expect(queryByText('▾')).toBeNull();
   });
 });

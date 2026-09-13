@@ -486,6 +486,18 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
     marginBottom: 14,
   };
 
+  // Single non-subagent tool: render the row directly inside a minimal card
+  // so the user needs only one click to open the payload.
+  if (normal.length === 1 && subs.length === 0) {
+    return (
+      <div style={container}>
+        <div style={{ border: CARD_BORDER, background: 'var(--term-surface)', overflow: 'hidden' }}>
+          <CardToolRow t={normal[0]} />
+        </div>
+      </div>
+    );
+  }
+
   // Pure subagent groups (the spawn_branches case) render as standalone
   // subagent cards — a "1 tool calls" header card around them is noise.
   if (normal.length === 0 && subs.length > 0) {
@@ -803,6 +815,17 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
     marginTop: 14,
     marginBottom: 14,
   };
+
+  // Single non-subagent tool: render the row directly without a group header
+  // so the user needs only one click to open the payload.
+  if (normal.length === 1 && subs.length === 0) {
+    return (
+      <div style={container}>
+        <TermToolRow t={normal[0]} />
+      </div>
+    );
+  }
+
   const headerBtn: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',

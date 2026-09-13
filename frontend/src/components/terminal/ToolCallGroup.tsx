@@ -126,6 +126,16 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
     return <TermToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} />;
   }
 
+  // Single non-subagent tool: render the row directly without a group header
+  // so the user needs only one click to open the payload.
+  if (visibleTools.length === 1 && !subagentToolInfo(visibleTools[0])) {
+    return (
+      <div style={{ fontSize: 10.5, fontFamily: 'var(--ui-font)', color: 'var(--term-muted)', marginTop: 14, marginBottom: 14, padding: '3px 0' }}>
+        <ToolRow t={visibleTools[0]} subagents={subagents} />
+      </div>
+    );
+  }
+
   const failed = failedToolCount(visibleTools);
   const running = !allTerminal(visibleTools);
   const doneCount = visibleTools.filter((t) => isTerminalStatus(t.status)).length;
