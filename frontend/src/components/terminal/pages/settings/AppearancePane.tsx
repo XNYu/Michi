@@ -144,6 +144,14 @@ export function AppearancePane() {
         </div>
       </Row>
 
+      <Row k="a11y.reduceMotion" label="Reduce motion">
+        <Toggle
+          on={prefs.reduceMotion}
+          label="suppress animations (drawer slides, pane transitions)"
+          onChange={(v) => setPref('reduceMotion', v)}
+        />
+      </Row>
+
       <Row k="theme.accent" label="Accent hue">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[

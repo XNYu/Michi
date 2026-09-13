@@ -157,6 +157,10 @@ export interface Prefs {
   quoteMaxLines: number;
   /** When true, ask kiro to end every reply by calling set_follow_ups. Disable to skip the 2-5s tail latency when you don't use follow-up suggestions. */
   enableFollowUps: boolean;
+  /** When true, suppress all UI motion (drawer slide-ins, pane animations,
+   *  scroll-to-view). Acts as an app-level override on top of the OS-level
+   *  `prefers-reduced-motion` media query. Default false. */
+  reduceMotion: boolean;
   /** When true, auto-approve all tool permission requests without showing the banner. */
   bypassPermissions: boolean;
   /** Number of unpinned threads to show per workspace before "Show more".
@@ -219,6 +223,7 @@ export const DEFAULT_PREFS: Prefs = {
   singlePaneContentWidth: 800,
   quoteMaxLines: 2,
   enableFollowUps: true,
+  reduceMotion: false,
   bypassPermissions: false,
   sidebarExpanded: { workspaces: {}, threads: {}, branches: {} },
   sidebarThreadLimit: 5,
@@ -334,6 +339,9 @@ function readInitial(): Prefs {
     }
     if (typeof merged.showSidebarTimestamps !== 'boolean') {
       merged.showSidebarTimestamps = DEFAULT_PREFS.showSidebarTimestamps;
+    }
+    if (typeof merged.reduceMotion !== 'boolean') {
+      merged.reduceMotion = DEFAULT_PREFS.reduceMotion;
     }
     if (
       merged.singlePaneContentWidth !== null &&
@@ -519,6 +527,11 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.style.setProperty('--message-code-font', code);
   }, [prefs.messageFont]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    document.documentElement.dataset.reduceMotion = prefs.reduceMotion ? 'on' : 'off';
+  }, [prefs.reduceMotion]);
+
   const setPref = useCallback(<K extends keyof Prefs>(key: K, value: Prefs[K]) => {
     setPrefs((prev) => ({ ...prev, [key]: value }));
   }, []);
@@ -549,6 +562,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       sidebarInset: DEFAULT_PREFS.sidebarInset,
       sidebarRowStyle: DEFAULT_PREFS.sidebarRowStyle,
       paneTopFadeHeight: DEFAULT_PREFS.paneTopFadeHeight,
+      reduceMotion: DEFAULT_PREFS.reduceMotion,
     }));
   }, []);
 
