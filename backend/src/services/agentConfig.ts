@@ -430,15 +430,15 @@ export function reconcileRuntimeWithRegistered(registeredIds: readonly string[])
  *   2. First provider with a configured key
  *   3. openrouter-free (no key required)
  *
- * Other runtimes return cfg.provider as-is since they don't have the
- * multi-provider concept.
+ * Other runtimes return their per-runtime memory when present, else
+ * cfg.provider. Non-provider runtimes (kiro/claude) ignore the value anyway.
  */
 export function resolveProvider(runtimeId: string, userId?: string): string {
   const cfg = getAgentConfig(userId);
   if (runtimeId === "pi") {
     return resolveDefaultPiProvider(cfg.providerByRuntime, cfg.provider, userId);
   }
-  return cfg.provider;
+  return cfg.providerByRuntime[runtimeId] ?? cfg.provider;
 }
 
 /**
@@ -453,6 +453,33 @@ export function updateProviderForRuntime(
 ): AgentConfig {
   return updateAgentConfig(
     { provider: providerId, providerByRuntime: { [runtimeId]: providerId } },
+    userId,
+  );
+}
+
+/**
+ * Remember the provider + model a conversation actually ran with, so a new
+ * pane switched to this runtime lands on the same pair instead of the
+ * built-in fallback. Pane-level picks never go through /agent/options, so
+ * this is the only place they become "last used". The two fields are
+ * written together because modelByRuntime is only meaningful under the
+ * provider it was chosen for. No-op when nothing changed.
+ */
+export function recordLastUsedProviderModel(
+  runtimeId: string,
+  providerId: string,
+  modelId: string | null | undefined,
+  userId?: string,
+): AgentConfig {
+  const cfg = getAgentConfig(userId);
+  const providerChanged = cfg.providerByRuntime[runtimeId] !== providerId;
+  const modelChanged = !!modelId && cfg.modelByRuntime[runtimeId] !== modelId;
+  if (!providerChanged && !modelChanged) return cfg;
+  return updateAgentConfig(
+    {
+      providerByRuntime: { [runtimeId]: providerId },
+      ...(modelId ? { modelByRuntime: { [runtimeId]: modelId } } : {}),
+    },
     userId,
   );
 }

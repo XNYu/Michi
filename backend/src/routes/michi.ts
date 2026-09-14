@@ -13,7 +13,7 @@ import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
 import { getRuntime } from "../agents/registry";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
-import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider } from "../services/agentConfig";
+import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider, recordLastUsedProviderModel } from "../services/agentConfig";
 import { startupMark } from "../services/startupTrace";
 import { log } from "../services/logger";
 import * as sessionRegistry from "../agents/sessionRegistry";
@@ -1408,6 +1408,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 // Do not let a subsequent ensure reuse an uncommitted replacement.
                 if (session !== liveSession) await retireLiveSession(session);
                 throw error;
+            }
+            // Pane-level provider/model picks never touch /agent/options, so
+            // remember what this conversation actually ran with. A new pane
+            // switched to this runtime then lands on the same pair instead of
+            // the built-in fallback. Primary-agent profiles are fixed by their
+            // definition and must not rewrite the user's own memory.
+            if (!primaryProfile && runtime.capabilities.providerModels && targetSignature.providerId) {
+                recordLastUsedProviderModel(runtimeId, targetSignature.providerId, targetSignature.modelId, michiUserId);
             }
             log.info('chat', 'runtime session resolved', {
                 nodeId,

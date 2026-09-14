@@ -34,8 +34,11 @@ export interface PendingNodeBindingOverride {
  *
  * When the pending override or node only specifies `runtime` but not
  * `model`/`reasoning`, those fields fall through to the global defaults
- * ONLY if the runtime matches. Otherwise they're left undefined — the
- * caller should fetch the new runtime's catalog to populate them.
+ * ONLY if the runtime matches. Otherwise they fall back to the per-runtime
+ * memory in `agentStatus.providerByRuntime` / `modelByRuntime` /
+ * `reasoningByRuntime` (what the user last used with that runtime), and are
+ * left undefined when there is no memory — the caller should then fetch the
+ * new runtime's catalog to populate them.
  */
 export function resolveNodeBinding(
   node: ChatNodeState | null | undefined,
@@ -60,27 +63,41 @@ export function resolveNodeBinding(
     ? effectiveRuntime === node.runtimeId
     : runtimeMatchesGlobal;
 
+  // Per-runtime memory: the provider/model/reasoning last used with this
+  // runtime (written by the backend on every send and on Settings saves).
+  // Lets a pane switched to a different runtime land on the user's last
+  // choice instead of an empty "Default provider" that resolves to the
+  // built-in fallback. modelByRuntime is recorded alongside providerByRuntime,
+  // so it is only trusted when the remembered provider is the effective one.
+  const rememberedProvider = agentStatus?.providerByRuntime?.[effectiveRuntime];
+  const rememberedModel = agentStatus?.modelByRuntime?.[effectiveRuntime];
+  const rememberedReasoning = agentStatus?.reasoningByRuntime?.[effectiveRuntime];
+
   const effectiveProvider =
     pendingOverride?.provider ??
     (nodeMatchesRuntime ? node?.providerId : undefined) ??
     (runtimeMatchesGlobal ? agentStatus?.provider : undefined) ??
+    rememberedProvider ??
     undefined;
 
   // Models are provider-scoped for provider runtimes (e.g. Pi): a model bound
   // under a different provider is not valid for the newly selected provider.
   const nodeProviderMatches = !node?.providerId || node.providerId === effectiveProvider;
   const globalProviderMatches = !agentStatus?.provider || agentStatus.provider === effectiveProvider;
+  const rememberedProviderMatches = !rememberedProvider || rememberedProvider === effectiveProvider;
 
   const effectiveModel =
     pendingOverride?.model ??
     (nodeMatchesRuntime && nodeProviderMatches ? node?.modelId : undefined) ??
     (runtimeMatchesGlobal && globalProviderMatches ? agentStatus?.model : undefined) ??
+    (rememberedProviderMatches ? rememberedModel : undefined) ??
     undefined;
 
   const effectiveReasoning =
     pendingOverride?.reasoning ??
     (nodeMatchesRuntime ? (node?.reasoning as AgentReasoning | undefined) : undefined) ??
     (runtimeMatchesGlobal ? agentStatus?.reasoning : undefined) ??
+    rememberedReasoning ??
     undefined;
 
   const source: ResolvedNodeBinding['source'] =

@@ -120,3 +120,29 @@ test('effort saves validate the target model before changing any defaults', asyn
   assert.equal(accepted.status, 200);
   assert.equal(getAgentConfig().reasoningByRuntime[runtime.id], 'low');
 });
+
+test('a pane send records its provider + model as the runtime last-used pair', async () => {
+  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, providerId: 'disabled', modelId: 'limited' });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  const cfg = getAgentConfig();
+  assert.equal(cfg.providerByRuntime[runtime.id], 'disabled');
+  assert.equal(cfg.modelByRuntime[runtime.id], 'limited');
+  // The global active runtime/provider are untouched — only the per-runtime memory moves.
+  assert.equal(cfg.provider, 'enabled');
+});
+
+test('a fresh pane switched to the runtime resolves to the last-used pair, not the built-in fallback', async () => {
+  updateAgentConfig({ runtime: 'unregistered-global-runtime', provider: 'enabled', providerByRuntime: { [runtime.id]: 'disabled' }, modelByRuntime: { [runtime.id]: 'limited' } });
+  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: runtime.id });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(captured[0].provider, 'disabled');
+  assert.equal(captured[0].model, 'limited');
+});
+
+test('switching to a non-provider runtime does not pollute providerByRuntime', async () => {
+  registerRuntime({ ...runtime, id: 'plain-test', capabilities: { ...runtime.capabilities, providerModels: false, apiKeys: false } });
+  const result = await post('/agent/options', { runtime: 'plain-test' });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(getAgentConfig().providerByRuntime['plain-test'], undefined);
+  assert.equal(getAgentConfig().providerByRuntime[runtime.id], 'enabled');
+});

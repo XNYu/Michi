@@ -201,6 +201,8 @@ export interface AgentStatus {
   availableRuntimes: AgentRuntimeOption[];
   provider?: string;
   providers?: AgentProviderInfo[];
+  /** Per-runtime last-used provider (only meaningful for provider runtimes like Pi). */
+  providerByRuntime?: Record<string, string>;
   /** Resolved model id for the active runtime (from modelByRuntime or builtin default). */
   model?: string;
   /** Per-runtime model overrides set by the user. */

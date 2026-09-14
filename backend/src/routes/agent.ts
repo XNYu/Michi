@@ -66,6 +66,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         capabilityDescriptor: describeRuntimeCapabilities(cfg.runtime),
         availableRuntimes,
         provider: resolveProvider(cfg.runtime, userId),
+        providerByRuntime: cfg.providerByRuntime,
         model: resolveModel(cfg.runtime, userId),
         modelByRuntime: cfg.modelByRuntime,
         reasoning: resolveReasoning(cfg.runtime, userId),
@@ -130,6 +131,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       availableRuntimes,
       provider: effectiveProvider,
       providers,
+      providerByRuntime: getAgentConfig(userId).providerByRuntime,
       model,
       modelByRuntime: getAgentConfig(userId).modelByRuntime,
       reasoning: resolveReasoning(cfg.runtime, userId),
@@ -192,8 +194,10 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     }
 
     // When the user explicitly selects a provider, record it per-runtime
-    // so switching back to this runtime later restores their choice.
-    if (patch.provider) {
+    // so switching back to this runtime later restores their choice. Only
+    // provider runtimes (Pi) have this concept; recording the resolved
+    // fallback for kiro/claude would just pollute the map.
+    if (patch.provider && runtimeForModel?.capabilities.providerModels) {
       patch.providerByRuntime = { [effectiveRuntime]: patch.provider };
     }
 
