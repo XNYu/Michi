@@ -1585,6 +1585,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       let chatId = n.chatId;
       let outgoingText = text;
       const tEnsureStart = perf.now();
+      let connectionStatusShown = false;
+      const connectionStatusTimer = setTimeout(() => {
+        connectionStatusShown = true;
+        dispatch({ type: 'runtime-activity', nodeId, assistantId, detail: 'Connecting to session' });
+      }, 1_000);
       try {
         if (!owningProject) throw new Error('workspace not found for node');
         const ensured = await ensureSession({
@@ -1643,6 +1648,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         delete assistantTextBufs.current[assistantId];
         pendingCancels.current.delete(nodeId);
         return;
+      } finally {
+        clearTimeout(connectionStatusTimer);
+        if (connectionStatusShown) dispatch({ type: 'runtime-activity', nodeId, assistantId });
       }
 
       // Mark these peers consumed so we don't re-inject on the next turn.

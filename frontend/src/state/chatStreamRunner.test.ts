@@ -31,6 +31,29 @@ function makeNode(): ChatNodeState {
 }
 
 describe('chatStreamRunner — chunk/tool-call ordering', () => {
+  it('projects recovery status from the existing retry events and clears it on failure', () => {
+    mockStream.mockClear();
+    let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1',
+      dispatch: (action) => { nodes = reduceNodes(nodes, action); },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    const handlers = mockStream.mock.calls[0][2];
+    dispatchChatStreamEvent({ event: 'retry_start', data: { detail: 'Restoring original Kiro session' } }, handlers);
+    expect((nodes.n1 as any).runtimeActivity).toBe('Restoring original Kiro session');
+    dispatchChatStreamEvent({ event: 'retry_end', data: {} }, handlers);
+    expect((nodes.n1 as any).runtimeActivity).toBeUndefined();
+    dispatchChatStreamEvent({ event: 'retry_start', data: { detail: 'Restoring original Kiro session' } }, handlers);
+    handlers.onError('Original session retained. Retry later.');
+    expect(nodes.n1.status).toBe('error');
+    expect((nodes.n1 as any).runtimeActivity).toBeUndefined();
+  });
+  it('does not let an old connection status overwrite the current assistant turn', () => {
+    const current = { ...makeNode(), runtimeActivity: 'Restoring original Kiro session' };
+    const nodes = { n1: current };
+    expect(reduceNodes(nodes, { type: 'runtime-activity', nodeId: 'n1', assistantId: 'old-turn' })).toBe(nodes);
+    expect(reduceNodes(nodes, { type: 'runtime-activity', nodeId: 'n1', assistantId: 'old-turn', detail: 'Waiting' })).toBe(nodes);
+  });
   beforeEach(() => {
     mockStream.mockClear();
     vi.useFakeTimers();
@@ -207,7 +230,10 @@ describe('chatStreamRunner — chunk/tool-call ordering', () => {
     cancels.current.n1 = returnedSecond;
 
     firstHandlers.onDone('end_turn');
-    expect(cancels.current.n1).toBe(secondCancel);
+    expect(cancels.current.n1).toBe(returnedSecond);
+    cancels.current.n1();
+    expect(secondCancel).toHaveBeenCalledOnce();
+    expect(firstCancel).not.toHaveBeenCalled();
   });
 });
 

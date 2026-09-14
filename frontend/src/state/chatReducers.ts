@@ -311,6 +311,7 @@ export function reduceNodes(
         [action.nodeId]: {
           ...draftless,
           status: 'streaming',
+          runtimeActivity: undefined,
           streamingStartedAt: Date.now(),
           error: undefined,
           errorKind: undefined,
@@ -397,6 +398,7 @@ export function reduceNodes(
           ...n,
           status: 'streaming',
           streamingStartedAt: now,
+          runtimeActivity: undefined,
           error: undefined,
           errorKind: undefined,
           followUps: [],
@@ -614,6 +616,7 @@ export function reduceNodes(
           status: 'idle',
           cancelPhase: undefined,
           compacting: undefined,
+          runtimeActivity: undefined,
           visibleResponseComplete: false,
           backgroundTurnAssistantId:
             n.backgroundTurnAssistantId === action.assistantId
@@ -700,6 +703,7 @@ export function reduceNodes(
           status: 'error',
           cancelPhase: undefined,
           compacting: undefined,
+          runtimeActivity: undefined,
           visibleResponseComplete: false,
           streamingStartedAt: undefined,
           error: humanizeDbError(action.message),
@@ -1419,6 +1423,7 @@ export function reduceNodes(
           status: 'idle',
           cancelPhase: undefined,
           compacting: undefined,
+          runtimeActivity: undefined,
           visibleResponseComplete: false,
           streamingStartedAt: undefined,
           streamingIdleMs: undefined,
@@ -1432,6 +1437,12 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, compacting: action.active || undefined } };
+    }
+    case 'runtime-activity': {
+      const n = nodes[action.nodeId];
+      if (!n || n.status !== 'streaming') return nodes;
+      if (action.assistantId && n.messages.at(-1)?.id !== action.assistantId) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, runtimeActivity: action.detail } };
     }
     case 'mcp-server-error': {
       const n = nodes[action.nodeId];

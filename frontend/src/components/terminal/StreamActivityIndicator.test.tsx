@@ -54,6 +54,11 @@ function node(opts: {
 }
 
 describe('deriveStreamActivity', () => {
+  it('shows native recovery before the first token, even when the assistant is empty', () => {
+    const n = { ...node({ messages: [assistant({})] }), runtimeActivity: 'Restoring original Kiro session' };
+    expect(deriveStreamActivity(n)?.label).toBe('Restoring original Kiro session');
+    expect(deriveStreamActivity({ ...n, status: 'error' })).toBeNull();
+  });
   it('returns null when not streaming', () => {
     expect(deriveStreamActivity(node({ status: 'idle' }))).toBeNull();
     expect(deriveStreamActivity(node({ status: 'error' }))).toBeNull();

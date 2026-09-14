@@ -347,6 +347,8 @@ export interface ChatNodeState {
   /** Honest cancel machine. Idle is not inferred from Stop click alone. */
   cancelPhase?: 'requested' | 'acknowledged' | 'settled';
   compacting?: boolean;
+  /** Transient session connection/recovery status; never model answer text. */
+  runtimeActivity?: string;
   /** Epoch ms when the current streaming turn began. Survives remounts. */
   streamingStartedAt?: number;
   error?: string;
@@ -776,6 +778,7 @@ export type ChatAction =
   | { type: 'cancel-phase'; nodeId: string; phase: 'requested' | 'acknowledged' | 'settled' }
   | { type: 'optimistic-cancel'; nodeId: string }
   | { type: 'compaction'; nodeId: string; active: boolean }
+  | { type: 'runtime-activity'; nodeId: string; assistantId?: string; detail?: string }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }
   | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null }
   | { type: 'add-comment'; nodeId: string; comment: PendingComment }

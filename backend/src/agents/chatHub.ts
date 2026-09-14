@@ -70,6 +70,8 @@ interface TurnLog {
    * reconciliation can restore it after installing the SQLite projection. */
   pendingPermission?: ChatStreamEvent;
   pendingUserInput?: ChatStreamEvent;
+  /** Runtime completion and the cancel timeout share one durability boundary. */
+  finalization?: Promise<void>;
 }
 
 export interface TurnPersistence {
@@ -292,7 +294,11 @@ export class ChatHub {
     // execution and the visible turn_start frame.
     const persistStartedAt = Date.now();
     await this.persistence.begin(log.snapshot);
-    logInfo('turn begin committed', log, { durationMs: Date.now() - persistStartedAt });
+    logInfo('turn begin committed', log, {
+      durationMs: Date.now() - persistStartedAt,
+      runtimeId: args.session.runtimeId,
+      nativeSessionId: args.session.nativeSessionId ?? args.session.id,
+    });
     this.turns.set(args.chatId, log);
     this.activeSessions.set(args.chatId, args.session);
     this.append(args.chatId, log, {
@@ -572,6 +578,7 @@ export class ChatHub {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+      if (this.turns.get(chatId) !== current) return;
       // Clean up the active session reference so isActive() returns false.
       this.activeSessions.delete(chatId);
       for (const sub of this.subscribers.get(chatId) ?? []) {
@@ -899,6 +906,8 @@ export class ChatHub {
     try {
       let branchOverviewPublished = false;
       for await (const ev of events) {
+        if (log.status !== 'active' || this.turns.get(chatId) !== log) break;
+        if (log.finalization) { await log.finalization; break; }
         if (ev.kind === "branch_overview") {
           branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
         }
@@ -918,7 +927,8 @@ export class ChatHub {
         }
         this.append(chatId, log, toChatStreamEvent(ev));
       }
-      if (log.status === 'active') {
+      if (log.finalization) await log.finalization;
+      if (log.status === 'active' && this.turns.get(chatId) === log) {
         if (!branchOverviewPublished) this.publishBranchOverview(chatId, log);
         await this.finishWithDone(
           chatId,
@@ -934,7 +944,7 @@ export class ChatHub {
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
-      this.clearCancelTimer(chatId);
+      if (this.turns.get(chatId) === log) this.clearCancelTimer(chatId);
       this.scheduleEvict(chatId, log);
     }
   }
@@ -1110,7 +1120,18 @@ export class ChatHub {
     }, false);
   }
 
-  private async finishWithDone(chatId: string, log: TurnLog, stopReason?: string): Promise<void> {
+  private finalizeOnce(log: TurnLog, finalize: () => Promise<void>): Promise<void> {
+    if (log.finalization) return log.finalization;
+    if (log.status !== 'active') return Promise.resolve();
+    log.finalization = Promise.resolve().then(finalize);
+    return log.finalization;
+  }
+
+  private finishWithDone(chatId: string, log: TurnLog, stopReason?: string): Promise<void> {
+    return this.finalizeOnce(log, () => this.persistDone(chatId, log, stopReason));
+  }
+
+  private async persistDone(chatId: string, log: TurnLog, stopReason?: string): Promise<void> {
     this.emitCancelSettled(chatId, log);
     const stamped = this.stamp(log, {
       event: CHAT_STREAM_EVENTS.done,
@@ -1139,7 +1160,11 @@ export class ChatHub {
     this.broadcast(chatId, log, stamped.ev);
   }
 
-  private async finishWithError(chatId: string, log: TurnLog, err: unknown): Promise<void> {
+  private finishWithError(chatId: string, log: TurnLog, err: unknown): Promise<void> {
+    return this.finalizeOnce(log, () => this.persistError(chatId, log, err));
+  }
+
+  private async persistError(chatId: string, log: TurnLog, err: unknown): Promise<void> {
     let message = err instanceof Error ? err.message : String(err);
     // Surface the rpcData detail so the user sees the real reason (e.g.
     // "The model you've selected is temporarily unavailable") instead of the
@@ -1211,6 +1236,8 @@ export class ChatHub {
       for await (const ev of session.send(log.wireText, {
         attachments: log.snapshot.userMessage?.metadata?.attachments,
       })) {
+        if (log.status !== 'active' || this.turns.get(chatId) !== log) return;
+        if (log.finalization) { await log.finalization; return; }
         if (ev.kind === "branch_overview") {
           branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
         }
@@ -1232,6 +1259,8 @@ export class ChatHub {
         this.append(chatId, log, toChatStreamEvent(ev));
       }
       if (!terminalSeen) {
+        if (log.status !== 'active' || this.turns.get(chatId) !== log) return;
+        if (log.finalization) { await log.finalization; return; }
         if (!branchOverviewPublished) this.publishBranchOverview(chatId, log);
         await this.finishWithDone(
           chatId,
@@ -1249,13 +1278,17 @@ export class ChatHub {
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
-      this.clearCancelTimer(chatId);
-      this.activeSessions.delete(chatId);
-      for (const sub of this.subscribers.get(chatId) ?? []) {
-        try {
-          sub.close();
-        } catch {
-          // ignore subscriber teardown failures
+      // A timed-out cancellation can finish after the next turn has started.
+      // Only the current turn owns chat-scoped timers, sessions and subscribers.
+      if (this.turns.get(chatId) === log) {
+        this.clearCancelTimer(chatId);
+        this.activeSessions.delete(chatId);
+        for (const sub of this.subscribers.get(chatId) ?? []) {
+          try {
+            sub.close();
+          } catch {
+            // ignore subscriber teardown failures
+          }
         }
       }
       this.scheduleEvict(chatId, log);

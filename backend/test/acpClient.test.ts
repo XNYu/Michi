@@ -70,6 +70,89 @@ describe('AcpClient RPC error diagnostics', () => {
 });
 
 describe('AcpClient cancellation transport', () => {
+  for (const cancelQueued of [false, true]) {
+    test(`serializes multiple queued consumers${cancelQueued ? ' and skips an aborted prompt' : ''}`, async () => {
+      const client = new AcpClient('/bin/false', '/tmp') as any;
+      const calls: string[] = [];
+      let finishFirst!: () => void;
+      client.send = async (method: string, params: any) => {
+        if (method === 'session/new') return { sessionId: 'serial' };
+        const text = params.prompt[0].text;
+        calls.push(text);
+        client.injectUpdate('serial', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+        if (text === 'first') {
+          return new Promise((resolve) => { finishFirst = () => resolve({ stopReason: 'cancelled' }); });
+        }
+        return { stopReason: 'end_turn' };
+      };
+      await client.newSession();
+      const first = client.prompt('serial', 'first');
+      await first.next();
+      const controller = new AbortController();
+      const second = client.prompt('serial', 'second', [], controller.signal);
+      const secondNext = second.next();
+      const third = client.prompt('serial', 'third');
+      const thirdNext = third.next();
+      if (cancelQueued) controller.abort();
+      const beforeRelease = [...calls];
+      finishFirst();
+      await first.return();
+      const secondUpdate = await secondNext;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const beforeSecondClosed = [...calls];
+      await second.return();
+      const thirdUpdate = await thirdNext;
+      await third.return();
+
+      assert.deepEqual(beforeRelease, ['first']);
+      assert.deepEqual(beforeSecondClosed, cancelQueued ? ['first'] : ['first', 'second']);
+      if (cancelQueued) assert.equal(secondUpdate.value.stopReason, 'cancelled');
+      else assert.equal(secondUpdate.value.content.text, 'second');
+      assert.equal(thirdUpdate.value.content.text, 'third');
+      assert.deepEqual(calls, cancelQueued ? ['first', 'third'] : ['first', 'second', 'third']);
+      assert.equal(client.sessionInFlight.size, 0);
+    });
+  }
+
+  test('waits for the cancelled RPC AND its consumer before reusing the session queue', async () => {
+    const client = new AcpClient('/bin/false', '/tmp') as any;
+    const calls: string[] = [];
+    let finishFirst!: (result: unknown) => void;
+    client.send = async (method: string, params: any) => {
+      if (method === 'session/new') return { sessionId: 'reuse' };
+      calls.push(params.prompt[0].text);
+      if (calls.length === 1) {
+        client.injectUpdate('reuse', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'old' } });
+        return new Promise((resolve) => { finishFirst = resolve; });
+      }
+      client.injectUpdate('reuse', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'new' } });
+      return { stopReason: 'end_turn' };
+    };
+    client.notify = async () => {};
+    await client.newSession();
+    const first = client.prompt('reuse', 'first');
+    await first.next();
+    await client.cancel('reuse');
+    const second = client.prompt('reuse', 'second');
+    const next = second.next();
+    let callsBeforeConsumerClosed: string[];
+    try {
+      assert.deepEqual(calls, ['first']);
+      client.injectUpdate('reuse', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'late-old' } });
+      finishFirst({ stopReason: 'cancelled' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      callsBeforeConsumerClosed = [...calls];
+    } finally {
+      await first.return();
+    }
+    const fresh = await next;
+    await second.return();
+    assert.deepEqual(callsBeforeConsumerClosed, ['first'], 'RPC completion is not queue-consumer completion');
+    assert.equal(fresh.value.content.text, 'new');
+    assert.deepEqual(calls, ['first', 'second']);
+    assert.equal(client.sessionInFlight.size, 0);
+  });
+
   test('sends session/cancel as a JSON-RPC notification', async () => {
     const client = new AcpClient('/bin/false', '/tmp') as any;
     const writes: string[] = [];

@@ -148,6 +148,7 @@ export class KiroSession implements AgentSession {
     public parentChatId?: string;
     private history: ChatMessage[] = [];
     private pendingAssistantBuf: string[] | undefined;
+    private activeTurn: AbortController | null = null;
     private enableFollowUps: boolean;
     private readonly toolProfile?: RuntimeToolProfile;
     private readonly permissionBroker?: RuntimePermissionBroker;
@@ -207,6 +208,8 @@ export class KiroSession implements AgentSession {
     private firstMessagePreamble: string | null = null;
 
     async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
+        const turn = new AbortController();
+        this.activeTurn = turn;
         this.history.push({ role: "user", content: text });
 
         // Append follow-up reminder for the model only — history stays clean.
@@ -228,7 +231,7 @@ export class KiroSession implements AgentSession {
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
         try {
-            for await (const ev of this.streamUpdates(transportText, imageBlocks)) {
+            for await (const ev of this.streamUpdates(transportText, imageBlocks, turn.signal)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 yield ev;
                 if (ev.kind === "turn_end") break;
@@ -237,7 +240,10 @@ export class KiroSession implements AgentSession {
             if (buf.length > 0) {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
-            this.pendingAssistantBuf = undefined;
+            if (this.activeTurn === turn) {
+                this.activeTurn = null;
+                this.pendingAssistantBuf = undefined;
+            }
         }
     }
 
@@ -265,25 +271,25 @@ export class KiroSession implements AgentSession {
      * failed, making an automatic resend unsafe. Durable Run recovery is owned
      * by the Coordinator and uses the persisted ACP session id.
      */
-    private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
-        // Agent Run sessions must not auto-retry — surface the error immediately
-        // so the Coordinator can decide whether to checkpoint or create a
-        // recovery Attempt.
-        if (this.owner?.kind === "agent_run") {
-            yield* this.runPromptOnce(text, imageBlocks);
-            return;
-        }
-
+    private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
         let attempt = 0;
         while (true) {
             let firstVisibleYielded = false;
             try {
-                for await (const ev of this.runPromptOnce(text, imageBlocks)) {
+                for await (const ev of this.runPromptOnce(text, imageBlocks, signal)) {
                     if (ev.kind !== "heartbeat") firstVisibleYielded = true;
                     yield ev;
                 }
                 return;
             } catch (err) {
+                // A cancelled prompt can fail with a normal connection/transient
+                // error. Retrying it would restart work the user just stopped
+                // (and connection recovery kills other sessions on this cwd).
+                if (signal.aborted) {
+                    yield { kind: "turn_end", stopReason: "cancelled" };
+                    return;
+                }
+                if (this.owner?.kind === "agent_run") throw err;
                 const cls = classifyAcpError(err);
                 const canRetry = attempt === 0 && !firstVisibleYielded && isRetryable(cls);
                 if (!canRetry) {
@@ -313,11 +319,24 @@ export class KiroSession implements AgentSession {
      * `chunk` before rethrowing, so a turn that produced ANY visible output is
      * observable to the wrapper (which then declines to retry).
      */
-    private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
-        const c = await this.runtime.ensureClient(this.cwd);
+    private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
+        if (signal.aborted) {
+            yield { kind: "turn_end", stopReason: "cancelled" };
+            return;
+        }
+        let c = await this.runtime.ensureClient(this.cwd);
+        if (c.needsSessionRecovery?.(this.nativeSessionId)) {
+            yield { kind: 'retry_start', detail: 'Restoring original Kiro session' };
+            c = await this.runtime.recoverCancelledSession(this.nativeSessionId, this.cwd);
+            yield { kind: 'retry_end' };
+        }
+        if (signal.aborted) {
+            yield { kind: 'turn_end', stopReason: 'cancelled' };
+            return;
+        }
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         try {
-            for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks)) {
+            for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks, signal)) {
                 const kind = update.sessionUpdate;
                 if (kind === "agent_message_chunk") {
                     const content = update.content;
@@ -571,6 +590,7 @@ export class KiroSession implements AgentSession {
     }
 
     async cancel(): Promise<void> {
+        this.activeTurn?.abort();
         const c = this.runtime.getClient(this.cwd);
         await c?.cancel(this.nativeSessionId);
     }

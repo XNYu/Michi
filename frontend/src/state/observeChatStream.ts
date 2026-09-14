@@ -162,6 +162,8 @@ export function createBackgroundTurnBinding({
       onCancelPhase: (data) => dispatch({ type: 'cancel-phase', nodeId, phase: data.phase }),
       onCompactionStart: () => dispatch({ type: 'compaction', nodeId, active: true }),
       onCompactionEnd: () => dispatch({ type: 'compaction', nodeId, active: false }),
+      onRetryStart: (data) => dispatch({ type: 'runtime-activity', nodeId, assistantId, detail: data.detail ?? 'Reconnecting' }),
+      onRetryEnd: () => dispatch({ type: 'runtime-activity', nodeId, assistantId }),
       onMcpServerError: (data) =>
         dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
       onDone: (stopReason, incomingAssistantId, incomingTurnId, persisted, completedAt) => {

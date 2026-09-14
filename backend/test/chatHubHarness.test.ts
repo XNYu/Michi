@@ -5,6 +5,7 @@ import { ChatHub } from '../src/agents/chatHub';
 import type { AgentSession, CompactResult, SteerResult } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import { MemoryHarnessJournal } from '../src/services/harnessJournal';
+import { CANCEL_TIMEOUT_MS } from '../src/config/constants';
 
 function iterator(events: NormalizedEvent[]): AsyncIterableIterator<NormalizedEvent> {
   let index = 0;
@@ -114,6 +115,106 @@ describe('ChatHub provenance', () => {
 });
 
 describe('cancel phase', () => {
+  it('late end-of-stream cannot publish an old overview after the next turn starts', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const chatHub = hub();
+    let releaseOld!: () => void;
+    let initialSent!: () => void;
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const ready = new Promise<void>((resolve) => { initialSent = resolve; });
+    const first = await chatHub.startTurn({
+      chatId: 'node-a', nodeId: 'node-a', text: 'old', turnId: 'old-overview',
+      session: mockSession({ events: (async function* (): AsyncIterableIterator<NormalizedEvent> {
+        yield { kind: 'chunk', text: '[BRANCH-OVERVIEW: Old turn summary]' };
+        initialSent();
+        await oldGate;
+      })() }),
+    });
+    await ready;
+    chatHub.cancel('node-a', first.turnId);
+    t.mock.timers.tick(CANCEL_TIMEOUT_MS);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const nextGate = { release() {} };
+    const second = await chatHub.startTurn({
+      chatId: 'node-a', nodeId: 'node-a', text: 'new', turnId: 'new-overview',
+      session: mockSession({ events: delayedIterator([{ kind: 'turn_end' }], nextGate) }),
+    });
+    const events: ChatStreamEvent[] = [];
+    chatHub.subscribe('node-a', { send: (event) => events.push(event), close() {} });
+    events.length = 0;
+    releaseOld();
+    await first.done;
+    const lateEvents = [...events];
+    nextGate.release();
+    await second.done;
+    assert.deepEqual(lateEvents, [], 'ended turns must not append overview/checkpoint events');
+  });
+
+  it('cancel timeout and runtime completion share one in-flight durable finalization', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let commit!: () => void;
+    const committed = new Promise<void>((resolve) => { commit = resolve; });
+    let finalizeCalls = 0;
+    const chatHub = new ChatHub({
+      workspaceIdForNode: () => 'workspace-a',
+      persistence: { begin() {}, checkpoint() {}, finalize() { finalizeCalls += 1; return committed; } },
+    });
+    const gate = { release: () => {} };
+    const events: ChatStreamEvent[] = [];
+    chatHub.subscribe('node-a', { send: (event) => events.push(event), close() {} });
+    const first = await chatHub.startTurn({
+      chatId: 'node-a', nodeId: 'node-a', text: 'old',
+      session: mockSession({ events: delayedIterator([{ kind: 'turn_end' }], gate) }),
+    });
+    chatHub.cancel('node-a', first.turnId);
+    t.mock.timers.tick(CANCEL_TIMEOUT_MS);
+    gate.release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const callsBeforeCommit = finalizeCalls;
+    assert.equal(events.filter((event) => event.event === 'done').length, 0);
+    commit();
+    await first.done;
+    assert.equal(callsBeforeCommit, 1);
+    assert.equal(events.filter((event) => event.event === 'done').length, 1);
+  });
+
+  it('late completion of a force-cancelled turn cannot finalize twice or tear down the next turn', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const finalized: string[] = [];
+    const chatHub = new ChatHub({
+      retentionMs: 60_000, workspaceIdForNode: () => 'workspace-a',
+      persistence: { begin() {}, checkpoint() {}, finalize(snapshot) { finalized.push(snapshot.turnId); } },
+    });
+    const oldGate = { release: () => {} };
+    const newGate = { release: () => {} };
+    const first = await chatHub.startTurn({
+      chatId: 'node-a', nodeId: 'node-a', text: 'old', turnId: 'old-turn',
+      session: mockSession({ events: delayedIterator([{ kind: 'chunk', text: 'stale' }, { kind: 'turn_end' }], oldGate) }),
+    });
+    chatHub.cancel('node-a', first.turnId);
+    t.mock.timers.tick(CANCEL_TIMEOUT_MS);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(chatHub.isActive('node-a'), false);
+    const second = await chatHub.startTurn({
+      chatId: 'node-a', nodeId: 'node-a', text: 'new', turnId: 'new-turn',
+      session: mockSession({ events: delayedIterator([{ kind: 'turn_end' }], newGate) }),
+    });
+    let closed = 0;
+    const events: ChatStreamEvent[] = [];
+    chatHub.subscribeTurn('node-a', second.turnId, { send: (event) => events.push(event), close: () => { closed += 1; } });
+    oldGate.release();
+    await first.done;
+    const ownerAfterOldCleanup = chatHub.activeOwnerTurnId('node-a');
+    const closedAfterOldCleanup = closed;
+    const finalizedAfterOldCleanup = [...finalized];
+    newGate.release();
+    await second.done;
+    assert.deepEqual(finalizedAfterOldCleanup, ['old-turn'], 'old turn must be finalized only once');
+    assert.equal(ownerAfterOldCleanup, second.turnId, 'old finally must not drop the new active session');
+    assert.equal(closedAfterOldCleanup, 0, 'old finally must not close the next SSE subscription');
+    assert.ok(events.every((event) => event.data.turnId === second.turnId));
+  });
+
   it('emits requested then acknowledged then settled only on terminal done', async () => {
     const chatHub = hub();
     const events: ChatStreamEvent[] = [];

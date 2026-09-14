@@ -113,3 +113,11 @@ export function toErrorKind(cls: AcpErrorClass): AcpErrorKind {
   if (cls === "generic") return "generic";
   return "connection";
 }
+
+/** Match the actual session/load envelope, not unrelated MCP/file "not found" errors. */
+export function isNativeSessionUnavailable(error: unknown, nativeSessionId: string): boolean {
+  if (!(error instanceof ACPError) || error.method !== 'session/load' || error.sessionId !== nativeSessionId) return false;
+  if (error.rpcCode === -32601) return true; // session/load is explicitly unsupported.
+  return error.rpcCode === -32603
+    && error.rpcData === `Failed to start session: Session not found: ${nativeSessionId}`;
+}

@@ -61,7 +61,7 @@ describe('resume strategy', () => {
     assert.equal(decision.reason, 'no_existing_session');
   });
 
-  test('compatible when signature is missing', () => {
+  test('attempts native restore when a legacy binding has no signature', () => {
     const decision = chooseResumeStrategy({
       existingChatId: 'sid-1',
       liveSessionMatches: false,
@@ -69,8 +69,26 @@ describe('resume strategy', () => {
       existingSignature: null,
       targetSignature: target,
     });
-    assert.equal(decision.strategy, 'compatible');
-    assert.equal(decision.reason, 'missing_resume_signature');
+    assert.equal(decision.strategy, 'exact');
+    assert.equal(decision.reason, 'native_resume_available');
+  });
+
+  test('native-capable model and reasoning transitions preserve history', () => {
+    for (const existingSignature of [{ ...target, modelId: 'opus' }, { ...target, reasoning: 'high' as const }]) {
+      assert.equal(chooseResumeStrategy({
+        existingChatId: 'sid-1', liveSessionMatches: false, nativeResumeAvailable: true,
+        nativeResumeSettings: ['model', 'reasoning'], existingSignature, targetSignature: target,
+      }).strategy, 'exact');
+    }
+  });
+
+  test('native settings support never bridges runtime or provider identities', () => {
+    for (const existingSignature of [{ ...target, runtimeId: 'claude' }, { ...target, providerId: 'other' }]) {
+      assert.equal(chooseResumeStrategy({
+        existingChatId: 'sid-1', liveSessionMatches: true, nativeResumeAvailable: true,
+        nativeResumeSettings: ['model', 'reasoning'], existingSignature, targetSignature: target,
+      }).strategy, 'compatible');
+    }
   });
 
   test('pi can reuse a matching live session but otherwise falls back to compatible', () => {

@@ -22,6 +22,7 @@ import { initDb, closeDb, getDb } from '../src/services/db';
 import {
   saveWorkspace,
   saveNode,
+  getNode,
   updateNodeResumeBinding,
 } from '../src/services/dbRepository';
 
@@ -30,7 +31,7 @@ function freshTmpDir(): string {
 }
 
 function insertNode(wsId: string, id: string, currentModeId: string | null) {
-  saveNode({
+  const node: Parameters<typeof saveNode>[0] = {
     id, workspace_id: wsId,
     tree_id: null, parent_node_id: null,
     kind: 'chat', title: id, status: 'idle',
@@ -43,7 +44,9 @@ function insertNode(wsId: string, id: string, currentModeId: string | null) {
     composer_draft: null, external_session_id: null,
     trim_snapshot: null,
     created_at: 1,
-  });
+  };
+  saveNode(node);
+  return node;
 }
 
 function modeOf(id: string): string | null {
@@ -118,5 +121,19 @@ describe('updateNodeResumeBinding — current_mode_id preservation', () => {
     assert.equal(row.model_id, 'claude-opus-4-7');
     assert.equal(row.reasoning, 'high');
     assert.equal(row.current_mode_id, 'gpu-dev'); // preserved
+  });
+
+  test('a delayed graph snapshot cannot overwrite the signature of a native session', () => {
+    const stale = insertNode('ws1', 'n1', 'gpu-dev');
+    updateNodeResumeBinding('n1', {
+      ...BINDING, model_id: 'bound-model', provider_id: 'bound-provider', reasoning: 'high',
+    });
+    saveNode({ ...stale, title: 'updated title', model_id: 'stale-model', provider_id: null, reasoning: null });
+    const row = getNode('n1')!;
+    assert.equal(row.title, 'updated title');
+    assert.equal(row.acp_session_id, 'sess-1');
+    assert.equal(row.model_id, 'bound-model');
+    assert.equal(row.provider_id, 'bound-provider');
+    assert.equal(row.reasoning, 'high');
   });
 });

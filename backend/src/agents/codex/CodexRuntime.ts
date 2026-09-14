@@ -23,6 +23,7 @@ import { getNode, setNodeExternalSessionId, grantPermission, getWorkspaceInstruc
 import { resolveModel, resolveReasoning } from '../../services/agentConfig';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { preflightCodexAuth } from './codexBinary';
+import { NativeResumeUnavailableError } from '../../services/nativeResume';
 import type { RuntimeModelCache } from '../runtimeModelCache';
 import {
   buildCodexFollowUpsHookPocConfig,
@@ -43,7 +44,7 @@ export class CodexConcurrencyError extends Error {
     this.name = 'CodexConcurrencyError';
   }
 }
-export class CodexSessionNotResumableError extends Error {
+export class CodexSessionNotResumableError extends NativeResumeUnavailableError {
   constructor(message: string) {
     super(message);
     this.name = 'CodexSessionNotResumableError';
@@ -64,6 +65,7 @@ const CODEX_CAPABILITIES: AgentCapabilities = {
   saveContext: true,
   spawnBranches: true,
   nativeResume: true,
+  nativeResumeSettings: ['model', 'reasoning'],
 };
 
 // ---- Approval alias map (spec §5.1) -----------------------------------------
@@ -408,7 +410,8 @@ export class CodexRuntime implements AgentRuntime {
       }) as Record<string, unknown>;
     } catch (err) {
       const msg = (err as Error).message ?? '';
-      if (/no rollout found/i.test(msg) || /not found/i.test(msg)) {
+      await session.dispose();
+      if (msg === `no rollout found for thread id ${threadId}`) {
         throw new CodexSessionNotResumableError(
           `codex thread/resume failed: ${msg}`,
         );
@@ -420,9 +423,8 @@ export class CodexRuntime implements AgentRuntime {
     const resumeThread = resumeResult['thread'] as Record<string, unknown> | undefined;
     const echoedThreadId = (resumeThread?.['id'] as string | undefined) ?? (resumeResult['threadId'] as string | undefined);
     if (echoedThreadId && echoedThreadId !== threadId) {
-      console.warn(
-        `[CodexRuntime] thread/resume returned threadId ${echoedThreadId}, expected ${threadId}`,
-      );
+      await session.dispose();
+      throw new Error('Codex native resume returned a different thread identity');
     }
 
     // Rebind in case the threadId came back different (treat original as canonical)

@@ -22,6 +22,9 @@ import { resolveAgentRunToolsForSession } from "../toolBridge";
 import type { RuntimeModelCache } from "../runtimeModelCache";
 import { getNode, getWorkspaceInstructions } from "../../services/dbRepository";
 import { buildRunMcpSlotCallbacks } from "../runs/runMcpSlot";
+import { NativeResumeFailedError, NativeResumeUnavailableError } from '../../services/nativeResume';
+import { classifyAcpError, isNativeSessionUnavailable } from './acpErrors';
+import { ACPNotRunningError, ACPProcessExitedError } from '../../services/acpClient';
 
 // ---------------------------------------------------------------------------
 // Process lifecycle constants
@@ -137,10 +140,20 @@ export class KiroRuntime implements AgentRuntime {
         saveContext: true,
         spawnBranches: true,
         nativeResume: true,
+        nativeResumeSettings: ['model'],
     };
+
+    isNativeResumeRetryable(error: unknown): boolean {
+        // A completed transient error or a dead process can be retried. An
+        // idle timeout may still have a load running, so it stays fail-closed.
+        return error instanceof ACPNotRunningError || error instanceof ACPProcessExitedError
+            || classifyAcpError(error) === 'transient';
+    }
 
     private pool = new Map<string, AcpClient>();
     private startLocks = new Map<string, Promise<AcpClient>>();
+    private readonly cancelRecoveryLocks = new Map<string, Promise<AcpClient>>();
+    private readonly cancelRecoveryTimeoutMs = 20_000;
     /**
      * Pool of pre-created ACP sessions, keyed by cwd. Each entry is a
      * `session/new` result that has NOT had a prompt sent yet. When a
@@ -613,7 +626,12 @@ export class KiroRuntime implements AgentRuntime {
     }
 
     ensureClient(cwd: string, model?: string): Promise<AcpClient> {
+        const recovery = this.cancelRecoveryLocks.get(cwd);
+        if (recovery) return recovery;
         const alive = this.pool.get(cwd);
+        if (alive?.hasUnconfirmedExit?.()) {
+            return Promise.reject(new NativeResumeFailedError(new Error('Kiro process exit has not been confirmed')));
+        }
         if (alive && alive.isAlive()) {
             perf.mark("ensureClient:hit", { cwd });
             this.cancelIdleTimer(cwd);
@@ -654,8 +672,13 @@ export class KiroRuntime implements AgentRuntime {
                         this.purgeSessionsForCwd(cwd);
                     }
                 });
-                c.start();
-                await c.initialize();
+                try {
+                    c.start();
+                    await c.initialize();
+                } catch (error) {
+                    await c.shutdown().catch(() => {});
+                    throw error;
+                }
                 this.pool.set(cwd, c);
                 this.cancelIdleTimer(cwd);
                 this.touchCwdActivity(cwd);
@@ -667,6 +690,87 @@ export class KiroRuntime implements AgentRuntime {
         })();
         this.startLocks.set(cwd, p);
         return p;
+    }
+
+    /** A cancellation watchdog fences only its session. Restart is deferred to
+     * the next user turn, and forbidden while another session owns the process. */
+    recoverCancelledSession(sid: string, cwd: string): Promise<AcpClient> {
+        const pending = this.cancelRecoveryLocks.get(cwd);
+        if (pending) return pending.then((client) => {
+            if (!client.hasSession(sid)) throw new NativeResumeFailedError(new Error('Please retry this session after the shared process recovery'));
+            return client;
+        });
+        const old = this.pool.get(cwd);
+        if (!old?.needsSessionRecovery(sid)) return this.ensureClient(cwd);
+        if (old.hasHealthyWork()) return Promise.reject(new NativeResumeFailedError(
+            new Error('Shared Kiro process is busy'),
+            'Recovery is waiting for another task using this Kiro process. The original session is retained. Retry after the other task finishes.',
+        ));
+        const binding = this.getBindingByNativeSid(sid);
+        const session = binding ? sessionRegistry.getSession(binding.publicSessionId) : undefined;
+        if (!binding || !session || binding.owner.kind !== 'chat_node') {
+            return Promise.reject(new NativeResumeFailedError(new Error('Session requires owner-managed native recovery')));
+        }
+        const model = this.getCurrentModel(sid) ?? binding.modelId ?? undefined;
+        const deadline = Date.now() + this.cancelRecoveryTimeoutMs;
+        const remaining = () => {
+            const ms = deadline - Date.now();
+            if (ms <= 0) throw new Error('Native recovery deadline exceeded');
+            return ms;
+        };
+        const work = Promise.resolve().then(async () => {
+            // Recheck inside the reserved cwd operation before stopping anything.
+            if (this.pool.get(cwd) !== old || old.hasHealthyWork()) throw new NativeResumeFailedError(new Error('Kiro process changed during recovery; retry'));
+            let client: AcpClient | undefined;
+            try {
+                // Keep the stopped client in the pool until exit is confirmed.
+                // A failed teardown must never start another writer for this SID.
+                await old.shutdown();
+                this.pool.delete(cwd);
+                this.purgeSessionsForCwd(cwd);
+                remaining();
+                client = new AcpClient(undefined, cwd, model);
+                const replacement = client;
+                client.onExit(() => {
+                    if (this.pool.get(cwd) === replacement) {
+                        this.pool.delete(cwd);
+                        this.purgeSessionsForCwd(cwd);
+                    }
+                });
+                client.start();
+                await client.initialize(remaining());
+                const loaded = await this.loadAcpSession({
+                    sessionId: sid, cwd, model, nodeId: binding.publicSessionId,
+                    workspaceId: binding.workspaceId, ownerUserId: binding.ownerUserId,
+                    client, deadline,
+                });
+                this.pool.set(cwd, client);
+                this.sessionCwd.set(sid, cwd);
+                this.bindNodeSession(binding.publicSessionId, sid);
+                if (loaded.slotId) this.slotByChatId.set(sid, loaded.slotId);
+                const slot = loaded.slotId ? this.mcpRegistry?.get(loaded.slotId) : undefined;
+                if (slot) slot.agentRuns = resolveAgentRunToolsForSession(this.bridge, {
+                    runtimeId: this.id, sessionId: sid, owner: binding.owner,
+                    ownerUserId: binding.ownerUserId, workspaceId: binding.workspaceId, nodeId: binding.publicSessionId,
+                }) ?? undefined;
+                this.storeBinding({ ...binding, slotId: loaded.slotId });
+                sessionRegistry.registerSession(session, binding.ownerUserId);
+                this.cancelIdleTimer(cwd);
+                this.touchCwdActivity(cwd);
+                perf.mark('cancelRecovery:restored', { sid, cwd, elapsedMs: this.cancelRecoveryTimeoutMs - (deadline - Date.now()) });
+                return client;
+            } catch (error) {
+                if (client) {
+                    try { await client.shutdown(); }
+                    catch { this.pool.set(cwd, client); }
+                }
+                throw error instanceof NativeResumeFailedError ? error : new NativeResumeFailedError(error);
+            }
+        }).finally(() => {
+            if (this.cancelRecoveryLocks.get(cwd) === work) this.cancelRecoveryLocks.delete(cwd);
+        });
+        this.cancelRecoveryLocks.set(cwd, work);
+        return work;
     }
 
     /**
@@ -975,9 +1079,13 @@ export class KiroRuntime implements AgentRuntime {
         nodeId?: string | null;
         /** Chat owner's Better-Auth user id. Scopes globalContext tool reads in cloud mode. */
         ownerUserId?: string | null;
+        /** Reserved replacement client and shared hard deadline for cancel recovery. */
+        client?: AcpClient;
+        deadline?: number;
     }): Promise<LoadSessionResult> {
         const { sessionId, cwd, model } = opts;
-        const c = await this.ensureClient(cwd, model);
+        const c = opts.client ?? await this.ensureClient(cwd, model);
+        const remaining = () => opts.deadline === undefined ? undefined : Math.max(1, opts.deadline - Date.now());
         const makeCallbacks: McpSlotCallbacksFactory = (getSlotId) =>
             this.makeSlotCallbacks(getSlotId);
 
@@ -1002,9 +1110,14 @@ export class KiroRuntime implements AgentRuntime {
 
         let result: { modes?: any; models?: any };
         try {
-            result = await c.loadSession(sessionId, cwd, mcpServers);
+            result = await c.loadSession(sessionId, cwd, mcpServers, remaining());
+            if (model && result.models?.currentModelId !== model) {
+                await c.setModel(sessionId, model, remaining());
+                result.models = { ...result.models, currentModelId: model };
+            }
         } catch (err) {
             if (slotId) await this.mcpRegistry?.dispose(slotId).catch(() => {});
+            if (isNativeSessionUnavailable(err, sessionId)) throw new NativeResumeUnavailableError('Kiro native session is unavailable');
             throw err;
         }
         if (result.modes?.currentModeId) {
@@ -1515,6 +1628,10 @@ export class KiroRuntime implements AgentRuntime {
             const c = await this.ensureClient(opts.cwd, opts.model ?? undefined);
             try {
                 const result = await c.loadSession(nativeSessionId, opts.cwd, mcpServers);
+                if (opts.model && result.models?.currentModelId !== opts.model) {
+                    await c.setModel(nativeSessionId, opts.model);
+                    result.models = { ...result.models, currentModelId: opts.model };
+                }
                 if (result.modes?.currentModeId) {
                     this.sessionCurrentMode.set(nativeSessionId, result.modes.currentModeId);
                 }
@@ -1701,6 +1818,7 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Shutdown: kill all clients in pool and reset internal maps. */
     async shutdown(): Promise<void> {
+        await Promise.allSettled(this.cancelRecoveryLocks.values());
         // Clear pending user-input requests (avoid leaked timers + dangling promises).
         for (const [, entry] of this.pendingUserInputs) {
             clearTimeout(entry.timer);

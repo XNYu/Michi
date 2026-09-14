@@ -47,6 +47,46 @@ function connErr(): ACPError {
 }
 
 describe('KiroSession connection-class auto-retry', () => {
+  for (const error of [connErr(), new ACPError('failed to generate a response')]) {
+    it(`does not retry an explicitly cancelled turn after ${error.rpcData ?? error.message}`, async () => {
+      let fail!: (err: Error) => void;
+      let ready!: () => void;
+      const started = new Promise<void>((resolve) => { ready = resolve; });
+      let calls = 0;
+      let recoveries = 0;
+      const client = {
+        async *prompt() {
+          calls += 1;
+          if (calls === 1) {
+            const pending = new Promise<void>((_resolve, reject) => { fail = reject; });
+            ready();
+            await pending;
+          }
+          yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+        },
+        async cancel() { fail(error); },
+      };
+      const runtime = {
+        ensureClient: async () => client, getClient: () => client,
+        recoverSession: async () => { recoveries += 1; return true; },
+      } as unknown as KiroRuntime;
+      const session = new KiroSession('cancel-node', 'cancel-sid', runtime, '/tmp');
+      const result = (async () => {
+        const events = [];
+        for await (const event of session.send('stop this work')) events.push(event);
+        return events;
+      })();
+      await started;
+      await session.cancel();
+      const events = await result;
+      assert.equal(calls, 1, 'cancelled work must not be re-sent');
+      assert.equal(recoveries, 0, 'cancel must not restart the shared ACP process');
+      assert.deepEqual(events.at(-1), { kind: 'turn_end', stopReason: 'cancelled' });
+      for await (const _event of session.send('new work')) { /* drain */ }
+      assert.equal(calls, 2, 'cancellation must not poison the next turn');
+    });
+  }
+
   it('respawns + resends once on dispatch failure with zero visible output', async () => {
     const { runtime, recoverCalls } = scriptedRuntime([
       connErr(),

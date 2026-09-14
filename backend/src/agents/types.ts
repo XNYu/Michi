@@ -49,6 +49,8 @@ export interface AgentCapabilities {
    * the extra round-trip.
    */
   nativeResume: boolean;
+  /** Settings that loadSession can change without replacing native history. */
+  nativeResumeSettings?: readonly ('model' | 'reasoning')[];
 }
 
 export interface AgentProviderInfo extends ModelReasoningCapabilities {
@@ -276,6 +278,8 @@ export interface AgentRuntime {
   warm(cwd: string, opts?: { model?: string | null }): Promise<void>;
   newSession(opts: NewAgentSessionOptions): Promise<AgentSession>;
   loadSession?(opts: LoadAgentSessionOptions): Promise<AgentSession>;
+  /** Opt in only for failures where another native load is safe, never for ambiguous timeouts. */
+  isNativeResumeRetryable?(error: unknown): boolean;
   /**
    * Runtime-owned teardown for a live session. Callers should use this instead
    * of casting AgentSession to runtime-specific dispose/destroy methods so the

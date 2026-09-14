@@ -571,8 +571,16 @@ export function saveNode(node: NodeRow, userId?: string): void {
       -- graph snapshot that has not received runtime metadata yet; never let
       -- that nullable snapshot erase a binding persisted by the adapter.
       runtime_id=COALESCE(nodes.runtime_id, excluded.runtime_id),
-      provider_id=excluded.provider_id, model_id=excluded.model_id,
-      reasoning=excluded.reasoning, resume_fingerprint=excluded.resume_fingerprint,
+      -- Keep the native id and its signature atomic. Delayed graph snapshots
+      -- must not make ensure-session mistake the live model for a new choice.
+      -- Explicit runtime/model changes go through updateNodeResumeBinding.
+      provider_id=CASE WHEN nodes.acp_session_id IS NOT NULL OR nodes.external_session_id IS NOT NULL
+        THEN nodes.provider_id ELSE excluded.provider_id END,
+      model_id=CASE WHEN nodes.acp_session_id IS NOT NULL OR nodes.external_session_id IS NOT NULL
+        THEN nodes.model_id ELSE excluded.model_id END,
+      reasoning=CASE WHEN nodes.acp_session_id IS NOT NULL OR nodes.external_session_id IS NOT NULL
+        THEN nodes.reasoning ELSE excluded.reasoning END,
+      resume_fingerprint=excluded.resume_fingerprint,
       composer_draft=excluded.composer_draft,
       -- external_session_id is minted server-side from claude system/init and is
       -- NOT carried in the frontend node sync payload (serializeNodeRow omits it).

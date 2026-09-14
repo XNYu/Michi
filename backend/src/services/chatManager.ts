@@ -14,6 +14,9 @@ import {
 import { workspaceOwnerMatches } from "./agentOwner";
 import { AgentDefinitionService } from "./agentDefinitionService";
 import { getDb } from "./db";
+import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from './nativeResume';
+import { buildCompatibleResumeContext, chooseResumeStrategy, normalizeResumeSignature } from './resumeStrategy';
+import { chatHub } from '../agents/chatHub';
 import { createHash } from "node:crypto";
 import {
     AgentPolicyCategory,
@@ -254,10 +257,16 @@ export class ChatManager {
         workspaceId: string;
         nodeId: string;
     }): Promise<AgentSession | null> {
-        const owner = { kind: "chat_node" as const, nodeId: input.nodeId };
-        const live = sessionRegistry.getSessionForOwner(input.nodeId, owner, input.ownerUserId);
-        if (live) return live;
+        const release = await acquireSessionRestoreLock(input.nodeId);
+        try {
+            return await this.restoreParentSession(input);
+        } finally {
+            release();
+        }
+    }
 
+    private async restoreParentSession(input: { ownerUserId: string; workspaceId: string; nodeId: string }): Promise<AgentSession | null> {
+        const owner = { kind: "chat_node" as const, nodeId: input.nodeId };
         const node = getNode(input.nodeId);
         if (!node || node.workspace_id !== input.workspaceId) return null;
         const workspace = getWorkspace(input.workspaceId);
@@ -277,24 +286,44 @@ export class ChatManager {
         const provider = primaryProfile?.providerId ?? node.provider_id ?? null;
         const reasoning = (primaryProfile?.reasoning ?? node.reasoning ?? null) as AgentReasoning | null;
         const bootstrap = primaryAgentSessionOptions(primaryAgent);
+        const live = sessionRegistry.getSessionForOwner(input.nodeId, owner, input.ownerUserId);
+        const nativeId = nativeResumeId(runtimeId, node);
+        const targetSignature = { runtimeId, modelId: model, providerId: provider, reasoning };
+        const existingSignature = normalizeResumeSignature({
+            runtimeId: node.runtime_id ?? (node.acp_session_id && node.acp_session_id !== node.id ? 'kiro' : null),
+            modelId: node.model_id, providerId: node.provider_id, reasoning: node.reasoning,
+        });
+        const decision = chooseResumeStrategy({
+            existingChatId: nativeId ? input.nodeId : null,
+            existingSignature,
+            targetSignature,
+            nativeResumeAvailable: !!runtime.loadSession && runtime.capabilities.nativeResume && !!nativeId,
+            nativeResumeSettings: runtime.capabilities.nativeResumeSettings,
+            liveSessionMatches: !!live && live.runtimeId === runtimeId
+                && (live.nativeSessionId ?? live.id) === nativeId
+                && (live.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null)
+                && (!existingSignature || (existingSignature.reasoning === reasoning && existingSignature.modelId === model)),
+        });
+        if (decision.strategy === 'live' && live) return live;
+        if (chatHub.isActive(input.nodeId)) throw new NativeResumeFailedError(new Error('Cannot reload an active parent turn'));
+        if (live) {
+            await getRuntime(live.runtimeId)?.releaseSession(live.id);
+            sessionRegistry.dropSession(live.id);
+        }
 
         let session: AgentSession | null = null;
-        if (runtime.loadSession && (node.acp_session_id || node.external_session_id)) {
-            try {
-                session = await runtime.loadSession({
-                    sessionId: input.nodeId,
-                    nodeId: input.nodeId,
-                    cwd,
-                    workspaceId: input.workspaceId,
-                    ownerUserId: input.ownerUserId,
-                    model,
-                    provider,
-                    reasoning,
-                    ...bootstrap,
-                });
-            } catch {
-                session = null;
-            }
+        if (decision.strategy === 'exact') {
+            session = await loadNativeSession(runtime, {
+                sessionId: input.nodeId,
+                nodeId: input.nodeId,
+                cwd,
+                workspaceId: input.workspaceId,
+                ownerUserId: input.ownerUserId,
+                model,
+                provider,
+                reasoning,
+                ...bootstrap,
+            }, nativeId);
         }
         if (!session) {
             const replayHistory = listMessages(input.nodeId, process.env.MICHI_CLOUD === "1" ? input.ownerUserId : undefined)
@@ -312,18 +341,27 @@ export class ChatManager {
                 provider,
                 reasoning,
                 replayHistory,
+                mergeContexts: runtime.id === 'kiro'
+                    ? [buildCompatibleResumeContext(replayHistory, { nodeId: input.nodeId, title: node.title })].filter((value): value is string => !!value)
+                    : undefined,
                 ...bootstrap,
             });
         }
         sessionRegistry.registerSession(session, input.ownerUserId, owner);
-        updateNodeResumeBinding(input.nodeId, {
-            acp_session_id: session.nativeSessionId ?? session.id,
-            runtime_id: session.runtimeId,
-            provider_id: provider,
-            model_id: session.currentModelId ?? model,
-            reasoning,
-            current_mode_id: session.currentModeId ?? null,
-        });
+        try {
+            updateNodeResumeBinding(input.nodeId, {
+                acp_session_id: session.nativeSessionId ?? session.id,
+                runtime_id: session.runtimeId,
+                provider_id: provider,
+                model_id: session.currentModelId ?? model,
+                reasoning,
+                current_mode_id: session.currentModeId ?? null,
+            });
+        } catch (error) {
+            await runtime.releaseSession(session.id);
+            sessionRegistry.dropSession(session.id);
+            throw error;
+        }
         return session;
     }
 }

@@ -6,6 +6,7 @@ import type { McpSlotRegistry } from '../src/services/mcpServer';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { ModelInfo } from '../src/agents/types';
 import type { RuntimeModelCache } from '../src/agents/runtimeModelCache';
+import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 
 // ---- Stubs ------------------------------------------------------------------
 
@@ -68,6 +69,42 @@ function makeRuntime(
     3001,
     { client: makeStubClient(clientOverrides), modelCache },
   );
+}
+
+for (const scenario of ['success', 'missing', 'mcp-error', 'wrong-identity']) {
+  test(`native Codex restore preserves settings and narrowly classifies failure: ${scenario}`, async () => {
+    let disposed = 0;
+    const registry = makeStubMcpRegistry();
+    registry.dispose = async () => { disposed++; };
+    const requested: Record<string, unknown>[] = [];
+    const runtime = new CodexRuntime(makeStubBridge(), registry, 3001, {
+      client: makeStubClient({ request: async (method: string, params: Record<string, unknown>) => {
+        if (method !== 'thread/resume') return {};
+        requested.push(params);
+        if (scenario === 'missing') throw new Error('no rollout found for thread id original');
+        if (scenario === 'mcp-error') throw new Error('MCP server not found');
+        return { thread: { id: scenario === 'wrong-identity' ? 'replacement' : 'original' } };
+      } }),
+    });
+    try {
+      const result = runtime.loadSession({ sessionId: 'attempt', cwd: '/tmp',
+        owner: { kind: 'agent_run', runId: 'run', attemptId: 'attempt' },
+        nativeResumeToken: 'original', model: 'new-model', reasoning: 'high' });
+      if (scenario === 'success') {
+        assert.equal((await result).nativeSessionId, 'original');
+        assert.equal(requested[0].model, 'new-model');
+        assert.equal(requested[0].reasoningEffort, 'high');
+      } else {
+        await assert.rejects(result, (error: unknown) => {
+          assert.equal(error instanceof NativeResumeUnavailableError, scenario === 'missing');
+          return true;
+        });
+        assert.equal(disposed, 1);
+      }
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 }
 
 // ---- Tests ------------------------------------------------------------------

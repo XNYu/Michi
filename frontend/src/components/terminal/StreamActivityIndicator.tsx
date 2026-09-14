@@ -65,6 +65,7 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
   if (node.status !== 'streaming' || node.visibleResponseComplete) return null;
   if (node.cancelPhase === 'requested') return { label: 'Cancel requested' };
   if (node.cancelPhase === 'acknowledged') return { label: 'Cancel acknowledged' };
+  if (node.runtimeActivity) return { label: node.runtimeActivity };
   if (node.compacting) return { label: 'Compacting' };
 
   // Kiro subagents get a dedicated, richer panel (SubagentStatus). Don't

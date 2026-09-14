@@ -20,6 +20,7 @@ export interface ResumeDecisionInput {
   existingChatId?: string | null;
   liveSessionMatches: boolean;
   nativeResumeAvailable: boolean;
+  nativeResumeSettings?: readonly ('model' | 'reasoning')[];
   existingSignature: ResumeSignature | null;
   targetSignature: ResumeSignature;
   /** @deprecated Fingerprint check removed — field ignored by chooseResumeStrategy. */
@@ -106,11 +107,18 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
   if (!input.existingChatId) {
     return { strategy: "fresh", reason: "no_existing_session" };
   }
-  if (!input.existingSignature) {
+  if (!input.existingSignature && !input.nativeResumeAvailable && !input.liveSessionMatches) {
     return { strategy: "compatible", reason: "missing_resume_signature" };
   }
-  if (!signaturesEqual(input.existingSignature, input.targetSignature)) {
-    return { strategy: "compatible", reason: "signature_changed" };
+  const existing = input.existingSignature;
+  const target = input.targetSignature;
+  if (existing && !signaturesEqual(existing, target)) {
+    const supported = input.nativeResumeSettings ?? [];
+    if (existing.runtimeId !== target.runtimeId || existing.providerId !== target.providerId
+      || (existing.modelId !== target.modelId && !supported.includes('model'))
+      || (existing.reasoning !== target.reasoning && !supported.includes('reasoning'))) {
+      return { strategy: "compatible", reason: "signature_changed" };
+    }
   }
   // Fingerprint check removed: Pane Ownership already prevents concurrent
   // writes, edit/retry clears chatId (forcing fresh), and the fingerprint's

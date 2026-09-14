@@ -24,12 +24,13 @@ import { ClaudeSessionManager, ClaudeConcurrencyError } from './ClaudeSessionMan
 import { chatHub } from '../chatHub';
 import type { CapabilityDescriptor } from 'michi-shared';
 import { describeRuntimeCapabilities } from '../capabilityDescriptors';
+import { NativeResumeUnavailableError } from '../../services/nativeResume';
 
 // ---- Errors ------------------------------------------------------------------
 
 export { ClaudeConcurrencyError };
 
-export class ClaudeSessionNotResumableError extends Error {
+export class ClaudeSessionNotResumableError extends NativeResumeUnavailableError {
   constructor(message: string) {
     super(message);
     this.name = 'ClaudeSessionNotResumableError';
@@ -51,6 +52,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilities = {
   saveContext: true,
   spawnBranches: true,
   nativeResume: true,
+  nativeResumeSettings: ['model', 'reasoning'],
 };
 
 // ---- ClaudeRuntime -----------------------------------------------------------

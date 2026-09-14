@@ -84,6 +84,18 @@ export function runChatStream({
   let lastAcceptedTurnId = '';
   let lastAcceptedSeq = -1;
   let streamCancel: (() => void) | null = null;
+  let waitingShown = false;
+  const waitingTimer = setTimeout(() => {
+    waitingShown = true;
+    dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId, detail: 'Waiting for session' });
+  }, 1_000);
+  const clearWaiting = () => {
+    clearTimeout(waitingTimer);
+    if (waitingShown) {
+      waitingShown = false;
+      dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId });
+    }
+  };
   const streamedFollowUps: string[] = [];
   const MAX_BRACKET_HOLD = 4096; // safety cap for malformed / unclosed brackets
 
@@ -134,6 +146,7 @@ export function runChatStream({
   };
 
   const cleanup = () => {
+    clearWaiting();
     if (streamCancel && cancelFns.current[nodeId] === streamCancel) {
       delete cancelFns.current[nodeId];
     }
@@ -145,6 +158,7 @@ export function runChatStream({
 
   const handlers: StreamHandlers = {
     onEnvelope: (envelope) => {
+      clearWaiting();
       if (envelope.turnId) currentTurnId = envelope.turnId;
       if (typeof envelope.seq !== 'number' || !envelope.turnId) return true;
       if (lastAcceptedTurnId === envelope.turnId && envelope.seq <= lastAcceptedSeq) return false;
@@ -154,6 +168,7 @@ export function runChatStream({
       return true;
     },
     onTurnStart: (data) => {
+      clearWaiting();
       const env = data as typeof data & { seq?: number };
       if (data.assistantId && data.assistantId !== currentAssistantId) {
         dispatch({
@@ -172,6 +187,7 @@ export function runChatStream({
       trackSeq(env.seq, data.turnId);
     },
     onChunk: (text, seq, _assistantId, turnId) => {
+      clearWaiting();
       trackSeq(seq, turnId);
       // Forward raw chunk to reducer immediately as block-first assistant data.
       dispatch({ type: 'chunk', nodeId, assistantId: currentAssistantId, text });
@@ -282,6 +298,11 @@ export function runChatStream({
     onCancelPhase: (data) => dispatch({ type: 'cancel-phase', nodeId, phase: data.phase }),
     onCompactionStart: () => dispatch({ type: 'compaction', nodeId, active: true }),
     onCompactionEnd: () => dispatch({ type: 'compaction', nodeId, active: false }),
+    onRetryStart: (data) => {
+      clearWaiting();
+      dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId, detail: data.detail ?? 'Reconnecting' });
+    },
+    onRetryEnd: () => dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId }),
     onMcpServerError: (data) =>
       dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
     onDone: (stopReason, _assistantId, turnId, persisted, completedAt) => {
@@ -330,9 +351,10 @@ export function runChatStream({
     ...extraHandlers,
   };
 
-  streamCancel = streamMessage(nodeId, prompt, handlers, ownerToken, {
+  const cancelTransport = streamMessage(nodeId, prompt, handlers, ownerToken, {
     displayText,
     userMetadata,
   });
+  streamCancel = () => { clearWaiting(); cancelTransport(); };
   return streamCancel;
 }

@@ -15,6 +15,7 @@ import { getRuntime } from "../agents/registry";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider } from "../services/agentConfig";
 import { startupMark } from "../services/startupTrace";
+import { log } from "../services/logger";
 import * as sessionRegistry from "../agents/sessionRegistry";
 import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/chatHub";
 import { paneOwnership } from "../agents/paneOwnership";
@@ -37,6 +38,7 @@ import {
 import type { WorkspaceRow } from "../services/dbRepository";
 import { ensureDurableGraphNode } from "../services/graphCommands";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
+import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from '../services/nativeResume';
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import {
     buildCompatibleResumeContext,
@@ -202,6 +204,10 @@ function isConcurrencyError(err: unknown): boolean {
 }
 
 function sendAgentRouteError(res: express.Response, err: unknown): void {
+    if (err instanceof NativeResumeFailedError) {
+        res.status(503).json({ code: 'NATIVE_RESUME_FAILED', error: err.message });
+        return;
+    }
     if (err instanceof PrimaryAgentBindingError) {
         res.status(400).json({ code: "PRIMARY_AGENT_INVALID", error: err.message });
         return;
@@ -223,19 +229,19 @@ async function retireLiveSession(session: AgentSession | undefined): Promise<voi
     if (!session) return;
     const runtime = getRuntime(session.runtimeId);
     try {
-        await Promise.resolve(runtime?.releaseSession(session.id) ?? session.cancel());
-    } catch {
-        /* ignore best-effort cleanup */
+        await Promise.resolve(runtime ? runtime.releaseSession(session.id) : session.cancel());
+    } catch (error) {
+        throw new NativeResumeFailedError(error);
     }
     sessionRegistry.dropSession(session.id);
 }
 
-function persistResumeBinding(
+async function persistResumeBinding(
     nodeId: string,
     session: AgentSession,
     signature: ResumeSignature,
     fingerprint: string | null,
-): void {
+): Promise<void> {
     const fields = {
         nodeId,
         acp_session_id: session.nativeSessionId ?? session.id,
@@ -247,11 +253,9 @@ function persistResumeBinding(
         current_mode_id: session.currentModeId ?? null,
     };
     if (isDbWorkerReady()) {
-        // Fire-and-forget on the worker — the caller already has the session,
-        // so blocking the response for this write is unnecessary.
-        void dbWorker.persistResumeBinding(fields).catch((err) => {
-            console.warn(`Failed to persist resume binding for ${nodeId} (worker):`, err);
-        });
+        // The next ensure-session may arrive immediately after cancel. It must
+        // observe this binding rather than manufacture another fresh session.
+        await dbWorker.persistResumeBinding(fields);
         return;
     }
     // Fallback: synchronous on main thread
@@ -268,6 +272,7 @@ function persistResumeBinding(
         });
     } catch (err) {
         console.warn(`Failed to persist resume binding for ${nodeId}:`, err);
+        throw err;
     }
 }
 
@@ -941,10 +946,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (bodyRuntimeId !== undefined && (typeof bodyRuntimeId !== "string" || bodyRuntimeId.length === 0)) {
             return res.status(400).json({ error: "runtimeId must be a non-empty string" });
         }
+        const resolvedNodeId = typeof nodeId === "string"
+            ? nodeId
+            : resolvePublicNodeId(chatId, req.user?.id ?? null) ?? chatId;
+        if (process.env.MICHI_CLOUD === '1'
+            && getNodeSessionBinding(chatId, req.user?.id)?.nodeId !== resolvedNodeId) {
+            return res.status(404).json({ error: 'not_found' });
+        }
+        const releaseRestore = await acquireSessionRestoreLock(resolvedNodeId);
         try {
-            const resolvedNodeId = typeof nodeId === "string"
-                ? nodeId
-                : resolvePublicNodeId(chatId, req.user?.id ?? null) ?? chatId;
             const nodeRow = getNode(resolvedNodeId);
             const chatRow = getNode(chatId);
             const row = nodeRow ?? chatRow;
@@ -975,15 +985,46 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!workspaceId) {
                 workspaceId = row?.workspace_id ?? null;
             }
-            const session = await runtime.loadSession({
+            const live = sessionRegistry.getSessionForOwner(resolvedNodeId, { kind: 'chat_node', nodeId: resolvedNodeId }, req.user?.id ?? null);
+            const requestedModel = typeof model === 'string' ? model : row?.model_id;
+            const primaryAgent = row?.workspace_id ? await chatManager.resolvePrimaryAgentBinding({
+                ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
+                workspaceId: row.workspace_id,
+                nodeId: resolvedNodeId,
+            }) : null;
+            const canReuse = live?.runtimeId === runtimeId
+                && (!requestedModel || live.currentModelId === requestedModel)
+                && (live.nativeSessionId ?? live.id) === nativeResumeId(runtimeId, row)
+                && (live.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null);
+            if (!canReuse && chatHub.isActive(resolvedNodeId)) {
+                throw new NativeResumeFailedError(new Error('Cannot reload an active turn'));
+            }
+            if (live && !canReuse) await retireLiveSession(live);
+            const loadOptions = {
                 sessionId: resolvedNodeId,
                 nodeId: resolvedNodeId,
                 cwd: normalizeWorkspaceCwd(cwd),
-                model: model as string | undefined,
+                model: requestedModel,
+                provider: row?.provider_id,
+                reasoning: normalizeReasoning(row?.reasoning),
                 workspaceId,
                 ownerUserId: req.user?.id ?? null,
-            });
+                ...primaryAgentSessionOptions(primaryAgent),
+            };
+            const session = canReuse ? live : runtime.capabilities.nativeResume
+                ? await loadNativeSession(runtime, loadOptions, nativeResumeId(runtimeId, row))
+                : await runtime.loadSession(loadOptions);
+            if (!session) return res.status(404).json({ error: 'Native session is unavailable' });
             sessionRegistry.registerSession(session, req.user?.id ?? null);
+            try {
+                await persistResumeBinding(resolvedNodeId, session, {
+                    runtimeId, modelId: session.currentModelId ?? requestedModel ?? null,
+                    providerId: row?.provider_id ?? null, reasoning: normalizeReasoning(row?.reasoning),
+                }, null);
+            } catch (error) {
+                if (session !== live) await retireLiveSession(session);
+                throw error;
+            }
             res.json({
                 ok: true,
                 currentModeId: session.currentModeId ?? null,
@@ -991,7 +1032,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             });
         } catch (err) {
             console.warn(`session/load failed for ${chatId}:`, err);
-            res.status(404).json({ error: (err as Error).message });
+            sendAgentRouteError(res, err);
+        } finally {
+            releaseRestore();
         }
     });
 
@@ -1156,9 +1199,19 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             enableFollowUps = body.enableFollowUps;
         }
 
+        const releaseRestore = await acquireSessionRestoreLock(nodeId);
         try {
             const michiUserId: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
             const cfg = getAgentConfig(michiUserId);
+            const row = getNode(nodeId);
+            const boundSignature = row?.acp_session_id || row?.external_session_id
+                ? normalizeResumeSignature({
+                    runtimeId: row.runtime_id ?? inferRuntimeId(row, nodeId),
+                    providerId: row.provider_id,
+                    modelId: row.model_id,
+                    reasoning: row.reasoning,
+                })
+                : null;
             const primaryAgent = await chatManager.resolvePrimaryAgentBinding({
                 ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
                 workspaceId,
@@ -1167,7 +1220,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             });
             const primaryProfile = primaryAgent?.effectiveDefinition.runtimeProfile;
             const requestedModeId = normalizeSignaturePart(primaryProfile?.modeId) ?? desiredModeId;
-            const runtimeId = primaryProfile?.runtimeId ?? normalizeSignaturePart(body.runtimeId) ?? cfg.runtime;
+            const runtimeId = primaryProfile?.runtimeId ?? normalizeSignaturePart(body.runtimeId)
+                ?? boundSignature?.runtimeId ?? cfg.runtime;
             const runtime = getRuntime(runtimeId);
             if (!runtime) {
                 return res.status(500).json({ error: `Unknown agent runtime: ${runtimeId}` });
@@ -1179,17 +1233,25 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     modelId: normalizeSignaturePart(primaryProfile.modelId),
                     reasoning: normalizeReasoning(primaryProfile.reasoning),
                 }
+                : boundSignature?.runtimeId === runtimeId
+                ? { ...boundSignature }
                 : buildTargetResumeSignature(
                     { ...cfg, runtime: runtimeId },
                     runtime,
                     normalizeSignaturePart(body.modelId) ?? (typeof modelRaw === "string" ? modelRaw : undefined),
                 );
             if (!primaryProfile) {
+                // An omitted selection means "continue this conversation", not
+                // "replace it with whichever global defaults were last saved".
+                const modelOverride = normalizeSignaturePart(body.modelId)
+                    ?? normalizeSignaturePart(modelRaw);
+                if (modelOverride) targetSignature.modelId = modelOverride;
+                const previousProvider = targetSignature.providerId;
                 targetSignature.providerId = runtime.capabilities.providerModels
-                    ? normalizeSignaturePart(body.providerId) ?? resolveProvider(runtimeId, michiUserId)
+                    ? normalizeSignaturePart(body.providerId) ?? targetSignature.providerId ?? resolveProvider(runtimeId, michiUserId)
                     : null;
                 if (runtime.capabilities.providerModels && body.providerId !== undefined
-                    && body.providerId !== resolveProvider(runtimeId, michiUserId)
+                    && body.providerId !== previousProvider
                     && body.modelId === undefined && modelRaw === undefined) {
                     targetSignature.modelId = null;
                 }
@@ -1199,26 +1261,28 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 targetSignature.modelId = effort.modelId ?? targetSignature.modelId;
                 targetSignature.reasoning = effort.value ?? null;
             }
-            const row = getNode(nodeId);
             const transcript = readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
-            const persistedBinding =
-                normalizeSignaturePart(row?.acp_session_id) ??
-                normalizeSignaturePart(row?.external_session_id);
+            const persistedBinding = nativeResumeId(runtimeId, row);
             const legacyBinding = existingChatId
                 ? getNodeSessionBinding(existingChatId, michiUserId)
                 : null;
             const hasResumeBinding = !!persistedBinding || legacyBinding?.nodeId === nodeId;
-            const existingSignature = readExistingSignature(row, body, nodeId);
-            const liveSession = sessionRegistry.getSession(nodeId)
-                ?? (existingChatId ? sessionRegistry.getSession(existingChatId) : undefined);
+            const existingSignature = boundSignature ?? readExistingSignature(row, body, nodeId);
+            const liveSession = sessionRegistry.getSessionForOwner(nodeId, { kind: 'chat_node', nodeId }, req.user?.id ?? null)
+                ?? (existingChatId ? sessionRegistry.getSessionForOwner(existingChatId, { kind: 'chat_node', nodeId }, req.user?.id ?? null) : undefined);
             const nativeResumeAvailable =
                 runtime.capabilities.nativeResume &&
                 typeof runtime.loadSession === "function" &&
                 hasResumeBinding;
             const decision = chooseResumeStrategy({
                 existingChatId: hasResumeBinding ? nodeId : null,
-                liveSessionMatches: !!liveSession && liveSession.runtimeId === targetSignature.runtimeId,
+                liveSessionMatches: !!liveSession && liveSession.runtimeId === targetSignature.runtimeId
+                    && (!persistedBinding || (liveSession.nativeSessionId ?? liveSession.id) === persistedBinding)
+                    && (liveSession.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null)
+                    && (!existingSignature || existingSignature.reasoning === targetSignature.reasoning)
+                    && (!targetSignature.modelId || liveSession.currentModelId === targetSignature.modelId || !!liveSession.setModel),
                 nativeResumeAvailable,
+                nativeResumeSettings: runtime.capabilities.nativeResumeSettings,
                 existingSignature,
                 targetSignature,
             });
@@ -1229,29 +1293,34 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
             if (decision.strategy === "live" && liveSession) {
                 session = liveSession;
+                if (targetSignature.modelId && session.currentModelId !== targetSignature.modelId && session.setModel) {
+                    if (chatHub.isActive(nodeId)) throw new NativeResumeFailedError(new Error('Cannot change settings during an active turn'));
+                    await session.setModel(targetSignature.modelId);
+                }
             } else if (decision.strategy === "exact" && runtime.loadSession) {
-                try {
-                    session = await runtime.loadSession({
-                        sessionId: nodeId,
-                        nodeId,
-                        cwd,
-                        model: targetSignature.modelId,
-                        provider: targetSignature.providerId,
-                        reasoning: targetSignature.reasoning,
-                        workspaceId,
-                        ownerUserId: req.user?.id ?? null,
-                        ...primaryAgentSessionOptions(primaryAgent),
-                    });
-                    sessionRegistry.registerSession(session, req.user?.id ?? null);
-                } catch (err) {
-                    console.warn(`exact resume failed for ${nodeId}; falling back to compatible resume: ${(err as Error).message}`);
+                if (chatHub.isActive(nodeId)) throw new NativeResumeFailedError(new Error('Cannot reload an active turn'));
+                if (liveSession) await retireLiveSession(liveSession);
+                session = await loadNativeSession(runtime, {
+                    sessionId: nodeId,
+                    nodeId,
+                    cwd,
+                    model: targetSignature.modelId,
+                    provider: targetSignature.providerId,
+                    reasoning: targetSignature.reasoning,
+                    workspaceId,
+                    ownerUserId: req.user?.id ?? null,
+                    ...primaryAgentSessionOptions(primaryAgent),
+                }, persistedBinding) ?? undefined;
+                if (session) sessionRegistry.registerSession(session, req.user?.id ?? null);
+                else {
                     resumeStrategy = "compatible";
-                    resumeReason = `exact_failed:${(err as Error).message}`;
+                    resumeReason = "native_session_unavailable";
                 }
             }
 
             if (!session) {
-                if (liveSession) {
+                if (chatHub.isActive(nodeId)) throw new NativeResumeFailedError(new Error('Cannot replace an active turn'));
+                if (liveSession && decision.strategy !== 'exact') {
                     await retireLiveSession(liveSession);
                 }
                 const resumeContext = buildCompatibleResumeContext(transcript, {
@@ -1333,7 +1402,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 }
             }
 
-            persistResumeBinding(nodeId, session, targetSignature, null);
+            try {
+                await persistResumeBinding(nodeId, session, targetSignature, null);
+            } catch (error) {
+                // Do not let a subsequent ensure reuse an uncommitted replacement.
+                if (session !== liveSession) await retireLiveSession(session);
+                throw error;
+            }
+            log.info('chat', 'runtime session resolved', {
+                nodeId,
+                runtimeId: session.runtimeId,
+                nativeSessionId: session.nativeSessionId ?? session.id,
+                previousNativeSessionId: persistedBinding,
+                resumeStrategy,
+                resumeReason,
+                modelId: targetSignature.modelId,
+            });
             startupMark("ensure_session_route_done", {
                 nodeId,
                 chatId: session.id,
@@ -1359,6 +1443,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 error: (err as Error).message,
             });
             return sendAgentRouteError(res, err);
+        } finally {
+            releaseRestore();
         }
     });
 
@@ -1411,10 +1497,13 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             }
         }
 
+        const releaseRestore = await acquireSessionRestoreLock(nodeId);
         let started;
         try {
+            const currentSession = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
+            if (!currentSession || currentSession.id !== nodeId) throw new Error('Session changed before turn start; retry the message');
             started = await chatHub.startTurn({
-                chatId: nodeId, nodeId, text, displayText, userMetadata, session,
+                chatId: nodeId, nodeId, text, displayText, userMetadata, session: currentSession,
                 turnId,
                 ownerUserId: req.user?.id ?? null,
             });
@@ -1423,6 +1512,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 error: (err as Error).message,
                 code: 'turn_begin_failed',
             });
+        } finally {
+            releaseRestore();
         }
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
@@ -1820,15 +1911,27 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (typeof modelId !== "string" || !modelId) {
             return res.status(400).json({ error: "modelId is required" });
         }
-        const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
-        if (!session?.setModel) {
-            return res.status(400).json({ error: "Active session does not support runtime model switching" });
-        }
+        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
+        const releaseRestore = await acquireSessionRestoreLock(nodeId);
         try {
+            const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
+            if (!session?.setModel) {
+                return res.status(400).json({ error: "Active session does not support runtime model switching" });
+            }
+            if (chatHub.isActive(nodeId)) {
+                return res.status(409).json({ error: 'Cannot change model during an active turn' });
+            }
             await session.setModel(modelId);
+            const row = getNode(nodeId);
+            await persistResumeBinding(nodeId, session, {
+                runtimeId: session.runtimeId, modelId, providerId: row?.provider_id ?? null,
+                reasoning: normalizeReasoning(row?.reasoning),
+            }, null);
             res.json({ ok: true, currentModelId: modelId });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
+        } finally {
+            releaseRestore();
         }
     });
 

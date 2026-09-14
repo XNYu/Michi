@@ -62,6 +62,7 @@ export class ACPError extends Error {
 }
 export class ACPNotRunningError extends ACPError {}
 export class ACPProcessExitedError extends ACPError {}
+export class ACPSessionRecoveryRequiredError extends ACPError {}
 
 export type AcpUpdate = Record<string, any>;
 
@@ -204,6 +205,7 @@ interface Pending {
     resolve: (v: any) => void;
     reject: (e: Error) => void;
     timer: NodeJS.Timeout | null;
+    hardTimeout?: boolean;
 }
 
 type SessionQueueItem = { update: AcpUpdate } | { done: true };
@@ -243,7 +245,11 @@ export class AcpClient {
     private pending = new Map<number, Pending>();
     private buffer = "";
     private sessionQueues = new Map<string, SessionQueue>();
+    /** Full prompt lifetimes, including the consumer's final queue cleanup. */
     private sessionInFlight = new Map<string, Promise<void>>();
+    private readonly quarantinedSessions = new Set<string>();
+    private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    private readonly cancelTimeoutMs = 5_000;
     private stopped = false;
     private exitError: Error | null = null;
     private exitListeners: Array<(err: Error) => void> = [];
@@ -273,6 +279,38 @@ export class AcpClient {
 
     isAlive(): boolean {
         return !this.stopped && !this.exitError && !!this.proc;
+    }
+
+    needsSessionRecovery(sessionId: string): boolean {
+        return this.quarantinedSessions.has(sessionId);
+    }
+
+    hasSession(sessionId: string): boolean {
+        return this.sessionQueues.has(sessionId) && !this.needsSessionRecovery(sessionId);
+    }
+
+    hasUnconfirmedExit(): boolean {
+        return this.stopped && this.proc !== null;
+    }
+
+    /** Restart only when no healthy session or control RPC owns this process. */
+    hasHealthyWork(): boolean {
+        return [...this.sessionInFlight.keys()].some((sid) => !this.quarantinedSessions.has(sid))
+            || [...this.pending.values()].some((p) => !p.sessionId || !this.quarantinedSessions.has(p.sessionId));
+    }
+
+    private assertSessionUsable(sessionId: string): void {
+        if (this.needsSessionRecovery(sessionId)) {
+            throw new ACPSessionRecoveryRequiredError(
+                'The previous Kiro turn did not stop. The original session needs recovery before another message can be sent.',
+                { sessionId },
+            );
+        }
+    }
+
+    private clearCancelTimer(sessionId: string): void {
+        clearTimeout(this.cancelTimers.get(sessionId));
+        this.cancelTimers.delete(sessionId);
     }
 
     /** Resolve the session that should receive subagent list_update events.
@@ -415,6 +453,16 @@ export class AcpClient {
 
     private dispatch(msg: any): void {
 
+        // An expired cancellation has no safe event boundary. Never let late
+        // chunks/permissions from that native session enter another turn.
+        if (msg?.params?.sessionId && this.needsSessionRecovery(msg.params.sessionId)) {
+            if (msg.method === 'session/request_permission' && msg.id != null) {
+                this.pendingPermissions.set(msg.id, { sessionId: msg.params.sessionId });
+                this.cancelPermission(msg.id);
+            }
+            return;
+        }
+
         // Incoming JSON-RPC request from kiro-cli (has both id and method).
         // Currently only session/request_permission uses this pattern.
         if (msg && msg.id !== undefined && msg.id !== null && 'method' in msg) {
@@ -443,6 +491,7 @@ export class AcpClient {
             if (!p) return;
             this.pending.delete(msg.id);
             if (p.timer) clearTimeout(p.timer);
+            if (p.method === 'session/prompt' && p.sessionId) this.clearCancelTimer(p.sessionId);
             if (msg.error) {
                 const message = typeof msg.error?.message === "string" && msg.error.message
                     ? msg.error.message
@@ -477,7 +526,7 @@ export class AcpClient {
             // in-flight session/prompt RPC — kiro is visibly still working.
             if (sid) {
                 for (const p of this.pending.values()) {
-                    if (p.sessionId === sid) this.resetIdleTimer(p);
+                    if (p.sessionId === sid && !p.hardTimeout) this.resetIdleTimer(p);
                 }
             }
             const q = sid ? this.sessionQueues.get(sid) : undefined;
@@ -703,13 +752,18 @@ export class AcpClient {
             }
             p.reject(
                 new ACPError(
-                    `Request ${p.method} idle for ${p.timeoutMs}ms (no updates from agent)`,
+                    p.hardTimeout
+                        ? `Request ${p.method} exceeded its ${p.timeoutMs}ms recovery deadline`
+                        : `Request ${p.method} idle for ${p.timeoutMs}ms (no updates from agent)`,
+                    { method: p.method, sessionId: p.sessionId },
                 ),
             );
         }, p.timeoutMs);
     }
 
     private failAllPending(err: Error): void {
+        for (const timer of this.cancelTimers.values()) clearTimeout(timer);
+        this.cancelTimers.clear();
         for (const p of this.pending.values()) {
             if (p.timer) clearTimeout(p.timer);
             p.reject(err);
@@ -744,8 +798,10 @@ export class AcpClient {
         params?: any,
         timeoutMs: number = DEFAULT_TIMEOUT_MS,
         sessionId?: string,
+        hardTimeout = false,
     ): Promise<any> {
         return new Promise((resolve, reject) => {
+            if (params?.sessionId) this.assertSessionUsable(params.sessionId);
             if (this.stopped || this.exitError) {
                 reject(new ACPNotRunningError(this.exitError?.message || "ACP process stopped"));
                 return;
@@ -762,6 +818,7 @@ export class AcpClient {
                 resolve,
                 reject,
                 timer: null,
+                hardTimeout,
             };
             this.pending.set(id, p);
             this.resetIdleTimer(p);
@@ -777,14 +834,14 @@ export class AcpClient {
         });
     }
 
-    async initialize(): Promise<void> {
+    async initialize(timeoutMs?: number): Promise<void> {
         const t0 = perf.now();
         startupMark("kiro_initialize_start", { cwd: this.cwd });
         await this.send("initialize", {
             protocolVersion: "2025-01-01",
             clientInfo: { name: "michi", version: "1.0.0" },
             clientCapabilities: {},
-        });
+        }, timeoutMs, undefined, timeoutMs !== undefined);
         startupMark("kiro_initialize_done", { cwd: this.cwd });
         perf.measure("acp:initialize", t0, { cwd: this.cwd });
     }
@@ -804,17 +861,27 @@ export class AcpClient {
         sessionId: string,
         cwd: string,
         mcpServers: Array<{ name: string; type?: "http"; url?: string; command?: string; args?: string[]; headers?: [] }> = [],
+        timeoutMs?: number,
     ): Promise<{ modes?: any; models?: any }> {
         const t0 = perf.now();
-        if (!this.sessionQueues.has(sessionId)) {
+        this.assertSessionUsable(sessionId);
+        const createdQueue = !this.sessionQueues.has(sessionId);
+        if (createdQueue) {
             this.sessionQueues.set(sessionId, new SessionQueue());
         }
-        const result = await this.send(
-            "session/load",
-            { sessionId, cwd, mcpServers },
-            DEFAULT_TIMEOUT_MS,
-            sessionId,
-        );
+        let result;
+        try {
+            result = await this.send(
+                "session/load",
+                { sessionId, cwd, mcpServers },
+                timeoutMs ?? DEFAULT_TIMEOUT_MS,
+                sessionId,
+                timeoutMs !== undefined,
+            );
+        } catch (error) {
+            if (createdQueue) this.sessionQueues.delete(sessionId);
+            throw error;
+        }
         const q = this.sessionQueues.get(sessionId);
         if (q) q.drain();
         perf.measure("acp:session_load", t0, { cwd, sessionId });
@@ -825,8 +892,8 @@ export class AcpClient {
         await this.send("session/set_mode", { sessionId, modeId });
     }
 
-    async setModel(sessionId: string, modelId: string): Promise<void> {
-        await this.send("session/set_model", { sessionId, modelId });
+    async setModel(sessionId: string, modelId: string, timeoutMs?: number): Promise<void> {
+        await this.send("session/set_model", { sessionId, modelId }, timeoutMs, sessionId, timeoutMs !== undefined);
     }
 
     /** Inject an out-of-band synthetic session/update into the session queue.
@@ -850,65 +917,90 @@ export class AcpClient {
         sessionId: string,
         text: string,
         extraBlocks: AcpPromptBlock[] = [],
+        signal?: AbortSignal,
     ): AsyncIterableIterator<AcpUpdate> {
         const tPromptIn = perf.now();
+        this.assertSessionUsable(sessionId);
         perf.mark("acp:prompt_entered", { sid: sessionId, textLen: text.length });
         const q = this.sessionQueues.get(sessionId);
         if (!q) throw new ACPError(`unknown session: ${sessionId}`);
 
-        // Wait for any previous turn on this session to finish its RPC reply
-        // (e.g. a cancelled turn whose session/prompt reply is still in-flight).
-        // kiro rejects overlapping session/prompt calls on the same session.
+        // Reserve the entire turn before awaiting its predecessor. Waiting only
+        // for the RPC lets a successor drain the queue while the old generator
+        // is still consuming it; reserving after await also races queued prompts.
         const prev = this.sessionInFlight.get(sessionId);
-        if (prev) await prev.catch(() => {});
-
-        // Discard any leftover items from a previously cancelled turn on this
-        // session (final chunks, tool_call_updates, and the __send_complete__
-        // sentinel from the prior prompt). Without this, the next turn's
-        // stream would begin with stale content.
-        q.drain();
-        if (BACKEND_STREAM_PROBE_ENABLED) this.rawProbeState.delete(sessionId);
-
-        // Yield any buffered context_usage that arrived between turns
-        // (before prompt() was called, so it would have been drained above).
-        const preTurnMeta = this.lastMetadata.get(sessionId);
-        if (preTurnMeta && !preTurnMeta.meteringUsage) {
-            this.lastMetadata.delete(sessionId);
-            q.push({ update: {
-                sessionUpdate: "context_usage",
-                contextUsagePercentage: preTurnMeta.contextUsagePercentage,
-            }});
-        }
-
-        let lastActivity = Date.now();
-        const heartbeat = setInterval(() => {
-            const idle = Date.now() - lastActivity;
-            if (idle >= HEARTBEAT_INTERVAL_MS) {
-                q.push({ update: { sessionUpdate: "__heartbeat__", idleMs: idle } });
-            }
-        }, HEARTBEAT_INTERVAL_MS);
-
-        let promptResult: any;
-        let promptError: Error | null = null;
-        const sendPromise = this.send(
-            "session/prompt",
-            { sessionId, prompt: [{ type: "text", text }, ...extraBlocks] },
-            PROMPT_TIMEOUT_MS,
-            sessionId,
-        )
-            .then((r) => {
-                promptResult = r;
-                q.push({ update: { sessionUpdate: "__send_complete__" } });
-            })
-            .catch((e) => {
-                promptError = e as Error;
-                q.push({ update: { sessionUpdate: "__send_complete__" } });
-            });
-        this.sessionInFlight.set(sessionId, sendPromise);
-
-        let firstRealUpdateSeen = false;
-        let firstChunkSeen = false;
+        let releaseTurn!: () => void;
+        const consumerFinished = new Promise<void>((resolve) => { releaseTurn = resolve; });
+        const turnFinished = prev ? prev.then(() => consumerFinished) : consumerFinished;
+        this.sessionInFlight.set(sessionId, turnFinished);
+        let predecessorFinished = !prev;
+        void prev?.then(() => { predecessorFinished = true; });
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        let sendPromise: Promise<void> | undefined;
         try {
+            if (prev) {
+                await new Promise<void>((resolve) => {
+                    const done = () => { signal?.removeEventListener('abort', done); resolve(); };
+                    if (signal?.aborted) done();
+                    else {
+                        signal?.addEventListener('abort', done, { once: true });
+                        void prev.then(done);
+                    }
+                });
+            }
+            if (signal?.aborted) {
+                yield { sessionUpdate: "turn_end", stopReason: "cancelled" };
+                return;
+            }
+            this.assertSessionUsable(sessionId);
+            if (this.sessionQueues.get(sessionId) !== q) throw new ACPError(`unknown session: ${sessionId}`);
+
+            // Discard any leftover items from a previously cancelled turn on this
+            // session (final chunks, tool_call_updates, and the __send_complete__
+            // sentinel from the prior prompt). Without this, the next turn's
+            // stream would begin with stale content.
+            q.drain();
+            if (BACKEND_STREAM_PROBE_ENABLED) this.rawProbeState.delete(sessionId);
+
+            // Yield any buffered context_usage that arrived between turns
+            // (before prompt() was called, so it would have been drained above).
+            const preTurnMeta = this.lastMetadata.get(sessionId);
+            if (preTurnMeta && !preTurnMeta.meteringUsage) {
+                this.lastMetadata.delete(sessionId);
+                q.push({ update: {
+                    sessionUpdate: "context_usage",
+                    contextUsagePercentage: preTurnMeta.contextUsagePercentage,
+                }});
+            }
+
+            let lastActivity = Date.now();
+            heartbeat = setInterval(() => {
+                const idle = Date.now() - lastActivity;
+                if (idle >= HEARTBEAT_INTERVAL_MS) {
+                    q.push({ update: { sessionUpdate: "__heartbeat__", idleMs: idle } });
+                }
+            }, HEARTBEAT_INTERVAL_MS);
+
+            let promptResult: any;
+            let promptError: Error | null = null;
+            sendPromise = this.send(
+                "session/prompt",
+                { sessionId, prompt: [{ type: "text", text }, ...extraBlocks] },
+                PROMPT_TIMEOUT_MS,
+                sessionId,
+            )
+                .then((r) => {
+                    this.clearCancelTimer(sessionId);
+                    promptResult = r;
+                    q.push({ update: { sessionUpdate: "__send_complete__" } });
+                })
+                .catch((e) => {
+                    this.clearCancelTimer(sessionId);
+                    promptError = e as Error;
+                    q.push({ update: { sessionUpdate: "__send_complete__" } });
+                });
+            let firstRealUpdateSeen = false;
+            let firstChunkSeen = false;
             while (true) {
                 const item = await q.get();
                 if ("done" in item) {
@@ -959,10 +1051,14 @@ export class AcpClient {
             }
         } finally {
             clearInterval(heartbeat);
-            await sendPromise.catch(() => {});
-            if (this.sessionInFlight.get(sessionId) === sendPromise) {
+            await sendPromise;
+            releaseTurn();
+            if (predecessorFinished && this.sessionInFlight.get(sessionId) === turnFinished) {
                 this.sessionInFlight.delete(sessionId);
             }
+            void turnFinished.then(() => {
+                if (this.sessionInFlight.get(sessionId) === turnFinished) this.sessionInFlight.delete(sessionId);
+            });
         }
     }
 
@@ -1034,11 +1130,31 @@ export class AcpClient {
     async cancel(sessionId: string): Promise<void> {
         if (!this.sessionQueues.has(sessionId)) return;
         this.cancelPermissionsForSession(sessionId);
-        try {
-            await this.notify("session/cancel", { sessionId });
-        } catch {
-            // best-effort
+        const active = [...this.pending.entries()].find(([, p]) => p.method === 'session/prompt' && p.sessionId === sessionId);
+        if (active && !this.cancelTimers.has(sessionId)) {
+            const [id, pending] = active;
+            const timer = setTimeout(() => {
+                this.cancelTimers.delete(sessionId);
+                if (this.pending.get(id) !== pending) return;
+                this.quarantinedSessions.add(sessionId);
+                this.cancelPermissionsForSession(sessionId);
+                this.sessionQueues.get(sessionId)?.drain();
+                this.sessionQueues.delete(sessionId);
+                this.pending.delete(id);
+                clearTimeout(pending.timer ?? undefined);
+                log.warn('acp', 'cancel deadline exceeded; native session quarantined', {
+                    sessionId, pid: this.proc?.pid, timeoutMs: this.cancelTimeoutMs,
+                });
+                pending.reject(new ACPSessionRecoveryRequiredError(
+                    'Kiro did not finish cancellation. The original session has been retained for recovery.',
+                    { method: 'session/prompt', sessionId },
+                ));
+            }, this.cancelTimeoutMs);
+            timer.unref();
+            this.cancelTimers.set(sessionId, timer);
         }
+        // A blocked stdin callback must not block the HTTP cancel response.
+        void this.notify("session/cancel", { sessionId }).catch(() => {});
     }
 
     destroySession(sessionId: string): void {
@@ -1048,26 +1164,25 @@ export class AcpClient {
     async shutdown(): Promise<void> {
         this.stopped = true;
         const proc = this.proc;
-        if (!proc) return;
-        const pid = proc.pid;
-
-        try {
-            if (pid) killProcessTree(pid, "SIGTERM");
-        } catch {}
-
-        const exited = await new Promise<boolean>((resolve) => {
-            const t = setTimeout(() => resolve(false), 5000);
-            proc.once("exit", () => {
-                clearTimeout(t);
-                resolve(true);
-            });
-        });
-
-        if (!exited && pid) {
-            try {
-                killProcessTree(pid, "SIGKILL");
-            } catch {}
+        if (!proc) {
+            this.failAllPending(new ACPNotRunningError('client shut down'));
+            return;
         }
+        const pid = proc.pid;
+        const stop = (signal: 'SIGTERM' | 'SIGKILL', ms: number) => new Promise<boolean>((resolve) => {
+            if (proc.exitCode != null || proc.signalCode != null) { resolve(true); return; }
+            const done = (exited: boolean) => {
+                clearTimeout(timer);
+                proc.removeListener('exit', onExit);
+                resolve(exited);
+            };
+            const onExit = () => done(true);
+            const timer = setTimeout(() => done(false), ms);
+            proc.once('exit', onExit);
+            try { if (pid) killProcessTree(pid, signal); } catch { /* wait for confirmed exit */ }
+        });
+        const exited = await stop('SIGTERM', 5_000) || await stop('SIGKILL', 1_000);
+        if (!exited) throw new ACPError('Kiro process exit could not be confirmed; native recovery was stopped.');
 
         this.proc = null;
         this.sessionQueues.clear();
