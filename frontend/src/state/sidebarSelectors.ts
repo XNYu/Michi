@@ -1,5 +1,6 @@
 import type { Prefs } from './prefs';
 import type { Tree, ChatNodeState, ProjectEdge, Project } from './chatTypes';
+import type { TreeNode } from './tree';
 
 
 type ExpandedMaps = Prefs['sidebarExpanded'];
@@ -55,6 +56,33 @@ export function sortTrees(trees: readonly Tree[], _activeTreeId: string | null):
   const unpinned = live.filter((t) => !t.pinnedAt).slice().sort(byRecentDesc);
   const archived = trees.filter((t) => !!t.archivedAt).slice().sort(byRecentDesc);
   return [...pinned, ...unpinned, ...archived];
+}
+
+/** Lookup for a node's `pinnedAt`; undefined/0 = not pinned. */
+export type NodePinnedAt = (nodeId: string) => number | undefined;
+
+/**
+ * Reorder a structure tree so that, within every sibling group, pinned nodes
+ * come first (most recently pinned first) and unpinned nodes keep their
+ * original relative order. The node-level analogue of `sortTrees`. Returns
+ * the same `TreeNode` instance when nothing in the subtree is pinned so
+ * memoized consumers don't see a spurious identity change.
+ */
+export function orderPinnedFirst(root: TreeNode, pinnedAt: NodePinnedAt): TreeNode {
+  const visit = (node: TreeNode): TreeNode => {
+    if (node.children.length === 0) return node;
+    const children = node.children.map(visit);
+    const changedChild = children.some((c, i) => c !== node.children[i]);
+    const anyPinned = children.some((c) => !!pinnedAt(c.nodeId));
+    if (!changedChild && !anyPinned) return node;
+    if (!anyPinned) return { ...node, children };
+    const pinned = children
+      .filter((c) => !!pinnedAt(c.nodeId))
+      .sort((a, b) => (pinnedAt(b.nodeId) ?? 0) - (pinnedAt(a.nodeId) ?? 0));
+    const unpinned = children.filter((c) => !pinnedAt(c.nodeId));
+    return { ...node, children: [...pinned, ...unpinned] };
+  };
+  return visit(root);
 }
 
 export type OpenState = 'none' | 'idle' | 'streaming';

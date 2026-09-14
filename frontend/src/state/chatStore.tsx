@@ -1326,6 +1326,20 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     [dispatch],
   );
 
+  const pinNode = useCallback(
+    (nodeId: string) => {
+      dispatch({ type: 'pin-node', nodeId, now: Date.now() });
+    },
+    [dispatch],
+  );
+
+  const unpinNode = useCallback(
+    (nodeId: string) => {
+      dispatch({ type: 'unpin-node', nodeId });
+    },
+    [dispatch],
+  );
+
   const newNodeId = useCallback(
     () => allocateNodeIdsLocal(1)[0],
     [],
@@ -3057,6 +3071,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      pinNode,
+      unpinNode,
       navBack,
       navForward,
       canNavBack,
@@ -3185,6 +3201,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      pinNode,
+      unpinNode,
       navBack,
       navForward,
       canNavBack,
@@ -3268,6 +3286,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      pinNode,
+      unpinNode,
       navBack,
       navForward,
       dispatch,
@@ -3347,6 +3367,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setUnreadFilterOn,
       markAllRead,
       renameNode,
+      pinNode,
+      unpinNode,
       navBack,
       navForward,
       dispatch,

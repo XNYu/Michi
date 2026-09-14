@@ -79,6 +79,43 @@ describe('workspace domain commands', () => {
     assert.equal(listEdges('ws-a').length, 0);
   });
 
+  test('node pinned_at round-trips through node.upsert and node.patch (migration 0021)', () => {
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'pin-seed',
+      commands: [
+        { type: 'workspace.upsert', payload: { id: 'ws-1', name: 'Pins', created_at: 1, updated_at: 1 } },
+        { type: 'node.upsert', payload: { id: 'n1', workspace_id: 'ws-1', tree_id: null, parent_node_id: null, kind: 'chat', status: 'idle', minimized: 0, spawned_by_agent: 0, pinned_at: 111, created_at: 1 } },
+      ],
+    });
+    assert.equal(getNode('n1')?.pinned_at, 111);
+
+    // Patch path (what the frontend sends on every dirty node) can pin…
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'pin-patch',
+      commands: [{ type: 'node.patch', payload: { id: 'n1', pinned_at: 222 } }],
+    });
+    assert.equal(getNode('n1')?.pinned_at, 222);
+
+    // …and unpin (explicit null clears it).
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'unpin-patch',
+      commands: [{ type: 'node.patch', payload: { id: 'n1', pinned_at: null } }],
+    });
+    assert.equal(getNode('n1')?.pinned_at, null);
+
+    // A patch that omits pinned_at leaves the stored value alone.
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'repin',
+      commands: [{ type: 'node.patch', payload: { id: 'n1', pinned_at: 333 } }],
+    });
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'width-only',
+      commands: [{ type: 'node.patch', payload: { id: 'n1', pane_width: 420 } }],
+    });
+    assert.equal(getNode('n1')?.pinned_at, 333);
+    assert.equal(getNode('n1')?.pane_width, 420);
+  });
+
   test('workspace commands preserve the existing runtime backend', () => {
     saveWorkspace({
       id: 'ws-1', name: 'Before', created_at: 1, updated_at: 1, backend: 'claude',

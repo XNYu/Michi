@@ -475,6 +475,14 @@ export interface ChatNodeState {
    * by the selector). Persisted.
    */
   viewedAt?: number;
+  /**
+   * Node-level pin. Unix ms when the user pinned this branch node; absent =
+   * not pinned. A pinned node floats to the top of its sibling group in the
+   * sidebar (most recently pinned first), mirroring `Tree.pinnedAt` one level
+   * down. Root nodes use the thread-level pin instead. Persisted as
+   * `nodes.pinned_at`.
+   */
+  pinnedAt?: number;
 }
 
 export interface PendingComment {
@@ -742,6 +750,8 @@ export type ChatAction =
   | { type: 'set-title'; nodeId: string; title: string }
   | { type: 'set-branch-overview'; nodeId: string; overview: string; assistantId?: string }
   | { type: 'rename-node'; nodeId: string; title: string }
+  | { type: 'pin-node'; nodeId: string; now: number }
+  | { type: 'unpin-node'; nodeId: string }
   | { type: 'set-follow-ups'; nodeId: string; followUps: string[] }
   | { type: 'visible-response-complete'; nodeId: string; assistantId: string }
   | { type: 'follow-ups-status'; nodeId: string; status: 'in_progress' | 'completed' | 'failed' }
@@ -1131,6 +1141,10 @@ export interface ChatContextValue {
    *  filter list). Digest nodes keep their own read model and are untouched. */
   markAllRead: () => void;
   renameNode: (nodeId: string, title: string) => void;
+  /** Toggle the node-level sidebar pin (`pinnedAt`). Ordering only — the
+   *  node stays where it is in the conversation graph. */
+  pinNode: (nodeId: string) => void;
+  unpinNode: (nodeId: string) => void;
 }
 
 /** Projects + UI-state slice of the chat store — every field that is NOT
@@ -1257,6 +1271,8 @@ export type ChatActionsValue = Pick<
   | 'setUnreadFilterOn'
   | 'markAllRead'
   | 'renameNode'
+  | 'pinNode'
+  | 'unpinNode'
 > & {
   /**
    * Synchronous node-state dispatcher — bypasses async session plumbing

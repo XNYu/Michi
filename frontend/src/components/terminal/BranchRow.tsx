@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useChatNode, useChatProjects } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
-import { Chevron, CARD_FILL, CARD_FILL_SELECT } from './ThreadRow';
+import { Chevron, CARD_FILL, CARD_FILL_SELECT, PinMark } from './ThreadRow';
 import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
 import type { TreeNode } from '../../state/tree';
 import { isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
@@ -198,6 +198,7 @@ export default function BranchRow({
             }}
           />
         )}
+        {!!n?.pinnedAt && <PinMark />}
         {renaming ? (
           <input
             ref={renameRef}

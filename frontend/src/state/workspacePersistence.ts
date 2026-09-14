@@ -378,6 +378,7 @@ export function serializeNodeRow(
       ? JSON.stringify({ __michiPendingSpawnPrompt: n.pendingSpawnPrompt })
       : n.composerDraft ? JSON.stringify(n.composerDraft) : null,
     trim_snapshot: n.trimSnapshot ? JSON.stringify(n.trimSnapshot) : null,
+    pinned_at: n.pinnedAt ?? null,
     created_at: n.messages[0]?.createdAt ?? project.createdAt ?? Date.now(),
   };
 }
@@ -497,6 +498,7 @@ function nodeCommandPatch(
     deleted_at: row.deleted_at,
     deletion_group_id: row.deletion_group_id,
     trim_snapshot: row.trim_snapshot,
+    pinned_at: row.pinned_at,
   };
 }
 

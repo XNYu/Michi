@@ -14,6 +14,8 @@ import {
   nodeOpenState,
   subtreeOpenState,
   selectProjectNodeStatuses,
+  orderPinnedFirst,
+  type NodePinnedAt,
   type OpenState,
 } from '../../state/sidebarSelectors';
 import { useAgentDomain } from '../../state/agentDomain';
@@ -145,6 +147,8 @@ export default function ActivityView({
     createMergedChat,
     createDigest,
     renameNode,
+    pinNode,
+    unpinNode,
     openAgentRunPane,
   } = useChatActions();
   const agentDomain = useOptionalAgentDomain();
@@ -179,6 +183,10 @@ export default function ActivityView({
 
   const isAlive = useCallback(
     (id: string) => !nodes[id]?.deletedAt,
+    [nodes],
+  );
+  const nodePinnedAt = useCallback<NodePinnedAt>(
+    (id) => nodes[id]?.pinnedAt,
     [nodes],
   );
 
@@ -421,6 +429,8 @@ export default function ActivityView({
             setMenu(null);
             setRenamingNodeId(id);
           },
+          pinNode,
+          unpinNode,
         },
       })
     : [];
@@ -504,6 +514,7 @@ export default function ActivityView({
                 key={item.tree.id}
                 item={item}
                 isAlive={isAlive}
+                nodePinnedAt={nodePinnedAt}
                 isThreadExpandedFn={isThreadExpandedFn}
                 isBranchExpanded={isBranchExpandedCb}
                 isBranchSelected={isBranchSelected}
@@ -564,6 +575,7 @@ export default function ActivityView({
 function ActivityTreeEntry({
   item,
   isAlive,
+  nodePinnedAt,
   isThreadExpandedFn,
   isBranchExpanded,
   isBranchSelected,
@@ -593,6 +605,7 @@ function ActivityTreeEntry({
 }: {
   item: ActivityTree;
   isAlive: (id: string) => boolean;
+  nodePinnedAt: NodePinnedAt;
   isThreadExpandedFn: (treeId: string, ownerActiveTreeId: string | null) => boolean;
   isBranchExpanded: (nodeId: string) => boolean;
   isBranchSelected: (nodeId: string) => boolean;
@@ -623,7 +636,7 @@ function ActivityTreeEntry({
   const { prefs } = usePrefs();
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const { tree, project } = item;
-  const root = buildTree(tree.rootNodeId, project.edges, isAlive);
+  const root = orderPinnedFirst(buildTree(tree.rootNodeId, project.edges, isAlive), nodePinnedAt);
   const hasBranches = root.children.length > 0;
   const isActive = tree.id === project.activeTreeId && project.id === activeProjectId;
   // In Activity view, threads default to expanded to show their branches

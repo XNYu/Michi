@@ -469,6 +469,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     deletedAt: asOptionalNumber(row.deleted_at),
     deletionGroupId: asString(row.deletion_group_id),
     trimSnapshot: parseTrimSnapshot(row.trim_snapshot),
+    pinnedAt: asOptionalNumber(row.pinned_at),
     currentModeId: asString(row.current_mode_id) ?? null,
     paneWidth: asOptionalNumber(row.pane_width),
     composerDraft: parseComposerDraft(row.composer_draft),

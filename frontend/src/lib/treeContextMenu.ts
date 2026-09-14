@@ -29,6 +29,11 @@ export interface TreeMenuActions {
   focusOrOpen: (id: string) => void;
   /** Begin inline rename for a node. */
   beginInlineRename?: (id: string) => void;
+  /** Toggle the node-level sidebar pin. Both must be supplied for the
+   *  Pin/Unpin item to appear. Not offered on tree roots, which pin at
+   *  the thread level instead (see threadRowContextMenu). */
+  pinNode?: (id: string) => void;
+  unpinNode?: (id: string) => void;
 }
 
 /**
@@ -172,6 +177,8 @@ export function buildTreeContextMenu({
   // Single target
   const isRoot = targetId === rootId;
   const isChat = nodes[targetId]?.kind === 'chat';
+  const canPin = !isRoot && !!actions.pinNode && !!actions.unpinNode;
+  const pinned = !!nodes[targetId]?.pinnedAt;
 
   return [
     {
@@ -188,6 +195,13 @@ export function buildTreeContextMenu({
           keys: 'R',
           run: () => actions.beginInlineRename?.(targetId),
         },
+        ...(canPin
+          ? [
+              pinned
+                ? { id: 'unpin', label: 'Unpin', keys: 'P', run: () => actions.unpinNode!(targetId) }
+                : { id: 'pin', label: 'Pin', keys: 'P', run: () => actions.pinNode!(targetId) },
+            ]
+          : []),
         {
           id: 'branch',
           label: 'Branch new chat',

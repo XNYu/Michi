@@ -1163,6 +1163,17 @@ export function reduceNodes(
       if (!next || n.title === next) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, title: next, titleNeedsPersistence: true } };
     }
+    case 'pin-node': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, pinnedAt: action.now } };
+    }
+    case 'unpin-node': {
+      const n = nodes[action.nodeId];
+      if (!n || n.pinnedAt === undefined) return nodes;
+      const { pinnedAt: _pinnedAt, ...rest } = n;
+      return { ...nodes, [action.nodeId]: rest as ChatNodeState };
+    }
     case 'set-follow-ups': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;

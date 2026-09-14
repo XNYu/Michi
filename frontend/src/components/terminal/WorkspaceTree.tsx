@@ -10,6 +10,8 @@ import {
   sortLiveProjects,
   mergeReferences,
   workspaceHasUnread,
+  orderPinnedFirst,
+  type NodePinnedAt,
 } from '../../state/sidebarSelectors';
 import WorkspaceRow from './WorkspaceRow';
 import ContextMenu from '../ContextMenu';
@@ -34,7 +36,11 @@ interface MergeGroup {
  *  the user sees on screen, so ⇧+click range-select feels predictable.
  *  Branches that aren't currently expanded are still included — selecting a
  *  collapsed-and-hidden range is unusual but cheap to support. */
-function flattenProjectBranchIds(project: Project, isAlive: (id: string) => boolean): string[] {
+function flattenProjectBranchIds(
+  project: Project,
+  isAlive: (id: string) => boolean,
+  pinnedAt: NodePinnedAt,
+): string[] {
   const ids: string[] = [];
   const visit = (node: TreeNode, isRoot: boolean) => {
     if (!isRoot) ids.push(node.nodeId);
@@ -43,7 +49,9 @@ function flattenProjectBranchIds(project: Project, isAlive: (id: string) => bool
   for (const tree of project.trees) {
     if (tree.archivedAt) continue;
     if (!isAlive(tree.rootNodeId)) continue;
-    const root = buildTree(tree.rootNodeId, project.edges, isAlive);
+    // Same pinned-first ordering WorkspaceRow renders with, so the flat
+    // list matches what the user sees.
+    const root = orderPinnedFirst(buildTree(tree.rootNodeId, project.edges, isAlive), pinnedAt);
     visit(root, true);
   }
   return ids;
@@ -102,6 +110,8 @@ export default function WorkspaceTree({
     createDigest,
     markAllRead,
     renameNode,
+    pinNode,
+    unpinNode,
   } = useChatActions();
   const { prefs, setPref } = usePrefs();
   const nodesSnapshot = useChatNodesSnapshot();
@@ -182,6 +192,10 @@ export default function WorkspaceTree({
 
   const isAlive = useCallback(
     (id: string) => !nodesSnapshot[id]?.deletedAt,
+    [nodesSnapshot],
+  );
+  const nodePinnedAt = useCallback<NodePinnedAt>(
+    (id) => nodesSnapshot[id]?.pinnedAt,
     [nodesSnapshot],
   );
 
@@ -290,8 +304,8 @@ export default function WorkspaceTree({
   );
 
   const branchIdsForProject = useCallback(
-    (project: Project) => flattenProjectBranchIds(project, isAlive),
-    [isAlive],
+    (project: Project) => flattenProjectBranchIds(project, isAlive, nodePinnedAt),
+    [isAlive, nodePinnedAt],
   );
 
   const selectBranch = useCallback(
@@ -590,6 +604,8 @@ export default function WorkspaceTree({
             setMenu(null);
             setRenamingNodeId(id);
           },
+          pinNode,
+          unpinNode,
         },
       })
     : [];
@@ -713,6 +729,7 @@ export default function WorkspaceTree({
           isBranchSelected={isBranchSelected}
           isBranchMenuTarget={(nodeId) => menu?.targetId === nodeId}
           isNodeAlive={isAlive}
+          nodePinnedAt={nodePinnedAt}
           sortedTrees={sortedTreesArr}
           edges={project.edges}
           actions={{

@@ -154,6 +154,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     createDigest,
     archiveTree,
     activateTree,
+    pinNode,
+    unpinNode,
   } = useChatStore();
   const nodesSnapshot = useChatNodesSnapshot();
   const streamingIds = useStructuralSelector(
@@ -651,6 +653,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                     openPane(id);
                     onNav?.('dashboard');
                   },
+                  pinNode,
+                  unpinNode,
                 },
               })}
               onClose={() => setMenu(null)}
@@ -1090,6 +1094,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                 // thread and the next action belongs in dashboard.
                 onNav?.('dashboard');
               },
+              pinNode,
+              unpinNode,
             },
           })}
           onClose={() => setMenu(null)}

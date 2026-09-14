@@ -21,6 +21,8 @@ import {
   workspaceHasUnread,
   treeHasUnread,
   buildBranchChildrenOf,
+  orderPinnedFirst,
+  type NodePinnedAt,
   type OpenState,
 } from '../../state/sidebarSelectors';
 import { getKnownBackendConnections } from '../../config/backendConnections';
@@ -106,6 +108,9 @@ interface Props {
    *  upstream in WorkspaceTree. */
   isBranchMenuTarget?: (nodeId: string) => boolean;
   isNodeAlive: (nodeId: string) => boolean;
+  /** Per-node `pinnedAt` lookup. Pinned branches float to the top of their
+   *  sibling group (see `orderPinnedFirst`). Omit to keep raw edge order. */
+  nodePinnedAt?: NodePinnedAt;
   sortedTrees: Tree[];
   edges: readonly ProjectEdge[];
   actions: Actions;
@@ -132,6 +137,7 @@ export default function WorkspaceRow({
   isBranchSelected,
   isBranchMenuTarget,
   isNodeAlive,
+  nodePinnedAt,
   sortedTrees,
   edges,
   actions,
@@ -642,6 +648,7 @@ export default function WorkspaceRow({
               isBranchSelected,
               isBranchMenuTarget,
               isNodeAlive,
+              nodePinnedAt,
               edges,
               actions,
               getNodeOpenState,
@@ -703,6 +710,7 @@ function renderThread(args: {
   isBranchSelected: (nodeId: string) => boolean;
   isBranchMenuTarget?: (nodeId: string) => boolean;
   isNodeAlive: (nodeId: string) => boolean;
+  nodePinnedAt?: NodePinnedAt;
   edges: readonly ProjectEdge[];
   actions: Actions;
   getNodeOpenState: (nodeId: string) => OpenState;
@@ -725,6 +733,7 @@ function renderThread(args: {
     isBranchSelected,
     isBranchMenuTarget,
     isNodeAlive,
+    nodePinnedAt,
     edges,
     actions,
     getNodeOpenState,
@@ -735,7 +744,8 @@ function renderThread(args: {
     onRenameEnd,
   } = args;
   const isActive = tree.id === activeTreeId && project.id === activeProjectId;
-  const root = buildTree(tree.rootNodeId, edges, isNodeAlive);
+  const rawRoot = buildTree(tree.rootNodeId, edges, isNodeAlive);
+  const root = nodePinnedAt ? orderPinnedFirst(rawRoot, nodePinnedAt) : rawRoot;
   const hasBranches = root.children.length > 0;
   const threadOpenStateValue = getSubtreeOpenState(tree.rootNodeId);
   return (

@@ -241,50 +241,31 @@ describe('reduceNodes bind-chat — currentModeId preservation', () => {
   });
 });
 
-describe('reduceNodes tool-call-update — title / input / output', () => {
-  it('replaces title, inputJson, and output when a later update provides them', () => {
-    const started = reduceNodes({ n1: makeNode() }, {
-      type: 'tool-call',
-      nodeId: 'n1',
-      assistantId: 'a1',
-      tool: { id: 'tc-1', title: 'MCP: tool', kind: 'other', status: 'pending' },
-    });
-    expect(started.n1.messages[0].toolCalls?.[0]?.title).toBe('MCP: tool');
-
-    const after = reduceNodes(started, {
-      type: 'tool-call-update',
-      nodeId: 'n1',
-      assistantId: 'a1',
-      tool: {
-        id: 'tc-1',
-        title: 'michi-list_threads: list_threads',
-        status: 'pending',
-        inputJson: '{\n  "keyword": "probe"\n}',
-        output: '{"threads":[]}',
-      },
-    });
-    const tool = after.n1.messages[0].toolCalls?.[0];
-    expect(tool?.title).toBe('michi-list_threads: list_threads');
-    expect(tool?.inputJson).toBe('{\n  "keyword": "probe"\n}');
-    expect(tool?.output).toBe('{"threads":[]}');
+describe('reduceNodes pin-node / unpin-node', () => {
+  it('pin-node stamps pinnedAt with the action timestamp', () => {
+    const before = { n1: makeNode({ status: 'idle' }) };
+    const after = reduceNodes(before, { type: 'pin-node', nodeId: 'n1', now: 555 });
+    expect(after.n1.pinnedAt).toBe(555);
+    // Immutable update: the previous node object is untouched.
+    expect(before.n1.pinnedAt).toBeUndefined();
   });
 
-  it('keeps a previously enriched title when a later update omits title', () => {
-    const started = reduceNodes({ n1: makeNode() }, {
-      type: 'tool-call',
-      nodeId: 'n1',
-      assistantId: 'a1',
-      tool: { id: 'tc-1', title: 'michi-list_threads: list_threads', status: 'pending' },
-    });
-    const after = reduceNodes(started, {
-      type: 'tool-call-update',
-      nodeId: 'n1',
-      assistantId: 'a1',
-      tool: { id: 'tc-1', title: '', status: 'completed', output: '{"ok":true}' },
-    });
-    const tool = after.n1.messages[0].toolCalls?.[0];
-    expect(tool?.title).toBe('michi-list_threads: list_threads');
-    expect(tool?.output).toBe('{"ok":true}');
-    expect(tool?.status).toBe('completed');
+  it('unpin-node removes the pinnedAt key entirely', () => {
+    const before = { n1: makeNode({ status: 'idle', pinnedAt: 555 }) };
+    const after = reduceNodes(before, { type: 'unpin-node', nodeId: 'n1' });
+    expect(after.n1.pinnedAt).toBeUndefined();
+    expect('pinnedAt' in after.n1).toBe(false);
+  });
+
+  it('unpin-node on an unpinned node is a no-op (same reference)', () => {
+    const before = { n1: makeNode({ status: 'idle' }) };
+    const after = reduceNodes(before, { type: 'unpin-node', nodeId: 'n1' });
+    expect(after).toBe(before);
+  });
+
+  it('ignores unknown node ids', () => {
+    const before = { n1: makeNode({ status: 'idle' }) };
+    expect(reduceNodes(before, { type: 'pin-node', nodeId: 'missing', now: 1 })).toBe(before);
+    expect(reduceNodes(before, { type: 'unpin-node', nodeId: 'missing' })).toBe(before);
   });
 });

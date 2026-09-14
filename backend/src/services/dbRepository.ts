@@ -110,6 +110,9 @@ export interface NodeRow {
   trim_snapshot?: string | null;
   last_applied_turn_id?: string | null;
   last_applied_seq?: number | null;
+  /** Node-level UI pin (sidebar ordering within the sibling group). NULL =
+   *  not pinned; otherwise Unix ms when pinned. See migration 0021. */
+  pinned_at?: number | null;
   /** Tombstone — Unix ms when this node was permanently purged. Non-null rows
    *  are filtered out of reads and refused on write so a stale POST /sync from
    *  another tab cannot resurrect them. GC'd by `runTombstoneGc()` after
@@ -546,13 +549,13 @@ export function saveNode(node: NodeRow, userId?: string): void {
       spawned_by_agent, current_mode_id, pane_width, digest, follow_ups, follow_ups_source_message_id,
       acp_session_id, runtime_id,
       provider_id, model_id, reasoning, resume_fingerprint, composer_draft, external_session_id,
-      trim_snapshot, last_applied_turn_id, last_applied_seq, created_at, rev)
+      trim_snapshot, last_applied_turn_id, last_applied_seq, pinned_at, created_at, rev)
     VALUES (@id, @workspace_id, @tree_id, @parent_node_id, @kind, @title, @branch_overview, @status,
       @position_x, @position_y, @minimized, @deleted_at, @deletion_group_id,
       @spawned_by_agent, @current_mode_id, @pane_width, @digest, @follow_ups, @follow_ups_source_message_id,
       @acp_session_id, @runtime_id,
       @provider_id, @model_id, @reasoning, @resume_fingerprint, @composer_draft, @external_session_id,
-      @trim_snapshot, @last_applied_turn_id, @last_applied_seq, @created_at, @rev)
+      @trim_snapshot, @last_applied_turn_id, @last_applied_seq, @pinned_at, @created_at, @rev)
     ON CONFLICT(id) DO UPDATE SET
       tree_id=excluded.tree_id, parent_node_id=excluded.parent_node_id,
       kind=excluded.kind, title=excluded.title, branch_overview=excluded.branch_overview, status=excluded.status,
@@ -593,6 +596,7 @@ export function saveNode(node: NodeRow, userId?: string): void {
       trim_snapshot=excluded.trim_snapshot,
       last_applied_turn_id=excluded.last_applied_turn_id,
       last_applied_seq=excluded.last_applied_seq,
+      pinned_at=excluded.pinned_at,
       rev=COALESCE(excluded.rev, nodes.rev)
   `).run({
     tree_id: null,
@@ -619,6 +623,7 @@ export function saveNode(node: NodeRow, userId?: string): void {
     trim_snapshot: null,
     last_applied_turn_id: null,
     last_applied_seq: null,
+    pinned_at: null,
     rev: null,
     ...node,
   });

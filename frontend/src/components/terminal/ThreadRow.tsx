@@ -26,6 +26,26 @@ const EMPTY_EDGES: readonly ProjectEdge[] = [];
 export const CARD_FILL = 'var(--sb-card-fill)';
 export const CARD_FILL_SELECT = 'var(--sb-card-fill-select)';
 
+/** Small star glyph marking a pinned row. Shared by ThreadRow (tree pin) and
+ *  BranchRow (node pin) so both levels read identically. */
+export function PinMark() {
+  return (
+    <svg
+      aria-label="pinned"
+      width="9"
+      height="9"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+      style={{ color: 'var(--term-pin, #c48300)', flexShrink: 0 }}
+    >
+      <path d="M8 1.5l1.9 4 4.4.5-3.3 3 .9 4.3L8 11.3 4.1 13.3 5 9 1.7 6l4.4-.5L8 1.5z" />
+    </svg>
+  );
+}
+
 function toMenuSections(sections: ContextMenuSection[]): MenuSection[] {
   return sections.map((s, si) => ({
     label: s.label,
@@ -280,21 +300,7 @@ export default function ThreadRow({
             }}
           />
         )}
-        {tree.pinnedAt && (
-          <svg
-            aria-label="pinned"
-            width="9"
-            height="9"
-            viewBox="0 0 16 16"
-            fill="currentColor"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinejoin="round"
-            style={{ color: 'var(--term-pin, #c48300)', flexShrink: 0 }}
-          >
-            <path d="M8 1.5l1.9 4 4.4.5-3.3 3 .9 4.3L8 11.3 4.1 13.3 5 9 1.7 6l4.4-.5L8 1.5z" />
-          </svg>
-        )}
+        {tree.pinnedAt && <PinMark />}
         {renaming ? (
           <input
             ref={renameRef}

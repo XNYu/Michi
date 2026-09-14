@@ -200,6 +200,7 @@ export function applyWorkspaceCommands(
               digest: optionalString(payload.digest),
               composer_draft: optionalString(payload.composer_draft),
               trim_snapshot: optionalString(payload.trim_snapshot),
+              pinned_at: optionalNumber(payload.pinned_at),
               created_at: optionalNumber(payload.created_at) ?? Date.now(),
             }, input.ownerUserId ?? undefined);
           }
@@ -232,7 +233,7 @@ export function applyWorkspaceCommands(
             position_x: 'position_x', position_y: 'position_y', minimized: 'minimized',
             digest: 'digest', composer_draft: 'composer_draft', deleted_at: 'deleted_at',
             deletion_group_id: 'deletion_group_id', trim_snapshot: 'trim_snapshot',
-            spawned_by_agent: 'spawned_by_agent',
+            spawned_by_agent: 'spawned_by_agent', pinned_at: 'pinned_at',
           };
           const sets: string[] = [];
           const params: any[] = [];
