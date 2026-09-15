@@ -472,6 +472,7 @@ export default function CommandPalette({
       kbdNavAt.current = Date.now();
       setActive((i) => Math.max(0, i - 1));
     } else if (e.key === 'Enter') {
+      if (e.nativeEvent.isComposing) return;
       e.preventDefault();
       runActiveRow();
     }

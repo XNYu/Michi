@@ -182,3 +182,18 @@ describe('CommandPalette quick number shortcuts', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 });
+
+describe('CommandPalette IME handling', () => {
+  it('does not run the active command when Enter confirms IME composition', () => {
+    const onClose = vi.fn();
+    render(<CommandPalette activePage="dashboard" setPage={vi.fn()} onClose={onClose} />);
+
+    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      isComposing: true,
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
