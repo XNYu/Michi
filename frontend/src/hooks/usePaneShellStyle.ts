@@ -10,7 +10,7 @@ import { usePrefs } from '../state/prefs';
  *  - flex column layout
  *  - theme-driven border/radius/shadow
  *  - paneRules-gated right divider
- *  - focus dim (opacity + brightness filter)
+ *  - focus dim (brightness filter only, matching the Topbar caption cell)
  *  - transitions
  *
  * Consumers spread the result and optionally override specific properties:
@@ -42,9 +42,12 @@ export function usePaneShellStyle(nodeId: string): React.CSSProperties {
       overflow: 'hidden',
       fontFamily: 'var(--ui-font)',
       animation: 'none',
-      opacity: isFocused ? 1 : 1 - prefs.focusDim / 100 * 0.5,
+      // Dim unfocused panes with brightness() only — NOT opacity. The Topbar
+      // caption cell above each pane uses the same brightness-only formula
+      // (see Topbar.tsx); stacking opacity on top here made the body darker
+      // than its title strip, which read as a visible seam between the two.
       filter: isFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
-      transition: 'opacity var(--t-soft) var(--t-ease), filter var(--t-soft) var(--t-ease)',
+      transition: 'filter var(--t-soft) var(--t-ease)',
       position: 'relative',
     }),
     [isFocused, prefs.paneRules, prefs.focusDim],

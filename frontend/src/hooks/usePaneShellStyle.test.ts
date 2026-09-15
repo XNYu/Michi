@@ -43,32 +43,34 @@ describe('usePaneShellStyle', () => {
   it('is fully opaque when no pane is focused (focusedPane=null)', () => {
     mockFocusedPane = null;
     const { result } = renderHook(() => usePaneShellStyle('node-1'));
-    expect(result.current.opacity).toBe(1);
+    expect(result.current.opacity).toBeUndefined();
     expect(result.current.filter).toBe('none');
   });
 
   it('is fully opaque when this pane is the focused one', () => {
     mockFocusedPane = 'node-1';
     const { result } = renderHook(() => usePaneShellStyle('node-1'));
-    expect(result.current.opacity).toBe(1);
+    expect(result.current.opacity).toBeUndefined();
     expect(result.current.filter).toBe('none');
   });
 
-  it('dims when another pane is focused', () => {
+  it('dims with brightness only when another pane is focused', () => {
     mockFocusedPane = 'other-node';
     mockPrefs.focusDim = 40;
     const { result } = renderHook(() => usePaneShellStyle('node-1'));
-    // opacity = 1 - 40/100 * 0.5 = 0.8
-    expect(result.current.opacity).toBe(0.8);
-    // brightness = 1 - 40/100 * 0.6 = 0.76
+    // No opacity dim: the Topbar caption cell dims with brightness() only, and
+    // stacking opacity here made the pane body darker than its title strip.
+    expect(result.current.opacity).toBeUndefined();
+    // brightness = 1 - 40/100 * 0.6 = 0.76 (same formula as Topbar.tsx)
     expect(result.current.filter).toBe('brightness(0.76)');
+    expect(result.current.transition).not.toContain('opacity');
   });
 
   it('does not dim when focusDim is 0', () => {
     mockFocusedPane = 'other-node';
     mockPrefs.focusDim = 0;
     const { result } = renderHook(() => usePaneShellStyle('node-1'));
-    expect(result.current.opacity).toBe(1);
+    expect(result.current.opacity).toBeUndefined();
     expect(result.current.filter).toBe('brightness(1)');
   });
 

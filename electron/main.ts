@@ -395,8 +395,17 @@ ipcMain.on('browser:set-bounds', (event, surfaceId: unknown, value: unknown, vis
     width: Math.max(1, Math.round(rect.width as number)),
     height: Math.max(1, Math.round(rect.height as number)),
   };
+  const nowVisible = visible === true && bounds.width > 1 && bounds.height > 1;
+  // Always set bounds BEFORE visibility so the view lands in the right place
+  // when transitioning to visible. Then re-apply AFTER setVisible for safety —
+  // Electron may not reliably apply setBounds to a hidden view (see #39993).
   surface.view.setBounds(bounds);
-  surface.view.setVisible(visible === true && bounds.width > 1 && bounds.height > 1);
+  surface.view.setVisible(nowVisible);
+  if (nowVisible) {
+    // Re-apply after setVisible(true) ensures the compositor has the correct
+    // position even if the first setBounds was a no-op on a hidden view.
+    surface.view.setBounds(bounds);
+  }
 });
 
 for (const [channel, action] of [

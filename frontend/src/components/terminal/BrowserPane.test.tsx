@@ -115,10 +115,20 @@ describe('BrowserPane native bridge', () => {
       resolveBrowserCreate?.(createdState);
       await Promise.resolve();
     });
-    expect(browserSetBounds).not.toHaveBeenCalled();
 
+    // After creation resolves, publishBounds fires synchronously and then on
+    // subsequent rAF ticks.  The synchronous call uses visible=true because
+    // creationDoneRef is now true.
+    expect(browserSetBounds).toHaveBeenCalledWith('surface-browser-1', {
+      x: 420,
+      y: 160,
+      width: 600,
+      height: 500,
+    }, true);
+
+    browserSetBounds.mockClear();
     act(() => frames.shift()?.(16));
-    expect(browserSetBounds).toHaveBeenCalledOnce();
+    // Additional rAF publishes continue to emit correct bounds.
     expect(browserSetBounds).toHaveBeenCalledWith('surface-browser-1', {
       x: 420,
       y: 160,

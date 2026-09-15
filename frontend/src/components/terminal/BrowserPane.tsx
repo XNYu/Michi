@@ -16,7 +16,16 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
   closePaneRef.current = closePane;
   const shellStyle = usePaneShellStyle(item.id);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const nativeVisibleRef = useRef(true);
+  // Don't make the native surface visible until creation has completed.
+  // Early set-bounds IPC messages (from the drift loop) that arrive while the
+  // main process is still inside browserCreate can land on a view that hasn't
+  // finished its about:blank + theme initialization.  That view may not honour
+  // setBounds until it's properly ready.  By holding nativeVisibleRef false
+  // until the creation promise resolves, early bounds are sent with
+  // visible=false — the main process hides the view and doesn't try to show it
+  // at coordinates that may not stick.
+  const creationDoneRef = useRef(false);
+  const nativeVisibleRef = useRef(false);      // start hidden; set true after creation
   const [address, setAddress] = useState(item.url);
   const [state, setState] = useState<BrowserSurfaceState>({ ...EMPTY_STATE, surfaceId: item.surfaceId, url: item.url });
   const electron = getElectron();
@@ -40,6 +49,7 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
     if (!electron?.browserCreate) return;
     let disposed = false;
     let creationBoundsRaf = 0;
+    let creationBoundsTimer = 0;
     const offState = electron.onBrowserState?.((next) => {
       if (next.surfaceId !== item.surfaceId) return;
       setState(next);
@@ -62,11 +72,30 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
         if (disposed) return;
         setState(next);
         if (next.url) setAddress(next.url);
-        // Surface creation is asynchronous (and may include hidden theme
-        // initialization), so bounds published during mount can arrive before
-        // the main process has registered the surface. Republish the latest
-        // painted rectangle once creation is complete.
-        creationBoundsRaf = requestAnimationFrame(publishBounds);
+        // Mark surface as ready — only now do we allow visible=true in
+        // publishBounds.  This prevents early drift-detection from showing
+        // the view at coordinates that may come from an intermediate layout
+        // (e.g. before the CSS grid resolves pane widths).
+        creationDoneRef.current = true;
+        nativeVisibleRef.current = true;
+        // Publish bounds several times over the first ~200ms to ensure the
+        // main process applies the position after the view is fully initialized.
+        // A single rAF is often too early (the Chromium compositor may not have
+        // committed the view's layer yet).
+        const publish = () => publishBounds();
+        publish();
+        creationBoundsRaf = requestAnimationFrame(() => {
+          publish();
+          creationBoundsRaf = requestAnimationFrame(() => {
+            publish();
+            // Also publish after a 100ms and 200ms delay to catch any late
+            // layout shifts (grid animation, pane entrance motion, etc.).
+            creationBoundsTimer = window.setTimeout(() => {
+              publish();
+              creationBoundsTimer = window.setTimeout(publish, 100);
+            }, 100);
+          });
+        });
       })
       .catch((error) => {
         if (disposed) return;
@@ -75,6 +104,9 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
     return () => {
       disposed = true;
       cancelAnimationFrame(creationBoundsRaf);
+      clearTimeout(creationBoundsTimer);
+      creationDoneRef.current = false;
+      nativeVisibleRef.current = false;
       offState?.();
       offFocus?.();
       offCloseRequest?.();
@@ -99,7 +131,9 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
     for (const event of events) window.addEventListener(event, schedule, { passive: true });
     document.addEventListener('visibilitychange', schedule);
     const onNativeVisibility = (event: Event) => {
-      nativeVisibleRef.current = (event as CustomEvent<{ visible: boolean }>).detail.visible;
+      const wantVisible = (event as CustomEvent<{ visible: boolean }>).detail.visible;
+      // Only allow visible=true after creation has completed.
+      nativeVisibleRef.current = wantVisible && creationDoneRef.current;
       schedule();
     };
     window.addEventListener('michi:native-surfaces-visible', onNativeVisibility as EventListener);
