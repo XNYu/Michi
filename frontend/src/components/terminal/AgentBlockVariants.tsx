@@ -43,7 +43,7 @@ import {
 
 const MONO = 'var(--font-mono)';
 const SCROLL_THRESHOLD = 5;
-const SCROLL_MAX_HEIGHT = 160;
+const SCROLL_MAX_HEIGHT = 400;
 
 /* ── Shared parts ────────────────────────────────────────────────────── */
 
@@ -262,7 +262,7 @@ function CardPayload({ t }: { t: ToolCallState }) {
   return (
     <div
       className="term-scrollbar"
-      style={{ borderTop: CARD_BORDER, background: 'var(--term-alt)', maxHeight: 200, overflowY: 'auto' }}
+      style={{ borderTop: CARD_BORDER, background: 'var(--term-alt)', maxHeight: 480, overflowY: 'auto' }}
     >
       {t.inputJson && (
         <>
@@ -306,13 +306,26 @@ function CardToolRow({ t }: { t: ToolCallState }) {
           background: running ? 'color-mix(in srgb, var(--term-accent) 5%, transparent)' : undefined,
         }}
       >
-        <ToolTypeIcon kind={toolBucketKey(t)} color={iconColor} size={13} />
+        <span
+          data-testid="card-tool-icon-slot"
+          style={{
+            alignItems: 'center',
+            display: 'inline-flex',
+            flexShrink: 0,
+            height: 16,
+            justifyContent: 'center',
+            width: 13,
+          }}
+        >
+          <ToolTypeIcon kind={toolBucketKey(t)} color={iconColor} size={13} />
+        </span>
         {purpose ? (
           <span style={{ flex: 1, minWidth: 0 }}>
             <span
               style={{
                 display: 'block',
                 fontSize: 11,
+                lineHeight: '16px',
                 color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
                 overflowWrap: 'anywhere',
                 wordBreak: 'break-word',
@@ -320,22 +333,21 @@ function CardToolRow({ t }: { t: ToolCallState }) {
             >
               {purpose}
             </span>
-            {detail && (
-              <span
-                style={{
-                  display: 'block',
-                  fontFamily: MONO,
-                  fontSize: 9.5,
-                  color: running ? 'var(--term-mid)' : 'var(--term-faint)',
-                  marginTop: 1,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {detail}
-              </span>
-            )}
+            <span
+              style={{
+                display: 'block',
+                fontFamily: MONO,
+                fontSize: 9.5,
+                color: running ? 'var(--term-mid)' : 'var(--term-faint)',
+                marginTop: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {cardToolName(t)}
+              {detail && ` ${detail}`}
+            </span>
           </span>
         ) : (
           <>
@@ -656,7 +668,7 @@ function TermPayload({ t }: { t: ToolCallState }) {
         background: 'var(--term-alt)',
         borderLeft: `2px solid ${failed ? 'var(--term-danger)' : 'var(--term-line-s)'}`,
         padding: '6px 9px 7px',
-        maxHeight: 200,
+        maxHeight: 480,
         overflowY: 'auto',
       }}
     >
@@ -713,22 +725,21 @@ function TermToolRow({ t }: { t: ToolCallState }) {
             <span style={{ fontSize: 11, color: nameColor, display: 'block', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
               {purpose}
             </span>
-            {detail && (
-              <span
-                style={{
-                  display: 'block',
-                  fontFamily: MONO,
-                  fontSize: 9.5,
-                  color: failed ? 'var(--term-danger)' : 'var(--term-faint)',
-                  marginTop: 1,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {detail}
-              </span>
-            )}
+            <span
+              style={{
+                display: 'block',
+                fontFamily: MONO,
+                fontSize: 9.5,
+                color: failed ? 'var(--term-danger)' : 'var(--term-faint)',
+                marginTop: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {termToolName(t)}
+              {detail && ` ${detail}`}
+            </span>
           </span>
         ) : (
           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

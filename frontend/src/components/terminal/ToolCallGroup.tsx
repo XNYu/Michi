@@ -32,7 +32,7 @@ interface Props {
 
 const FAIL_COLOR = 'var(--term-danger)';
 const SCROLL_THRESHOLD = 5;
-const SCROLL_MAX_HEIGHT = 130;
+const SCROLL_MAX_HEIGHT = 400;
 
 function allTerminal(tools: ToolCallState[]): boolean {
   return tools.every((t) => isTerminalStatus(t.status));
@@ -301,20 +301,19 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
             <>
               <span>{purpose}</span>
               {failed && ' · failed'}
-              {detail && (
-                <span
-                  style={{
-                    display: 'block',
-                    fontSize: 9.5,
-                    fontFamily: 'var(--font-mono)',
-                    color: failed ? FAIL_COLOR : 'var(--term-faint)',
-                    opacity: failed ? 0.8 : 1,
-                    marginTop: 1,
-                  }}
-                >
-                  {detail}
-                </span>
-              )}
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: 9.5,
+                  fontFamily: 'var(--font-mono)',
+                  color: failed ? FAIL_COLOR : 'var(--term-faint)',
+                  opacity: failed ? 0.8 : 1,
+                  marginTop: 1,
+                }}
+              >
+                {prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
+                {detail && ` ${detail}`}
+              </span>
             </>
           ) : (
             <>
@@ -367,7 +366,7 @@ function PayloadBlock({ inputJson, output }: { inputJson?: string; output?: stri
         marginBottom: 2,
         border: '1px solid var(--term-line)',
         background: 'var(--term-alt)',
-        maxHeight: 200,
+        maxHeight: 480,
         overflowY: 'auto',
       }}
     >

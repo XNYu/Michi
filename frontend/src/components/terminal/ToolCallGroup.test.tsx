@@ -105,6 +105,39 @@ describe('ToolCallGroup — expanded state', () => {
     }
   });
 
+  it('aligns card tool icons within the first text line', () => {
+    const tools: ToolCallState[] = [
+      {
+        id: '1',
+        title: 'Read',
+        status: 'completed',
+        kind: 'read',
+        inputJson: JSON.stringify({ __tool_use_purpose: 'Read the node schema' }),
+      },
+      {
+        id: '2',
+        title: 'Bash',
+        status: 'completed',
+        kind: 'bash',
+        inputJson: JSON.stringify({ __tool_use_purpose: 'Locate runtime bindings' }),
+      },
+    ];
+
+    const { getAllByTestId } = render(
+      <AgentBlockStyleOverride.Provider value="card">
+        <ToolCallGroup tools={tools} defaultExpanded />
+      </AgentBlockStyleOverride.Provider>,
+    );
+
+    const iconSlots = getAllByTestId('card-tool-icon-slot');
+    expect(iconSlots).toHaveLength(2);
+    for (const slot of iconSlots) {
+      expect(slot.style.alignItems).toBe('center');
+      expect(slot.style.height).toBe('16px');
+      expect(slot.style.justifyContent).toBe('center');
+    }
+  });
+
   it('clicking the expanded header collapses the group', () => {
     const tools = [
       tool('1', 'Read a', 'completed', 'read'),
