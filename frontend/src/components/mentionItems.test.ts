@@ -56,6 +56,12 @@ describe('buildAtMentionItems', () => {
     const items = buildAtMentionItems('Research', [], nodes, 'other');
     expect(items[0].token).toBe('node:n1');
   });
+
+  it('orders same-tree nodes before artifacts before cross-tree nodes', () => {
+    const cross: CrossTreeGroup[] = [{ treeTitle: 'Other', nodes: [mkNode('x1', 'Remote', 2)] }];
+    const items = buildAtMentionItems('', contexts, nodes, 'other', cross);
+    expect(items.map(i => i.id)).toEqual(['node-n1', 'node-n2', 'ctx-c1', 'ctx-c2', 'node-x1']);
+  });
 });
 
 describe('buildAtMentionItems — cross-tree nodes', () => {

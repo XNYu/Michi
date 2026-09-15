@@ -36,11 +36,17 @@ const storeState: Record<string, unknown> = {
   agentStatus: null,
   refreshAgentStatus: vi.fn(),
   availableModes: [],
+  defaultModeId: null,
   projects: [],
 };
 
 vi.mock('../../../state/chatStore', () => ({
   useChatStore: () => storeState,
+  // These tests exercise send/agent plumbing, not the @-mention candidate
+  // list, and their Project fixtures omit `trees`; return an empty list.
+  useStructuralSelector: () => [],
+  shallowArrayEqual: Object.is,
+  chatLabel: () => 'New thread',
 }));
 
 vi.mock('../../../services/api', () => ({
@@ -76,6 +82,7 @@ describe('ManageComposer', () => {
     sendMessage.mockClear();
     selectProject.mockClear();
     storeState.availableModes = [];
+    storeState.defaultModeId = null;
     storeState.agentStatus = null;
     storeState.projects = [{ id: 'ws1', name: 'Workspace', cwd: '/tmp', artifacts: [] }];
     vi.mocked(toast.error).mockClear();
@@ -156,6 +163,20 @@ describe('ManageComposer', () => {
       <ManageComposer workspaceId="ws1" workspaceName="ws-one" onSubmitted={vi.fn()} />,
     );
     expect(screen.queryByTitle(/Switch agent/)).toBeNull();
+  });
+
+  it('shows the runtime default Agent without pinning it to the new thread', () => {
+    storeState.availableModes = [{ id: 'kiro_default', name: 'Kiro Default Agent' }];
+    storeState.defaultModeId = 'kiro_default';
+    render(
+      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
+    );
+
+    expect(screen.getByTitle('Switch agent — Kiro Default Agent')).toBeTruthy();
+    fireEvent.change(composerTextarea(), { target: { value: 'follow Kiro default' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    expect(createThread).toHaveBeenCalledWith(undefined);
   });
 
   it('pre-selected agent is stamped onto the new thread on send', () => {

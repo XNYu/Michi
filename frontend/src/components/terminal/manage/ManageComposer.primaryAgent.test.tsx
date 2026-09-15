@@ -23,8 +23,11 @@ vi.mock('../../../state/chatStore', () => ({
     activeProject: { id: 'ws-remote', name: 'Remote', backendConnectionId: 'remote-a', artifacts: [] },
     projects: [{ id: 'ws-remote', name: 'Remote', backendConnectionId: 'remote-a', artifacts: [] }],
     selectProject: vi.fn(), createThread, createChildChat, sendMessage,
-    agentStatus: status, refreshAgentStatus: vi.fn(), availableModes: [{ id: 'build', name: 'Build' }],
+    agentStatus: status, refreshAgentStatus: vi.fn(), availableModes: [{ id: 'build', name: 'Build' }], defaultModeId: 'build',
   }),
+  useStructuralSelector: () => [],
+  shallowArrayEqual: Object.is,
+  chatLabel: () => 'New thread',
 }));
 
 vi.mock('../../../services/api', () => ({

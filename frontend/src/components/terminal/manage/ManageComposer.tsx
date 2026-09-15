@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChatStore } from '../../../state/chatStore';
+import { useChatStore, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { MentionEditorHandle } from '../../MentionEditor';
 const MentionEditor = React.lazy(() => import('../../MentionEditor'));
 import type { MentionRecord } from '../../mentions';
 import { expandMentions } from '../../mentions';
+import { collectCrossTreeGroups, EMPTY_CROSS_TREE_GROUPS } from '../../crossTreeMentions';
 import { getElectron } from '../../../lib/electronBridge';
 import {
   getWebUploadCwd,
@@ -114,6 +115,7 @@ function ScopedManageComposer({
     agentStatus,
     refreshAgentStatus,
     availableModes,
+    defaultModeId,
     projects,
   } = useChatStore();
 
@@ -607,7 +609,16 @@ function ScopedManageComposer({
   const currentMode = currentModeId
     ? availableModes.find((m) => m.id === currentModeId)
     : undefined;
+  const defaultMode = defaultModeId
+    ? availableModes.find((mode) => mode.id === defaultModeId)
+    : undefined;
   const selectedAgentLabel = pendingPrimaryAgent?.definition.name;
+  const displayedMode = selectedAgentLabel
+    ? { id: pendingPrimaryAgent!.definition.id, name: selectedAgentLabel }
+    : currentMode ?? defaultMode;
+  const displayedModeId = selectedAgentLabel
+    ? pendingPrimaryAgent!.definition.id
+    : currentModeId ?? defaultMode?.id;
 
   const canAttach = !!getElectron()?.chooseFiles || !!project;
   const sendDisabled =
@@ -616,6 +627,15 @@ function ScopedManageComposer({
   // Same-tree mentions don't apply on the manage page (no active thread).
   // Pass the project's artifacts so @<contextName> still works.
   const artifacts = useMemo(() => project?.artifacts ?? [], [project?.artifacts]);
+
+  // Every conversation in the target workspace is @-mentionable from here.
+  // There is no "current thread" on Home or for a digest follow-up root, so
+  // nothing is excluded and all nodes flow through the cross-tree path
+  // (grouped by thread, most recently active thread first).
+  const crossTreeNodes = useStructuralSelector(useCallback((nodesMap) => {
+    if (!project) return EMPTY_CROSS_TREE_GROUPS;
+    return collectCrossTreeGroups(nodesMap, project, null);
+  }, [project]), shallowArrayEqual);
 
   return (
     <div style={{ marginBottom: parentNodeId ? 0 : 18, flexShrink: 0, minWidth: 0 }}>
@@ -684,6 +704,7 @@ function ScopedManageComposer({
             className="hide-sb"
             artifacts={artifacts}
             sameTreeNodes={[]}
+            crossTreeNodes={crossTreeNodes}
             currentNodeId={parentNodeId ?? '__manage__'}
             enableSlash={false}
             onSubmit={() => submit()}
@@ -697,8 +718,8 @@ function ScopedManageComposer({
             canAttach={canAttach}
             toolbarTier={0}
             enableAgentChip={enableAgentSelect}
-            currentMode={selectedAgentLabel ? { id: pendingPrimaryAgent!.definition.id, name: selectedAgentLabel } : currentMode}
-            currentModeId={selectedAgentLabel ? pendingPrimaryAgent!.definition.id : currentModeId}
+            currentMode={displayedMode}
+            currentModeId={displayedModeId}
             availableModesCount={enableAgentSelect ? availableModes.length + primaryAgents.length + 1 : 0}
             agentStatus={agentStatus}
             onPickFile={() => void onPickFile()}
@@ -746,6 +767,8 @@ function ScopedManageComposer({
         providers={agentStatus?.providers}
         modelsLoading={modelsLoading}
         modelsError={modelsError}
+        defaultModeId={defaultModeId}
+        runtimeId={agentStatus?.runtime}
         onSwitchAgent={(modeId) => {
           // No thread yet — record the pick locally. submit() stamps it onto
           // the new thread, which applies it to the session on send. When

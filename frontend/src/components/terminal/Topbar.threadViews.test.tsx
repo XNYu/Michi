@@ -16,7 +16,7 @@ vi.mock('../../services/api', async (importOriginal) => {
     ...actual,
     checkVersion: vi.fn().mockResolvedValue({ updateAvailable: false }),
     triggerUpdate: vi.fn(),
-    listAgentModes: vi.fn().mockResolvedValue([]),
+    listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
     listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
     fetchAllWorkspaces: vi.fn().mockResolvedValue([]),
     fetchAllWorkspacesMeta: vi.fn().mockResolvedValue([]),

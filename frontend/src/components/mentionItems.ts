@@ -20,9 +20,15 @@ export interface CrossTreeGroup {
 }
 
 /**
- * Build the list of mentionable items from artifacts + same-tree nodes +
+ * Build the list of mentionable items from same-tree nodes + artifacts +
  * optional cross-tree nodes from other threads in the same workspace.
  * Filters by query (case-insensitive substring match).
+ *
+ * Order: same-tree nodes → artifacts → cross-tree nodes. Nodes from the
+ * thread you are already in are the most likely reference, so they lead.
+ * Artifacts stay above cross-tree nodes because the cross-tree list is the
+ * longest segment (capped at ~50) and would otherwise bury the handful of
+ * deliberately saved documents.
  */
 export function buildAtMentionItems(
   query: string,
@@ -33,18 +39,6 @@ export function buildAtMentionItems(
 ): AtMentionItem[] {
   const q = query.toLowerCase();
   const items: AtMentionItem[] = [];
-
-  for (const ctx of artifacts) {
-    const label = ctx.name;
-    if (q && !label.toLowerCase().includes(q)) continue;
-    items.push({
-      id: `ctx-${ctx.id}`,
-      label,
-      description: `${ctx.type ?? 'doc'}${ctx.pinnedAt ? ' · pinned' : ''}`,
-      kind: 'context',
-      token: ctx.name,
-    });
-  }
 
   for (const node of sameTreeNodes) {
     if (node.nodeId === currentNodeId) continue;
@@ -62,7 +56,19 @@ export function buildAtMentionItems(
     });
   }
 
-  // Cross-thread nodes — shown after same-tree nodes, grouped by thread title
+  for (const ctx of artifacts) {
+    const label = ctx.name;
+    if (q && !label.toLowerCase().includes(q)) continue;
+    items.push({
+      id: `ctx-${ctx.id}`,
+      label,
+      description: `${ctx.type ?? 'doc'}${ctx.pinnedAt ? ' · pinned' : ''}`,
+      kind: 'context',
+      token: ctx.name,
+    });
+  }
+
+  // Cross-thread nodes — shown after artifacts, grouped by thread title
   if (crossTreeNodes) {
     for (const { treeTitle, nodes } of crossTreeNodes) {
       for (const node of nodes) {

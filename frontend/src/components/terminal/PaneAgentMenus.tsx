@@ -33,6 +33,10 @@ interface PaneAgentMenusProps {
   primaryAgentsError?: string | null;
   onSelectPrimaryAgent?: (id: string) => void;
   onSelectDefaultAgent?: () => void;
+  /** The mode ACP assigns to a fresh session. Null when unavailable. */
+  defaultModeId?: string | null;
+  /** Current runtime id — used to derive the mode section header label. */
+  runtimeId?: string;
 }
 
 export interface PrimaryAgentMenuOption {
@@ -70,18 +74,29 @@ export function PaneAgentMenus({
   primaryAgentsError = null,
   onSelectPrimaryAgent,
   onSelectDefaultAgent,
+  defaultModeId,
+  runtimeId,
 }: PaneAgentMenusProps) {
   useEffect(() => {
     if (disabled && modelMenu) onCloseModelMenu();
   }, [disabled, modelMenu, onCloseModelMenu]);
+
+  const runtimeLabel = runtimeId === 'kiro'
+    ? 'Kiro'
+    : agentStatus?.label ?? runtimeId ?? 'Runtime';
+  const resolvedDefaultName = defaultModeId
+    ? availableModes.find((mode) => mode.id === defaultModeId)?.name
+    : undefined;
+  const defaultAgentLabel = resolvedDefaultName ?? `${runtimeLabel} Default Agent`;
+  const followsRuntimeDefault = !selectedPrimaryAgentId && !currentModeId;
 
   const primarySections: MenuSection[] = onSelectPrimaryAgent && onSelectDefaultAgent
     ? [
         {
           items: [{
             id: 'primary-default',
-            label: selectedPrimaryAgentId ? 'Default Michi Agent' : '✓ Default Michi Agent',
-            sublabel: 'Uses the runtime and model controls below',
+            label: followsRuntimeDefault ? `✓ ${defaultAgentLabel}` : defaultAgentLabel,
+            sublabel: `${runtimeLabel} default agent · follows runtime and model controls`,
             run: onSelectDefaultAgent,
           }],
         },
@@ -98,6 +113,15 @@ export function PaneAgentMenus({
         ...(primaryAgentsError ? [{ items: [{ id: 'primary-error', label: primaryAgentsError, disabled: true, run: () => {} }] }] : []),
       ]
     : [];
+
+  // Section header: "Kiro Agents" when the runtime is Kiro, neutral wording otherwise.
+  const modesSectionLabel = (() => {
+    if (primarySections.length === 0) return undefined;
+    if (runtimeId === 'kiro') return 'Kiro Agents';
+    if (agentStatus?.label) return `${agentStatus.label} Agents`;
+    return 'Built-in Agents';
+  })();
+
   return (
     <>
       {agentMenu && (
@@ -110,7 +134,7 @@ export function PaneAgentMenus({
           sections={[
             ...primarySections,
             {
-              label: primarySections.length > 0 ? 'Built-in Modes' : undefined,
+              label: modesSectionLabel,
               items:
                 availableModes.length === 0
                   ? [{ id: 'loading', label: 'Loading…', disabled: true, run: () => {} }]

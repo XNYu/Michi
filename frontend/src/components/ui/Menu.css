@@ -63,6 +63,20 @@
   --m-background: var(--term-surface);
   --m-backdrop: none;
 }
+.michi-menu[data-menu='agents'] {
+  --m-width: 480px;
+  --m-maxHeight: 320px;
+}
+.michi-menu[data-menu='agents'] .michi-menu-label {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: var(--m-textGap);
+}
+.michi-menu[data-menu='agents'] .michi-menu-sublabel {
+  margin-left: 0;
+  display: block;
+}
 .michi-menu[data-menu='mentions'] { --m-width: 420px; }
 .michi-menu[data-menu='slash'] { --m-width: 480px; --m-maxHeight: 192px; }
 .michi-menu[data-menu-animate='true'] { animation: michi-menu-enter var(--m-enterMs) ease-out both; }

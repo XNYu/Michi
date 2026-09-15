@@ -20,7 +20,7 @@ vi.mock('../../services/api', async (importOriginal) => {
   return {
     ...actual,
     listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
-    listAgentModes: vi.fn().mockResolvedValue([]),
+    listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
     fetchAllWorkspaces: vi.fn().mockResolvedValue([]),
     fetchAllWorkspacesMeta: vi.fn().mockResolvedValue([]),
     fetchTreeMessages: vi.fn().mockResolvedValue([]),
