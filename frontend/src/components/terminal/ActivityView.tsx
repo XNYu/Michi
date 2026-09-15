@@ -21,6 +21,11 @@ import {
 import { useAgentDomain } from '../../state/agentDomain';
 import { agentResourceKey, identityOf } from '../../state/agentIdentity';
 import { AgentRunsActivity } from './agentRuns/AgentRunsActivity';
+import {
+  ACTIVITY_PAGE_SIZE,
+  ACTIVITY_PREVIEW_LIMIT,
+  truncateActivityBuckets,
+} from './activityTruncation';
 
 function useOptionalAgentDomain() {
   try {
@@ -54,6 +59,9 @@ const BUCKET_LABELS: Record<TimeBucket, string> = {
   yesterday: 'Yesterday',
   earlier: 'Earlier',
 };
+// Streaming trees are what the user is waiting on right now; they never count
+// toward the preview cap and are never hidden behind "Show more".
+const CAP_EXEMPT_BUCKETS: ReadonlySet<TimeBucket> = new Set<TimeBucket>(['now']);
 
 // ── Data derivation ────────────────────────────────────────────────────────
 
@@ -180,6 +188,14 @@ export default function ActivityView({
     }
     return groups;
   }, [activityItems]);
+
+  // Preview cap. Session-local on purpose: reopening the sidebar returns to the
+  // default so the lens always starts as "recent", never as "everything".
+  const [visibleLimit, setVisibleLimit] = useState(ACTIVITY_PREVIEW_LIMIT);
+  const { visible: visibleBuckets, hidden: hiddenCount } = useMemo(
+    () => truncateActivityBuckets(bucketGroups, BUCKET_ORDER, visibleLimit, CAP_EXEMPT_BUCKETS),
+    [bucketGroups, visibleLimit],
+  );
 
   const isAlive = useCallback(
     (id: string) => !nodes[id]?.deletedAt,
@@ -472,7 +488,7 @@ export default function ActivityView({
         />
       )}
       {BUCKET_ORDER.map((bucket) => {
-        const items = bucketGroups.get(bucket);
+        const items = visibleBuckets.get(bucket);
         if (!items || items.length === 0) return null;
         return (
           <div key={bucket} className="activity-section">
@@ -546,6 +562,41 @@ export default function ActivityView({
           </div>
         );
       })}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          className="sb-flush show-more-toggle"
+          aria-label={`Show ${hiddenCount} more threads`}
+          aria-expanded={visibleLimit > ACTIVITY_PREVIEW_LIMIT}
+          onClick={() => setVisibleLimit((v) => v + ACTIVITY_PAGE_SIZE)}
+          style={{
+            width: '100%',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            marginTop: 8,
+            // Sit on the same text spine as the thread titles. `.sb-flush`
+            // rides the container's --sb-inset, so classic only adds the
+            // borderLeft(2) + paddingLeft(8) + chevron(12) + gap(5) = 27px.
+            padding: geom.isCard
+              ? `5px ${spinePadding(geom, geom.rightGap)} 5px ${spinePadding(geom, geom.titleX)}`
+              : '5px 10px 5px 27px',
+            background: 'transparent',
+            border: 0,
+            textAlign: 'left',
+            color: 'var(--term-faint)',
+            fontFamily: 'var(--ui-font)',
+            fontSize: 11.5,
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+            textUnderlineOffset: '3px',
+            textDecorationColor: 'var(--term-faint)',
+          }}
+        >
+          Show {hiddenCount} more
+        </button>
+      )}
       {activityItems.length === 0 && agentRuns.length === 0 && (
         <div
           style={{
