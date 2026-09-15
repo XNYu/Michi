@@ -59,6 +59,26 @@ export interface PersistenceCapabilities {
   backgroundWorkspaceSync: boolean;
   legacySyncAccepted: boolean;
   streamTransport?: string;
+  /**
+   * Pane Inspection API capability version (design doc §11). Optional
+   * because an old gateway that predates this feature omits the field
+   * entirely. Use {@link supportsPaneInspection} rather than truthiness —
+   * absent/unknown/malformed values must all mean "unsupported", never be
+   * treated as "supported with an empty pane list".
+   */
+  paneInspection?: unknown;
+}
+
+/**
+ * Defensive predicate for the `paneInspection` capability. Returns true ONLY
+ * for the exact string `'v1'`. Any other value — absent, `undefined`, a
+ * future version string, a boolean, an object, `null` — means unsupported.
+ * Callers must gate all Pane Inspection API usage (list/inspect/subscribe)
+ * behind this check and show "unsupported", never silently render an empty
+ * pane list for a gateway that never advertised the capability at all.
+ */
+export function supportsPaneInspection(capabilities: Pick<PersistenceCapabilities, 'paneInspection'> | null | undefined): boolean {
+  return capabilities?.paneInspection === 'v1';
 }
 
 export function fetchPersistenceCapabilities(connectionId?: string): Promise<PersistenceCapabilities> {

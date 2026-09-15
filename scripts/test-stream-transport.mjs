@@ -42,7 +42,7 @@ try {
   app.get('/', (_req, res) => res.type('html').send('<!doctype html><title>Michi transport regression</title><style>body{font:16px system-ui;margin:48px;color:#20242b;background:#fff}h1{font-size:26px}pre{font:15px monospace;line-height:1.8;white-space:pre-wrap}</style><h1>Michi transport regression</h1><pre id="result">Running isolated transport checks...</pre>'));
   app.get('/bundle.js', (_req, res) => res.type('js').send(frontend.outputFiles[0].text));
   app.all('/api/*route', async (req, res) => {
-    if (req.path.endsWith('/message') || req.path.endsWith('/background/subscribe') || req.path.endsWith('/stream') || req.path.endsWith('/agent-runs/subscribe')) {
+    if (req.path.endsWith('/message') || req.path.endsWith('/background/subscribe') || req.path.endsWith('/stream') || req.path.endsWith('/agent-runs/subscribe') || req.path.endsWith('/panes/subscribe')) {
       held.set(req.originalUrl, res);
       res.on('close', () => held.delete(req.originalUrl));
       res.setHeader('Content-Type', 'text/event-stream');
@@ -114,21 +114,22 @@ try {
       michi.fetchStream('/api/workspaces/test/watch/stream'),
       michi.fetchStream('/api/agent-runs/subscribe?workspaceId=test'),
       michi.fetchStream('/api/digests/stream', { method: 'POST', body: '{}' }),
+      michi.fetchStream('/api/panes/subscribe?paneIds=%5B%22node%3An-1%22%5D'),
     ]);
   });
-  await waitUntil(() => held.size === 29);
-  assert.equal(socketCount, 1, 'all 29 streams must use one WebSocket');
+  await waitUntil(() => held.size === 30);
+  assert.equal(socketCount, 1, 'all 30 streams must use one WebSocket');
   await startOrdinaryRequests();
   await page.waitForFunction(() => Object.keys(window.completed).length === 3, null, { timeout: 3_000 });
   const timings = await page.evaluate(() => window.completed);
   assert.ok(Object.values(timings).every((ms) => ms < 1_500));
-  assert.equal(held.size, 29, 'ordinary requests must complete while every stream remains active');
+  assert.equal(held.size, 30, 'ordinary requests must complete while every stream remains active');
   assert.deepEqual(await readFile(path.join(temp, 'upload.png')), Buffer.from([1, 2, 3]));
 
   await page.evaluate(() => window.cancels[0]());
-  await waitUntil(() => held.size === 28);
+  await waitUntil(() => held.size === 29);
   const report = { status: 'PASS', legacyHttpStreams: 6, legacyQueuedRequests: 3,
-    multiplexedStreams: 29, webSockets: socketCount, concurrentRequestMs: timings,
+    multiplexedStreams: 30, webSockets: socketCount, concurrentRequestMs: timings,
     cancellation: 'One channel detached; 28 remain active', isolation: 'Mock gateway; no user data or agent execution' };
   await page.locator('#result').evaluate((element, text) => { element.textContent = text; }, JSON.stringify(report, null, 2));
   if (process.env.MICHI_TRANSPORT_SCREENSHOT) {

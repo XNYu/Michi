@@ -9,7 +9,7 @@ const ENDPOINT = `/api${STREAM_TRANSPORT_PATH}`;
 const TICKET_TTL_MS = 30_000;
 const MAX_CHANNELS = 256;
 const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
-const STREAM_PATH = /^\/api\/(?:backend-connections\/[a-zA-Z0-9_-]+\/proxy\/)?(chats\/background\/subscribe|chats\/[a-zA-Z0-9_-]+\/(message|stream)|workspaces\/[a-zA-Z0-9_-]+\/watch\/stream|agent-runs\/subscribe|digests\/stream)$/;
+const STREAM_PATH = /^\/api\/(?:backend-connections\/[a-zA-Z0-9_-]+\/proxy\/)?(chats\/background\/subscribe|chats\/[a-zA-Z0-9_-]+\/(message|stream)|workspaces\/[a-zA-Z0-9_-]+\/watch\/stream|agent-runs\/subscribe|digests\/stream|panes\/subscribe|panes\/presence\/keepalive)$/;
 
 interface Ticket {
   expires: number;
@@ -109,9 +109,15 @@ export function createStreamTransport() {
         if (typeof frame.path !== 'string' || !frame.path.startsWith('/api/')) throw new Error();
         target = new URL(frame.path, 'http://stream.local');
         const match = STREAM_PATH.exec(target.pathname);
+        // panes/presence/keepalive (design §9's independent semantic heartbeat — see
+        // routes/paneInspection.ts's own header comment) is POST, like /message and the other
+        // one-shot-body routes below. It is the ONLY presence path in STREAM_PATH's allowlist
+        // above: panes/presence (PUT/DELETE) and panes/presence/allocate are ordinary HTTP,
+        // deliberately not reachable through this multiplexer.
         const expectedMethod = target.pathname.endsWith('/message')
           || target.pathname.endsWith('/background/subscribe')
-          || target.pathname.endsWith('/digests/stream') ? 'POST' : 'GET';
+          || target.pathname.endsWith('/digests/stream')
+          || target.pathname.endsWith('/panes/presence/keepalive') ? 'POST' : 'GET';
         if (target.origin !== 'http://stream.local' || !match || target.hash
           || frame.method !== expectedMethod
           || (frame.body !== undefined && typeof frame.body !== 'string')) throw new Error();

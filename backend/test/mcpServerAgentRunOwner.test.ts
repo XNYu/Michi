@@ -13,8 +13,11 @@
  * Run: cd backend && npm test -- --test-name-pattern 'T02|Owner-aware MCP'
  */
 
-import { test, describe, beforeEach, mock } from 'node:test';
+import { test, describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   McpSlotRegistry,
@@ -25,6 +28,9 @@ import type { RuntimeSessionOwner } from '../src/agents/types';
 import type { ResultBundleV1 } from 'michi-shared';
 import { buildRunMcpSlotCallbacks, type RunMcpSlotOptions } from '../src/agents/runs/runMcpSlot';
 import { SUBMIT_AGENT_RESULT_TOOL, type RunWorkerToolProfile } from '../src/agents/runs/runWorkerTools';
+import { closeDb, initDb } from '../src/services/db';
+import { saveNode, saveWorkspace, setAiGlobalContext } from '../src/services/dbRepository';
+import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -484,6 +490,13 @@ describe('T02: Backward compatibility for existing chat slots', () => {
     assert.ok(tools.includes('approve'));
     assert.ok(tools.includes('set_follow_ups'));
     assert.ok(tools.includes('set_branch_overview'));
+    // P1-9: inspect_pane / read_pane_output are registered unconditionally alongside the
+    // globalContext tools above — this single assertion is the evidence for Kiro, Claude and
+    // Codex per R4 §8, since all three are HTTP MCP clients of this same buildMcpServerForSlot
+    // server object.
+    assert.ok(tools.includes('inspect_pane'), 'chat slot must expose inspect_pane');
+    assert.ok(tools.includes('read_pane_output'), 'chat slot must expose read_pane_output');
+    assert.ok(tools.includes('list_panes'), 'chat slot must expose list_panes');
     assert.ok(!tools.includes('submit_agent_result'),
       'legacy chat slot must not have submit_agent_result');
   });
@@ -497,5 +510,183 @@ describe('T02: Backward compatibility for existing chat slots', () => {
     assert.equal(slot.nodeId, 'n-1');
     assert.equal(slot.workspaceId, 'ws-1');
     assert.equal(slot.owner, undefined, 'legacy slot has no owner');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1-9: inspect_pane / read_pane_output caller-identity behavioural test.
+//
+// The security core of this task is that the tool builds its PaneInspectionCaller from the
+// session-bound slot binding, never from tool arguments (task brief step 3). This exercises
+// that end to end: a model-supplied ownerUserId/workspaceId in the tool arguments must be
+// silently ignored, and the service must receive the SLOT's own identity instead.
+// ---------------------------------------------------------------------------
+
+describe('T02: inspect_pane ignores caller-identity override attempts', () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-mcp-pane-inspection-'));
+    process.env.MICHI_DATA_DIR = dataDir;
+    delete process.env.MICHI_CLOUD;
+    closeDb();
+    initDb();
+  });
+
+  afterEach(() => {
+    closeDb();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test('a paneId/nodeId call still resolves against the SLOT owner, not an injected identity', () => {
+    const owner = LOCAL_AGENT_OWNER_ID;
+    const workspaceId = 'ws-real';
+    const nodeId = 'n-real';
+    const impostorNodeId = 'n-impostor';
+
+    saveWorkspace({
+      id: workspaceId, name: 'Workspace', created_at: 1, updated_at: 1,
+      active_tree_id: null, cwd: null, settings: null, deleted_at: null, archived_at: null,
+    });
+    setAiGlobalContext(workspaceId, true, owner);
+    saveNode({
+      id: nodeId, workspace_id: workspaceId,
+      tree_id: null, parent_node_id: null,
+      kind: 'chat', title: 'Real node', branch_overview: null,
+      status: 'idle',
+      position_x: null, position_y: null, minimized: 0, deleted_at: null,
+      deletion_group_id: null, spawned_by_agent: 0, current_mode_id: null,
+      pane_width: null, digest: null, follow_ups: null, follow_ups_source_message_id: null,
+      acp_session_id: null, runtime_id: null, provider_id: null,
+      model_id: null, reasoning: null, resume_fingerprint: null,
+      composer_draft: null, external_session_id: null, trim_snapshot: null,
+      created_at: 1,
+    } as any);
+
+    const registry = new McpSlotRegistry();
+    const slot = registry.create('chat-real', '/tmp', owner, makeChatCallbacks() as any, {
+      nodeId,
+      workspaceId,
+    });
+
+    const handler = getToolHandler(slot, 'inspect_pane');
+    assert.ok(handler, 'inspect_pane must be registered');
+
+    // The model tries to smuggle a different identity via the tool arguments. None of these
+    // keys exist on InspectPaneToolArgs, so they have nowhere to go even if a caller tried.
+    const forged = {
+      nodeId,
+      ownerUserId: 'someone-else',
+      workspaceId: 'ws-not-mine',
+      backendConnectionId: 'forged-conn',
+    } as Record<string, unknown>;
+
+    return handler(forged).then((result: any) => {
+      assert.equal(result.isError, undefined, 'a real, visible node must not error');
+      const text = result.content[0].text as string;
+      // Proves the SLOT's own nodeId/workspaceId were used (the node/workspace this slot is
+      // actually bound to), not any injected value — an impostor node id would 404, and a
+      // wrong workspaceId would fail authorizeCaller's ownership check entirely.
+      assert.ok(text.includes('kind: chat'), 'resolved against the real bound node');
+      assert.ok(!text.includes(impostorNodeId));
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2-4: list_panes ignores caller-identity override attempts.
+//
+// Unlike inspect_pane/read_pane_output, list_panes has NO locator argument at all — its request's
+// workspaceId always comes from the slot binding (paneInspectionTools.ts's listPanesTool), never
+// from a tool argument. This proves a model-supplied workspaceId in the arguments is silently
+// ignored and the call is scoped to the SLOT's own bound workspace instead.
+// ---------------------------------------------------------------------------
+
+describe('T02: list_panes ignores caller-identity override attempts', () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-mcp-pane-list-'));
+    process.env.MICHI_DATA_DIR = dataDir;
+    delete process.env.MICHI_CLOUD;
+    closeDb();
+    initDb();
+  });
+
+  afterEach(() => {
+    closeDb();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test('a list_panes call is scoped to the SLOT workspace, not an injected one', () => {
+    const owner = LOCAL_AGENT_OWNER_ID;
+    const workspaceId = 'ws-real-list';
+    const otherWorkspaceId = 'ws-not-mine-list';
+    const nodeId = 'n-real-list';
+    const otherNodeId = 'n-other-workspace';
+
+    saveWorkspace({
+      id: workspaceId, name: 'Workspace', created_at: 1, updated_at: 1,
+      active_tree_id: null, cwd: null, settings: null, deleted_at: null, archived_at: null,
+    });
+    saveWorkspace({
+      id: otherWorkspaceId, name: 'Other workspace', created_at: 1, updated_at: 1,
+      active_tree_id: null, cwd: null, settings: null, deleted_at: null, archived_at: null,
+    });
+    setAiGlobalContext(workspaceId, true, owner);
+    setAiGlobalContext(otherWorkspaceId, true, owner);
+    saveNode({
+      id: nodeId, workspace_id: workspaceId,
+      tree_id: null, parent_node_id: null,
+      kind: 'chat', title: 'Real node', branch_overview: null,
+      status: 'idle',
+      position_x: null, position_y: null, minimized: 0, deleted_at: null,
+      deletion_group_id: null, spawned_by_agent: 0, current_mode_id: null,
+      pane_width: null, digest: null, follow_ups: null, follow_ups_source_message_id: null,
+      acp_session_id: null, runtime_id: null, provider_id: null,
+      model_id: null, reasoning: null, resume_fingerprint: null,
+      composer_draft: null, external_session_id: null, trim_snapshot: null,
+      created_at: 1,
+    } as any);
+    saveNode({
+      id: otherNodeId, workspace_id: otherWorkspaceId,
+      tree_id: null, parent_node_id: null,
+      kind: 'chat', title: 'Other workspace node', branch_overview: null,
+      status: 'idle',
+      position_x: null, position_y: null, minimized: 0, deleted_at: null,
+      deletion_group_id: null, spawned_by_agent: 0, current_mode_id: null,
+      pane_width: null, digest: null, follow_ups: null, follow_ups_source_message_id: null,
+      acp_session_id: null, runtime_id: null, provider_id: null,
+      model_id: null, reasoning: null, resume_fingerprint: null,
+      composer_draft: null, external_session_id: null, trim_snapshot: null,
+      created_at: 1,
+    } as any);
+
+    const registry = new McpSlotRegistry();
+    const slot = registry.create('chat-real-list', '/tmp', owner, makeChatCallbacks() as any, {
+      nodeId,
+      workspaceId,
+    });
+
+    const handler = getToolHandler(slot, 'list_panes');
+    assert.ok(handler, 'list_panes must be registered');
+
+    // None of these keys exist on the tool's own schema (workspaceId/ownerUserId are not
+    // parameters of list_panes at all), so a forged value has nowhere to go even if a model
+    // tried to inject one.
+    const forged = {
+      workspaceId: otherWorkspaceId,
+      ownerUserId: 'someone-else',
+      scope: 'all',
+      includeArchived: true,
+    } as Record<string, unknown>;
+
+    return handler(forged).then((result: any) => {
+      assert.equal(result.isError, undefined, 'a real, visible workspace must not error');
+      const text = result.content[0].text as string;
+      // Proves the call was scoped to the SLOT's own bound workspace, not the injected
+      // otherWorkspaceId: the other workspace's node must never appear.
+      assert.ok(!text.includes(otherNodeId), 'must never enumerate another workspace\'s nodes');
+    });
   });
 });

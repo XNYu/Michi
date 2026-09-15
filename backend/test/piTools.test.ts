@@ -31,6 +31,22 @@ describe("buildPiTools global-context gating", () => {
   });
 });
 
+describe("buildPiTools pane inspection tools", () => {
+  afterEach(() => __resetRuntimeDeps());
+
+  test("always includes inspect_pane, read_pane_output, list_panes and wait_pane — no provider gating", () => {
+    // Unlike list_threads/search_messages/read_node, these tools call the
+    // paneInspection service directly (no GlobalContextProvider-style seam
+    // exists for panes per R4 §2's optional note) so they are present even
+    // when no globalContext provider was injected.
+    configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
+    const names = buildPiTools(opts() as any).map((t: any) => t.name);
+    for (const name of ["inspect_pane", "read_pane_output", "list_panes", "wait_pane"]) {
+      assert.ok(names.includes(name), `${name} should be present`);
+    }
+  });
+});
+
 describe("Pi tool result error propagation", () => {
   test("marks Michi errorResult payloads as failed for pi-agent-core", () => {
     assert.deepEqual(piToolResultErrorOverride({

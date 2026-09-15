@@ -11,6 +11,13 @@ import {
     type ParamField,
     type ParamSpec,
 } from "../agents/builtinTools";
+import {
+    inspectPaneTool,
+    readPaneOutputTool,
+    listPanesTool,
+    waitPaneTool,
+    type PaneInspectionToolBinding,
+} from "../agents/paneInspectionTools";
 import type { BridgeContextResult } from "../agents/toolBridge";
 import {
     AGENT_RUN_TOOL_NAMES,
@@ -533,6 +540,163 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             const binding = resolveSlotBinding(slot);
             const result = readNodeOverview(binding.workspaceId, slot.ownerUserId, String(args?.nodeId ?? ""));
             return { content: [{ type: "text", text: result.text }] };
+        },
+    );
+
+    // Pane Inspection tools (inspect_pane / read_pane_output — design §7.2/§7.3). Registered
+    // unconditionally alongside the globalContext tools above, following the read_node pattern:
+    // resolveSlotBinding(slot) FIRST, then call the shared implementation. Covers Kiro, Claude
+    // and Codex — all three are MCP clients of this same server/slot (see report). The caller
+    // binding is built from resolveSlotBinding(slot) + slot.ownerUserId + slot.owner (never from
+    // args) so a model cannot forge ownerUserId/workspaceId/runOwner via a tool argument.
+    const executionRefSchema = z.object({
+        kind: z.enum(["chat_turn", "agent_run"]),
+        nodeId: z.string().optional(),
+        turnId: z.string().optional(),
+        runId: z.string().optional(),
+    });
+
+    function paneInspectionBinding(): PaneInspectionToolBinding {
+        const resolved = resolveSlotBinding(slot);
+        return {
+            ownerUserId: slot.ownerUserId,
+            workspaceId: resolved.workspaceId,
+            runOwnerRunId: slot.owner?.kind === "agent_run" ? slot.owner.runId : null,
+            backendConnectionId: slot.slotId,
+        };
+    }
+
+    server.registerTool(
+        "inspect_pane",
+        {
+            description:
+                "Inspect one pane (a chat thread, digest, artifact, or Agent Run) by its paneId/nodeId/runId — " +
+                "exactly one of those three locates it. Returns identity, current activity, message/turn counts, " +
+                "lineage, runtime binding, and a short latest-output preview. Read-only; does not load full " +
+                "conversation history — use read_pane_output for that. Optionally pass executionRef to inspect a " +
+                "specific historical turn/run instead of the most recent one.",
+            inputSchema: {
+                paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
+                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId)."),
+                runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
+                executionRef: executionRefSchema.optional().describe("Inspect this specific historical execution instead of the latest one."),
+            },
+        },
+        async (args) => {
+            const binding = paneInspectionBinding();
+            return inspectPaneTool(binding, {
+                paneId: args?.paneId,
+                nodeId: args?.nodeId,
+                runId: args?.runId,
+                executionRef: args?.executionRef,
+            });
+        },
+    );
+
+    server.registerTool(
+        "read_pane_output",
+        {
+            description:
+                "Read the (possibly paginated) output text of one pane's chat turn or Agent Run — the content " +
+                "behind inspect_pane's short preview. selection picks 'latest' (default, may be partial/streaming), " +
+                "'last_completed' (only a successfully committed execution), or 'execution' (a specific historical " +
+                "execution named by executionRef). Use pageCursor from a prior call's nextPageCursor to continue " +
+                "reading; a changed nextPageCursor means the underlying output moved on and must be re-read fresh.",
+            inputSchema: {
+                paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
+                nodeId: z.string().optional().describe("A chat node id (mutually exclusive with paneId/runId)."),
+                runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
+                selection: z.enum(["latest", "last_completed", "execution"]).optional().describe("Default 'latest'."),
+                executionRef: executionRefSchema.optional().describe("Required when selection is 'execution'."),
+                outputId: z.string().optional().describe("Re-request this specific prior output identity."),
+                pageCursor: z.string().optional().describe("Continue a prior paginated read."),
+                limitBytes: z.number().int().min(1).optional().describe("Max UTF-8 bytes per page. Default 16384, max 65536."),
+            },
+        },
+        async (args) => {
+            const binding = paneInspectionBinding();
+            return readPaneOutputTool(binding, {
+                paneId: args?.paneId,
+                nodeId: args?.nodeId,
+                runId: args?.runId,
+                selection: args?.selection,
+                executionRef: args?.executionRef,
+                outputId: args?.outputId,
+                pageCursor: args?.pageCursor,
+                limitBytes: args?.limitBytes,
+            });
+        },
+    );
+
+    server.registerTool(
+        "list_panes",
+        {
+            description:
+                "List panes (chat threads, digests, artifacts, Agent Runs, and open UI surfaces) in the caller's " +
+                "own workspace — never another workspace or backend. scope='open' (default) lists only panes a " +
+                "renderer currently reports as open; scope='all' lists every permitted persistent object plus " +
+                "still-open surfaces. Returns compact summaries (title, activity, latest execution outcome, how " +
+                "many views have it open) — NOT output content; use inspect_pane/read_pane_output for that. " +
+                "includeArchived defaults false. Use cursor from a prior call's nextCursor to page through the rest.",
+            inputSchema: {
+                treeId: z.string().optional().describe("Only panes in this tree."),
+                kind: z.enum(["chat", "agent-run", "digest", "artifact", "launcher", "files", "review", "file", "diff", "terminal", "browser"])
+                    .optional().describe("Only panes of this kind."),
+                parentNodeId: z.string().optional().describe("Only chat panes whose parent node is this id."),
+                scope: z.enum(["open", "all"]).optional().describe("Default 'open'."),
+                includeArchived: z.boolean().optional().describe("Default false."),
+                limit: z.number().int().min(1).optional().describe("Page size. Default 20, max 100."),
+                cursor: z.string().optional().describe("Continue a prior paginated list."),
+            },
+        },
+        async (args) => {
+            const binding = paneInspectionBinding();
+            return listPanesTool(binding, {
+                treeId: args?.treeId,
+                kind: args?.kind,
+                parentNodeId: args?.parentNodeId,
+                scope: args?.scope,
+                includeArchived: args?.includeArchived,
+                limit: args?.limit,
+                cursor: args?.cursor,
+            });
+        },
+    );
+
+    server.registerTool(
+        "wait_pane",
+        {
+            description:
+                "Block, up to timeoutMs, until a pane changes or a specific execution reaches a terminal state — " +
+                "use instead of polling inspect_pane in a loop. until='changed' requires cursor (from a prior " +
+                "inspect_pane/list_panes/wait_pane result) and returns as soon as anything about the pane differs " +
+                "from that cursor's snapshot, immediately if it already has. until='terminal' requires " +
+                "executionRef naming a turn/run that has already started (a still-queued chat has no turnId yet " +
+                "and can only use 'changed') and returns once THAT execution completes/fails/is cancelled — a " +
+                "later execution starting on the same pane does not satisfy it. timeoutMs defaults to 20000ms, " +
+                "max 30000ms; on timeout, reason is 'timed_out' and nothing is cancelled — call again to keep " +
+                "waiting. At most 8 concurrent waits are allowed per caller.",
+            inputSchema: {
+                paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
+                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId)."),
+                runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
+                until: z.enum(["changed", "terminal"]).describe("Which condition ends the wait."),
+                cursor: z.string().optional().describe("Required when until is 'changed'."),
+                executionRef: executionRefSchema.optional().describe("Required when until is 'terminal'; names the execution to wait for."),
+                timeoutMs: z.number().int().min(1).optional().describe("Max wait, ms. Default 20000, max 30000."),
+            },
+        },
+        async (args) => {
+            const binding = paneInspectionBinding();
+            return waitPaneTool(binding, {
+                paneId: args?.paneId,
+                nodeId: args?.nodeId,
+                runId: args?.runId,
+                until: args?.until,
+                cursor: args?.cursor,
+                executionRef: args?.executionRef,
+                timeoutMs: args?.timeoutMs,
+            });
         },
     );
 

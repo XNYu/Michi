@@ -10,6 +10,8 @@ const domStateTests = [
   'manageRoute',
   'navHistory',
   'perWindowActiveProject',
+  'usePanePresenceIntegration',
+  'usePanePresenceReporter',
   'workspacePersistence.scoped',
 ];
 const nodeTests = [

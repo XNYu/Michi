@@ -74,6 +74,17 @@ interface TurnLog {
   pendingUserInput?: ChatStreamEvent;
   /** Runtime completion and the cancel timeout share one durability boundary. */
   finalization?: Promise<void>;
+  /**
+   * Set only inside the existing finishWithPersistenceError path, beside its
+   * pre-existing effects (log.status = "error", the live broadcast event).
+   * This is IN-MEMORY ONLY and does not survive a process restart — nothing
+   * here is written to SQLite. After a restart this process never sees the
+   * turn again (getSnapshot returns null for it), so a caller must fall back
+   * to the database and report commitState=unknown rather than trusting a
+   * stale in-memory conclusion. Do not treat the absence of this field after
+   * a restart as proof the commit succeeded.
+   */
+  lastPersistenceError?: { message: string; recoverable: boolean; occurredAt: number };
 }
 
 export interface TurnPersistence {
@@ -155,6 +166,61 @@ export interface StartedTurn {
   done: Promise<void>;
 }
 
+/**
+ * Read-only observation of a chat's most relevant turn, keyed by nodeId.
+ * This is a LOCAL type owned by this task (P1-5) — the shared pane-inspection
+ * DTO mapping happens elsewhere (P1-2), which maps this shape onto its own
+ * contract rather than this file importing one.
+ *
+ * `inMemoryStatus` and `durableStatus` are DIFFERENT enums with DIFFERENT
+ * meanings (see TurnLog.status vs DurableTurnSnapshot.status) — conflating
+ * them is exactly how a failed commit gets reported as a success.
+ * `inMemoryStatus` is this process's view of the TurnLog; `durableStatus` is
+ * the last snapshot.status this process computed, which is NOT the same as
+ * "committed to SQLite" — see lastPersistenceError and the restart note on
+ * getSnapshot below.
+ */
+export interface ChatObservationSnapshot {
+  chatId: string;
+  nodeId: string;
+  turnId: string;
+  assistantId: string;
+  /** TurnLog['status'] — this process's in-memory view of the turn. */
+  inMemoryStatus: "active" | "ended" | "error";
+  /** log.snapshot.status — the durable-shaped status as last computed by
+   * applyTurnEvent in this process. NOT proof of a committed SQLite row;
+   * see lastPersistenceError and the restart-honesty note on getSnapshot. */
+  durableStatus: DurableTurnSnapshot["status"];
+  stopReason?: string;
+  error?: string;
+  /** Structurally-copied DurableTurnSnapshot — safe for the caller to hold
+   * and mutate without affecting ChatHub's own state. */
+  snapshot: DurableTurnSnapshot;
+  /** Last ASSIGNED seq for this turn (log.nextSeq - 1), in the same shape as
+   * BackgroundCursor so a snapshot-then-subscribe handoff can use it as the
+   * native watermark without inventing a second cursor shape. -1 when no
+   * event has been assigned a seq yet. */
+  cursor: { turnId: string; seq: number };
+  startedAt: number;
+  completedAt?: number;
+  /** True when a permission or user-input card is currently unresolved.
+   * Only a boolean + a human-readable reason are exposed — never the raw
+   * ChatStreamEvent, which may carry permission options / executable
+   * actions (design §10 forbids those from reaching an observer). */
+  pendingInteraction: { waiting: false } | { waiting: true; reason: string };
+  /** Wall-clock time cancel() was invoked for this turn, or null if no
+   * cancellation has been requested. Cleared once the turn ends (naturally
+   * or via force-finish) or is evicted before it started. */
+  cancelRequestedAt: number | null;
+  /** Set only by the existing finishWithPersistenceError path. IN-MEMORY
+   * ONLY — see the doc-comment on TurnLog.lastPersistenceError. null does
+   * NOT mean "committed successfully"; it only means this process never
+   * recorded a persistence failure for this turn (which is also true for a
+   * turn this process never saw at all, e.g. after a restart). */
+  lastPersistenceError: { message: string; recoverable: boolean; occurredAt: number } | null;
+  selfInitiated: boolean;
+}
+
 export interface StartSelfTurnArgs {
   chatId: string;
   nodeId: string;
@@ -209,6 +275,13 @@ export class ChatHub {
    * cancelling turn B on the same chat. Entries may also reserve a
    * client-minted turn id when cancel wins the race against POST /message. */
   private readonly cancelledTurnIds = new Set<string>();
+  /** Parallel to cancelledTurnIds, recording when cancellation was requested
+   * so a read-only observer can derive a "cancelling" activity state and
+   * apply a cancel-timeout rule without a dedicated ChatHub state machine.
+   * Written/cleared at every site that adds/removes from cancelledTurnIds —
+   * never read by cancel()/finish*() themselves, so it cannot perturb the
+   * existing cancellation behaviour. */
+  private readonly cancelRequestedAt = new Map<string, number>();
   /** Force-finish timers keyed by chatId. Cleared when the turn ends naturally. */
   private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retentionMs: number;
@@ -304,12 +377,106 @@ export class ChatHub {
     return null;
   }
 
+  /**
+   * Read-only observation entry point. Does NOT stamp an event, touch
+   * nextSeq, checkpoint, notify subscribers, or delete from any map — a
+   * turn streaming concurrently is completely unaffected by this call.
+   *
+   * Lookup order (COMMON decision 1): this.turns.get(nodeId) first — verified
+   * that routes/michi.ts:1417 starts foreground turns with
+   * `chatId: nodeId, nodeId`, so chatId===nodeId in that path but is NOT a
+   * type-enforced invariant elsewhere (resolveActiveInvocationAnchor above
+   * treats them as separate candidates). Falls back to scanning
+   * this.turns.values() for log.nodeId === nodeId, then this.retainedTurns,
+   * preferring an active log over an ended one, and the most recently ended
+   * one otherwise.
+   *
+   * Returns null when this ChatHub instance (this process) has no in-memory
+   * knowledge of the node. null means exactly that — NOT "no turn ever
+   * existed for this node". In particular, after a process restart every
+   * turn this process previously knew about is gone (ChatHub has no
+   * boot-time reconstruction), so getSnapshot correctly returns null for a
+   * turn that may well have committed successfully to SQLite before the
+   * restart. The caller is responsible for falling back to the database and
+   * reporting commitState=unknown in that case — this method must not be
+   * used to conclude a turn failed or never happened.
+   */
+  getSnapshot(nodeId: string): ChatObservationSnapshot | null {
+    const direct = this.turns.get(nodeId);
+    const log = direct && direct.nodeId === nodeId ? direct : this.findLogByNodeId(nodeId);
+    if (!log) return null;
+    return this.toObservationSnapshot(log);
+  }
+
+  private findLogByNodeId(nodeId: string): TurnLog | null {
+    let bestActive: TurnLog | null = null;
+    for (const candidate of this.turns.values()) {
+      if (candidate.nodeId !== nodeId) continue;
+      if (candidate.status === "active") return candidate;
+      if (!bestActive) bestActive = candidate;
+    }
+    if (bestActive) return bestActive;
+    let bestEnded: TurnLog | null = null;
+    for (const candidates of this.retainedTurns.values()) {
+      for (const candidate of candidates) {
+        if (candidate.nodeId !== nodeId) continue;
+        if (!bestEnded || candidate.snapshot.startedAt > bestEnded.snapshot.startedAt) {
+          bestEnded = candidate;
+        }
+      }
+    }
+    return bestEnded;
+  }
+
+  private toObservationSnapshot(log: TurnLog): ChatObservationSnapshot {
+    const pendingInteraction: ChatObservationSnapshot["pendingInteraction"] = log.pendingPermission
+      ? { waiting: true, reason: this.permissionReason(log.pendingPermission) }
+      : log.pendingUserInput
+        ? { waiting: true, reason: this.userInputReason(log.pendingUserInput) }
+        : { waiting: false };
+    return {
+      chatId: log.chatId,
+      nodeId: log.nodeId,
+      turnId: log.turnId,
+      assistantId: log.assistantId,
+      inMemoryStatus: log.status,
+      durableStatus: log.snapshot.status,
+      stopReason: log.snapshot.stopReason,
+      error: log.snapshot.error,
+      snapshot: structuredClone(log.snapshot),
+      cursor: { turnId: log.turnId, seq: log.nextSeq - 1 },
+      startedAt: log.snapshot.startedAt,
+      completedAt: log.snapshot.completedAt,
+      pendingInteraction,
+      cancelRequestedAt: this.cancelRequestedAt.get(log.turnId) ?? null,
+      lastPersistenceError: log.lastPersistenceError
+        ? { ...log.lastPersistenceError }
+        : null,
+      selfInitiated: log.selfInitiated,
+    };
+  }
+
+  private permissionReason(event: ChatStreamEvent): string {
+    return event.event === CHAT_STREAM_EVENTS.permissionRequest && event.data.title
+      ? event.data.title
+      : "waiting for permission";
+  }
+
+  private userInputReason(event: ChatStreamEvent): string {
+    if (event.event === CHAT_STREAM_EVENTS.userInputRequest) {
+      const first = event.data.questions?.[0]?.question;
+      if (first) return first;
+    }
+    return "waiting for user input";
+  }
+
   async startTurn(args: StartTurnArgs): Promise<StartedTurn> {
     if (this.isActive(args.chatId) || this.pendingSelfTurns.has(args.chatId)) {
       throw new Error('a turn is already active for this chat');
     }
     const turnId = args.turnId ?? randomUUID();
     if (this.cancelledTurnIds.delete(turnId)) {
+      this.cancelRequestedAt.delete(turnId);
       throw new Error(`turn ${turnId} was cancelled before it started`);
     }
     const assistantId = `a-${args.nodeId}-${turnId}`;
@@ -524,7 +691,11 @@ export class ChatHub {
     if (!log || log.status !== "active") {
       if (requestedTurnId) {
         this.cancelledTurnIds.add(requestedTurnId);
-        const expiry = setTimeout(() => this.cancelledTurnIds.delete(requestedTurnId), this.retentionMs);
+        this.cancelRequestedAt.set(requestedTurnId, Date.now());
+        const expiry = setTimeout(() => {
+          this.cancelledTurnIds.delete(requestedTurnId);
+          this.cancelRequestedAt.delete(requestedTurnId);
+        }, this.retentionMs);
         expiry.unref?.();
       }
       return false;
@@ -532,6 +703,7 @@ export class ChatHub {
     const turnId = requestedTurnId ?? log.turnId;
     if (turnId !== log.turnId) return false;
     this.cancelledTurnIds.add(log.turnId);
+    this.cancelRequestedAt.set(log.turnId, Date.now());
     this.append(chatId, log, {
       event: CHAT_STREAM_EVENTS.cancelPhase,
       data: {
@@ -979,6 +1151,7 @@ export class ChatHub {
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
+      this.cancelRequestedAt.delete(log.turnId);
       if (this.turns.get(chatId) === log) this.clearCancelTimer(chatId);
       this.scheduleEvict(chatId, log);
     }
@@ -1240,6 +1413,15 @@ export class ChatHub {
   private finishWithPersistenceError(chatId: string, log: TurnLog, err: unknown): void {
     const persistError = err instanceof Error ? err : new Error(String(err));
     log.status = "error";
+    // Dedicated field beside the existing effects above/below (status, log,
+    // broadcast) — none of those are altered. This is the only durable-ish
+    // record of the failure and it is IN-MEMORY ONLY; see the TurnLog field
+    // doc-comment for why it must never be treated as surviving a restart.
+    log.lastPersistenceError = {
+      message: persistError.message,
+      recoverable: true,
+      occurredAt: Date.now(),
+    };
     appLog.error('chat', 'turn persistence finalize failed', {
       turnId: log.turnId,
       nodeId: log.nodeId,
@@ -1379,6 +1561,7 @@ export class ChatHub {
       }
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
+      this.cancelRequestedAt.delete(log.turnId);
       // A timed-out cancellation can finish after the next turn has started.
       // Only the current turn owns chat-scoped timers, sessions and subscribers.
       if (this.turns.get(chatId) === log) {

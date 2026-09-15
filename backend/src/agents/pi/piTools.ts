@@ -11,6 +11,13 @@ import {
     type ParamSpec,
 } from "../builtinTools";
 import { getRuntimeDeps } from "../runtimeDeps";
+import {
+    inspectPaneTool,
+    readPaneOutputTool,
+    listPanesTool,
+    waitPaneTool,
+    type PaneInspectionToolBinding,
+} from "../paneInspectionTools";
 import { executeRead, type TurnImageQuota } from "../tools/read";
 import { executeLs } from "../tools/ls";
 import { executeGrep } from "../tools/grep";
@@ -323,6 +330,112 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     execute: async (_id: string, args: any) => {
                         const result = gc.readNodeOverview(workspaceId, ownerUserId ?? null, String(args?.nodeId ?? ""));
                         return { content: [{ type: "text", text: result.text }], details: result };
+                    },
+                };
+            }
+
+            case "inspect_pane": {
+                const binding: PaneInspectionToolBinding = {
+                    ownerUserId: ownerUserId ?? null,
+                    workspaceId,
+                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    backendConnectionId: parentChatId,
+                };
+                return {
+                    name: t.name,
+                    label: "Inspect pane",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        const result = inspectPaneTool(binding, {
+                            paneId: typeof args?.paneId === "string" ? args.paneId : undefined,
+                            nodeId: typeof args?.nodeId === "string" ? args.nodeId : undefined,
+                            runId: typeof args?.runId === "string" ? args.runId : undefined,
+                            executionRef: args?.executionRef,
+                        });
+                        return { ...result, details: result };
+                    },
+                };
+            }
+
+            case "read_pane_output": {
+                const binding: PaneInspectionToolBinding = {
+                    ownerUserId: ownerUserId ?? null,
+                    workspaceId,
+                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    backendConnectionId: parentChatId,
+                };
+                return {
+                    name: t.name,
+                    label: "Read pane output",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        const result = readPaneOutputTool(binding, {
+                            paneId: typeof args?.paneId === "string" ? args.paneId : undefined,
+                            nodeId: typeof args?.nodeId === "string" ? args.nodeId : undefined,
+                            runId: typeof args?.runId === "string" ? args.runId : undefined,
+                            selection: args?.selection,
+                            executionRef: args?.executionRef,
+                            outputId: typeof args?.outputId === "string" ? args.outputId : undefined,
+                            pageCursor: typeof args?.pageCursor === "string" ? args.pageCursor : undefined,
+                            limitBytes: typeof args?.limitBytes === "number" ? args.limitBytes : undefined,
+                        });
+                        return { ...result, details: result };
+                    },
+                };
+            }
+
+            case "list_panes": {
+                const binding: PaneInspectionToolBinding = {
+                    ownerUserId: ownerUserId ?? null,
+                    workspaceId,
+                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    backendConnectionId: parentChatId,
+                };
+                return {
+                    name: t.name,
+                    label: "List panes",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        const result = listPanesTool(binding, {
+                            treeId: typeof args?.treeId === "string" ? args.treeId : undefined,
+                            kind: args?.kind,
+                            parentNodeId: typeof args?.parentNodeId === "string" ? args.parentNodeId : undefined,
+                            scope: args?.scope,
+                            includeArchived: typeof args?.includeArchived === "boolean" ? args.includeArchived : undefined,
+                            limit: typeof args?.limit === "number" ? args.limit : undefined,
+                            cursor: typeof args?.cursor === "string" ? args.cursor : undefined,
+                        });
+                        return { ...result, details: result };
+                    },
+                };
+            }
+
+            case "wait_pane": {
+                const binding: PaneInspectionToolBinding = {
+                    ownerUserId: ownerUserId ?? null,
+                    workspaceId,
+                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    backendConnectionId: parentChatId,
+                };
+                return {
+                    name: t.name,
+                    label: "Wait for pane",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        const result = await waitPaneTool(binding, {
+                            paneId: typeof args?.paneId === "string" ? args.paneId : undefined,
+                            nodeId: typeof args?.nodeId === "string" ? args.nodeId : undefined,
+                            runId: typeof args?.runId === "string" ? args.runId : undefined,
+                            until: args?.until,
+                            cursor: typeof args?.cursor === "string" ? args.cursor : undefined,
+                            executionRef: args?.executionRef,
+                            timeoutMs: typeof args?.timeoutMs === "number" ? args.timeoutMs : undefined,
+                        });
+                        return { ...result, details: result };
                     },
                 };
             }

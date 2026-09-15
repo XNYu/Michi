@@ -1,0 +1,25 @@
+-- Composite index to support pane-inspection message role counts (P1-4).
+--
+-- getMessageCountsByNode() runs:
+--   SELECT role, COUNT(*) FROM messages WHERE node_id = ? GROUP BY role
+--
+-- Before this index, the query plan was:
+--   SEARCH messages USING INDEX idx_messages_node (node_id=?)
+--   USE TEMP B-TREE FOR GROUP BY
+--
+-- i.e. idx_messages_node(node_id) narrows to the node's rows, but SQLite
+-- still materializes a temp B-tree to group them by role. Measured against
+-- 20 nodes x 6000 mixed-role messages each (120k rows total), adding this
+-- index changes the plan to a single covering-index search with no temp
+-- B-tree:
+--   SEARCH messages USING COVERING INDEX idx_messages_node_role (node_id=?)
+--
+-- and roughly triples per-call throughput for that query in the same
+-- measurement (~1.55ms -> ~0.51ms per call). See P1-4's task report for the
+-- full before/after EXPLAIN QUERY PLAN output.
+--
+-- role cardinality is low (user/assistant, occasionally other values with no
+-- CHECK constraint), but node_id is the leading column and is what actually
+-- narrows the scan; role rides along in the same index to make the result a
+-- covering index and avoid the GROUP BY temp B-tree entirely.
+CREATE INDEX IF NOT EXISTS idx_messages_node_role ON messages(node_id, role);

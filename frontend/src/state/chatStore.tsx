@@ -20,6 +20,7 @@ import { joinMessageParts } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
+import { usePanePresenceIntegration } from './usePanePresenceIntegration';
 import { agentRunPaneId, normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
 import type { AgentResourceIdentity } from './agentIdentity';
 import { getElectron } from '../lib/electronBridge';
@@ -314,6 +315,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     focusNonce,
     paneItems,
     viewMode,
+    openPanesMap,
     setOpenPanes,
     setFocusedPane,
     openPane,
@@ -810,6 +812,22 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     userId,
     windowId: WINDOW_ID,
     syncPausedRef,
+  });
+
+  // Pane Presence — reports every open pane slot for the ACTIVE project (across all its trees,
+  // not just the visible one) to the backend presence registry (design §9; W13 brief). Mounted
+  // exactly once here so the reporter's own per-connection lease never gets duplicated by a
+  // second mount elsewhere. Disabled entirely (empty `backends`) until the active connection's
+  // capability probe confirms `paneInspection: 'v1'` support and workspace hydration completes —
+  // see usePanePresenceIntegration's own doc comment for the full gate/allocation contract.
+  usePanePresenceIntegration({
+    windowId: WINDOW_ID,
+    hydrated,
+    projects,
+    activeProjectId,
+    activeBackendConnectionId,
+    openPanesMap,
+    paneItems,
   });
 
   useEffect(() => {

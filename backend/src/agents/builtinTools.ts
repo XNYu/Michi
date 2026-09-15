@@ -43,6 +43,10 @@ export type BuiltinToolName =
     | "search_messages"
     | "read_node"
     | "read_node_overview"
+    | "inspect_pane"
+    | "read_pane_output"
+    | "list_panes"
+    | "wait_pane"
     | "read"
     | "ls"
     | "grep"
@@ -175,6 +179,114 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
             "Much lighter than read_node; use to decide whether and what to read in detail. " +
             "Use AFTER list_threads identified a relevant nodeId.",
         parameters: { object: { nodeId: f("string") } },
+    },
+    {
+        name: "inspect_pane",
+        description:
+            "Inspect one pane (a chat thread, digest, artifact, or Agent Run) by its paneId/nodeId/runId — exactly one " +
+            "of those three locates it. Returns identity, current activity, message/turn counts, lineage, runtime " +
+            "binding, and a short latest-output preview. Read-only; does not load full conversation history — use " +
+            "read_pane_output for that. Optionally pass executionRef to inspect a specific historical turn/run " +
+            "instead of the most recent one.",
+        parameters: {
+            object: {
+                paneId: f("string", { optional: true, description: "Opaque pane id from a prior inspect/list result." }),
+                nodeId: f("string", { optional: true, description: "A chat/digest/artifact node id (mutually exclusive with paneId/runId)." }),
+                runId: f("string", { optional: true, description: "An Agent Run id (mutually exclusive with paneId/nodeId)." }),
+                executionRef: f({
+                    object: {
+                        kind: f("string", { enum: ["chat_turn", "agent_run"] }),
+                        nodeId: f("string", { optional: true, description: "Required when kind is chat_turn." }),
+                        turnId: f("string", { optional: true, description: "Required when kind is chat_turn." }),
+                        runId: f("string", { optional: true, description: "Required when kind is agent_run." }),
+                    },
+                }, { optional: true, description: "Inspect this specific historical execution instead of the latest one." }),
+            },
+        },
+    },
+    {
+        name: "read_pane_output",
+        description:
+            "Read the (possibly paginated) output text of one pane's chat turn or Agent Run — the content behind " +
+            "inspect_pane's short preview. selection picks 'latest' (default, may be partial/streaming), " +
+            "'last_completed' (only a successfully committed execution), or 'execution' (a specific historical " +
+            "execution named by executionRef). Use pageCursor from a prior call's nextPageCursor to continue " +
+            "reading; a changed nextPageCursor means the underlying output moved on and must be re-read fresh.",
+        parameters: {
+            object: {
+                paneId: f("string", { optional: true, description: "Opaque pane id from a prior inspect/list result." }),
+                nodeId: f("string", { optional: true, description: "A chat node id (mutually exclusive with paneId/runId)." }),
+                runId: f("string", { optional: true, description: "An Agent Run id (mutually exclusive with paneId/nodeId)." }),
+                selection: f("string", { optional: true, enum: ["latest", "last_completed", "execution"], description: "Default 'latest'." }),
+                executionRef: f({
+                    object: {
+                        kind: f("string", { enum: ["chat_turn", "agent_run"] }),
+                        nodeId: f("string", { optional: true, description: "Required when kind is chat_turn." }),
+                        turnId: f("string", { optional: true, description: "Required when kind is chat_turn." }),
+                        runId: f("string", { optional: true, description: "Required when kind is agent_run." }),
+                    },
+                }, { optional: true, description: "Required when selection is 'execution'." }),
+                outputId: f("string", { optional: true, description: "Re-request this specific prior output identity." }),
+                pageCursor: f("string", { optional: true, description: "Continue a prior paginated read." }),
+                limitBytes: f("number", { optional: true, description: "Max UTF-8 bytes per page. Default 16384, max 65536." }),
+            },
+        },
+    },
+    {
+        name: "list_panes",
+        description:
+            "List panes (chat threads, digests, artifacts, Agent Runs, and open UI surfaces) in the caller's own " +
+            "workspace — never another workspace or backend. scope='open' (default) lists only panes a renderer " +
+            "currently reports as open; scope='all' lists every permitted persistent object plus still-open " +
+            "surfaces. Returns compact summaries (title, activity, latest execution outcome, how many views have " +
+            "it open) — NOT output content; use inspect_pane/read_pane_output for that. includeArchived defaults " +
+            "false. Use cursor from a prior call's nextCursor to page through the rest.",
+        parameters: {
+            object: {
+                treeId: f("string", { optional: true, description: "Only panes in this tree." }),
+                kind: f("string", {
+                    optional: true,
+                    enum: ["chat", "agent-run", "digest", "artifact", "launcher", "files", "review", "file", "diff", "terminal", "browser"],
+                    description: "Only panes of this kind.",
+                }),
+                parentNodeId: f("string", { optional: true, description: "Only chat panes whose parent node is this id." }),
+                scope: f("string", { optional: true, enum: ["open", "all"], description: "Default 'open'." }),
+                includeArchived: f("boolean", { optional: true, description: "Default false." }),
+                limit: f("number", { optional: true, description: "Page size. Default 20, max 100." }),
+                cursor: f("string", { optional: true, description: "Continue a prior paginated list." }),
+            },
+        },
+    },
+    {
+        name: "wait_pane",
+        description:
+            "Block, up to timeoutMs, until a pane changes or a specific execution reaches a terminal state — use " +
+            "instead of polling inspect_pane in a loop. until='changed' requires cursor (from a prior " +
+            "inspect_pane/list_panes/wait_pane result) and returns as soon as anything about the pane differs from " +
+            "that cursor's snapshot, immediately if it already has. until='terminal' requires executionRef naming " +
+            "a turn/run that has already started (a still-queued chat has no turnId yet and can only use " +
+            "'changed') and returns once THAT execution completes/fails/is cancelled — a later execution starting " +
+            "on the same pane does not satisfy it. timeoutMs defaults to 20000ms, max 30000ms; on timeout, reason " +
+            "is 'timed_out' and nothing is cancelled — call again to keep waiting. At most 8 concurrent waits are " +
+            "allowed per caller.",
+        parameters: {
+            object: {
+                paneId: f("string", { optional: true, description: "Opaque pane id from a prior inspect/list result." }),
+                nodeId: f("string", { optional: true, description: "A chat/digest/artifact node id (mutually exclusive with paneId/runId)." }),
+                runId: f("string", { optional: true, description: "An Agent Run id (mutually exclusive with paneId/nodeId)." }),
+                until: f("string", { enum: ["changed", "terminal"], description: "Which condition ends the wait." }),
+                cursor: f("string", { optional: true, description: "Required when until is 'changed'." }),
+                executionRef: f({
+                    object: {
+                        kind: f("string", { enum: ["chat_turn", "agent_run"] }),
+                        nodeId: f("string", { optional: true, description: "Required when kind is chat_turn." }),
+                        turnId: f("string", { optional: true, description: "Required when kind is chat_turn." }),
+                        runId: f("string", { optional: true, description: "Required when kind is agent_run." }),
+                    },
+                }, { optional: true, description: "Required when until is 'terminal'; names the execution to wait for." }),
+                timeoutMs: f("number", { optional: true, description: "Max wait, ms. Default 20000, max 30000." }),
+            },
+        },
     },
     {
         name: "read",

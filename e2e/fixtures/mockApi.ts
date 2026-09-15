@@ -61,6 +61,187 @@ export interface MockOverrides {
 
 const AGENT_HASH = 'a'.repeat(64);
 
+// ── Pane Presence mock controller (brief P3-7 gap #2/#3) ───────────────────
+//
+// A reusable, test-local stand-in for backend/src/services/panePresence.ts +
+// the /panes/presence* routes in backend/src/routes/paneInspection.ts. Deliberately NOT a
+// byte-for-byte reimplementation of the real registry's semantics (revision conflicts, TTL
+// expiry, per-scope allocation caps, etc. — those already have real backend coverage in
+// backend/test/panePresence.test.ts and backend/test/paneInspectionRoutes.test.ts). This
+// controller exists ONLY to make the ONE thing a browser-only Playwright harness cannot get from
+// a real backend observable end-to-end: that two independent renderer instances (two Playwright
+// pages) submitting presence for the SAME workspace/pane each get their OWN distinct
+// rendererLeaseId, and that closing/reloading one never touches the other's lease or triggers a
+// chat/run cancel.
+//
+// Advertises `paneInspection: 'v1'` via GET /persistence/capabilities so
+// usePanePresenceIntegration's capability gate (frontend/src/state/usePanePresenceIntegration.ts)
+// actually turns the reporter on — installMockApi's own default capabilities response has no such
+// field, so a spec that needs presence traffic MUST pass this controller's `handle` via
+// `custom:` (it takes over the capabilities route too) rather than relying on defaults.
+//
+// Shareable by two Playwright pages in one test: the controller is a plain closure with mutable
+// state, so two `installMockApi(pageN, { custom: controller.handle })` calls against the SAME
+// controller instance observe and mutate the same in-memory maps — exactly like two renderer
+// windows talking to one real backend process. Every counter and map is closure-local, so tests
+// that construct a fresh controller cannot leak state or depend on execution order.
+export interface PanePresenceMockController {
+  handle(route: Route): Promise<boolean>;
+  /** Every accepted PUT /panes/presence call, in arrival order. */
+  readonly submitCalls: Array<{ rendererLeaseId: string; viewRevision: number; windowId: string; viewCount: number }>;
+  /** Every DELETE /panes/presence call, in arrival order. */
+  readonly removeCalls: Array<{ rendererLeaseId: string }>;
+  /** Every POST /panes/presence/keepalive call, in arrival order. */
+  readonly keepaliveCalls: Array<{ rendererLeaseId: string }>;
+  /** Every POST /chats/:id/cancel call this controller observed, in arrival order — used to prove
+   *  a pane-close/reload lifecycle path never triggers a cancel (brief P3-7 gap #3). */
+  readonly cancelCalls: string[];
+  /** Currently-live leases, keyed by rendererLeaseId, exactly as last submitted. Empty once a
+   *  lease has been DELETEd. Read-only snapshot for test assertions. */
+  liveLeases(): Array<{ rendererLeaseId: string; windowId: string; paneIds: string[] }>;
+}
+
+/** Creates a fresh, isolated Pane Presence mock controller. Construct one PER TEST (never share
+ *  across tests) — see this module's own doc comment for why. */
+export function createPanePresenceMockController(): PanePresenceMockController {
+  interface Lease {
+    rendererLeaseId: string;
+    windowId: string;
+    viewRevision: number;
+    paneIds: string[];
+  }
+  const leasesById = new Map<string, Lease>();
+  const submitCalls: PanePresenceMockController['submitCalls'] = [];
+  const removeCalls: PanePresenceMockController['removeCalls'] = [];
+  const keepaliveCalls: PanePresenceMockController['keepaliveCalls'] = [];
+  const cancelCalls: string[] = [];
+  let leaseCounter = 0;
+
+  const json = (route: Route, data: unknown, status = 200) => route.fulfill({
+    status, contentType: 'application/json', body: JSON.stringify(data),
+  });
+
+  return {
+    submitCalls,
+    removeCalls,
+    keepaliveCalls,
+    cancelCalls,
+    liveLeases() {
+      return Array.from(leasesById.values()).map((l) => (
+        { rendererLeaseId: l.rendererLeaseId, windowId: l.windowId, paneIds: [...l.paneIds] }
+      ));
+    },
+    async handle(route: Route): Promise<boolean> {
+      const request = route.request();
+      const url = new URL(request.url());
+      const apiPath = url.pathname.replace(/^.*\/api/, '');
+      const method = request.method();
+
+      // Capability advertisement — takes over the default /persistence/capabilities response
+      // entirely (rather than composing with installMockApi's own handler) so a spec using this
+      // controller gets a single source of truth for what "paneInspection" support looks like.
+      if (method === 'GET' && apiPath === '/persistence/capabilities') {
+        await json(route, {
+          protocolVersion: 2,
+          authoritativeTurnPersistence: true,
+          durableNodePrerequisite: true,
+          explicitCommands: true,
+          backgroundWorkspaceSync: false,
+          legacySyncAccepted: true,
+          paneInspection: 'v1',
+        });
+        return true;
+      }
+
+      if (method === 'PUT' && apiPath === '/panes/presence') {
+        const body = request.postDataJSON() as {
+          rendererLeaseId?: string;
+          viewRevision: number;
+          windowId: string;
+          views: Array<{ paneId: string }>;
+        };
+        // A fresh rendererLeaseId per FIRST submission from a given renderer — this is the crux
+        // of the whole controller: two pages that never supplied a rendererLeaseId each get
+        // their OWN distinct lease, exactly matching the real registry's first-PUT-allocates
+        // contract (backend/src/services/panePresence.ts).
+        const rendererLeaseId = body.rendererLeaseId && leasesById.has(body.rendererLeaseId)
+          ? body.rendererLeaseId
+          : `mock-lease-${(leaseCounter += 1)}`;
+        leasesById.set(rendererLeaseId, {
+          rendererLeaseId,
+          windowId: body.windowId,
+          viewRevision: body.viewRevision,
+          paneIds: body.views.map((v) => v.paneId),
+        });
+        submitCalls.push({
+          rendererLeaseId, viewRevision: body.viewRevision, windowId: body.windowId, viewCount: body.views.length,
+        });
+        await json(route, {
+          ok: true, rendererLeaseId, accepted: body.views.length, rejectedTargets: [],
+        });
+        return true;
+      }
+
+      if (method === 'DELETE' && apiPath === '/panes/presence') {
+        const body = request.postDataJSON() as { rendererLeaseId: string; paneIds?: string[] };
+        const lease = leasesById.get(body.rendererLeaseId);
+        removeCalls.push({ rendererLeaseId: body.rendererLeaseId });
+        if (!lease) {
+          await json(route, { ok: false, code: 'NOT_FOUND' }, 404);
+          return true;
+        }
+        let removedCount: number;
+        if (body.paneIds && body.paneIds.length > 0) {
+          // Partial removal — mirrors the real registry's paneIds-scoped DELETE
+          // (backend/src/services/panePresence.ts's RemovePresenceRequest.paneIds): only the
+          // named views drop, the lease itself survives with whatever remains.
+          const toRemove = new Set(body.paneIds);
+          const before = lease.paneIds.length;
+          lease.paneIds = lease.paneIds.filter((id) => !toRemove.has(id));
+          removedCount = before - lease.paneIds.length;
+        } else {
+          // No paneIds -> full lease removal (the "closing the last pane" / explicit teardown
+          // case per usePanePresenceReporter.ts's own DELETE call sites).
+          removedCount = lease.paneIds.length;
+          leasesById.delete(body.rendererLeaseId);
+        }
+        await json(route, { ok: true, removed: removedCount });
+        return true;
+      }
+
+      if (method === 'POST' && apiPath === '/panes/presence/keepalive') {
+        const body = request.postDataJSON() as { rendererLeaseId: string };
+        keepaliveCalls.push({ rendererLeaseId: body.rendererLeaseId });
+        const lease = leasesById.get(body.rendererLeaseId);
+        await json(
+          route,
+          lease ? { ok: true, renewedViews: lease.paneIds.length } : { ok: false, code: 'NOT_FOUND' },
+          lease ? 200 : 404,
+        );
+        return true;
+      }
+
+      if (method === 'POST' && apiPath === '/panes/presence/allocate') {
+        const body = request.postDataJSON() as { kind: string };
+        const registrationId = `mock-surface-${(leaseCounter += 1)}`;
+        await json(route, { registrationId, paneId: `surface:${registrationId}` });
+        return true;
+      }
+
+      if (method === 'POST' && /^\/chats\/[^/]+\/cancel$/.test(apiPath)) {
+        const nodeId = apiPath.split('/')[2];
+        cancelCalls.push(nodeId);
+        // Deliberately NOT `return true` — falls through to installMockApi's own built-in
+        // /chats/:id/cancel handler (`json({ ok: true })`) so this controller only OBSERVES the
+        // call rather than needing to reimplement its response shape.
+        return false;
+      }
+
+      return false;
+    },
+  };
+}
+
 /** Stateful hermetic Custom Agents backend used by the release E2E. */
 export function createCustomAgentsMockController() {
   let definition: AgentDefinitionDtoV1 | null = null;

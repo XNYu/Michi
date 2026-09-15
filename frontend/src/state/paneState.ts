@@ -344,6 +344,12 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
     focusNonce,
     paneItems,
     viewMode,
+    /** Every open-pane slot for EVERY project/tree, keyed by `${projectId}::${treeId ??
+     *  'workspace'}` exactly as `paneSlotKey` produces it — not just the active project's
+     *  currently-focused slot. Read-only: exposed for consumers (e.g. Pane Presence reporting)
+     *  that need visibility into panes open in a background tree/tab, not for mutation — use the
+     *  callbacks above (`setPaneSlot`, `openPaneInTree`, etc.) to change pane state. */
+    openPanesMap,
     setOpenPanes,
     setFocusedPane,
     openPane,

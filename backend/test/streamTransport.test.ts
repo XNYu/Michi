@@ -21,6 +21,10 @@ async function fixture(t: TestContext) {
     requests.push({ path: req.originalUrl, body: req.body, cookie: req.headers.cookie });
     if (req.path.endsWith('/forbidden/stream')) return res.status(403).json({ error: 'wrong workspace owner' });
     if (req.path === '/api/control') return res.json({ ok: true });
+    // panes/presence/keepalive is an ordinary one-shot JSON route (design §9), not a stream —
+    // mirrors the real route's shape (200 + small JSON body, connection closes immediately)
+    // rather than the SSE-shaped default below, which never ends on its own.
+    if (req.path.endsWith('/panes/presence/keepalive')) return res.json({ ok: true, renewedViews: 1 });
     active.add(req.originalUrl);
     res.on('close', () => active.delete(req.originalUrl));
     if (req.path.endsWith('/pending/stream')) return;
@@ -160,4 +164,59 @@ test('expired tickets cannot open a socket', async (t) => {
   t.mock.method(Date, 'now', () => expiredTime);
   const expired = new WebSocket(`${f.base.replace('http:', 'ws:')}/api/stream-transport?token=${token}`, { origin: f.base });
   await assert.rejects(once(expired, 'open'), /403/);
+});
+
+// -----------------------------------------------------------------------------------------------
+// panes/presence/keepalive allowlist — W11. Design §9's independent semantic heartbeat is an
+// ordinary authenticated HTTP route (backend/src/routes/paneInspection.ts), forwarded through
+// this multiplexer like any other already-guarded route rather than a bespoke frame type. Only
+// the EXACT path `panes/presence/keepalive` is added; `panes/presence` (PUT/DELETE) and
+// `panes/presence/allocate` are deliberately NOT added. This fixture's own `/api/*path`
+// catch-all gives `panes/presence/keepalive` a one-shot JSON response (mirroring the real route)
+// and everything else the SSE-shaped default, so these assertions are purely about STREAM_PATH's
+// allowlist/method matching, not about the real presence routes' semantics.
+// -----------------------------------------------------------------------------------------------
+
+test('forwards panes/presence/keepalive as POST through the multiplexer', async (t) => {
+  const f = await fixture(t);
+  const { socket, frames } = await f.connect();
+  socket.send(JSON.stringify({
+    type: 'open', id: 'one', path: '/api/panes/presence/keepalive', method: 'POST',
+    body: JSON.stringify({ rendererLeaseId: 'lease-1' }),
+  }));
+  await until(() => frames.some((frame) => frame.type === 'end'));
+  assert.deepEqual(frames[0], { type: 'headers', id: 'one', status: 200 });
+  assert.equal(frames.filter((frame) => frame.type === 'data').map((frame) => frame.text).join(''), '{"ok":true,"renewedViews":1}');
+  assert.equal(f.requests[0].path, '/api/panes/presence/keepalive');
+  assert.deepEqual(f.requests[0].body, { rendererLeaseId: 'lease-1' });
+});
+
+
+test('rejects panes/presence/keepalive over GET even though the path is allowlisted', async (t) => {
+  const f = await fixture(t);
+  const { socket, frames } = await f.connect();
+  socket.send(JSON.stringify({ type: 'open', id: 'wrong-method', path: '/api/panes/presence/keepalive', method: 'GET' }));
+  await until(() => frames.length === 1);
+  assert.equal(frames[0].type, 'error');
+  assert.equal(f.requests.length, 0);
+});
+
+test('does not allowlist panes/presence or panes/presence/allocate — only the exact keepalive path', async (t) => {
+  const f = await fixture(t);
+  const { socket, frames } = await f.connect();
+  const paths = ['/api/panes/presence', '/api/panes/presence/allocate', '/api/panes/presence/keepalive/extra'];
+  paths.forEach((path, i) => socket.send(JSON.stringify({ type: 'open', id: String(i), path, method: 'POST' })));
+  await until(() => frames.length === paths.length);
+  assert.ok(frames.every((frame) => frame.type === 'error'));
+  assert.equal(f.requests.length, 0);
+});
+
+test('remote-proxied panes/presence/keepalive keeps route authorization', async (t) => {
+  const f = await fixture(t);
+  const { socket, frames } = await f.connect();
+  const path = '/api/backend-connections/remote-1/proxy/panes/presence/keepalive';
+  socket.send(JSON.stringify({ type: 'open', id: 'one', path, method: 'POST', body: JSON.stringify({ rendererLeaseId: 'lease-1' }) }));
+  await until(() => frames.some((frame) => frame.type === 'end'));
+  assert.deepEqual(frames[0], { type: 'headers', id: 'one', status: 200 });
+  assert.equal(f.requests[0].path, path);
 });

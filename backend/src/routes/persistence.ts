@@ -32,6 +32,12 @@ export function setupPersistenceRoutes(): express.Router {
       backgroundWorkspaceSync: false,
       legacySyncAccepted: false,
       streamTransport: 'websocket-v1',
+      // Pane Inspection API (design doc §11): advertised so the frontend can
+      // distinguish an old gateway that predates this feature ("unsupported")
+      // from a current gateway that legitimately has zero panes right now
+      // ("supported, empty"). Bump only alongside a breaking contract change
+      // in shared/src/paneInspection.ts.
+      paneInspection: 'v1',
     });
   });
 
