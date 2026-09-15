@@ -301,7 +301,24 @@ export interface AgentRuntime {
    * human-readable reason. Optional: runtimes without it fall back to warm().
    */
   checkHealth?(cwd: string, opts?: { model?: string | null }): Promise<{ ok: boolean; detail?: string }>;
+  /**
+   * Sidecar thread-title generation on a cheap model owned by this runtime
+   * (for example Haiku for Claude or Luna for Kiro). Runs in parallel with the
+   * main turn so the sidebar stops showing "Untitled" before the agent has
+   * finished thinking. Resolves `null` when the runtime cannot produce a
+   * title; callers fall back to the agent's own title sentinel. Runtimes that
+   * generate titles inside the session (Codex) leave this undefined.
+   */
+  generateTitle?(opts: GenerateTitleOptions): Promise<string | null>;
   shutdown(): Promise<void>;
+}
+
+export interface GenerateTitleOptions {
+  /** The user's first message, as shown in the UI (no mention expansion). */
+  userText: string;
+  /** Workspace folder of the chat that needs a title. Runtimes may ignore it. */
+  cwd?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface VerifyProviderKeyOptions {

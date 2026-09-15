@@ -1737,6 +1737,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         cancelFns,
         ownerToken: ownerTokenRef.current,
         displayText,
+        enableKiroSidecarTitle: prefsRef.current.enableKiroSidecarTitles,
         userMetadata: {
           quotedText: meta?.quotedText,
           attachments: meta?.attachments,

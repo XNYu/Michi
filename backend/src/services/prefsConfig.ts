@@ -33,6 +33,7 @@ const PERSISTED_KEYS: ReadonlySet<string> = new Set([
   "singlePaneContentWidth",
   "paneRules",
   "notifications",
+  "enableKiroSidecarTitles",
   "enableFollowUps",
   "bypassPermissions",
 ]);

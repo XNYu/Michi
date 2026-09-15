@@ -149,6 +149,21 @@ describe('streamMessage terminal-state safety net', () => {
     expect(onDone).toHaveBeenCalledWith('end_turn', undefined, undefined, true, undefined);
   });
 
+  it('sends the sidecar title preference with the turn request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.done, data: { stopReason: 'end_turn' } }),
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    streamMessage('n1', 'hello', { onDone: vi.fn() }, undefined, {
+      enableKiroSidecarTitle: false,
+    });
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({ enableKiroSidecarTitle: false });
+  });
+
   it('finalizes via onError when the stream goes silent past the watchdog timeout', async () => {
     vi.useFakeTimers();
     // First fetch: the message POST stream that stays open with no further

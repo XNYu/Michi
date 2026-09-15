@@ -4,11 +4,14 @@ import type { ChatStreamEvent } from 'michi-shared';
 import type { AgentSession } from '../src/agents/types';
 import { ChatHub } from '../src/agents/chatHub';
 
-test('cancel during durable begin never dispatches the prompt', async () => {
+test('cancel during durable begin never dispatches the prompt or title sidecar', async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let prompts = 0;
+  let titles = 0;
   const hub = new ChatHub({ workspaceIdForNode: () => 'workspace',
+    titleGenerator: async () => { titles++; return 'Unexpected title'; },
+    nodeTitle: () => null,
     persistence: { begin: () => gate, checkpoint() {}, finalize() {} } });
   const session: AgentSession = {
     id: 'node', runtimeId: 'pi', getHistory: () => [], getPendingAssistant: () => undefined,
@@ -21,6 +24,7 @@ test('cancel during durable begin never dispatches the prompt', async () => {
   const started = await pending;
   await started.done;
   assert.equal(prompts, 0);
+  assert.equal(titles, 0);
   assert.equal(hub.isActive('node'), false);
   const replay: ChatStreamEvent[] = [];
   const unsubscribe = hub.subscribeTurn('node', started.turnId, { send: (event) => replay.push(event), close() {} });

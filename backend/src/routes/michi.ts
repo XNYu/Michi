@@ -1458,6 +1458,11 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const displayText: string = typeof req.body?.displayText === 'string'
             ? req.body.displayText
             : text;
+        const enableKiroSidecarTitleRaw: unknown = req.body?.enableKiroSidecarTitle;
+        if (enableKiroSidecarTitleRaw !== undefined && typeof enableKiroSidecarTitleRaw !== 'boolean') {
+            return res.status(400).json({ error: 'enableKiroSidecarTitle must be a boolean' });
+        }
+        const enableKiroSidecarTitle = enableKiroSidecarTitleRaw === true;
         const userMetadata = req.body?.userMetadata && typeof req.body.userMetadata === 'object'
             ? req.body.userMetadata
             : undefined;
@@ -1507,7 +1512,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const currentSession = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
             if (!currentSession || currentSession.id !== nodeId) throw new Error('Session changed before turn start; retry the message');
             started = await chatHub.startTurn({
-                chatId: nodeId, nodeId, text, displayText, userMetadata, session: currentSession,
+                chatId: nodeId, nodeId, text, displayText, enableKiroSidecarTitle, userMetadata, session: currentSession,
                 turnId,
                 ownerUserId: req.user?.id ?? null,
             });

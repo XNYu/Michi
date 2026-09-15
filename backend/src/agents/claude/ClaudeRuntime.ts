@@ -3,6 +3,7 @@ import type {
   AgentCapabilities,
   AgentRuntime,
   AgentSession,
+  GenerateTitleOptions,
   LoadAgentSessionOptions,
   ModelInfo,
   NewAgentSessionOptions,
@@ -13,6 +14,9 @@ import type {
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import { CLAUDE_MODEL_CATALOG } from './claudeModelCatalog';
+import { generateClaudeTitle } from './claudeTitleGenerator';
+import { titleModelConfig } from '../../services/titleGeneration';
+import { log } from '../../services/logger';
 import { getNode } from '../../services/dbRepository';
 import * as sessionRegistry from '../sessionRegistry';
 import { preflightClaudeAuth } from './claudeBinary';
@@ -105,6 +109,25 @@ export class ClaudeRuntime implements AgentRuntime {
 
   async warm(cwd: string, opts?: { model?: string | null }): Promise<void> {
     await this.manager.warm(cwd, opts?.model ?? resolveModel('claude'));
+  }
+
+  /**
+   * Sidecar title on a cheap Claude model (Haiku by default). One-shot
+   * process; never throws so a title failure cannot affect the chat turn.
+   */
+  async generateTitle(opts: GenerateTitleOptions): Promise<string | null> {
+    const config = titleModelConfig('claude');
+    if (!config.model) return null;
+    try {
+      const title = await generateClaudeTitle(opts.userText, {
+        model: config.model,
+        timeoutMs: config.timeoutMs,
+      });
+      return title || null;
+    } catch (err) {
+      log.warn('chat', 'claude title generation failed', { model: config.model, error: (err as Error).message });
+      return null;
+    }
   }
 
   async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {

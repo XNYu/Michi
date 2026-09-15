@@ -111,6 +111,7 @@ export function ModelPane({
         ) : null;
       })()}
 
+      <KiroSidecarTitleToggle />
       <FollowUpsToggle />
       <BypassPermissionsToggle />
 
@@ -608,6 +609,72 @@ function ProviderKeyControls({
         </a>
       )}
       {keyError && <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{keyError}</div>}
+    </div>
+  );
+}
+
+function KiroSidecarTitleToggle() {
+  const { prefs, setPref } = usePrefs();
+  const enabled = prefs.enableKiroSidecarTitles;
+  return (
+    <div
+      style={{
+        paddingTop: 18,
+        paddingBottom: 4,
+        borderTop: '1px solid var(--term-line)',
+        marginTop: 18,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          color: 'var(--term-muted)',
+          letterSpacing: '.14em',
+          marginBottom: 10,
+          fontFamily: 'var(--ui-font)',
+        }}
+      >
+        ▸ TITLES
+      </div>
+      <ClickableRow
+        onClick={() => setPref('enableKiroSidecarTitles', !enabled)}
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 10,
+          padding: '6px 6px',
+          margin: '0 -6px',
+        }}
+      >
+        <span style={{ marginTop: 1 }}>
+          <Switch
+            on={enabled}
+            onChange={(value) => setPref('enableKiroSidecarTitles', value)}
+            aria-label="Generate Kiro titles in background"
+          />
+        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+          <span
+            style={{
+              fontSize: 12.5,
+              color: 'var(--term-fg)',
+              fontFamily: 'var(--ui-font)',
+              fontWeight: 600,
+            }}
+          >
+            Generate Kiro titles in background
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              color: 'var(--term-muted)',
+              fontFamily: 'var(--ui-font)',
+            }}
+          >
+            Runs a separate Kiro request for untitled chats. Disabled by default because it may arrive after the main response.
+          </span>
+        </div>
+      </ClickableRow>
     </div>
   );
 }

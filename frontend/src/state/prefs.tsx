@@ -155,6 +155,8 @@ export interface Prefs {
   singlePaneContentWidth: number | null;
   /** How many lines of quoted text to show in the composer's quote bar before clamping. 1 = single-line ellipsis. */
   quoteMaxLines: number;
+  /** When true, run a separate Kiro prompt to title untitled chats while the main turn is active. */
+  enableKiroSidecarTitles: boolean;
   /** When true, ask kiro to end every reply by calling set_follow_ups. Disable to skip the 2-5s tail latency when you don't use follow-up suggestions. */
   enableFollowUps: boolean;
   /** When true, suppress all UI motion (drawer slide-ins, pane animations,
@@ -222,6 +224,7 @@ export const DEFAULT_PREFS: Prefs = {
   paneSpawnAnimation: 'soft-fade',
   singlePaneContentWidth: 800,
   quoteMaxLines: 2,
+  enableKiroSidecarTitles: false,
   enableFollowUps: true,
   reduceMotion: false,
   bypassPermissions: false,
@@ -230,6 +233,10 @@ export const DEFAULT_PREFS: Prefs = {
   workspaceOrder: [],
   onboardingCompletedAt: null,
 };
+
+export function normalizeKiroSidecarTitlesPreference(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : DEFAULT_PREFS.enableKiroSidecarTitles;
+}
 
 const PREFS_KEY = 'michi:v1:prefs';
 const VALID_PALETTES: ReadonlySet<TerminalPalette> = new Set([
@@ -303,6 +310,9 @@ function readInitial(): Prefs {
     if (typeof merged.codeWrap !== 'boolean') {
       merged.codeWrap = DEFAULT_PREFS.codeWrap;
     }
+    merged.enableKiroSidecarTitles = normalizeKiroSidecarTitlesPreference(
+      merged.enableKiroSidecarTitles,
+    );
     if (typeof merged.paneTopFadeHeight !== 'number' || merged.paneTopFadeHeight < 0 || merged.paneTopFadeHeight > 80) {
       merged.paneTopFadeHeight = DEFAULT_PREFS.paneTopFadeHeight;
     }
@@ -403,7 +413,16 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     fetchPrefs().then((remote) => {
       if (!remote) return;
       if (hadLocal) return;
-      setPrefs({ ...DEFAULT_PREFS, ...remote, paneWidthMode: normalizePaneWidthMode(remote.paneWidthMode), paneSpawnAnimation: normalizePaneMotion(remote.paneSpawnAnimation) } as Prefs);
+      const merged = {
+        ...DEFAULT_PREFS,
+        ...remote,
+        paneWidthMode: normalizePaneWidthMode(remote.paneWidthMode),
+        paneSpawnAnimation: normalizePaneMotion(remote.paneSpawnAnimation),
+      } as Prefs;
+      merged.enableKiroSidecarTitles = normalizeKiroSidecarTitlesPreference(
+        remote.enableKiroSidecarTitles,
+      );
+      setPrefs(merged);
     });
   }, []);
 

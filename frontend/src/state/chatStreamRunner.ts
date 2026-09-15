@@ -34,6 +34,7 @@ interface RunChatStreamOptions {
   cancelFns: Ref<Record<string, () => void>>;
   ownerToken?: string;
   displayText?: string;
+  enableKiroSidecarTitle?: boolean;
   userMetadata?: {
     quotedText?: string;
     attachments?: Array<{ name: string; absPath: string }>;
@@ -59,6 +60,7 @@ export function runChatStream({
   cancelFns,
   ownerToken,
   displayText,
+  enableKiroSidecarTitle,
   userMetadata,
   extraHandlers,
   onStreamComplete,
@@ -357,6 +359,7 @@ export function runChatStream({
 
   const cancelTransport = streamMessage(nodeId, prompt, handlers, ownerToken, {
     displayText,
+    enableKiroSidecarTitle,
     userMetadata,
   });
   streamCancel = () => { clearWaiting(); cancelTransport(); };

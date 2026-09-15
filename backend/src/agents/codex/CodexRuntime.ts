@@ -27,6 +27,7 @@ import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy'
 import { preflightCodexAuth } from './codexBinary';
 import { NativeResumeUnavailableError, nativeResumeId } from '../../services/nativeResume';
 import type { RuntimeModelCache } from '../runtimeModelCache';
+import { titleModelConfig } from '../../services/titleGeneration';
 import {
   buildCodexFollowUpsHookPocConfig,
   isCodexFollowUpsHookPocEnabled,
@@ -311,6 +312,7 @@ export class CodexRuntime implements AgentRuntime {
       effort: effort ? String(effort) : null,
       model: modelId || null,
       generateTitleOnFirstTurn: owner.kind === 'chat_node',
+      titleModel: await this.resolveTitleModel(),
       enableFollowUps,
       followUpsHookPocEnabled: this.followUpsHookPocEnabled,
       followUpsExperimentMode: this.followUpsExperimentMode,
@@ -594,6 +596,22 @@ export class CodexRuntime implements AgentRuntime {
       return this.modelCache;
     }
     return this.refreshModels();
+  }
+
+  /**
+   * Cheap model for the pre-turn title thread. Only returned when the account's
+   * catalog actually lists it, otherwise the title thread stays on the
+   * session's own model rather than failing on an unknown model id.
+   */
+  private async resolveTitleModel(): Promise<string | null> {
+    const configured = titleModelConfig('codex').model;
+    if (!configured) return null;
+    try {
+      const models = await this.listModels();
+      return models.some((m) => m.id === configured) ? configured : null;
+    } catch {
+      return null;
+    }
   }
 
   async refreshModels(): Promise<ModelInfo[]> {

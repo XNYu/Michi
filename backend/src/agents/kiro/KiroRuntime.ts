@@ -25,6 +25,10 @@ import { buildRunMcpSlotCallbacks } from "../runs/runMcpSlot";
 import { NativeResumeFailedError, NativeResumeUnavailableError } from '../../services/nativeResume';
 import { classifyAcpError, isNativeSessionUnavailable } from './acpErrors';
 import { ACPNotRunningError, ACPProcessExitedError } from '../../services/acpClient';
+import { KiroTitleGenerator } from './kiroTitleGenerator';
+import { titleModelConfig } from '../../services/titleGeneration';
+import { log } from '../../services/logger';
+import type { GenerateTitleOptions } from '../types';
 
 // ---------------------------------------------------------------------------
 // Process lifecycle constants
@@ -258,6 +262,13 @@ export class KiroRuntime implements AgentRuntime {
      * bind/release. Used for LRU eviction when the process cap is reached.
      */
     private readonly cwdLastActivity = new Map<string, number>();
+    /**
+     * Sidecar title generation on a cheap model. Lives on the defaultCwd
+     * process (which already hosts modes/models probes) so no chat workspace
+     * pays for an extra kiro-cli, and title prompts never share a session
+     * with a chat. `null` when disabled via MICHI_TITLE_MODEL_KIRO=off.
+     */
+    private readonly titleGenerator: KiroTitleGenerator | null;
 
     constructor(
         bridge: AgentToolBridge,
@@ -273,6 +284,28 @@ export class KiroRuntime implements AgentRuntime {
         this.concurrencyCap = parseInt(process.env.MICHI_KIRO_MAX_CONCURRENT ?? "100", 10);
         this.processCap = DEFAULT_PROCESS_CAP;
         this.idleTtlMs = DEFAULT_IDLE_TTL_MS;
+        const titleConfig = titleModelConfig('kiro');
+        this.titleGenerator = titleConfig.model
+            ? new KiroTitleGenerator({
+                ensureClient: () => this.ensureClient(this.defaultCwd),
+                model: titleConfig.model,
+                timeoutMs: titleConfig.timeoutMs,
+            })
+            : null;
+    }
+
+    /**
+     * Generate a sidebar title on the cheap title session. Never throws: a
+     * failure here must not affect the chat turn it runs beside.
+     */
+    async generateTitle(opts: GenerateTitleOptions): Promise<string | null> {
+        if (!this.titleGenerator) return null;
+        try {
+            return await this.titleGenerator.generate(opts.userText, opts.signal);
+        } catch (err) {
+            log.warn("chat", "kiro title generation failed", { error: (err as Error).message });
+            return null;
+        }
     }
 
     /** Resolves the cwd for a sessionId — used by permission forwarding. */
@@ -1839,6 +1872,7 @@ export class KiroRuntime implements AgentRuntime {
     /** Shutdown: kill all clients in pool and reset internal maps. */
     async shutdown(): Promise<void> {
         await Promise.allSettled(this.cancelRecoveryLocks.values());
+        await this.titleGenerator?.shutdown().catch(() => {});
         // Clear pending user-input requests (avoid leaked timers + dangling promises).
         for (const [, entry] of this.pendingUserInputs) {
             clearTimeout(entry.timer);

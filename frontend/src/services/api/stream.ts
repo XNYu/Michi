@@ -69,6 +69,7 @@ export function streamMessage(
     /** Generated before POST so replay is possible before the first frame. */
     turnId?: string;
     displayText?: string;
+    enableKiroSidecarTitle?: boolean;
     userMetadata?: {
       quotedText?: string;
       attachments?: Array<{ name: string; absPath: string }>;
@@ -173,6 +174,9 @@ export function streamMessage(
       if (nodeId) payload.nodeId = nodeId;
       if (ownerToken) payload.ownerToken = ownerToken;
       if (durable?.displayText !== undefined) payload.displayText = durable.displayText;
+      if (durable?.enableKiroSidecarTitle !== undefined) {
+        payload.enableKiroSidecarTitle = durable.enableKiroSidecarTitle;
+      }
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
       const startedAt = Date.now();
       startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });

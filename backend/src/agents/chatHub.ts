@@ -9,6 +9,7 @@ import {
   type DurableTurnSnapshot,
 } from "michi-shared";
 import type { AgentSession, CompactResult, SteerResult } from "./types";
+import { getRuntime } from "./registry";
 import type { NormalizedEvent } from "../services/chatEvents";
 import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEvents";
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
@@ -121,11 +122,32 @@ export interface StartTurnArgs {
   nodeId: string;
   text: string;
   displayText?: string;
+  enableKiroSidecarTitle?: boolean;
   userMetadata?: DurableMessageMetadata;
   session: AgentSession;
   turnId?: string;
   ownerUserId?: string | null;
 }
+
+export interface SidecarTitleRequest {
+  session: AgentSession;
+  nodeId: string;
+  /** The user's message as displayed, without mention expansion or attachments. */
+  userText: string;
+}
+
+/**
+ * Produces a sidebar title while the main turn is still running. Resolves
+ * `null` when the runtime has no cheap title path; the hub then relies on
+ * the agent's own title sentinel.
+ */
+export type SidecarTitleGenerator = (request: SidecarTitleRequest) => Promise<string | null>;
+
+const runtimeSidecarTitleGenerator: SidecarTitleGenerator = async ({ session, userText }) => {
+  const runtime = getRuntime(session.runtimeId);
+  if (!runtime?.generateTitle) return null;
+  return runtime.generateTitle({ userText });
+};
 
 export interface StartedTurn {
   turnId: string;
@@ -195,6 +217,8 @@ export class ChatHub {
   private readonly workspaceIdForNode: (nodeId: string) => string | null;
   private readonly journal: HarnessJournal | null;
   private readonly lookupDurableTurn: (turnId: string) => DurableTurnIdentity | null;
+  private readonly titleGenerator: SidecarTitleGenerator | null;
+  private readonly nodeTitle: (nodeId: string) => string | null;
 
   constructor(opts: {
     retentionMs?: number;
@@ -203,12 +227,21 @@ export class ChatHub {
     workspaceIdForNode?: (nodeId: string) => string | null;
     journal?: HarnessJournal | null;
     lookupDurableTurn?: (turnId: string) => DurableTurnIdentity | null;
+    /** `null` disables sidecar title generation (tests, agent-run-only hubs). */
+    titleGenerator?: SidecarTitleGenerator | null;
+    nodeTitle?: (nodeId: string) => string | null;
   } = {}) {
     this.retentionMs = opts.retentionMs ?? ENDED_LOG_RETENTION_MS;
     this.persistence = opts.persistence ?? repositoryTurnPersistence;
     this.checkpointIntervalMs = opts.checkpointIntervalMs ?? TURN_CHECKPOINT_INTERVAL_MS;
     this.workspaceIdForNode = opts.workspaceIdForNode
       ?? ((nodeId) => getNode(nodeId)?.workspace_id ?? null);
+    // A hub built with injected persistence is a test harness; it must not
+    // reach into the runtime registry unless the test asks for it.
+    this.titleGenerator = opts.titleGenerator === undefined
+      ? (opts.persistence ? null : runtimeSidecarTitleGenerator)
+      : opts.titleGenerator;
+    this.nodeTitle = opts.nodeTitle ?? ((nodeId) => getNode(nodeId)?.title ?? null);
     this.journal = opts.journal === undefined
       ? (opts.persistence ? null : createSqliteHarnessJournal())
       : opts.journal;
@@ -312,6 +345,7 @@ export class ChatHub {
         startedAt: log.snapshot.startedAt,
       },
     }, false);
+    if (!this.cancelledTurnIds.has(turnId)) this.maybeGenerateTitle(args, log);
     const done = this.runTurn(args.chatId, log, args.session);
     this.activeTurnCompletions.set(args.chatId, done);
     void done.then(() => {
@@ -1228,6 +1262,66 @@ export class ChatHub {
     log.events.push(persistenceError);
     this.trackPendingInteraction(log, persistenceError.ev);
     this.broadcast(chatId, log, persistenceError.ev);
+  }
+
+  /**
+   * Kick off sidecar title generation for an untitled chat node. Runs beside
+   * the main turn and never awaits it: whichever title arrives first wins
+   * because both the durable projection (`setTitleIfEmpty`) and the renderer
+   * lock the first non-blank title. A result that lands after the turn ended
+   * is dropped — the agent's sentinel or the stored first sentence covers it.
+   */
+  private maybeGenerateTitle(args: StartTurnArgs, log: TurnLog): void {
+    if (args.session.runtimeId === 'kiro' && args.enableKiroSidecarTitle !== true) return;
+    const generator = this.titleGenerator;
+    if (!generator) return;
+    const owner = args.session.owner;
+    if (owner && owner.kind !== 'chat_node') return;
+    const userText = (args.displayText ?? args.text).trim();
+    if (!userText) return;
+    let existing: string | null;
+    try {
+      existing = this.nodeTitle(log.nodeId);
+    } catch {
+      return;
+    }
+    if (existing && existing.trim().length > 0) return;
+
+    const startedAt = Date.now();
+    let pending: Promise<string | null>;
+    try {
+      pending = Promise.resolve(generator({ session: args.session, nodeId: log.nodeId, userText }));
+    } catch (err) {
+      pending = Promise.reject(err);
+    }
+    void pending.then((title) => {
+      const trimmed = title?.trim() ?? '';
+      if (!trimmed) return;
+      if (this.turns.get(args.chatId) !== log || log.status !== 'active') {
+        logInfo('sidecar title arrived after turn ended; dropped', log, {
+          durationMs: Date.now() - startedAt,
+          runtimeId: args.session.runtimeId,
+        });
+        return;
+      }
+      if (log.snapshot.nodeMetadata.title) return;
+      this.append(args.chatId, log, {
+        event: CHAT_STREAM_EVENTS.title,
+        data: { title: trimmed },
+      });
+      logInfo('sidecar title applied', log, {
+        durationMs: Date.now() - startedAt,
+        runtimeId: args.session.runtimeId,
+        titleChars: trimmed.length,
+      });
+    }, (err: unknown) => {
+      appLog.warn('chat', 'sidecar title generation failed', {
+        turnId: log.turnId,
+        nodeId: log.nodeId,
+        runtimeId: args.session.runtimeId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   private async runTurn(chatId: string, log: TurnLog, session: AgentSession): Promise<void> {

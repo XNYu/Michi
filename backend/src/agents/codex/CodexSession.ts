@@ -92,6 +92,11 @@ export interface CodexSessionDeps {
   effort?: string | null;
   model?: string | null;
   generateTitleOnFirstTurn?: boolean;
+  /**
+   * Cheap model for the pre-turn title thread (e.g. `gpt-5.6-luna`). When
+   * null/undefined the title thread uses the session's own model.
+   */
+  titleModel?: string | null;
   followUpsHookPocEnabled?: boolean;
   followUpsExperimentMode?: FollowUpsExperimentMode;
   /** Default true. When false, the per-turn follow-up reminder is suppressed. */
@@ -138,6 +143,7 @@ export class CodexSession implements AgentSession {
   private readonly mcpPort: number;
   private readonly ownerUserId: string | null;
   private readonly generateTitleOnFirstTurn: boolean;
+  private readonly titleModel: string | null;
   private readonly followUpsHookPocEnabled: boolean;
   private readonly followUpsExperimentMode: FollowUpsExperimentMode;
   private readonly enableFollowUps: boolean;
@@ -226,6 +232,7 @@ export class CodexSession implements AgentSession {
     this.mcpPort = deps.mcpPort;
     this.ownerUserId = deps.ownerUserId ?? null;
     this.generateTitleOnFirstTurn = deps.generateTitleOnFirstTurn ?? false;
+    this.titleModel = deps.titleModel ?? null;
     this.enableFollowUps = deps.enableFollowUps !== false;
     this.followUpsHookPocEnabled = deps.followUpsHookPocEnabled ?? false;
     this.followUpsExperimentMode =
@@ -311,7 +318,7 @@ export class CodexSession implements AgentSession {
         titlePromise = generateCodexTitle({
           client: this.client,
           cwd: this.cwd,
-          model: this.currentModelId,
+          model: this.titleModel ?? this.currentModelId,
           userText: text,
           onThreadStarted: (threadId) => {
             titleThreadId = threadId;
