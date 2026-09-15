@@ -22,7 +22,7 @@ vi.mock('../services/api', () => ({
   allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   allocateNodeIdsLocal: (() => { let i = 0; return (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   // Non-spied: plain arrow that returns what the provider expects.
-  listAgentModes: () => Promise.resolve([]),
+  listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchPrefs: () => Promise.resolve(null),
@@ -32,13 +32,17 @@ vi.mock('../services/api', () => ({
   respondToPermission: () => Promise.resolve({ ok: true }),
   cancelPermission: () => Promise.resolve({ ok: true }),
   warmCwd: () => Promise.resolve({ ok: true }),
-  claimPane: () => Promise.resolve({ owner: true }),
+  claimPane: vi.fn(() => Promise.resolve({ owner: true })),
   heartbeatPane: () => Promise.resolve(true),
   releasePane: () => Promise.resolve(),
   subscribeChat: vi.fn(() => () => {}),
   subscribeChats: vi.fn(() => () => {}),
   subscribeBackground: vi.fn(() => () => {}),
   cancelChat: () => Promise.resolve(),
+  cancelChatAndObserve: vi.fn(() => () => {}),
+  fetchAllWorkspacesMeta: vi.fn(async () => []),
+  fetchTreeMessages: vi.fn(async () => []),
+  listBackendConnections: async () => [],
   // Spied: implementation set in beforeEach.
   bindPendingPrimaryAgent: vi.fn(),
   ensureSession: vi.fn(),
@@ -52,9 +56,10 @@ vi.mock('../services/digestApi', () => ({
 
 import * as api from '../services/api';
 import { notify } from '../services/notifications';
-import { ChatProvider, useChatStore, useChatNodesSnapshot } from './chatStore';
+import { ChatProvider, useChatStore, useChatNode, useChatNodesSnapshot } from './chatStore';
 import { PrefsProvider } from './prefs';
 import type { ChatNodeState } from './chatTypes';
+import { dispatchChatStreamEvent } from '../services/chatStreamEvents';
 
 function useStoreAndNodes() {
   const store = useChatStore();
@@ -102,6 +107,12 @@ describe('auto-branch behavior (real provider)', () => {
     mockEnsureSession.mockReset();
     mockStreamMessage.mockReset();
     mockNotify.mockReset();
+    vi.mocked(api.cancelChatAndObserve).mockReset().mockImplementation(() => () => {});
+    vi.mocked(api.subscribeChat).mockReset().mockImplementation(() => () => {});
+    vi.mocked(api.subscribeBackground).mockReset().mockImplementation(() => () => {});
+    vi.mocked(api.claimPane).mockClear();
+    vi.mocked(api.fetchAllWorkspacesMeta).mockReset().mockResolvedValue([]);
+    vi.mocked(api.fetchTreeMessages).mockReset().mockResolvedValue([]);
     vi.mocked(api.bindPendingPrimaryAgent).mockReset();
     mockEnsureSession.mockImplementation(() => Promise.resolve({ chatId: 'fake-chat', currentModeId: null, resumeStrategy: 'fresh' }));
     // Real streamMessage returns a cancel fn AND starts an async stream. For
@@ -214,6 +225,215 @@ describe('auto-branch behavior (real provider)', () => {
 
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(result.current.nodes[rootId].status).toBe('streaming'));
+  });
+
+  it.each([
+    ['resolve', 'setup'],
+    ['reject', 'setup'],
+    ['resolve', 'streaming'],
+    ['reject', 'streaming'],
+  ] as const)('isolates a cancelled ensure that later %ss while the new send is %s', async (outcome, newerPhase) => {
+    type Ensured = Awaited<ReturnType<typeof api.ensureSession>>;
+    let resolveOld!: (value: Ensured) => void;
+    let rejectOld!: (error: Error) => void;
+    let resolveNew!: (value: Ensured) => void;
+    const oldEnsure = new Promise<Ensured>((resolve, reject) => {
+      resolveOld = resolve;
+      rejectOld = reject;
+    });
+    const newEnsure = new Promise<Ensured>((resolve) => { resolveNew = resolve; });
+    // Ignore abort deliberately: a late transport completion must remain harmless.
+    mockEnsureSession.mockImplementationOnce(() => oldEnsure).mockImplementationOnce(() => newEnsure);
+    const cancelOutput = vi.fn();
+    mockStreamMessage.mockImplementation((_nodeId, _text, handlers: api.StreamHandlers) => () => {
+      cancelOutput();
+      handlers.onAborted?.();
+    });
+    const { result, rerender } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test', undefined); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread() ?? ''; });
+
+    act(() => { result.current.store.sendMessage(nodeId, 'cancelled prompt'); });
+    expect(result.current.nodes[nodeId].status).toBe('streaming');
+    const oldSignal = mockEnsureSession.mock.calls[0][0].signal as AbortSignal;
+    expect(oldSignal.aborted).toBe(false);
+    const oldAssistantId = result.current.nodes[nodeId].messages.at(-1)!.id;
+    act(() => { result.current.store.cancelStream(nodeId); });
+    expect(oldSignal.aborted).toBe(true);
+    expect(result.current.nodes[nodeId].status).toBe('idle');
+    expect(result.current.nodes[nodeId].messages.at(-1)?.streaming).toBe(false);
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(api.cancelChatAndObserve).not.toHaveBeenCalled();
+
+    act(() => { result.current.store.sendMessage(nodeId, 'new prompt'); });
+    expect(mockEnsureSession).toHaveBeenCalledTimes(2);
+    const newSignal = mockEnsureSession.mock.calls[1][0].signal as AbortSignal;
+    const newAssistantId = result.current.nodes[nodeId].messages.at(-1)!.id;
+    expect(newSignal).not.toBe(oldSignal);
+    expect(newSignal.aborted).toBe(false);
+    expect(newAssistantId).not.toBe(oldAssistantId);
+    const openNew = async () => {
+      await act(async () => {
+        resolveNew({ chatId: nodeId, currentModeId: 'new-mode', resumeStrategy: 'fresh', runtimeId: 'claude', modelId: 'new-model' });
+      });
+      const handlers = mockStreamMessage.mock.calls[0][2] as api.StreamHandlers;
+      act(() => { handlers.onRetryStart?.({ detail: 'Restoring new turn' }); });
+      rerender();
+    };
+    if (newerPhase === 'streaming') await openNew();
+
+    await act(async () => {
+      if (outcome === 'resolve') {
+        resolveOld({ chatId: nodeId, currentModeId: 'old-mode', resumeStrategy: 'fresh', runtimeId: 'codex', modelId: 'old-model' });
+      } else {
+        rejectOld(new Error('late failure from cancelled setup'));
+      }
+    });
+    rerender();
+    expect(result.current.nodes[nodeId].status).toBe('streaming');
+    expect(result.current.nodes[nodeId].error).toBeUndefined();
+    expect(result.current.nodes[nodeId].messages.at(-1)?.id).toBe(newAssistantId);
+    expect(newSignal.aborted).toBe(false);
+    expect(cancelOutput).not.toHaveBeenCalled();
+    if (newerPhase === 'setup') {
+      expect(result.current.nodes[nodeId].chatId).toBeNull();
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+      await openNew();
+    }
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(mockStreamMessage.mock.calls[0][1]).toBe('new prompt');
+    expect(result.current.nodes[nodeId]).toMatchObject({
+      status: 'streaming', runtimeId: 'claude', modelId: 'new-model',
+      currentModeId: 'new-mode', runtimeActivity: 'Restoring new turn',
+    });
+    act(() => { result.current.store.cancelStream(nodeId); });
+    expect(cancelOutput).toHaveBeenCalledTimes(1);
+    expect(result.current.nodes[nodeId].status).toBe('idle');
+  });
+
+  function hydratedCancellationNode(status: 'idle' | 'streaming') {
+    vi.mocked(api.fetchAllWorkspacesMeta).mockResolvedValue([{
+      workspace: { id: 'cancel-ws', name: 'Cancellation', created_at: 1, active_tree_id: 'cancel-tree' },
+      trees: [{ id: 'cancel-tree', root_node_id: 'cancel-node', created_at: 1, last_active_at: 1 }],
+      nodes: [{
+        id: 'cancel-node', status, acp_session_id: 'native-session', runtime_id: 'claude',
+        last_applied_turn_id: 'old-foreground', last_applied_seq: 1,
+      }],
+      messages: [
+        { id: 'old-user', node_id: 'cancel-node', role: 'user', content: 'earlier prompt', seq: 0 },
+        { id: 'old-a', node_id: 'cancel-node', role: 'assistant', content: 'partial', seq: 1 },
+      ],
+    }]);
+    return renderHook(() => ({ store: useChatStore(), node: useChatNode('cancel-node') }), { wrapper });
+  }
+
+  function backgroundForCancellationNode() {
+    const handlersForChat = vi.mocked(api.subscribeBackground).mock.calls.at(-1)![0];
+    return handlersForChat('cancel-node', 'cancel-node');
+  }
+
+  it('fallback Stop targets the active background turn after a completed foreground turn', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.status).toBe('idle'));
+    await act(async () => { result.current.store.openPane('cancel-node'); });
+    await waitFor(() => expect(api.claimPane).toHaveBeenCalled());
+    await waitFor(() => expect(api.subscribeBackground).toHaveBeenCalledTimes(1));
+    await act(async () => { result.current.store.sendMessage('cancel-node', 'foreground'); });
+    const foreground = mockStreamMessage.mock.calls[0][2] as api.StreamHandlers;
+    act(() => {
+      dispatchChatStreamEvent({ event: 'turn_start', data: {
+        nodeId: 'cancel-node', turnId: 'foreground-turn', assistantId: 'foreground-a', seq: 0, userText: 'foreground',
+      } }, foreground);
+    });
+    expect(result.current.node?.activeTurnId).toBe('foreground-turn');
+    act(() => { foreground.onDone?.('end_turn', 'foreground-a', 'foreground-turn', true); });
+    expect(result.current.node?.activeTurnId).toBeUndefined();
+
+    const background = backgroundForCancellationNode();
+    act(() => {
+      dispatchChatStreamEvent({ event: 'turn_start', data: {
+        nodeId: 'cancel-node', turnId: 'background-turn', assistantId: 'background-a', seq: 0, userText: '', selfInitiated: true,
+      } }, background);
+    });
+    expect(result.current.node).toMatchObject({
+      status: 'streaming', activeTurnId: 'background-turn', lastAppliedTurnId: 'foreground-turn',
+    });
+    act(() => { result.current.store.cancelStream('cancel-node'); });
+    expect(api.cancelChatAndObserve).toHaveBeenCalledExactlyOnceWith(
+      'cancel-node', expect.any(String), 'background-turn', expect.any(Function),
+    );
+    expect(result.current.node?.status).toBe('idle');
+    expect(result.current.node?.messages.at(-1)?.streaming).toBe(false);
+    expect(api.subscribeBackground).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovered Stop finalizes the captured assistant and delivers cleanup status through useChatNode', async () => {
+    const detach = vi.fn();
+    vi.mocked(api.subscribeChat).mockImplementation(() => detach);
+    const { result } = hydratedCancellationNode('streaming');
+    await waitFor(() => expect(api.subscribeChat).toHaveBeenCalledTimes(1));
+    expect(result.current.node?.activeTurnId).toBe('old-foreground');
+    const replay = vi.mocked(api.subscribeChat).mock.calls[0][1];
+    act(() => {
+      dispatchChatStreamEvent({ event: 'chunk', data: {
+        turnId: 'old-foreground', assistantId: 'old-a', seq: 2, text: ' still streaming',
+      } }, replay);
+    });
+    await waitFor(() => expect(result.current.node?.messages.at(-1)?.blocks?.some((block) =>
+      block.kind === 'answer' && block.streaming,
+    )).toBe(true));
+    act(() => { result.current.store.cancelStream('cancel-node'); });
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(result.current.node?.status).toBe('idle');
+    expect(result.current.node?.activeTurnId).toBeUndefined();
+    expect(result.current.node?.messages.at(-1)?.streaming).toBe(false);
+    expect(result.current.node?.messages.at(-1)?.blocks?.some((block) =>
+      (block.kind === 'answer' || block.kind === 'thinking') && block.streaming,
+    )).toBe(false);
+    expect(api.cancelChatAndObserve).toHaveBeenCalledExactlyOnceWith(
+      'cancel-node', expect.any(String), 'old-foreground', expect.any(Function),
+    );
+    const onStatus = vi.mocked(api.cancelChatAndObserve).mock.calls[0][3];
+    act(() => { onStatus({ state: 'pending', detail: 'Waiting for cleanup' }); });
+    expect(result.current.node?.runtimeActivity).toBe('Waiting for cleanup');
+    act(() => { onStatus({ state: 'settled' }); });
+    expect(result.current.node?.runtimeActivity).toBeUndefined();
+    expect(result.current.node?.status).toBe('idle');
+    expect(api.subscribeBackground).toHaveBeenCalledTimes(1);
+
+    await act(async () => { result.current.store.sendMessage('cancel-node', 'new foreground'); });
+    const newAssistant = result.current.node?.messages.at(-1)?.id;
+    act(() => { onStatus({ state: 'error', detail: 'late old cleanup error' }); });
+    expect(result.current.node?.status).toBe('streaming');
+    expect(result.current.node?.error).toBeUndefined();
+    expect(result.current.node?.messages.at(-1)?.id).toBe(newAssistant);
+    act(() => { (mockStreamMessage.mock.calls[0][2] as api.StreamHandlers).onDone?.(); });
+  });
+
+  it('recovered replay 410 drops the stale Stop callback while background retains the live node', async () => {
+    const detach = vi.fn();
+    vi.mocked(api.subscribeChat).mockImplementation(() => detach);
+    const { result } = hydratedCancellationNode('streaming');
+    await waitFor(() => expect(api.subscribeChat).toHaveBeenCalledTimes(1));
+    await act(async () => { result.current.store.openPane('cancel-node'); });
+    await waitFor(() => expect(api.claimPane).toHaveBeenCalled());
+    await waitFor(() => expect(api.subscribeBackground).toHaveBeenCalledTimes(1));
+    const disconnect = vi.mocked(api.subscribeChat).mock.calls[0][3]!.onDisconnect!;
+    act(() => { disconnect({ retryable: false, error: new Error('subscribe failed: 410') }); });
+    expect(result.current.node?.status).toBe('streaming');
+    const background = backgroundForCancellationNode();
+    act(() => {
+      dispatchChatStreamEvent({ event: 'turn_start', data: {
+        nodeId: 'cancel-node', turnId: 'background-turn', assistantId: 'background-a', seq: 0, userText: '', selfInitiated: true,
+      } }, background);
+      result.current.store.cancelStream('cancel-node');
+    });
+    expect(api.cancelChatAndObserve).toHaveBeenCalledExactlyOnceWith(
+      'cancel-node', expect.any(String), 'background-turn', expect.any(Function),
+    );
+    expect(result.current.node?.status).toBe('idle');
+    expect(detach).not.toHaveBeenCalled();
   });
 
   it('createChildChat from a streaming parent starts an independent new stream', async () => {

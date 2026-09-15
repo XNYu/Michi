@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { abortable, withDeadline } from '../runtimeLifecycle';
 import type {
     AgentReasoning,
     AgentSession,
@@ -162,6 +163,8 @@ export class PiSession implements AgentSession {
      */
     private mcpManager: McpClientManager | undefined;
     private mcpInitialized = false;
+    private mcpInitialization: Promise<any[]> | undefined;
+    private mcpCleanup: Promise<void> | undefined;
     private pendingAssistantBuf: string[] | undefined;
     /**
      * Set at the start of every runTurn so beforeToolCall (which is wired
@@ -170,6 +173,11 @@ export class PiSession implements AgentSession {
      * Cleared at turn end.
      */
     private activePush: ((ev: NormalizedEvent) => void) | undefined;
+    private turnAbort: AbortController | undefined;
+    private inFlightPrompt: Promise<void> | undefined;
+    private recoveryError: Error | undefined;
+    private recoveryWork: Promise<void> | undefined;
+    public currentModelId: string | null = null;
     /**
      * Outstanding permission requests keyed by requestId. Resolved by
      * respondToPermission/cancelPermission, rejected on session destroy
@@ -200,6 +208,7 @@ export class PiSession implements AgentSession {
         this.permissionBroker = deps.permissionBroker;
         this.requestedProvider = deps.requestedProvider ?? null;
         this.requestedModel = deps.requestedModel ?? null;
+        this.currentModelId = this.requestedModel;
         this.requestedReasoning = deps.requestedReasoning ?? null;
 
         // Seed history from SQLite-rehydrated messages (text-only).
@@ -223,11 +232,30 @@ export class PiSession implements AgentSession {
         return this.pendingAssistantBuf?.join("");
     }
 
+    describeNativeState(): Record<string, unknown> {
+        return {
+            kind: 'pi-agent-core',
+            status: this.destroyed ? 'destroyed' : this.recoveryError ? 'unavailable'
+                : this.turnAbort?.signal.aborted || this.mcpCleanup ? 'stopping'
+                : this.turnAbort ? 'running' : 'idle',
+            recoveryRequired: !!this.recoveryError,
+            recoveryAction: this.recoveryError ? 'restart_backend_if_still_unavailable' : undefined,
+            detail: this.recoveryError?.message,
+        };
+    }
+
     async *send(rawUserText: string): AsyncIterableIterator<NormalizedEvent> {
         if (this.destroyed) {
             yield { kind: "turn_end", stopReason: "error" };
             return;
         }
+
+        if (this.recoveryError) throw this.recoveryError;
+        if (this.turnAbort || this.inFlightPrompt || this.mcpInitialization || this.mcpCleanup) {
+            throw new Error('The previous Pi task is still stopping. Please retry after it finishes; no new request was sent.');
+        }
+        const controller = new AbortController();
+        this.turnAbort = controller;
 
         this.history.push({ role: "user", content: rawUserText });
 
@@ -235,12 +263,25 @@ export class PiSession implements AgentSession {
         this.pendingAssistantBuf = buf;
 
         try {
-            for await (const ev of this.runTurn(rawUserText)) {
+            for await (const ev of this.runTurn(rawUserText, controller.signal)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 yield ev;
                 if (ev.kind === "turn_end") break;
             }
+        } catch (error) {
+            // runTurn cleanup can mark the session unavailable after the entry guard.
+            const recoveryError = this.recoveryError as Error | undefined;
+            if (recoveryError) {
+                yield { kind: 'retry_end', detail: recoveryError.message };
+                yield { kind: 'runtime_error', error: recoveryError.message, recoveryRequired: true };
+                yield { kind: 'turn_end', stopReason: 'error' };
+                return;
+            }
+            if (!controller.signal.aborted) throw error;
+            yield { kind: 'turn_end', stopReason: 'cancelled' };
         } finally {
+            controller.abort();
+            if (this.turnAbort === controller) this.turnAbort = undefined;
             if (buf.length > 0) {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
@@ -248,7 +289,7 @@ export class PiSession implements AgentSession {
         }
     }
 
-    private async *runTurn(rawText: string): AsyncIterableIterator<NormalizedEvent> {
+    private async *runTurn(rawText: string, signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
         // Runtime ownership is required for durable Agent Runs even on local
         // desktop installs (where the synthetic owner is "local-user"). Do
         // not confuse that audit identity with a cloud BYOK credential owner:
@@ -276,7 +317,7 @@ export class PiSession implements AgentSession {
                     "Amazon Bedrock credentials not configured — add them in Settings or set AWS_PROFILE + AWS_REGION env vars.",
                 );
             }
-            await refreshBedrockCredentialsIfNeeded(creds);
+            await abortable(refreshBedrockCredentialsIfNeeded(creds), signal);
             bedrockStreamOpts = { region: creds.region };
             if (creds.bearerToken) bedrockStreamOpts.bearerToken = creds.bearerToken;
             if (creds.profile) bedrockStreamOpts.profile = creds.profile;
@@ -297,16 +338,17 @@ export class PiSession implements AgentSession {
             }
         }
 
-        const piMod: any = await loadPiAi();
-        const piAgentCore: any = await loadPiAgentCore();
+        const piMod: any = await abortable(loadPiAi(), signal);
+        const piAgentCore: any = await abortable(loadPiAgentCore(), signal);
         const { Type } = piMod;
         const modelIds = modelAttemptIds.length > 0
             ? modelAttemptIds
             : [requestedModel];
-        const modelAttempts = await Promise.all(
+        const modelAttempts = await abortable(Promise.all(
             modelIds.map((modelId) => resolvePiModel(provider, modelId)),
-        );
+        ), signal);
         const model = modelAttempts[0];
+        this.currentModelId = this.agent?.state?.model?.id ?? (model as any).id ?? requestedModel ?? null;
 
         // Reset the per-turn image budget before each LLM-driven loop.
         this.imageQuota.usedBytes = 0;
@@ -314,7 +356,8 @@ export class PiSession implements AgentSession {
         // Lazily build the Agent on the first turn (and reuse on subsequent turns).
         if (!this.agent) {
             // Connect to configured MCP servers (lazy, once per session).
-            const mcpTools = await this.initMcpTools(Type);
+            const mcpTools = await this.initMcpTools(Type, signal);
+            signal.throwIfAborted();
 
             const tools = buildPiTools({
                 bridge: this.bridge,
@@ -380,17 +423,20 @@ export class PiSession implements AgentSession {
                     bcCtx: { toolCall: { name: string }; args: unknown },
                     signal?: AbortSignal,
                 ): Promise<{ block: boolean; reason?: string } | undefined> => {
+                    signal?.throwIfAborted();
                     if (!this.isToolAllowed(bcCtx.toolCall.name)) {
                         return { block: true, reason: "tool is not enabled for this Agent Run" };
                     }
                     if (this.permissionBroker) {
-                        const decision = await this.permissionBroker.requestPermission({
+                        const permission = this.permissionBroker.requestPermission({
                             owner: this.owner,
                             ownerUserId: this.ownerUserId,
                             workspaceId: this.workspaceId,
                             toolName: bcCtx.toolCall.name,
                             input: bcCtx.args,
                         });
+                        const decision = signal ? await abortable(Promise.resolve(permission), signal) : await permission;
+                        signal?.throwIfAborted();
                         if (decision === "deny") return { block: true, reason: "denied by Run permission policy" };
                         if (decision !== "ask") return undefined;
                         const answer = await this.requestPermission(bcCtx.toolCall.name, bcCtx.args, signal);
@@ -459,7 +505,9 @@ export class PiSession implements AgentSession {
 
         const dump = openRawDump(this.id);
         dump.write("marker", `turn start ${new Date().toISOString()} model=${(model as any)?.id ?? "?"}`);
-        const unsubscribe = this.agent.subscribe((event: any) => {
+        const agent = this.agent;
+        const unsubscribe = agent.subscribe((event: any) => {
+            if (signal.aborted) return;
             if (event?.type === "message_update") {
                 const e = event.assistantMessageEvent;
                 if (e?.type === "text_delta") dump.write("chunk", e.delta ?? "");
@@ -480,7 +528,13 @@ export class PiSession implements AgentSession {
         const textWithReminder = promptText + followUpReminder(userTurnCount, this.enableFollowUps);
 
         // Kick off the prompt; don't await it here — yield events as they arrive.
-        const promptPromise = this.agent.prompt(textWithReminder).catch((err: unknown) => {
+        signal.throwIfAborted();
+        const onAbort = () => agent.abort();
+        signal.addEventListener('abort', onAbort, { once: true });
+        const promptPromise = Promise.resolve().then(() => {
+            signal.throwIfAborted();
+            return agent.prompt(textWithReminder);
+        }).catch((err: unknown) => {
             // If agent_end already finished the turn, drop late rejections.
             if (terminated) return;
             // Provider/runtime threw before agent_end could fire. Surface as turn_end:error.
@@ -488,16 +542,25 @@ export class PiSession implements AgentSession {
             push({ kind: "turn_end", stopReason: aborted ? undefined : "error" });
             finish();
         });
+        this.inFlightPrompt = promptPromise;
+        void promptPromise.finally(() => {
+            if (this.inFlightPrompt === promptPromise) this.inFlightPrompt = undefined;
+            if (this.recoveryWork === promptPromise) {
+                this.recoveryError = undefined;
+                this.recoveryWork = undefined;
+            }
+        });
 
         try {
             while (true) {
+                signal.throwIfAborted();
                 let ev: NormalizedEvent | null;
                 if (queue.length > 0) {
                     ev = queue.shift()!;
                 } else if (done) {
                     break;
                 } else {
-                    ev = await new Promise<NormalizedEvent | null>((r) => (resolveNext = r));
+                    ev = await abortable(new Promise<NormalizedEvent | null>((r) => (resolveNext = r)), signal);
                 }
                 if (ev === null) break;
                 yield ev;
@@ -508,8 +571,19 @@ export class PiSession implements AgentSession {
             }
         } finally {
             unsubscribe();
-            await promptPromise;
-            this.activePush = undefined;
+            if (!terminated) agent.abort();
+            finish();
+            dump.close();
+            signal.removeEventListener('abort', onAbort);
+            if (this.activePush === push) this.activePush = undefined;
+            try {
+                await withDeadline(promptPromise, 5_000, 'Pi task did not stop in time');
+            } catch {
+                if (this.inFlightPrompt === promptPromise) {
+                    this.recoveryWork = promptPromise;
+                    throw this.markUnavailable('Pi provider did not stop within 5 seconds.');
+                }
+            }
         }
     }
 
@@ -532,7 +606,7 @@ export class PiSession implements AgentSession {
         args: unknown,
         signal: AbortSignal | undefined,
     ): Promise<string | null> {
-        if (!this.activePush) return null;
+        if (!this.activePush || signal?.aborted) return null;
         const requestId = this.nextRequestId++;
         const options: PermissionOption[] = [
             { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
@@ -623,7 +697,9 @@ export class PiSession implements AgentSession {
     }
 
     cancel(): CancelAck {
-        const acknowledged = !!this.agent;
+        const acknowledged = !!this.turnAbort || !!this.agent;
+        this.turnAbort?.abort();
+        if (this.mcpInitialization) void this.disposeMcpManager().catch(() => {});
         try {
             this.agent?.abort();
         } catch {
@@ -641,11 +717,31 @@ export class PiSession implements AgentSession {
         }
         this.pendingPermissions.clear();
         this.agent = undefined;
-        // Fire-and-forget MCP cleanup — child processes get SIGTERM.
-        if (this.mcpManager) {
-            this.mcpManager.dispose().catch(() => { /* ignore */ });
-            this.mcpManager = undefined;
-        }
+        void this.disposeMcpManager().catch(() => {});
+    }
+
+    private markUnavailable(reason: string): Error {
+        this.recoveryError = Object.assign(new Error(
+            `${reason} This Pi session is unavailable; its history and ownership are retained. ` +
+            'No overlapping work will be started. Retry after cleanup finishes; if it remains unavailable, restart the backend before retrying.',
+        ), { code: 'PI_SESSION_UNAVAILABLE' });
+        return this.recoveryError;
+    }
+
+    private disposeMcpManager(): Promise<void> {
+        if (this.mcpCleanup) return this.mcpCleanup;
+        const manager = this.mcpManager;
+        if (!manager) return Promise.resolve();
+        const work = withDeadline(Promise.resolve().then(() => manager.dispose()), 5_000, 'Pi MCP cleanup timed out')
+            .then(() => {
+                if (this.mcpManager === manager) {
+                    this.mcpManager = undefined;
+                    this.mcpInitialized = false;
+                }
+                if (this.mcpCleanup === work) this.mcpCleanup = undefined;
+            }, () => { throw this.markUnavailable('Pi MCP resources could not be stopped within 5 seconds.'); });
+        this.mcpCleanup = work;
+        return work;
     }
 
     /**
@@ -658,36 +754,56 @@ export class PiSession implements AgentSession {
      * Errors are non-fatal: a failed MCP connection logs a warning but does
      * not prevent the session from running (with built-in tools only).
      */
-    private async initMcpTools(Type: any): Promise<any[]> {
-        if (this.mcpInitialized && this.mcpManager) {
-            return buildMcpToolsForPi({ mcpManager: this.mcpManager, Type });
+    private initMcpTools(Type: any, signal: AbortSignal): Promise<any[]> {
+        if (this.mcpInitialization) return this.mcpInitialization;
+        const work = this.connectMcpTools(Type, signal);
+        this.mcpInitialization = work;
+        const clear = () => { if (this.mcpInitialization === work) this.mcpInitialization = undefined; };
+        void work.then(clear, clear);
+        return work;
+    }
+
+    private async connectMcpTools(Type: any, signal: AbortSignal): Promise<any[]> {
+        if (this.mcpInitialized) {
+            return this.mcpManager ? buildMcpToolsForPi({ mcpManager: this.mcpManager, Type }) : [];
         }
-        this.mcpInitialized = true;
 
 
         const configs = readPiMcpServers();
-        if (configs.length === 0) return [];
-
-        const manager = new McpClientManager();
-        for (const cfg of configs) {
-            try {
-                await manager.connect({ ...cfg, cwd: cfg.cwd ?? this.cwd });
-            } catch (err) {
-                console.warn(
-                    `[PiSession] MCP server "${cfg.serverName}" (${cfg.command}) failed to connect:`,
-                    (err as Error).message,
-                );
-                // Continue — don't block the session for one failed MCP server.
-            }
-        }
-
-        if (manager.connectedServers().length === 0) {
-            await manager.dispose();
+        if (configs.length === 0) {
+            this.mcpInitialized = true;
             return [];
         }
 
+        signal.throwIfAborted();
+        const manager = new McpClientManager();
         this.mcpManager = manager;
-        return buildMcpToolsForPi({ mcpManager: manager, Type });
+        try {
+            for (const cfg of configs) {
+                signal.throwIfAborted();
+                try {
+                    await abortable(manager.connect({ ...cfg, cwd: cfg.cwd ?? this.cwd }, signal), signal);
+                } catch (err) {
+                    signal.throwIfAborted();
+                    if ((err as { code?: string }).code === 'MCP_CLEANUP_TIMEOUT') throw err;
+                    console.warn(
+                        `[PiSession] MCP server "${cfg.serverName}" (${cfg.command}) failed to connect:`,
+                        (err as Error).message,
+                    );
+                }
+            }
+            signal.throwIfAborted();
+            if (manager.connectedServers().length === 0) {
+                await this.disposeMcpManager();
+                this.mcpInitialized = true;
+                return [];
+            }
+            this.mcpInitialized = true;
+            return buildMcpToolsForPi({ mcpManager: manager, Type });
+        } catch (error) {
+            await this.disposeMcpManager();
+            throw error;
+        }
     }
 }
 
@@ -699,7 +815,7 @@ export class PiSession implements AgentSession {
  * Pattern: synchronously return an outer EventStream, drive it from an
  * async IIFE — identical to pi-ai's own faux/lazyStream pattern.
  */
-function streamSimpleWithFallback(
+export function streamSimpleWithFallback(
     piMod: any,
     upstreamProvider: string,
     models: any[],
@@ -708,8 +824,22 @@ function streamSimpleWithFallback(
 ): any /* AssistantMessageEventStream */ {
     const outer = piMod.createAssistantMessageEventStream();
     const attempts = models.length > 0 ? models : [undefined];
+    const fail = (error: unknown, modelId = '') => {
+        const aborted = options?.signal?.aborted || (error as { name?: string })?.name === 'AbortError';
+        outer.push({
+            type: 'error',
+            reason: aborted ? 'aborted' : 'error',
+            error: {
+                role: 'assistant', content: [], api: '', provider: upstreamProvider, model: modelId,
+                usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+                stopReason: aborted ? 'aborted' : 'error',
+                errorMessage: error instanceof Error ? error.message : String(error),
+                timestamp: Date.now(),
+            },
+        });
+    };
 
-    (async () => {
+    void (async () => {
         let lastError: any;
 
         for (let i = 0; i < attempts.length; i += 1) {
@@ -718,8 +848,14 @@ function streamSimpleWithFallback(
             let yieldedAny = false;
 
             try {
+                options?.signal?.throwIfAborted();
                 const inner = piMod.streamSimple(model, context, options);
+                let terminalSeen = false;
                 for await (const ev of inner) {
+                    if (ev?.type === 'error' && (options?.signal?.aborted || ev.reason === 'aborted' || ev.error?.stopReason === 'aborted')) {
+                        outer.push({ ...ev, reason: 'aborted', error: { ...ev.error, stopReason: 'aborted' } });
+                        return;
+                    }
                     // Still no output + error + more models to try → switch
                     if (ev?.type === "error" && !yieldedAny && i < attempts.length - 1) {
                         lastError = ev;
@@ -727,26 +863,14 @@ function streamSimpleWithFallback(
                     }
                     yieldedAny = true;
                     outer.push(ev);
+                    terminalSeen ||= ev?.type === 'done' || ev?.type === 'error';
                     // push of done/error event auto-resolves outer.result()
                 }
-                if (yieldedAny) return; // success: outer already received done event
+                if (terminalSeen) return;
+                if (yieldedAny) throw new Error('Pi provider stream ended without a terminal event');
             } catch (err) {
-                if (yieldedAny || i === attempts.length - 1) {
-                    outer.push({
-                        type: "error",
-                        reason: "error",
-                        error: {
-                            role: "assistant",
-                            content: [],
-                            api: "",
-                            provider: upstreamProvider,
-                            model: modelId ?? "",
-                            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-                            stopReason: "error",
-                            errorMessage: err instanceof Error ? err.message : String(err),
-                            timestamp: Date.now(),
-                        },
-                    });
+                if (options?.signal?.aborted || (err as { name?: string })?.name === 'AbortError' || yieldedAny || i === attempts.length - 1) {
+                    fail(err, modelId);
                     return;
                 }
                 lastError = err;
@@ -757,25 +881,9 @@ function streamSimpleWithFallback(
         if (lastError && typeof lastError === "object" && "type" in lastError) {
             outer.push(lastError);
         } else {
-            outer.push({
-                type: "error",
-                reason: "error",
-                error: {
-                    role: "assistant",
-                    content: [],
-                    api: "",
-                    provider: upstreamProvider,
-                    model: "",
-                    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-                    stopReason: "error",
-                    errorMessage: lastError instanceof Error
-                        ? lastError.message
-                        : "All model attempts failed",
-                    timestamp: Date.now(),
-                },
-            });
+            fail(lastError ?? new Error('All model attempts failed'));
         }
-    })();
+    })().catch((error) => fail(error));
 
     return outer;
 }

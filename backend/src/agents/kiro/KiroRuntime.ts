@@ -180,6 +180,13 @@ export class KiroRuntime implements AgentRuntime {
      */
     private globalAvailableModes: any[] | null = null;
     /**
+     * Default mode assigned by ACP to a fresh session, keyed by cwd. Kiro may
+     * resolve workspace-local agent configuration during session/new, so this
+     * must not be shared across workspaces. Loaded sessions never populate it
+     * because their current mode may be a historical user override.
+     */
+    private readonly defaultModeByCwd = new Map<string, string>();
+    /**
      * Global list of ACP models (claude-opus-4.7, claude-sonnet-4.6, etc.).
      * Like modes, empirically identical across sessions; cached once per boot.
      */
@@ -947,7 +954,8 @@ export class KiroRuntime implements AgentRuntime {
     async checkHealth(cwd: string): Promise<{ ok: boolean; detail?: string }> {
         try {
             const c = await this.forceRespawn(cwd);
-            const { sessionId: sid } = await c.newSession([]);
+            const { sessionId: sid, modes } = await c.newSession([]);
+            this.absorbFreshModes(cwd, modes);
             c.destroySession(sid);
             return { ok: true };
         } catch (err) {
@@ -956,14 +964,21 @@ export class KiroRuntime implements AgentRuntime {
     }
 
     /**
-     * Opportunistic update of the global availableModes cache from any
-     * `modes` payload that came back with a session/new or session/load
-     * response. First non-empty list wins; later sessions don't overwrite.
+     * Opportunistic update of the global availableModes cache from any modes
+     * payload. The catalog is process-global; the selected/default mode is not.
      */
     private absorbModes(modes: any): void {
         if (!modes) return;
         if (!this.globalAvailableModes && Array.isArray(modes.availableModes)) {
             this.globalAvailableModes = modes.availableModes;
+        }
+    }
+
+    /** Record the initial mode reported by a fresh session/new for this cwd. */
+    private absorbFreshModes(cwd: string, modes: any): void {
+        this.absorbModes(modes);
+        if (typeof modes?.currentModeId === "string" && modes.currentModeId) {
+            this.defaultModeByCwd.set(cwd, modes.currentModeId);
         }
     }
 
@@ -1048,7 +1063,7 @@ export class KiroRuntime implements AgentRuntime {
         if (modes && typeof modes.currentModeId === "string") {
             this.sessionCurrentMode.set(sid, modes.currentModeId);
         }
-        this.absorbModes(modes);
+        this.absorbFreshModes(cwd, modes);
         this.absorbModels(sid, models);
         return { sid, slotId, modes };
     }
@@ -1216,6 +1231,11 @@ export class KiroRuntime implements AgentRuntime {
         return this.sessionCurrentMode.get(sid);
     }
 
+    /** The initial mode most recently reported by session/new for this cwd. */
+    getDefaultModeId(cwd: string): string | null {
+        return this.defaultModeByCwd.get(cwd) ?? null;
+    }
+
     /**
      * Global ACP availableModes (kiro agent list). Lazily loaded. When
      * a background warmNextSession has an inflight session/new for
@@ -1243,8 +1263,8 @@ export class KiroRuntime implements AgentRuntime {
             const c = await this.ensureClient(this.defaultCwd);
             const { sessionId: sid, modes, models } = await c.newSession([]);
             c.destroySession(sid);
+            this.absorbFreshModes(this.defaultCwd, modes);
             const list = Array.isArray(modes?.availableModes) ? modes.availableModes : [];
-            this.globalAvailableModes = list;
             if (Array.isArray(models?.availableModels)) this.storeAvailableModels(models.availableModels);
             perf.measure("getAvailableModes:fallback_session_new", t0);
             return list;
@@ -1422,7 +1442,7 @@ export class KiroRuntime implements AgentRuntime {
             if (result.modes?.currentModeId) {
                 this.sessionCurrentMode.set(sid, result.modes.currentModeId);
             }
-            this.absorbModes(result.modes);
+            this.absorbFreshModes(opts.cwd, result.modes);
             this.absorbModels(sid, result.models);
 
             // Finalize the slot binding.
@@ -1852,6 +1872,7 @@ export class KiroRuntime implements AgentRuntime {
         this.sessionCurrentMode.clear();
         this.sessionCurrentModel.clear();
         this.globalAvailableModes = null;
+        this.defaultModeByCwd.clear();
         this.globalAvailableModels = null;
         await Promise.all(clients.map((c) => c.shutdown().catch(() => {})));
     }

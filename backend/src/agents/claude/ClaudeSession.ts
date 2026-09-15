@@ -37,6 +37,8 @@ import type { AgentReasoning } from '../types';
 import { resolveReasoningOptions } from 'michi-shared';
 import { getClaudeReasoningCapabilities } from './claudeModelCatalog';
 import { EventQueue } from '../eventQueue';
+import { killProcessTree } from '../processTree';
+import { abortable, withDeadline } from '../runtimeLifecycle';
 import { AsyncGate } from '../asyncGate';
 import { log } from '../../services/logger';
 import {
@@ -104,6 +106,8 @@ export interface ClaudeSessionDeps {
   toolProfile?: RuntimeToolProfile;
   permissionBroker?: RuntimePermissionBroker;
   reasoning?: AgentReasoning | null;
+  /** Anonymous warm processes have no durable node until handoff. */
+  persistNativeIdentity?: boolean;
 }
 
 export type SelfTurnIterator = AsyncIterableIterator<NormalizedEvent>;
@@ -169,9 +173,14 @@ export class ClaudeSession implements AgentSession {
 
   private state: SessionState = 'spawning';
   private child: ChildProcessWithoutNullStreams | null = null;
+  private retirement: Promise<void> | null = null;
+  private turnAbort: AbortController | null = null;
+  private resumePending = false;
+  private initTimer: ReturnType<typeof setTimeout> | undefined;
   private exitPromise: Promise<void> = Promise.resolve();
   private slotId: string | null = null;
   private externalSessionId: string | null = null;
+  private persistNativeIdentity: boolean;
   private lastUsedAt = Date.now();
   private authNoticeSent = false;
   private readonly followUpsHookPocEnabled = isClaudeFollowUpsHookPocEnabled();
@@ -226,11 +235,6 @@ export class ClaudeSession implements AgentSession {
   // Disposed callback
   private disposedCallback: (() => void) | undefined;
   private disposedCallbackFired = false;
-  /** When true, a process exit is treated as an intentional model-switch
-   *  retirement: the session stays registered (no disposed callback) so the
-   *  next send() resumes it via spawnResume with the new model. */
-  private retireForModelSwitch = false;
-
   // Idle pump: drains self-initiated turns when no send() is active
   private readonly idleGate = new AsyncGate();
   private selfTurnCallback: SelfTurnCallback | null = null;
@@ -251,6 +255,7 @@ export class ClaudeSession implements AgentSession {
     this.toolProfile = deps.toolProfile;
     this.permissionBroker = deps.permissionBroker;
     this.reasoning = deps.reasoning ?? null;
+    this.persistNativeIdentity = deps.persistNativeIdentity ?? true;
     this.systemPromptAppend = deps.systemPromptAppend;
     this.mcpRegistry = deps.mcpRegistry;
     this.bridge = deps.bridge;
@@ -305,6 +310,8 @@ export class ClaudeSession implements AgentSession {
     // alone: closing its gate or interrupting its single EventQueue waiter
     // would truncate that owner's stream.
     this.acquireTurnLock();
+    const controller = new AbortController();
+    this.turnAbort = controller;
     this.idleGate.close();
     // Once the pump has claimed a real self-turn it owns EventQueue until the
     // terminal frame. Interrupting that waiter would splice the remaining
@@ -313,15 +320,24 @@ export class ClaudeSession implements AgentSession {
     perf.measure('claude:send_lock_acquired', tSendIn, { sid: this.id });
     try {
       this.lastUsedAt = Date.now();
+      if (this.resumePending && this.state !== 'crashed') {
+        yield { kind: 'retry_start', detail: 'Restoring original Claude session' };
+      }
+      if (this.retirement) {
+        yield { kind: 'retry_start', detail: 'Waiting for previous Claude task to stop' };
+        await abortable(this.retirement, controller.signal);
+      }
       if (this.state === 'crashed') {
         if (!this.externalSessionId) {
-          yield { kind: 'turn_end', stopReason: 'error' };
-          return;
+          throw new Error('Claude stopped before its native session was initialized. No replacement session was created.');
         }
+        yield { kind: 'retry_start', detail: 'Restoring original Claude session' };
         const tResume = perf.now();
+        if (this.child) await abortable(this.retireProcess(), controller.signal);
         await this.spawnResume(this.externalSessionId);
         perf.measure('claude:send_spawn_resume', tResume, { sid: this.id });
       }
+      controller.signal.throwIfAborted();
 
       this.state = 'in_turn';
 
@@ -353,6 +369,9 @@ export class ClaudeSession implements AgentSession {
       this.stdinWriteAt = perf.now();
       const tStdin = this.stdinWriteAt;
       const imageBlocks = buildClaudeImageBlocks(input);
+      if (this.resumePending) {
+        this.initTimer = setTimeout(() => this.failProcess(new Error('Claude native restore did not initialize within 20 seconds. Original session retained; please retry.')), 20_000);
+      }
       this.writeStdin(userEnvelope(textForModel, imageBlocks));
       perf.measure('claude:write_stdin', tStdin, { sid: this.id });
 
@@ -384,7 +403,18 @@ export class ClaudeSession implements AgentSession {
         this.state = 'idle';
       }
       this.lastUsedAt = Date.now();
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      if (this.retirement) await this.retirement.catch(() => {});
+      yield { kind: 'turn_end', stopReason: 'cancelled' };
     } finally {
+      if (this.initTimer) clearTimeout(this.initTimer);
+      this.initTimer = undefined;
+      if (this.state === 'in_turn') {
+        controller.abort();
+        await this.retireProcess().catch(() => {});
+      }
+      if (this.turnAbort === controller) this.turnAbort = null;
       this.pendingAssistantBuf = null;
       this.finishFollowUpsHookPocTurn();
       this.releaseTurnLock();
@@ -392,9 +422,7 @@ export class ClaudeSession implements AgentSession {
     }
   }
 
-  /** Read-only view of the claude SDK's session_id, captured on system/init.
-   *  Used by ClaudeRuntime to re-issue setNodeExternalSessionId() after
-   *  rebinding a warm-pool session to a real chat's nodeId. */
+  /** Native identity learned from init or supplied for resume, never a spawn placeholder. */
   getExternalSessionId(): string | null {
     return this.externalSessionId;
   }
@@ -426,6 +454,7 @@ export class ClaudeSession implements AgentSession {
     }
     this.id = newId;
     this.nodeId = newNodeId;
+    this.persistNativeIdentity = true;
     if (opts && 'workspaceId' in opts) this.workspaceId = opts.workspaceId ?? null;
     if (opts && 'ownerUserId' in opts) this.ownerUserId = opts.ownerUserId ?? null;
     if (opts?.owner) this.owner = opts.owner;
@@ -566,16 +595,60 @@ export class ClaudeSession implements AgentSession {
   }
 
   async cancel(): Promise<void> {
-    if (this.state !== 'in_turn') return;
-    try { this.child?.kill('SIGINT'); } catch {}
-    const exitedAfterInterrupt = await this.waitForExit(DISPOSE_TERM_TIMEOUT_MS);
-    if (!exitedAfterInterrupt) {
-      try { this.child?.kill('SIGKILL'); } catch {}
-      await this.waitForExit(DISPOSE_KILL_TIMEOUT_MS);
+    if (!this.turnAbort && this.state !== 'in_turn') return;
+    this.turnAbort?.abort();
+    await this.retireProcess();
+  }
+
+  private clearInteractions(): void {
+    for (const entries of [this.pendingPermissions, this.pendingUserInputs]) {
+      for (const entry of entries.values()) { clearTimeout(entry.timer); entry.resolve(null); }
+      entries.clear();
     }
-    this.state = 'crashed';
-    await this.disposeSlot();
-    this.fireDisposedCallback();
+  }
+
+  private signalProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+    if (child.pid) killProcessTree(child.pid, signal);
+    else { try { child.kill(signal); } catch { /* unspawned test/process */ } }
+  }
+
+  private retireProcess(): Promise<void> {
+    if (this.retirement) return this.retirement;
+    const child = this.child;
+    const queue = this.queue;
+    const exit = this.exitPromise;
+    if (this.state !== 'disposed') this.state = 'crashed';
+    this.clearInteractions();
+    // Publish the barrier before signaling: a child can report exit immediately.
+    const work = Promise.resolve().then(async () => {
+      try {
+        if (child) {
+          this.signalProcess(child, 'SIGINT');
+          const exited = await withDeadline(exit.then(() => true), DISPOSE_TERM_TIMEOUT_MS, 'exit timeout').catch(() => false);
+          // Kill descendants too, even when their parent handled SIGINT and exited.
+          this.signalProcess(child, 'SIGKILL');
+          if (!exited) await withDeadline(exit, DISPOSE_KILL_TIMEOUT_MS, 'Claude process exit could not be confirmed. Original session retained; retry after it stops.');
+        }
+        await this.disposeSlot();
+        if (this.child === child) {
+          this.child = null;
+          this.markTranslatorTurnStart = null;
+        }
+        if (this.state === 'disposed') this.fireDisposedCallback();
+      } finally {
+        queue.push({ kind: 'turn_end', stopReason: this.turnAbort?.signal.aborted ? 'cancelled' : 'error' });
+        queue.dispose();
+      }
+    });
+    this.retirement = work;
+    void work.finally(() => { if (this.retirement === work) this.retirement = null; }).catch(() => {});
+    return work;
+  }
+
+  private failProcess(error: Error): void {
+    if (this.state === 'disposed' || this.state === 'crashed') return;
+    this.queue.push({ kind: 'runtime_error', error: error.message });
+    void this.retireProcess().catch(() => {});
   }
 
   /**
@@ -589,7 +662,7 @@ export class ClaudeSession implements AgentSession {
    * Parity with Kiro's native ACP set_model (KiroSession.setModel).
    */
   async setModel(modelId: string): Promise<void> {
-    if (this.state === 'in_turn') {
+    if (this.turnLock || this.state === 'in_turn') {
       throw new Error('Cannot switch model during an active turn — cancel the turn first');
     }
     if (this.state === 'disposed') {
@@ -599,25 +672,19 @@ export class ClaudeSession implements AgentSession {
       this.model = modelId || this.model;
       return;
     }
-    this.model = modelId;
-    // If the process is alive and resumable, retire it so the next turn
-    // respawns with the new model. If it has no external id yet (never
-    // sent a turn) the fresh spawn on first send() already uses this.model.
-    if (this.state === 'idle' && this.externalSessionId && this.child) {
-      this.retireForModelSwitch = true;
-      try {
-        try { this.child.kill('SIGINT'); } catch {}
-        const exited = await this.waitForExit(DISPOSE_TERM_TIMEOUT_MS);
-        if (!exited) {
-          try { this.child.kill('SIGKILL'); } catch {}
-          await this.waitForExit(DISPOSE_KILL_TIMEOUT_MS);
-        }
-      } finally {
-        this.retireForModelSwitch = false;
+    this.acquireTurnLock();
+    this.idleGate.close();
+    this.queue.interruptWaiter();
+    try {
+      if (this.child || this.retirement) await this.retireProcess();
+      this.model = modelId;
+      // Only an unused, uninitialized process may be replaced without resume.
+      if (!this.externalSessionId && !this.firstTurnPrefixConsumed) {
+        await this.spawnFresh();
       }
-      // The exit handler set state='crashed' (and, because of the flag, kept
-      // the session registered). The next send() sees 'crashed' and calls
-      // spawnResume(externalSessionId), which respawns with the new model.
+    } finally {
+      this.releaseTurnLock();
+      this.idleGate.open();
     }
   }
 
@@ -654,7 +721,8 @@ export class ClaudeSession implements AgentSession {
   }
 
   async dispose(): Promise<void> {
-    if (this.state === 'disposed') return;
+    // A prior disposal may have timed out with the process still owned here.
+    if (this.disposedCallbackFired) return;
     this.state = 'disposed';
     this.idleGate.open(); // Unblock idle pump so it can check state and exit
     this.queue.dispose();
@@ -674,15 +742,8 @@ export class ClaudeSession implements AgentSession {
     }
     this.pendingUserInputs.clear();
 
-    const child = this.child;
-    if (child) {
-      try { child.kill('SIGTERM'); } catch {}
-      const exitedAfterTerm = await this.waitForExit(DISPOSE_TERM_TIMEOUT_MS);
-      if (!exitedAfterTerm) {
-        try { child.kill('SIGKILL'); } catch {}
-        await this.waitForExit(DISPOSE_KILL_TIMEOUT_MS);
-      }
-    }
+    this.turnAbort?.abort();
+    await this.retireProcess();
 
     await this.disposeSlot();
 
@@ -730,6 +791,7 @@ export class ClaudeSession implements AgentSession {
         if (!this.idleGate.isOpen) continue;
 
         const ev = await this.queue.pull();
+        if ((this.state as SessionState) === 'disposed' || (this.state as SessionState) === 'crashed') break;
         if (ev === null) {
           // null means either queue disposed or send() interrupted us.
           // If queue is disposed, exit. Otherwise loop back to gate.wait().
@@ -818,6 +880,10 @@ export class ClaudeSession implements AgentSession {
   // ---- Spawn ------------------------------------------------------------------
 
   async spawnFresh(): Promise<void> {
+    if (this.retirement) await this.retirement;
+    if (this.child) await this.retireProcess();
+    this.turnAbort?.signal.throwIfAborted();
+    if (this.state === 'disposed') throw new Error('Claude session was disposed during startup');
     const tSpawnFresh = perf.now();
     perf.mark('claude:spawn_fresh_start', { sid: this.id });
     const slot = this.mcpRegistry.create(this.id, this.cwd, this.ownerUserId ?? null, {
@@ -878,6 +944,10 @@ export class ClaudeSession implements AgentSession {
   }
 
   async spawnResume(externalSessionId: string): Promise<void> {
+    if (this.retirement) await this.retirement;
+    if (this.child) await this.retireProcess();
+    this.turnAbort?.signal.throwIfAborted();
+    if (this.state === 'disposed') throw new Error('Claude session was disposed during startup');
     // The caller supplied a validated opaque resume token. Retain it before
     // the CLI emits its next system/init envelope so crash/cancel recovery can
     // immediately describe the native state.
@@ -885,11 +955,10 @@ export class ClaudeSession implements AgentSession {
     // Invariant 4: JSONL tail integrity check
     this.checkAndRepairJsonl(this.cwd, externalSessionId, this.ownerUserId);
 
-    // Dispose the old slot before creating a new one (invariant: each process needs fresh slot)
-    if (this.slotId) {
-      await this.mcpRegistry.dispose(this.slotId).catch(() => {});
-      this.slotId = null;
-    }
+    // Dispose the old slot before creating a new one (each process needs a fresh slot).
+    await this.disposeSlot();
+    this.turnAbort?.signal.throwIfAborted();
+    if (this.getState() === 'disposed') throw new Error('Claude session was disposed during startup');
 
     const slot = this.mcpRegistry.create(this.id, this.cwd, this.ownerUserId ?? null, {
       onSpawnBranches: async (topics) => {
@@ -948,7 +1017,10 @@ export class ClaudeSession implements AgentSession {
   // ---- Private helpers -------------------------------------------------------
 
   private async doSpawn(opts: { sessionId?: string; resumeSessionId?: string; mcpConfig: string }): Promise<void> {
+    this.turnAbort?.signal.throwIfAborted();
+    if (this.state === 'disposed') throw new Error('Claude session was disposed during startup');
     this.state = 'spawning';
+    this.resumePending = !!opts.resumeSessionId;
 
     // Reset queue for new spawn
     this.queue.dispose();
@@ -957,8 +1029,11 @@ export class ClaudeSession implements AgentSession {
         this.queue.push({ kind: 'heartbeat', idleMs });
       }
     });
+    const queue = this.queue;
+    const isCurrent = () => this.queue === queue && this.state !== 'crashed' && this.state !== 'disposed';
 
     const translator = createTranslator((ev) => {
+      if (!isCurrent()) return;
       this.observeFollowUpsSentinelEvent(ev);
       if (this.suppressFollowUpsInternalEvent(ev)) return;
       // Drive the idle transition from the claude process's own end-of-turn
@@ -983,30 +1058,43 @@ export class ClaudeSession implements AgentSession {
 
     const parser = createClaudeEnvelopeParser(
       (envelope) => {
-        this.logFollowUpsHookEnvelope(envelope);
-        this.completeFollowUpsOutputBoundaryFromEnvelope(envelope);
+        if (!isCurrent()) return;
+        const isInit = envelope['type'] === 'system' && envelope['subtype'] === 'init';
+        if (this.resumePending && !isInit) {
+          if (['assistant', 'stream_event', 'result'].includes(String(envelope['type']))) {
+            this.failProcess(new Error('Claude native restore produced output before confirming its session identity. Original session retained; please retry.'));
+          }
+          return;
+        }
         // Invariant 6: persist external_session_id on init before forwarding events
-        if (envelope['type'] === 'system' && envelope['subtype'] === 'init') {
+        if (isInit) {
           if (!this.initSeenThisTurn && this.stdinWriteAt) {
             this.initSeenThisTurn = true;
             perf.measure('claude:stdin_to_cli_init', this.stdinWriteAt, { sid: this.id });
           }
-          const sessionId = envelope['session_id'] as string | undefined;
-          if (sessionId) {
-            if (this.externalSessionId && this.externalSessionId !== sessionId) {
-              console.warn(
-                `[ClaudeSession] session_id mismatch: expected ${this.externalSessionId}, got ${sessionId}`,
-              );
-            }
-            this.externalSessionId = sessionId;
-            if (this.owner.kind === 'chat_node') {
-              try {
-                setNodeExternalSessionId(this.owner.nodeId, sessionId);
-              } catch (err) {
-                console.warn(`[ClaudeSession] setNodeExternalSessionId failed:`, err);
-              }
+          const sessionId = envelope['session_id'];
+          if (typeof sessionId !== 'string' || !sessionId.trim()) {
+            this.failProcess(new Error('Claude initialization did not provide a valid session identity. Original session retained; please retry.'));
+            return;
+          }
+          if (this.externalSessionId && this.externalSessionId !== sessionId) {
+            this.failProcess(new Error('Claude native resume returned a different session identity. Original binding retained; please retry.'));
+            return;
+          }
+          // Keep the native token available for retry even when its DB write fails.
+          this.externalSessionId = sessionId;
+          if (this.persistNativeIdentity && this.owner.kind === 'chat_node') {
+            try {
+              setNodeExternalSessionId(this.owner.nodeId, sessionId);
+            } catch (err) {
+              this.failProcess(new Error(`Claude session identity could not be persisted: ${err instanceof Error ? err.message : String(err)}. Native identity retained in memory; please retry.`));
+              return;
             }
           }
+          if (this.initTimer) clearTimeout(this.initTimer);
+          this.initTimer = undefined;
+          if (this.resumePending) queue.push({ kind: 'retry_end' });
+          this.resumePending = false;
         } else if (!this.firstModelEnvelopeThisTurn && this.stdinWriteAt) {
           // First non-system envelope after stdin write — Anthropic actually responded.
           this.firstModelEnvelopeThisTurn = true;
@@ -1015,6 +1103,8 @@ export class ClaudeSession implements AgentSession {
             type: envelope['type'] as string | undefined,
           });
         }
+        this.logFollowUpsHookEnvelope(envelope);
+        this.completeFollowUpsOutputBoundaryFromEnvelope(envelope);
         translator.feed(envelope);
       },
       (err, raw) => {
@@ -1038,47 +1128,53 @@ export class ClaudeSession implements AgentSession {
     }
 
     const tCliSpawn = perf.now();
-    const child = spawnClaude({
-      cwd: this.cwd,
-      sessionId: opts.sessionId,
-      resumeSessionId: opts.resumeSessionId,
-      permissionMode: 'default',
-      permissionPromptTool: 'mcp____michi_internal____approve',
-      mcpConfigInline: opts.mcpConfig,
-      settingsInline: this.followUpsHookPocEnabled
-        ? buildClaudeFollowUpsHookPocSettings()
-        : undefined,
-      includeHookEvents: this.followUpsHookPocEnabled,
-      // Surface in-session Task subagents as a live roster (subagent_list_update /
-      // subagent_tool_activity) instead of an opaque "Used N tools" chip. Default
-      // on; set MICHI_CLAUDE_SUBAGENT_TEXT=0 to disable (e.g. older binary that
-      // rejects the flag, or to keep the parent stream lean).
-      forwardSubagentText: process.env.MICHI_CLAUDE_SUBAGENT_TEXT !== '0',
-      // Default: let claude auto-discover the user's own MCP servers
-      // (~/.claude/settings.json, project .mcp.json, plugin MCPs). __michi_internal__
-      // is still injected via --mcp-config so the agent↔Michi protocol (approve,
-      // save_artifact, spawn_branches) is always available. Set MICHI_CLAUDE_STRICT_MCP=1
-      // to lock the agent to ONLY __michi_internal__ — useful for multi-tenant
-      // deploys where host MCP must not leak in.
-      strictMcpConfig: this.owner.kind === 'agent_run' || process.env.MICHI_CLAUDE_STRICT_MCP === '1',
-      // Bare mode skips SessionStart hooks, plugins, skills, MCP auto-discovery.
-      // Without it, configs with many plugins (financial-services, superpowers)
-      // take 10-20s to emit system/init. Tests / CI / smoke runs opt in via env.
-      // Production toggle is a follow-up; default to bare=false until then.
-      bare: this.owner.kind === 'agent_run'
-        ? true
-        : (this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1'),
-      model: this.model,
-      effort: reasoningToClaudeEffort(resolveReasoningOptions(
-        { reasoning: true }, getClaudeReasoningCapabilities(this.model ?? 'sonnet'), undefined,
-        this.reasoning ?? resolveReasoning('claude', this.ownerUserId ?? undefined),
-      ).value),
-      // Opt-in override for multi-profile setups (agent.claudeConfigDir in
-      // ~/.michi/config.json). Undefined for everyone else — claude keeps
-      // its ~/.claude default.
-      configDir: resolveClaudeConfigDir(),
-      systemPromptAppend,
-    });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawnClaude({
+        cwd: this.cwd,
+        sessionId: opts.sessionId,
+        resumeSessionId: opts.resumeSessionId,
+        permissionMode: 'default',
+        permissionPromptTool: 'mcp____michi_internal____approve',
+        mcpConfigInline: opts.mcpConfig,
+        settingsInline: this.followUpsHookPocEnabled
+          ? buildClaudeFollowUpsHookPocSettings()
+          : undefined,
+        includeHookEvents: this.followUpsHookPocEnabled,
+        // Surface in-session Task subagents as a live roster (subagent_list_update /
+        // subagent_tool_activity) instead of an opaque "Used N tools" chip. Default
+        // on; set MICHI_CLAUDE_SUBAGENT_TEXT=0 to disable (e.g. older binary that
+        // rejects the flag, or to keep the parent stream lean).
+        forwardSubagentText: process.env.MICHI_CLAUDE_SUBAGENT_TEXT !== '0',
+        // Default: let claude auto-discover the user's own MCP servers
+        // (~/.claude/settings.json, project .mcp.json, plugin MCPs). __michi_internal__
+        // is still injected via --mcp-config so the agent↔Michi protocol (approve,
+        // save_artifact, spawn_branches) is always available. Set MICHI_CLAUDE_STRICT_MCP=1
+        // to lock the agent to ONLY __michi_internal__ — useful for multi-tenant
+        // deploys where host MCP must not leak in.
+        strictMcpConfig: this.owner.kind === 'agent_run' || process.env.MICHI_CLAUDE_STRICT_MCP === '1',
+        // Bare mode skips SessionStart hooks, plugins, skills, MCP auto-discovery.
+        // Without it, configs with many plugins (financial-services, superpowers)
+        // take 10-20s to emit system/init. Tests / CI / smoke runs opt in via env.
+        // Production toggle is a follow-up; default to bare=false until then.
+        bare: this.owner.kind === 'agent_run'
+          ? true
+          : (this.followUpsHookPocEnabled ? false : process.env.MICHI_CLAUDE_BARE === '1'),
+        model: this.model,
+        effort: reasoningToClaudeEffort(resolveReasoningOptions(
+          { reasoning: true }, getClaudeReasoningCapabilities(this.model ?? 'sonnet'), undefined,
+          this.reasoning ?? resolveReasoning('claude', this.ownerUserId ?? undefined),
+        ).value),
+        // Opt-in override for multi-profile setups (agent.claudeConfigDir in
+        // ~/.michi/config.json). Undefined for everyone else — claude keeps
+        // its ~/.claude default.
+        configDir: resolveClaudeConfigDir(),
+        systemPromptAppend,
+      });
+    } catch (error) {
+      await this.retireProcess();
+      throw error;
+    }
     this.child = child;
     perf.measure('claude:cli_spawn_call', tCliSpawn, {
       sid: this.id,
@@ -1095,6 +1191,16 @@ export class ClaudeSession implements AgentSession {
       { sessionId: this.id, nodeId: this.nodeId },
     ));
     child.stdout.on('end', () => parser.flush());
+    child.stdout.on('close', () => { if (this.child === child) this.failProcess(new Error('Claude output connection closed. Original session retained.')); });
+    const transportError = (error: Error) => { if (this.child === child) this.failProcess(error); };
+    child.on('error', (error: Error) => {
+      // Failed spawn emits error/close, but no exit and no process to wait for.
+      if (!child.pid) exitResolve();
+      transportError(error);
+    });
+    child.stdin.on('error', transportError);
+    child.stdout.on('error', transportError);
+    child.stderr.on('error', transportError);
 
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
@@ -1116,26 +1222,11 @@ export class ClaudeSession implements AgentSession {
     });
 
     child.on('exit', () => {
-      // If the process exits while a turn is in progress, the translator did
-      // not see Claude's `result/success` envelope. Treat that as incomplete
-      // even when the process exit code is 0; Claude hooks can still exit cleanly
-      // after a failed/interrupted turn.
-      if (this.state === 'in_turn') {
-        this.queue.push({ kind: 'turn_end', stopReason: 'error' });
-      }
-      if (this.state !== 'disposed') {
-        this.state = 'crashed';
-        this.queue.dispose();
-        this.markTranslatorTurnStart = null;
-        void this.disposeSlot();
-        // For an intentional model-switch retirement, keep the session
-        // registered so the next send() resumes it with the new model. The
-        // slot is recreated by spawnResume.
-        if (!this.retireForModelSwitch) {
-          this.fireDisposedCallback();
-        }
-      }
       exitResolve();
+      if (this.child !== child) return;
+      // Keep the captured group owned until descendants and MCP are retired.
+      // This barrier also gates a native respawn after an unexpected exit.
+      void this.retireProcess().catch(() => {});
     });
 
     // ARCHITECTURAL NOTE (Invariant 5 update):
@@ -1430,21 +1521,13 @@ export class ClaudeSession implements AgentSession {
 
   private writeStdin(data: string): void {
     if (!this.child || !this.child.stdin.writable) {
-      this.queue.push({ kind: 'turn_end', stopReason: 'error' });
-      this.state = 'crashed';
-      this.queue.dispose();
-      void this.disposeSlot();
-      this.fireDisposedCallback();
+      this.failProcess(new Error('Claude input connection is unavailable. Original session retained.'));
       return;
     }
-    this.child.stdin.write(data, 'utf8', (err) => {
+    const child = this.child;
+    child.stdin.write(data, 'utf8', (err) => {
       if (err) {
-        console.warn(`[ClaudeSession] stdin write error:`, err);
-        this.queue.push({ kind: 'turn_end', stopReason: 'error' });
-        this.state = 'crashed';
-        this.queue.dispose();
-        void this.disposeSlot();
-        this.fireDisposedCallback();
+        if (this.child === child) this.failProcess(err);
       }
     });
   }
@@ -1459,8 +1542,9 @@ export class ClaudeSession implements AgentSession {
   private async disposeSlot(): Promise<void> {
     if (!this.slotId) return;
     const slotId = this.slotId;
-    this.slotId = null;
-    await this.mcpRegistry.dispose(slotId).catch(() => {});
+    await withDeadline(this.mcpRegistry.dispose(slotId), DISPOSE_TERM_TIMEOUT_MS,
+      'Claude tool connection cleanup timed out. Original session retained; please retry.');
+    if (this.slotId === slotId) this.slotId = null;
   }
 
   private fireDisposedCallback(): void {

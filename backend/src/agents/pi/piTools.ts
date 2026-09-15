@@ -442,7 +442,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     description: t.description,
                     parameters,
                     executionMode: "sequential" as const,
-                    execute: async (_id: string, args: any) =>
+                    execute: async (_id: string, args: any, signal?: AbortSignal) =>
                         executeBash(
                             {
                                 command: String(args?.command ?? ""),
@@ -450,7 +450,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                                 timeoutMs: typeof args?.timeoutMs === "number" ? args.timeoutMs : undefined,
                             },
                             cwd,
-                            { ownerUserId },
+                            { ownerUserId, signal },
                         ),
                 };
         }

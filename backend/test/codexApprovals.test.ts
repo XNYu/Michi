@@ -15,7 +15,7 @@
  *   - Approval for unknown threadId → immediate { decision: 'decline' }
  */
 
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { CodexRuntime } from '../src/agents/codex/CodexRuntime';
 import { CodexSession } from '../src/agents/codex/CodexSession';
@@ -32,26 +32,47 @@ type ServerRequestHandler = (
   respond: (result: unknown) => void,
 ) => void;
 
-function makeStubClient(): CodexAppServerClient & {
+function makeStubClient(threadId = 'thread-approval-test'): CodexAppServerClient & {
   _serverRequestHandler: ServerRequestHandler | null;
   _fireServerRequest(method: string, params: Record<string, unknown>): Promise<unknown>;
+  _emit(threadId: string, method: string, params: Record<string, unknown>): void;
 } {
   let serverRequestHandler: ServerRequestHandler | null = null;
+  const notifHandlers = new Map<string, Set<(method: string, params: Record<string, unknown>) => void>>();
+  const titleThreadId = `${threadId}-title`;
 
   const client: any = {
     ensureStarted: async () => {},
-    request: async (_method: string, _params: unknown): Promise<unknown> => {
-      if (_method === 'thread/start') return { threadId: 'thread-approval-test' };
-      if (_method === 'model/list') return { data: [] };
+    request: async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+      if (method === 'thread/start') return { threadId: params.ephemeral ? titleThreadId : threadId };
+      if (method === 'model/list') return { data: [] };
+      if (method === 'turn/start') {
+        if (params.threadId === titleThreadId) {
+          queueMicrotask(() => client._emit(titleThreadId, 'turn/completed', {
+            threadId: titleThreadId, turn: { id: 'title-turn-1', status: 'completed' },
+          }));
+          return { turn: { id: 'title-turn-1' } };
+        }
+        return { turn: { id: 'turn-1' } };
+      }
       return {};
     },
-    onNotification: (_threadId: string, _handler: unknown) => () => {},
+    onNotification: (id: string, handler: (method: string, params: Record<string, unknown>) => void) => {
+      let handlers = notifHandlers.get(id);
+      if (!handlers) { handlers = new Set(); notifHandlers.set(id, handlers); }
+      handlers.add(handler);
+      return () => { handlers.delete(handler); };
+    },
+    onGlobalNotification: (_h: unknown) => () => {},
     onServerRequest: (h: ServerRequestHandler) => {
       serverRequestHandler = h;
     },
     onExit: (_cb: () => void) => () => {},
     shutdown: async () => {},
     isRunning: () => true,
+    _emit(id: string, method: string, params: Record<string, unknown>) {
+      for (const handler of notifHandlers.get(id) ?? []) handler(method, params);
+    },
 
     // Test helper — fire a server request and capture the response
     _fireServerRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -100,19 +121,24 @@ function makeRuntime(client: CodexAppServerClient) {
   );
 }
 
-/**
- * Create a CodexSession directly (bypasses newSession's thread/start call)
- * and register it into a runtime by creating a real session via newSession.
- * Returns the session and the client for test control.
- */
-async function makeRuntimeWithSession(threadId = 'thread-approval-test') {
-  const client = makeStubClient();
-  // Override thread/start to return our controlled threadId
-  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
-    if (method === 'thread/start') return { threadId };
-    if (method === 'model/list') return { data: [] };
-    return {};
-  };
+async function startActiveTurn(t: TestContext, runtime: CodexRuntime, session: CodexSession, client: ReturnType<typeof makeStubClient>) {
+  const turn = (async () => {
+    for await (const _event of session.send('Run the approval test')) { /* Drain until cleanup. */ }
+  })();
+  t.after(async () => {
+    client._emit(session.threadId, 'turn/completed', {
+      threadId: session.threadId, turn: { id: 'turn-1', status: 'completed' },
+    });
+    await runtime.shutdown();
+    await turn;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(session.acceptsControl({ threadId: session.threadId, turnId: 'turn-1' }), 'controls require a live native turn');
+}
+
+/** Create a registered session with an active native turn for approval routing. */
+async function makeRuntimeWithSession(t: TestContext, threadId = 'thread-approval-test') {
+  const client = makeStubClient(threadId);
 
   const runtime = makeRuntime(client);
   const session = await runtime.newSession({
@@ -120,17 +146,18 @@ async function makeRuntimeWithSession(threadId = 'thread-approval-test') {
     cwd: '/tmp/test',
     model: 'test-model',
   }) as CodexSession;
+  await startActiveTurn(t, runtime, session, client);
 
   return { runtime, session, client };
 }
 
 // ---- Tests ------------------------------------------------------------------
 
-test('unknown approval method always asks — never auto-allows', async () => {
+test('unknown approval method always asks — never auto-allows', async (t) => {
   // `item/permissions/requestApproval` is NOT in CODEX_APPROVAL_ALIASES.
   // resolvePolicy would return 'allow' for it (since it's not in ASK_TOOLS),
   // so it MUST NOT be fed to resolvePolicy — it must always go to session.askPermission.
-  const { runtime, session, client } = await makeRuntimeWithSession();
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   // Fire the unknown method but do NOT respond — we just want to verify it lands
   // in pendingPermissions (i.e. was not auto-responded by the runtime).
@@ -155,8 +182,8 @@ test('unknown approval method always asks — never auto-allows', async () => {
   await runtime.shutdown();
 });
 
-test('MCP elicitation approval uses the Codex action response contract', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('MCP elicitation approval uses the Codex action response contract', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const responsePromise = client._fireServerRequest(
     CODEX_SERVER_REQUESTS.mcpElicitation,
@@ -208,8 +235,8 @@ test('MCP elicitation without a matching session declines with its own contract'
   });
 });
 
-test('allow_once → { decision: accept } for commandExecution and fileChange', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('allow_once → { decision: accept } for commandExecution and fileChange', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   // --- commandExecution ---
   const cmdResponsePromise = client._fireServerRequest(
@@ -241,8 +268,8 @@ test('allow_once → { decision: accept } for commandExecution and fileChange', 
   await runtime.shutdown();
 });
 
-test('reject_once → { decision: decline }', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('reject_once → { decision: decline }', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const responsePromise = client._fireServerRequest(
     CODEX_SERVER_REQUESTS.commandApproval,
@@ -258,8 +285,8 @@ test('reject_once → { decision: decline }', async () => {
   await runtime.shutdown();
 });
 
-test('allow_always → { decision: acceptForSession } and onAlwaysAllow called with canonical tool name', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('allow_always → { decision: acceptForSession } and onAlwaysAllow called with canonical tool name', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const alwaysAllowCalls: string[] = [];
   session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
@@ -283,8 +310,8 @@ test('allow_always → { decision: acceptForSession } and onAlwaysAllow called w
   await runtime.shutdown();
 });
 
-test('allow_always for fileChange calls onAlwaysAllow with "edit"', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('allow_always for fileChange calls onAlwaysAllow with "edit"', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const alwaysAllowCalls: string[] = [];
   session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
@@ -304,8 +331,8 @@ test('allow_always for fileChange calls onAlwaysAllow with "edit"', async () => 
   await runtime.shutdown();
 });
 
-test('cancelPermission resolves to decline (null → decline path)', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('cancelPermission resolves to decline (null → decline path)', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const responsePromise = client._fireServerRequest(
     CODEX_SERVER_REQUESTS.commandApproval,
@@ -324,8 +351,8 @@ test('cancelPermission resolves to decline (null → decline path)', async () =>
   await runtime.shutdown();
 });
 
-test('markCrashed cancels all pending permissions with decline', async () => {
-  const { runtime, session, client } = await makeRuntimeWithSession();
+test('markCrashed cancels all pending permissions with decline', async (t) => {
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   // Queue two approval requests without responding
   const response1Promise = client._fireServerRequest(
@@ -379,7 +406,7 @@ test('approval with missing threadId in params → immediate decline', async () 
 
 // ---- Agent Run approval routing tests (T06) ---------------------------------
 
-test('agent_run approval delegates to permissionBroker, not resolvePolicy', async () => {
+test('agent_run approval delegates to permissionBroker, not resolvePolicy', async (t) => {
   const brokerRequests: Array<{ toolName: string }> = [];
   const broker: any = {
     async requestPermission(req: any) {
@@ -388,22 +415,18 @@ test('agent_run approval delegates to permissionBroker, not resolvePolicy', asyn
     },
   };
 
-  const client = makeStubClient();
-  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
-    if (method === 'thread/start') return { threadId: 'thread-run-approval' };
-    if (method === 'model/list') return { data: [] };
-    return {};
-  };
+  const client = makeStubClient('thread-run-approval');
 
   const runtime = makeRuntime(client);
-  await runtime.newSession({
+  const session = await runtime.newSession({
     sessionId: 'attempt-approval-1',
     cwd: '/tmp/test',
     model: 'test-model',
     owner: { kind: 'agent_run', runId: 'run-approval', attemptId: 'attempt-approval-1' },
     permissionBroker: broker,
     toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
-  });
+  }) as CodexSession;
+  await startActiveTurn(t, runtime, session, client);
 
   // Fire a known command approval — for agent_run, runtime should delegate
   // directly to askPermission which routes through the broker.
@@ -419,17 +442,12 @@ test('agent_run approval delegates to permissionBroker, not resolvePolicy', asyn
   await runtime.shutdown();
 });
 
-test('agent_run allow_always from broker produces acceptForSession without grantPermission', async () => {
+test('agent_run allow_always from broker produces acceptForSession without grantPermission', async (t) => {
   const broker: any = {
     async requestPermission(_req: any) { return 'allow_always'; },
   };
 
-  const client = makeStubClient();
-  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
-    if (method === 'thread/start') return { threadId: 'thread-run-grant' };
-    if (method === 'model/list') return { data: [] };
-    return {};
-  };
+  const client = makeStubClient('thread-run-grant');
 
   const runtime = makeRuntime(client);
   const session = await runtime.newSession({
@@ -441,6 +459,7 @@ test('agent_run allow_always from broker produces acceptForSession without grant
     toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
     workspaceId: 'ws-test',
   }) as CodexSession;
+  await startActiveTurn(t, runtime, session, client);
 
   // Track whether onAlwaysAllow was called (it should NOT be for agent_run)
   const alwaysAllowCalls: string[] = [];
@@ -458,27 +477,23 @@ test('agent_run allow_always from broker produces acceptForSession without grant
   await runtime.shutdown();
 });
 
-test('agent_run deny from broker produces decline', async () => {
+test('agent_run deny from broker produces decline', async (t) => {
   const broker: any = {
     async requestPermission(_req: any) { return 'deny'; },
   };
 
-  const client = makeStubClient();
-  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
-    if (method === 'thread/start') return { threadId: 'thread-run-deny' };
-    if (method === 'model/list') return { data: [] };
-    return {};
-  };
+  const client = makeStubClient('thread-run-deny');
 
   const runtime = makeRuntime(client);
-  await runtime.newSession({
+  const session = await runtime.newSession({
     sessionId: 'attempt-deny-1',
     cwd: '/tmp/test',
     model: 'test-model',
     owner: { kind: 'agent_run', runId: 'run-deny', attemptId: 'attempt-deny-1' },
     permissionBroker: broker,
     toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
-  });
+  }) as CodexSession;
+  await startActiveTurn(t, runtime, session, client);
 
   const result = await client._fireServerRequest(
     CODEX_SERVER_REQUESTS.commandApproval,
@@ -490,7 +505,7 @@ test('agent_run deny from broker produces decline', async () => {
   await runtime.shutdown();
 });
 
-test('agent_run unknown approval method delegates to broker (fails closed)', async () => {
+test('agent_run unknown approval method delegates to broker (fails closed)', async (t) => {
   const brokerRequests: Array<{ toolName: string }> = [];
   const broker: any = {
     async requestPermission(req: any) {
@@ -499,22 +514,18 @@ test('agent_run unknown approval method delegates to broker (fails closed)', asy
     },
   };
 
-  const client = makeStubClient();
-  (client as any).request = async (method: string, _params: unknown): Promise<unknown> => {
-    if (method === 'thread/start') return { threadId: 'thread-run-unknown' };
-    if (method === 'model/list') return { data: [] };
-    return {};
-  };
+  const client = makeStubClient('thread-run-unknown');
 
   const runtime = makeRuntime(client);
-  await runtime.newSession({
+  const session = await runtime.newSession({
     sessionId: 'attempt-unknown-1',
     cwd: '/tmp/test',
     model: 'test-model',
     owner: { kind: 'agent_run', runId: 'run-unknown', attemptId: 'attempt-unknown-1' },
     permissionBroker: broker,
     toolProfile: { allowedToolNames: ['submit_agent_result'] },
-  });
+  }) as CodexSession;
+  await startActiveTurn(t, runtime, session, client);
 
   const result = await client._fireServerRequest(
     CODEX_SERVER_REQUESTS.permissionsApproval,
@@ -527,9 +538,9 @@ test('agent_run unknown approval method delegates to broker (fails closed)', asy
   await runtime.shutdown();
 });
 
-test('chat session approval still uses resolvePolicy and grantPermission', async () => {
+test('chat session approval still uses resolvePolicy and grantPermission', async (t) => {
   // This test verifies existing chat behavior is unchanged after T06 changes.
-  const { runtime, session, client } = await makeRuntimeWithSession();
+  const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const alwaysAllowCalls: string[] = [];
   session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);

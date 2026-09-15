@@ -157,6 +157,39 @@ async function cancelFirstTurn() {
   assert.doesNotMatch(body, /event: error/);
 }
 
+test('legacy create shares the durable ensure path and cold native resume', async () => {
+  const request = () => post('/chats', { nodeId: 'cancel-node', workspaceId: 'ws', cwd: directory });
+  const responses = await Promise.all(Array.from({ length: 4 }, request));
+  for (const response of responses) assert.equal(response.status, 200, await response.text());
+  assert.equal(created.length, 1);
+  assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
+  clearAllSessions();
+  const resumed = await request();
+  assert.equal(resumed.status, 200);
+  assert.equal((await resumed.json() as any).resumeStrategy, 'exact');
+  assert.equal(loaded.length, 1);
+  assert.equal(created.length, 1);
+});
+
+test('legacy create rejects missing durable nodes and mismatched workspace ownership', async () => {
+  for (const body of [
+    { workspaceId: 'ws', cwd: directory },
+    { nodeId: 'missing', workspaceId: 'ws', cwd: directory },
+    { nodeId: 'cancel-node', workspaceId: 'wrong', cwd: directory },
+  ]) assert.equal((await post('/chats', body)).status, 409);
+  assert.equal(created.length, 0);
+});
+
+test('legacy create awaits worker commit and tears down an uncommitted session', async (t) => {
+  t.mock.method(dbWorkerClient, 'isDbWorkerReady', () => true);
+  t.mock.method(dbWorkerClient.dbWorker, 'persistResumeBinding', async () => { throw new Error('disk unavailable'); });
+  const response = await post('/chats', { nodeId: 'cancel-node', workspaceId: 'ws', cwd: directory });
+  assert.equal(response.status, 500);
+  assert.equal(getNode('cancel-node')?.acp_session_id, null);
+  assert.equal(getSession('cancel-node'), undefined);
+  assert.deepEqual(releases, ['cancel-node']);
+});
+
 test('HTTP cancel then follow-up reuses the native ACP session without re-priming', async () => {
   await cancelFirstTurn();
   assert.equal((await ensure()).resumeStrategy, 'live');

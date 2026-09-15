@@ -45,7 +45,7 @@ export class PiSdkSession implements AgentSession {
   public readonly runtimeId = "pi";
   public readonly parentChatId?: string;
   public currentModeId: string | null = null;
-  public currentModelId: string | null = null;
+  get currentModelId(): string | null { return this.fallback.currentModelId; }
 
   private readonly fallback: PiSession;
   private readonly sdk: PiSdkRuntimeAdapter | null;
@@ -94,6 +94,7 @@ export class PiSdkSession implements AgentSession {
 
   describeNativeState(): Record<string, unknown> {
     return {
+      ...this.fallback.describeNativeState(),
       kind: "pi-sdk",
       michiNodeId: this.id,
       navigatesParentTree: shouldNavigatePiTreeOnMichiBranch(),

@@ -311,6 +311,7 @@ export function reduceNodes(
         [action.nodeId]: {
           ...draftless,
           status: 'streaming',
+          activeTurnId: undefined,
           runtimeActivity: undefined,
           streamingStartedAt: Date.now(),
           error: undefined,
@@ -352,6 +353,7 @@ export function reduceNodes(
           [action.nodeId]: {
             ...n,
             status: 'streaming',
+            activeTurnId: action.turnId,
             streamingStartedAt: n.streamingStartedAt ?? Date.now(),
             error: undefined,
             errorKind: undefined,
@@ -398,6 +400,7 @@ export function reduceNodes(
           ...n,
           status: 'streaming',
           streamingStartedAt: now,
+          activeTurnId: action.turnId,
           runtimeActivity: undefined,
           error: undefined,
           errorKind: undefined,
@@ -413,6 +416,11 @@ export function reduceNodes(
           messages: [...n.messages, ...newMessages],
         },
       };
+    }
+    case 'active-turn': {
+      const n = nodes[action.nodeId];
+      if (!n || n.status !== 'streaming' || n.messages.at(-1)?.id !== action.assistantId) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, activeTurnId: action.turnId } };
     }
     case 'apply-seq': {
       const n = nodes[action.nodeId];
@@ -615,6 +623,7 @@ export function reduceNodes(
             : {}),
           status: 'idle',
           cancelPhase: undefined,
+          activeTurnId: undefined,
           compacting: undefined,
           runtimeActivity: undefined,
           visibleResponseComplete: false,
@@ -696,12 +705,17 @@ export function reduceNodes(
           },
         };
       }
+      const latestAssistantId = [...n.messages].reverse().find((message) => message.role === 'assistant')?.id;
+      if (latestAssistantId && latestAssistantId !== action.assistantId) {
+        return { ...nodes, [action.nodeId]: { ...n, messages: msgs } };
+      }
       return {
         ...nodes,
         [action.nodeId]: {
           ...n,
           status: 'error',
           cancelPhase: undefined,
+          activeTurnId: undefined,
           compacting: undefined,
           runtimeActivity: undefined,
           visibleResponseComplete: false,
@@ -1425,8 +1439,8 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n || n.status !== 'streaming') return nodes;
       // Immediately move the node to idle so the composer unlocks. The
-      // backend turn is cancelled asynchronously; if any trailing events
-      // arrive they are harmlessly absorbed by the idle node.
+      // backend turn is cancelled asynchronously. Stream teardown and the
+      // turn-scoped cleanup observer own the eventual cancellation result.
       return {
         ...nodes,
         [action.nodeId]: {
@@ -1454,6 +1468,20 @@ export function reduceNodes(
       if (!n || n.status !== 'streaming') return nodes;
       if (action.assistantId && n.messages.at(-1)?.id !== action.assistantId) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, runtimeActivity: action.detail } };
+    }
+    case 'cancel-recovery': {
+      const n = nodes[action.nodeId];
+      // A new send owns its own lifecycle, even if the old cancel settles late.
+      if (!n || n.status !== 'idle' || n.messages.at(-1)?.id !== action.assistantId) return nodes;
+      if (action.state === 'error') {
+        return reduceNodes(nodes, {
+          type: 'error', nodeId: action.nodeId, assistantId: action.assistantId,
+          message: action.detail ?? 'Cancellation cleanup failed. Retry to check the original session.',
+        });
+      }
+      return { ...nodes, [action.nodeId]: { ...n,
+        runtimeActivity: action.state === 'pending' ? action.detail : undefined,
+      } };
     }
     case 'mcp-server-error': {
       const n = nodes[action.nodeId];

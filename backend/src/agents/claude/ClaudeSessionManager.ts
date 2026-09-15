@@ -9,7 +9,6 @@ import type {
 } from '../types';
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
-import { setNodeExternalSessionId } from '../../services/dbRepository';
 import { resolveModel } from '../../services/agentConfig';
 import * as sessionRegistry from '../sessionRegistry';
 import { buildStableSystemPrompt, type MetadataOutputMode } from '../preamble';
@@ -183,14 +182,6 @@ export class ClaudeSessionManager {
           reasoning: opts.reasoning ?? null,
           replayHistory: opts.replayHistory,
         });
-        const externalSessionId = session.getExternalSessionId();
-        if (externalSessionId && owner.kind === 'chat_node') {
-          try {
-            setNodeExternalSessionId(opts.id, externalSessionId);
-          } catch (err) {
-            console.warn(`[ClaudeSessionManager] setNodeExternalSessionId after warm handoff failed:`, err);
-          }
-        }
       } else {
         perf.mark('warmpool:cold_spawn', { cwd: opts.cwd, model, waitForWarm: !!this.deps.waitForWarm });
         releaseReservation = await this.reserveSlot('active');
@@ -284,8 +275,10 @@ export class ClaudeSessionManager {
     if (session) {
       await session.dispose();
     }
-    this.active.delete(sessionId);
-    sessionRegistry.dropSession(sessionId);
+    if (this.active.get(sessionId) === session) {
+      this.active.delete(sessionId);
+      sessionRegistry.dropSession(sessionId);
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -306,6 +299,7 @@ export class ClaudeSessionManager {
     const anonymousId = randomUUID();
     const session = new ClaudeSession(anonymousId, {
       nodeId: anonymousId,
+      persistNativeIdentity: false,
       owner: { kind: 'chat_node', nodeId: anonymousId },
       cwd,
       workspaceId: null,
@@ -388,6 +382,7 @@ export class ClaudeSessionManager {
   private registerActiveSession(id: string, session: ClaudeSession): boolean {
     this.active.set(id, session);
     session.onDisposed(() => {
+      if (this.active.get(id) !== session) return;
       this.active.delete(id);
       sessionRegistry.dropSession(id);
     });
@@ -419,9 +414,11 @@ export class ClaudeSessionManager {
     const first = candidates[0];
     if (!first) return false;
     const [id, session] = first;
-    await session.dispose().catch(() => {});
-    this.active.delete(id);
-    sessionRegistry.dropSession(id);
+    await session.dispose();
+    if (this.active.get(id) === session) {
+      this.active.delete(id);
+      sessionRegistry.dropSession(id);
+    }
     return true;
   }
 }

@@ -29,6 +29,7 @@ import {
     getNode,
     getNodeSessionBinding,
     getNodeWorkspaceId,
+    getWorkspace,
     listGrants,
     listMessages,
     revokePermission,
@@ -260,7 +261,6 @@ async function persistResumeBinding(
     }
     // Fallback: synchronous on main thread
     try {
-        if (!getNode(nodeId)) return;
         updateNodeResumeBinding(nodeId, {
             acp_session_id: fields.acp_session_id,
             runtime_id: fields.runtime_id,
@@ -847,8 +847,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 enableFollowUps = enableFollowUpsRaw;
             }
 
-            // Optional client-supplied session id. Pi adopts it so chatId
-            // === nodeId; Kiro ignores it (ACP requires server-minted ids).
+            // A durable public node must own every runtime session.
             const nodeId: unknown = req.body?.nodeId;
             let validatedSessionId: string | undefined;
             if (nodeId !== undefined) {
@@ -858,11 +857,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 validatedSessionId = nodeId;
             }
 
-            const userIdForConfig: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
-            const cfg = getAgentConfig(userIdForConfig);
-            const runtime = getRuntime(cfg.runtime);
-            if (!runtime) {
-                return res.status(500).json({ error: `Unknown agent runtime: ${cfg.runtime}` });
+            if (!validatedSessionId) {
+                return res.status(409).json({ code: 'NODE_NOT_PERSISTED', error: 'nodeId and durable node prerequisite required before session creation' });
+            }
+            if (process.env.MICHI_CLOUD === '1' && getNode(validatedSessionId)
+                && !getNodeSessionBinding(validatedSessionId, req.user?.id)) {
+                return res.status(404).json({ error: 'not_found' });
             }
 
             // Resolve workspaceId for the new session. Priority:
@@ -889,33 +889,16 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 workspaceId = getNode(validatedSessionId)?.workspace_id ?? null;
             }
 
-            const session = await runtime.newSession({
-                cwd: normalizeWorkspaceCwd(cwd ?? process.cwd()),
-                parentChatId,
+            // Keep legacy callers on the same locked, durable resume path as
+            // the composer. A repeated create must not replace native history.
+            req.body = {
+                ...req.body, cwd, workspaceId, enableFollowUps,
                 mergeContexts: validatedMergeContexts,
                 extraContexts: validatedExtraContexts,
                 contextManifest: validatedContextManifest,
-                enableFollowUps,
-                model: (model as string | undefined) ?? resolveModel(cfg.runtime, userIdForConfig),
-                provider: resolveProvider(cfg.runtime, userIdForConfig),
-                reasoning: resolveReasoning(cfg.runtime, userIdForConfig),
-                sessionId: validatedSessionId,
-                workspaceId,
-                ownerUserId: req.user?.id ?? null,
-            });
-            if (
-                typeof modeId === "string" &&
-                session.setMode &&
-                session.currentModeId !== modeId
-            ) {
-                await session.setMode(modeId);
-            }
-            sessionRegistry.registerSession(session, req.user?.id ?? null);
-            res.json({
-                chatId: session.id,
-                currentModeId: session.currentModeId ?? null,
-                runtimeId: session.runtimeId,
-            });
+            };
+            (req.params as Record<string, string>).nodeId = validatedSessionId;
+            return ensureNodeSession(req as express.Request<{ nodeId: string }>, res);
         } catch (err) {
             console.error("Failed to create chat:", err);
             sendAgentRouteError(res, err);
@@ -1038,7 +1021,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
     });
 
-    router.post("/nodes/:nodeId/ensure-session", requireNodeOwner, async (req, res) => {
+    async function ensureNodeSession(req: express.Request<{ nodeId: string }>, res: express.Response) {
         const { nodeId } = req.params;
         const routeStart = Date.now();
         startupMark("ensure_session_route_start", { nodeId });
@@ -1059,6 +1042,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     ...(prerequisite as Parameters<typeof ensureDurableGraphNode>[0]),
                     ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
                 };
+                if (graphInput.node?.id !== nodeId
+                    || (body.workspaceId && graphInput.workspace?.id !== body.workspaceId)) {
+                    throw new Error('graph prerequisite must identify the requested node and workspace');
+                }
                 if (isDbWorkerReady()) {
                     await dbWorker.ensureDurableGraphNode(graphInput);
                 } else {
@@ -1070,6 +1057,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     code: 'NODE_PREREQUISITE_FAILED',
                 });
             }
+        }
+
+        const durableNode = getNode(nodeId);
+        if (!durableNode) return res.status(409).json({ code: 'NODE_NOT_PERSISTED', error: 'durable node prerequisite required' });
+        if (body.workspaceId && body.workspaceId !== durableNode.workspace_id) {
+            return res.status(409).json({ code: 'IDENTITY_MISMATCH', error: 'node and workspace do not match' });
         }
 
         // In cloud mode, derive cwd server-side from the node's workspace ownership.
@@ -1361,13 +1354,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 }
 
                 const seededMergeContexts = [
-                    ...(resumeContext ? [resumeContext] : []),
+                    ...(resumeContext && runtime.id !== 'pi' ? [resumeContext] : []),
                     ...(parentTranscriptContext ? [parentTranscriptContext] : []),
                     ...mergeContexts,
                 ];
                 session = await runtime.newSession({
                     cwd,
                     parentChatId,
+                    ...(runtime.id === 'pi' ? { replayHistory: transcript } : {}),
                     mergeContexts: seededMergeContexts.length > 0 ? seededMergeContexts : undefined,
                     extraContexts,
                     contextManifest,
@@ -1454,7 +1448,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         } finally {
             releaseRestore();
         }
-    });
+    }
+
+    router.post("/nodes/:nodeId/ensure-session", requireNodeOwner, ensureNodeSession);
 
     router.post("/chats/:chatId/message", requireChatOwner, async (req, res) => {
         const requestedIdentifier = req.params.chatId;
@@ -1858,31 +1854,42 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
     });
 
-    router.get("/modes", async (req, res) => {
+    const sendModeCatalog = async (req: express.Request, res: express.Response, cwd?: string) => {
         const cfg = getAgentConfig(process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined);
         const runtime = getRuntime(cfg.runtime);
         if (!runtime?.capabilities.modes) {
-            return res.json({ availableModes: [] });
+            return res.json({ availableModes: [], defaultModeId: null });
         }
         try {
-            // The kiro path keeps its warm-aware ChatManager fast path; any
-            // other modes-capable runtime answers through the AgentRuntime
-            // contract. The frontend expects { id, name, description }.
+            // Kiro discovers the default Agent from the same fresh ACP session
+            // used to warm this cwd. Other runtimes expose their catalog only.
             if (runtime === chatManager.getRuntime()) {
-                const availableModes = await chatManager.getAvailableModes();
-                return res.json({ availableModes });
+                return res.json(await chatManager.getModeCatalog(cwd));
             }
             const modes = await (runtime.listModes?.("") ?? Promise.resolve([]));
-            res.json({
+            return res.json({
                 availableModes: modes.map((m) => ({
                     id: m.id,
                     name: m.label ?? m.id,
                     description: m.description,
                 })),
+                defaultModeId: null,
             });
         } catch (err) {
-            res.status(500).json({ error: (err as Error).message });
+            return res.status(500).json({ error: (err as Error).message });
         }
+    };
+
+    // Compatibility path for callers that do not yet have a workspace.
+    router.get("/modes", (req, res) => sendModeCatalog(req, res));
+
+    router.get("/workspaces/:workspaceId/modes", requireWorkspaceOwner, async (req, res) => {
+        const workspace = getWorkspace(req.params.workspaceId);
+        if (!workspace) return res.status(404).json({ error: "workspace not found" });
+        const cwd = process.env.MICHI_CLOUD === "1"
+            ? deriveSandboxCwd(req.user!.id, req.params.workspaceId)
+            : normalizeWorkspaceCwd(workspace.cwd ?? process.cwd());
+        return sendModeCatalog(req, res, cwd);
     });
 
     router.get("/chats/:chatId/modes", requireChatOwner, (req, res) => {

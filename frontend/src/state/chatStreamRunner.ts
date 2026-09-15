@@ -184,6 +184,7 @@ export function runChatStream({
       // The server has committed the provisional user/assistant rows before
       // this frame. It is now safe to ack a recovered agent-spawn outbox item.
       dispatch({ type: 'spawn-prompt-started', nodeId });
+      dispatch({ type: 'active-turn', nodeId, assistantId: currentAssistantId, turnId: data.turnId });
       trackSeq(env.seq, data.turnId);
     },
     onChunk: (text, seq, _assistantId, turnId) => {
@@ -342,6 +343,9 @@ export function runChatStream({
       onTurnEnd?.('cancel', nodeId);
       // Note: intentionally NOT calling onStreamComplete for aborted streams
     },
+    onCancelRecovery: (status) => dispatch({
+      type: 'cancel-recovery', nodeId, assistantId: currentAssistantId, ...status,
+    }),
     onError: (message, _assistantId, turnId, code) => {
       if (turnId) currentTurnId = turnId;
       dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message, errorKind: code });

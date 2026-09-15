@@ -10,20 +10,22 @@ import type {
   RuntimeSessionOwner,
 } from '../types';
 import { assertReleaseOwnership } from '../runs/runtimeRunAdapter';
+import { assertOwner } from '../types';
+import { withDeadline } from '../runtimeLifecycle';
 import { describeRuntimeCapabilities } from '../capabilityDescriptors';
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
-import { CodexAppServerClient } from './CodexAppServerClient';
+import { CodexAppServerClient, CodexRpcError } from './CodexAppServerClient';
 import type { CodexModel } from './codexProtocol';
 import { buildCodexMcpConfig, CODEX_SERVER_REQUESTS } from './codexProtocol';
 import { CodexSession } from './CodexSession';
 import * as sessionRegistry from '../sessionRegistry';
 import { buildFirstTurnPrefix, buildStableSystemPrompt } from '../preamble';
-import { getNode, setNodeExternalSessionId, grantPermission, getWorkspaceInstructions } from '../../services/dbRepository';
+import { getNode, grantPermission, getWorkspaceInstructions } from '../../services/dbRepository';
 import { resolveModel, resolveReasoning } from '../../services/agentConfig';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { preflightCodexAuth } from './codexBinary';
-import { NativeResumeUnavailableError } from '../../services/nativeResume';
+import { NativeResumeUnavailableError, nativeResumeId } from '../../services/nativeResume';
 import type { RuntimeModelCache } from '../runtimeModelCache';
 import {
   buildCodexFollowUpsHookPocConfig,
@@ -79,6 +81,9 @@ const CODEX_APPROVAL_ALIASES: Record<string, string> = {
   [CODEX_SERVER_REQUESTS.fileChangeApproval]: 'edit',
 };
 
+const RECOVERY_TIMEOUT_MS = 20_000;
+const RECOVERY_TIMEOUT_MESSAGE = 'Codex native recovery exceeded 20 seconds. Original thread retained; please retry.';
+
 // ---- CodexRuntime ------------------------------------------------------------
 
 export interface CodexRuntimeTestSeams {
@@ -104,6 +109,9 @@ export class CodexRuntime implements AgentRuntime {
 
   private readonly sessions = new Map<string, CodexSession>();
   private readonly threadToSession = new Map<string, CodexSession>();
+  private readonly pendingSessions = new Map<string, Promise<AgentSession>>();
+  private recovery: Promise<void> | null = null;
+  private daemonDisconnected = false;
 
   private readonly modelCacheStore?: RuntimeModelCache;
   private modelCache: ModelInfo[] | null;
@@ -170,6 +178,7 @@ export class CodexRuntime implements AgentRuntime {
 
     // When daemon exits unexpectedly, crash all live sessions.
     this.client.onExit(() => {
+      this.daemonDisconnected = true;
       for (const session of this.sessions.values()) {
         session.markCrashed('codex app-server exited unexpectedly');
       }
@@ -191,6 +200,42 @@ export class CodexRuntime implements AgentRuntime {
   // ---- newSession ----------------------------------------------------------
 
   async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
+    return this.acquireSession(opts, () => this.createSession(opts));
+  }
+
+  private async acquireSession(
+    opts: NewAgentSessionOptions | LoadAgentSessionOptions,
+    create: () => Promise<AgentSession>,
+  ): Promise<AgentSession> {
+    if (!opts.sessionId) throw new Error('sessionId is required for CodexRuntime');
+    const owner: RuntimeSessionOwner = opts.owner ?? { kind: 'chat_node', nodeId: opts.sessionId };
+    const id = owner.kind === 'agent_run' ? owner.attemptId : opts.sessionId;
+    const compatible = (session: AgentSession): AgentSession => {
+      assertOwner(session.owner ?? { kind: 'chat_node', nodeId: session.id }, owner);
+      if ((session.runtimeProfileHash ?? null) !== (opts.profileHash ?? null)) {
+        throw new Error(`session ${id} runtime profile hash mismatch`);
+      }
+      return session;
+    };
+    const deadline = Date.now() + RECOVERY_TIMEOUT_MS;
+    while (this.recovery) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(RECOVERY_TIMEOUT_MESSAGE);
+      await withDeadline(this.recovery.catch(() => {}), remaining, RECOVERY_TIMEOUT_MESSAGE);
+    }
+    const pending = this.pendingSessions.get(id);
+    if (pending) return compatible(await pending);
+    const existing = this.sessions.get(id);
+    if (existing) return compatible(existing);
+    if (this.sessions.size + this.pendingSessions.size >= this.concurrencyCap) {
+      throw new CodexConcurrencyError(`Codex concurrency cap (${this.concurrencyCap}) reached.`);
+    }
+    const work = create();
+    this.pendingSessions.set(id, work);
+    try { return compatible(await work); } finally { this.pendingSessions.delete(id); }
+  }
+
+  private async createSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
     const nodeId = opts.sessionId ?? (() => { throw new Error('sessionId is required for CodexRuntime'); })();
 
     // Resolve product owner. For agent_run owners, the public session id is
@@ -273,13 +318,16 @@ export class CodexRuntime implements AgentRuntime {
       profileHash: opts.profileHash,
       toolProfile: opts.toolProfile,
       permissionBroker: opts.permissionBroker,
+      recover: (s) => this.recoverSession(s),
     });
 
     const slotId = session.createMcpSlot();
     const threadConfig = this.buildThreadConfig(slotId);
 
     // Start the thread on codex app-server
-    const threadStartResult = await this.client.request('thread/start', {
+    let threadStartResult: Record<string, unknown>;
+    try {
+      threadStartResult = await this.client.request('thread/start', {
       model: modelId || undefined,
       cwd: opts.cwd,
       developerInstructions: buildStableSystemPrompt(
@@ -294,11 +342,16 @@ export class CodexRuntime implements AgentRuntime {
       sandbox: 'workspace-write',
       config: threadConfig,
       ...(effort ? { reasoningEffort: String(effort) } : {}),
-    }) as Record<string, unknown>;
+      }) as Record<string, unknown>;
+    } catch (error) {
+      await session.dispose();
+      throw error;
+    }
 
     const thread = threadStartResult['thread'] as Record<string, unknown> | undefined;
     const threadId = (thread?.['id'] as string | undefined) ?? (threadStartResult['threadId'] as string | undefined);
     if (!threadId) {
+      await session.dispose();
       throw new Error('codex thread/start did not return a threadId');
     }
 
@@ -310,16 +363,8 @@ export class CodexRuntime implements AgentRuntime {
     // Wire notifications before registering
     session.wireNotifications();
 
-    // Persist threadId so loadSession can resume — chat sessions only.
-    // Agent Run sessions store the native token through the Executor's
-    // checkpoint path and never read nodes.external_session_id.
-    if (owner.kind === 'chat_node') {
-      try {
-        setNodeExternalSessionId(publicId, threadId);
-      } catch (err) {
-        console.warn('[CodexRuntime] setNodeExternalSessionId failed:', err);
-      }
-    }
+    // The route/Executor commits the complete binding atomically. Publishing
+    // an external ID here would overwrite the old binding before that commit.
 
     this.sessions.set(publicId, session);
     this.threadToSession.set(threadId, session);
@@ -331,6 +376,10 @@ export class CodexRuntime implements AgentRuntime {
   // ---- loadSession ---------------------------------------------------------
 
   async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
+    return this.acquireSession(opts, () => this.restoreSession(opts));
+  }
+
+  private async restoreSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
     const owner: RuntimeSessionOwner = opts.owner ?? { kind: 'chat_node', nodeId: opts.sessionId };
     const publicId = owner.kind === 'agent_run' ? owner.attemptId : opts.sessionId;
 
@@ -352,11 +401,14 @@ export class CodexRuntime implements AgentRuntime {
       }
     } else {
       const node = getNode(publicId);
-      threadId = node?.external_session_id ?? null;
+      if (node?.runtime_id && node.runtime_id !== 'codex') {
+        throw new Error(`Node ${publicId} belongs to runtime ${node.runtime_id}, not Codex. Original binding retained.`);
+      }
+      threadId = nativeResumeId('codex', node);
       nodeWorkspaceId = node?.workspace_id ?? null;
       if (!threadId) {
         throw new CodexSessionNotResumableError(
-          `Node ${publicId} has no external_session_id — cannot resume codex session`,
+          `Node ${publicId} has no native session binding - cannot resume codex session`,
         );
       }
     }
@@ -390,6 +442,7 @@ export class CodexRuntime implements AgentRuntime {
       profileHash: opts.profileHash,
       toolProfile: opts.toolProfile,
       permissionBroker: opts.permissionBroker,
+      recover: (s) => this.recoverSession(s),
     });
 
     const slotId = session.createMcpSlot();
@@ -411,7 +464,7 @@ export class CodexRuntime implements AgentRuntime {
     } catch (err) {
       const msg = (err as Error).message ?? '';
       await session.dispose();
-      if (msg === `no rollout found for thread id ${threadId}`) {
+      if ((err instanceof CodexRpcError ? err.rpcMessage : msg) === `no rollout found for thread id ${threadId}`) {
         throw new CodexSessionNotResumableError(
           `codex thread/resume failed: ${msg}`,
         );
@@ -422,7 +475,7 @@ export class CodexRuntime implements AgentRuntime {
     // Validate that the server echoed back the same threadId
     const resumeThread = resumeResult['thread'] as Record<string, unknown> | undefined;
     const echoedThreadId = (resumeThread?.['id'] as string | undefined) ?? (resumeResult['threadId'] as string | undefined);
-    if (echoedThreadId && echoedThreadId !== threadId) {
+    if (echoedThreadId !== threadId) {
       await session.dispose();
       throw new Error('Codex native resume returned a different thread identity');
     }
@@ -437,6 +490,66 @@ export class CodexRuntime implements AgentRuntime {
     sessionRegistry.registerSession(session, opts.ownerUserId, owner);
 
     return session;
+  }
+
+  private async recoverSession(session: CodexSession): Promise<void> {
+    const deadline = Date.now() + RECOVERY_TIMEOUT_MS;
+    const remaining = () => {
+      const ms = deadline - Date.now();
+      if (ms <= 0) throw new Error(RECOVERY_TIMEOUT_MESSAGE);
+      return ms;
+    };
+    while (this.recovery) {
+      await withDeadline(this.recovery.catch(() => {}), remaining(), RECOVERY_TIMEOUT_MESSAGE);
+    }
+    remaining();
+    if (!session.needsRecovery()) return;
+    const assertRegistered = () => {
+      if (this.sessions.get(session.id) !== session) throw new Error('Codex session was released during recovery');
+    };
+    // Reserve ownership before any recovery work can yield or call external code.
+    const work = Promise.resolve().then(async () => {
+      assertRegistered();
+      let replacedDaemon = this.daemonDisconnected || !this.client.isRunning();
+      if (session.requiresRestart && this.client.isRunning() && !this.daemonDisconnected) {
+        const unhealthy = new Set([...this.sessions.values()].filter((s) => s.needsRecovery()).map((s) => s.threadId));
+        if (this.pendingSessions.size || [...this.sessions.values()].some((s) => s !== session && s.isBusy()) || this.client.hasPendingRequests(unhealthy)) {
+          throw new Error('Codex recovery is waiting for other tasks to finish. Their work was not interrupted; retry this message afterward.');
+        }
+        for (const peer of this.sessions.values()) peer.markCrashed('Codex connection is restarting; native threads retained.');
+        await this.client.shutdown();
+        // shutdown only succeeds after exit is confirmed. Every old native turn
+        // is now stopped, even though each peer still needs its own thread resume.
+        for (const peer of this.sessions.values()) peer.requiresRestart = false;
+        replacedDaemon = true;
+      }
+      await this.client.ensureStarted(remaining());
+      remaining();
+      if (replacedDaemon) {
+        for (const peer of this.sessions.values()) {
+          if (peer.needsRecovery()) peer.requiresRestart = false;
+        }
+        this.daemonDisconnected = false;
+      }
+      assertRegistered();
+      const slotId = await session.prepareNativeResume();
+      const result = await this.client.request('thread/resume', {
+        threadId: session.threadId, cwd: session.cwd,
+        model: session.currentModelId || undefined,
+        approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
+        config: this.buildThreadConfig(slotId),
+        ...(session.effort ? { reasoningEffort: session.effort } : {}),
+      }, remaining()) as { thread?: { id?: string }; threadId?: string };
+      if ((result.thread?.id ?? result.threadId) !== session.threadId) throw new Error('Codex native recovery returned a different thread identity. Original binding retained.');
+      remaining();
+      assertRegistered();
+      session.completeNativeResume();
+    });
+    this.recovery = work;
+    // A caller can time out without releasing another operation's native work.
+    // Later callers still have bounded waits, and late work checks its deadline.
+    void work.finally(() => { if (this.recovery === work) this.recovery = null; }).catch(() => {});
+    await withDeadline(work, remaining(), RECOVERY_TIMEOUT_MESSAGE);
   }
 
   private buildThreadConfig(slotId: string): Record<string, unknown> {
@@ -536,7 +649,7 @@ export class CodexRuntime implements AgentRuntime {
   ): void {
     const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
     const session = threadId ? this.threadToSession.get(threadId) : null;
-    if (!session) {
+    if (!session || !session.acceptsControl(params)) {
       respond({ answers: null });
       return;
     }
@@ -549,7 +662,7 @@ export class CodexRuntime implements AgentRuntime {
   ): void {
     const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
     const session = threadId ? this.threadToSession.get(threadId) : null;
-    if (!session) {
+    if (!session || !session.acceptsControl(params)) {
       respond({ action: 'decline', content: null, _meta: null });
       return;
     }
@@ -565,6 +678,7 @@ export class CodexRuntime implements AgentRuntime {
   ): void {
     const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
     const session = threadId ? this.threadToSession.get(threadId) : null;
+    if (!session || !session.acceptsControl(params)) { respond({ decision: 'decline' }); return; }
 
     // Agent Run owner: delegate directly to the session's permission broker.
     // MUST NOT call resolvePolicy() or grantPermission().

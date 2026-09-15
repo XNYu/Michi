@@ -20,6 +20,7 @@ import { CANCEL_TIMEOUT_MS } from "../config/constants";
 import type { HarnessJournal } from "../services/harnessJournal";
 import { createSqliteHarnessJournal } from "../services/harnessJournal";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
+import { RuntimeRecoveryRequiredError } from './runtimeLifecycle';
 
 export interface HubSubscriber {
   send(ev: ChatStreamEvent): void;
@@ -912,7 +913,7 @@ export class ChatHub {
           branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
         }
         if (ev.kind === "runtime_error") {
-          throw new Error(ev.error);
+          throw ev.recoveryRequired ? new RuntimeRecoveryRequiredError(ev.error) : new Error(ev.error);
         }
         if (ev.kind === "turn_end") {
           if (!branchOverviewPublished) {
@@ -937,7 +938,7 @@ export class ChatHub {
         );
       }
     } catch (err) {
-      if (this.cancelledTurnIds.has(log.turnId)) {
+      if (this.cancelledTurnIds.has(log.turnId) && !(err instanceof RuntimeRecoveryRequiredError)) {
         await this.finishWithDone(chatId, log, 'cancelled');
       } else {
         await this.finishWithError(chatId, log, err);
@@ -1231,6 +1232,12 @@ export class ChatHub {
 
   private async runTurn(chatId: string, log: TurnLog, session: AgentSession): Promise<void> {
     try {
+      // Stop may arrive while the provisional rows are committing, before
+      // activeSessions is installed. Preserve that cancellation before send().
+      if (this.cancelledTurnIds.has(log.turnId)) {
+        await this.finishWithDone(chatId, log, 'cancelled');
+        return;
+      }
       let terminalSeen = false;
       let branchOverviewPublished = false;
       for await (const ev of session.send(log.wireText, {
@@ -1242,7 +1249,7 @@ export class ChatHub {
           branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
         }
         if (ev.kind === "runtime_error") {
-          throw new Error(ev.error);
+          throw ev.recoveryRequired ? new RuntimeRecoveryRequiredError(ev.error) : new Error(ev.error);
         }
         if (ev.kind === "turn_end") {
           if (!branchOverviewPublished) {
@@ -1269,7 +1276,7 @@ export class ChatHub {
         );
       }
     } catch (err) {
-      if (this.cancelledTurnIds.has(log.turnId)) {
+      if (this.cancelledTurnIds.has(log.turnId) && !(err instanceof RuntimeRecoveryRequiredError)) {
         // Cancel was requested — treat the resulting runtime error as a
         // graceful cancellation rather than a hard error.
         await this.finishWithDone(chatId, log, 'cancelled');

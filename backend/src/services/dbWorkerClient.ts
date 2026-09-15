@@ -142,7 +142,7 @@ export const dbWorker = {
 
   /**
    * Async version of persistResumeBinding from michi.ts.
-   * Fire-and-forget is safe — the caller already has the session.
+   * Await this before acknowledging session creation or releasing its restore lock.
    */
   persistResumeBinding(args: {
     nodeId: string;

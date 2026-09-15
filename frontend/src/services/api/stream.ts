@@ -3,7 +3,7 @@ import {
   dispatchChatStreamEvent,
   parseChatStreamEvent,
 } from '../chatStreamEvents';
-import type { StreamHandlers } from '../chatStreamEvents';
+import type { CancelRecoveryStatus, StreamHandlers } from '../chatStreamEvents';
 import { startupMark } from '../startupTrace';
 import { backendApiBase, nodeBackendApiBase } from '../../config/backendConnections';
 import { SseHttpError, readSseStream } from './sseParser';
@@ -76,6 +76,7 @@ export function streamMessage(
     };
   },
 ): () => void {
+  stopCancellationObservation(nodeId);
   const controller = new AbortController();
   const probeEnabled = streamProbeEnabled();
 
@@ -101,15 +102,22 @@ export function streamMessage(
   let resumeAttempt = 0;
   let cancelledByUser = false;
   let sawFirstByte = false;
+  const acceptEnvelope: NonNullable<StreamHandlers['onEnvelope']> = (envelope) => {
+    if (cancelledByUser || handlers.onEnvelope?.(envelope) === false) return false;
+    // Rejected frames must not retarget cancellation or advance the replay cursor.
+    if (envelope.turnId && envelope.turnId !== resumeTurnId) {
+      resumeTurnId = envelope.turnId;
+      resumeSeq = -1;
+    }
+    if (typeof envelope.seq === 'number') resumeSeq = Math.max(resumeSeq, envelope.seq);
+    return true;
+  };
+  const acceptedHandlers = { ...handlers, onEnvelope: undefined };
   const resumeForeground = (): boolean => {
     if (!resumeTurnId || cancelledByUser || resumeCancel || resumeTimer) return false;
     resumeCancel = subscribeChat(nodeId, {
       ...handlers,
-      onEnvelope: (envelope) => {
-        if (envelope.turnId) resumeTurnId = envelope.turnId;
-        if (typeof envelope.seq === 'number') resumeSeq = Math.max(resumeSeq, envelope.seq);
-        return handlers.onEnvelope?.(envelope);
-      },
+      onEnvelope: acceptEnvelope,
       onDone: (...args) => { terminalSeen = true; handlers.onDone?.(...args); },
       onError: (...args) => { terminalSeen = true; handlers.onError?.(...args); },
     }, { turnId: resumeTurnId, seq: resumeSeq + 1 }, {
@@ -186,10 +194,9 @@ export function streamMessage(
 
       armWatchdog();
       await readSseStream(reader, (evt, data) => {
+        if (cancelledByUser) return;
         const parsed = parseChatStreamEvent(evt, data);
-        if (!parsed) return;
-        if (parsed.data.turnId) resumeTurnId = parsed.data.turnId;
-        if (typeof parsed.data.seq === 'number') resumeSeq = Math.max(resumeSeq, parsed.data.seq);
+        if (!parsed || acceptEnvelope(parsed.data) === false) return;
         if (!sawFirstEvent) {
           sawFirstEvent = true;
           startupMark('first_sse_event', { chatId: nodeId, nodeId, event: parsed.event, durMs: Date.now() - startedAt });
@@ -220,8 +227,8 @@ export function streamMessage(
           terminalSeen = true;
           clearWatchdog();
         }
-        dispatchChatStreamEvent(parsed, handlers);
-      }, { onRead: () => armWatchdog() }); // bytes arrived (incl. heartbeats) — reset the silence timer
+        dispatchChatStreamEvent(parsed, acceptedHandlers);
+      }, { onRead: () => armWatchdog(), shouldStop: () => cancelledByUser });
       // A foreground runner can outlive its first HTTP response. Reattach to
       // the same immutable turn/cursor rather than handing it to background
       // SSE (which intentionally never carries user turns).
@@ -249,6 +256,7 @@ export function streamMessage(
   })();
 
   return () => {
+    if (cancelledByUser) return;
     cancelledByUser = true;
     settleAborted();
     clearWatchdog();
@@ -256,7 +264,11 @@ export function streamMessage(
     resumeTimer = null;
     controller.abort();
     resumeCancel?.();
-    cancelChat(nodeId, ownerToken, resumeTurnId || clientTurnId).catch(() => {});
+    if (handlers.onCancelRecovery && !terminalSeen) {
+      cancelChatAndObserve(nodeId, ownerToken, resumeTurnId || clientTurnId, handlers.onCancelRecovery);
+    } else {
+      cancelChat(nodeId, ownerToken, resumeTurnId || clientTurnId).catch(() => {});
+    }
   };
 }
 
@@ -281,15 +293,107 @@ export async function steerChat(
   };
 }
 
-export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string): Promise<void> {
-  await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
+export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...(ownerToken ? { ownerToken } : {}),
       ...(turnId ? { turnId } : {}),
     }),
+    signal,
   });
+  if (!res.ok) throw new Error(`Cancel request failed: ${res.status}`);
+}
+
+const cancellationObservers = new Map<string, {
+  turnId?: string;
+  stop: () => void;
+  finish: (status: CancelRecoveryStatus) => void;
+}>();
+const CANCEL_OBSERVATION_TIMEOUT_MS = 30_000;
+
+function cancellationKey(chatId: string): string {
+  return `${nodeBackendApiBase(chatId)}/chats/${chatId}`;
+}
+
+function stopCancellationObservation(chatId: string): void {
+  cancellationObservers.get(cancellationKey(chatId))?.stop();
+}
+
+/** The existing background feed is authoritative for runtime self-turns. */
+export function settleCancellationObservation(chatId: string, turnId: string, status: CancelRecoveryStatus): void {
+  const observer = cancellationObservers.get(cancellationKey(chatId));
+  if (turnId && observer?.turnId === turnId) observer.finish(status);
+}
+
+/** Observe only the cancelled turn's outcome, never its output or interactions. */
+export function cancelChatAndObserve(
+  chatId: string,
+  ownerToken: string | undefined,
+  turnId: string | undefined,
+  onStatus: (status: CancelRecoveryStatus) => void,
+): () => void {
+  stopCancellationObservation(chatId);
+  const key = cancellationKey(chatId);
+  const request = new AbortController();
+  let stopped = false;
+  let detach: (() => void) | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let attempt = 0;
+  const pending = setTimeout(() => {
+    if (!stopped) onStatus({ state: 'pending', detail: 'Waiting for cancellation to finish' });
+  }, 1_000);
+  const deadline = setTimeout(() => finish({
+    state: 'error',
+    detail: 'Cancellation could not be confirmed. Retry to check the original session.',
+  }), CANCEL_OBSERVATION_TIMEOUT_MS);
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(pending);
+    clearTimeout(deadline);
+    if (retry) clearTimeout(retry);
+    request.abort();
+    detach?.();
+    if (cancellationObservers.get(key)?.stop === stop) cancellationObservers.delete(key);
+  };
+  const finish = (status: CancelRecoveryStatus) => {
+    if (stopped) return;
+    stop();
+    onStatus(status);
+  };
+  const observe = () => {
+    if (stopped) return;
+    detach = subscribeChat(chatId, {
+      onEnvelope: (envelope) => !stopped && (!envelope.turnId || envelope.turnId === turnId),
+      onDone: (reason, _assistantId, _turnId, persisted) => finish(
+        reason === 'error' || persisted === false
+          ? { state: 'error', detail: 'Cancellation cleanup failed. Retry to check the original session.' }
+          : { state: 'settled' },
+      ),
+      onError: (detail) => finish({ state: 'error', detail }),
+    }, { turnId, seq: 0 }, {
+      onDisconnect: ({ retryable, error }) => {
+        if (stopped) return;
+        detach = undefined;
+        // A ring miss or a self-turn is not proof that cancellation completed.
+        if (!retryable && !(error instanceof SseHttpError && error.status === 410)) {
+          finish({ state: 'error', detail: 'Cancellation result unavailable. Retry to check the original session.' });
+        } else {
+          retry = setTimeout(observe, Math.min(5_000, 250 * (2 ** attempt++)));
+        }
+      },
+    });
+  };
+  cancellationObservers.set(key, { turnId, stop, finish });
+  void cancelChat(chatId, ownerToken, turnId, request.signal).then(() => {
+    if (turnId) observe();
+    else finish({ state: 'error', detail: 'Cancellation requested, but the original turn could not be identified. Retry to check the session.' });
+  }, (error: unknown) => {
+    finish({ state: 'error', detail: error instanceof Error ? error.message : 'Cancel request failed' });
+  });
+  return stop;
 }
 
 export interface ChatStreamDisconnect {
@@ -340,7 +444,7 @@ export function subscribeChat(
       await readSseStream(reader, (evt, data) => {
         const parsed = parseChatStreamEvent(evt, data);
         if (parsed) dispatchChatStreamEvent(parsed, handlers);
-      }, { onRead: () => armWatchdog() });
+      }, { onRead: () => armWatchdog(), shouldStop: () => stopped });
     } catch (err) {
       const original = err instanceof Error ? err : new Error(String(err));
       const error = watchdogTimedOut ? new Error('turn replay stalled — no data received') : original;

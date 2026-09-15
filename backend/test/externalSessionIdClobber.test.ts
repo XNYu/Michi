@@ -9,8 +9,8 @@
  * just-persisted claude UUID back to NULL on the very next sync — permanently
  * breaking native `claude --resume` (loadSession threw → silent fresh+replay).
  *
- * The fix wraps it in COALESCE(excluded..., nodes...), preserving the stored
- * value when the incoming row omits it. These tests pin that behaviour. They
+ * The binding writer owns native identity; graph snapshots preserve its stored
+ * value even when an incoming row contains an older ID. These tests pin that behaviour. They
  * are intentionally NOT gated behind MICHI_CLAUDE_SMOKE — no real claude binary
  * is needed; the bug lives purely in the SQLite upsert.
  *
@@ -101,11 +101,13 @@ describe('external_session_id — survives frontend sync upserts', () => {
     assert.equal(getNodeExternalSessionId('n1'), UUID);
   });
 
-  test('an explicit non-null external_session_id still wins', () => {
+  test('only the native binding writer can replace an existing external session ID', () => {
     saveNode(syncNode('ws1', 'n1'));
     setNodeExternalSessionId('n1', UUID);
     const other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     saveNode({ ...syncNode('ws1', 'n1'), external_session_id: other });
+    assert.equal(getNodeExternalSessionId('n1'), UUID);
+    setNodeExternalSessionId('n1', other);
     assert.equal(getNodeExternalSessionId('n1'), other);
   });
 

@@ -160,3 +160,39 @@ test('daemon exit rejects pending requests and fires exit handlers', async () =>
   assert.equal(exited, true);
   await client.shutdown();
 });
+
+test('stdout EOF rejects local work and late old-child callbacks cannot kill a replacement', async () => {
+  const first = fakeChild(), second = fakeChild();
+  autoInit(first); autoInit(second);
+  const children = [first, second];
+  const client = makeClient(first, { spawnFn: () => children.shift() });
+  await client.ensureStarted();
+  let oldRespond!: (value: unknown) => void;
+  client.onServerRequest((_method, _params, respond) => { oldRespond = respond; });
+  first.stdout.write(JSON.stringify({ id: 'old-approval', method: 'requestApproval' }) + '\n');
+  const pending = client.request('turn/start', { threadId: 'native' });
+  const failed = assert.rejects(pending, /exited/);
+  first.stdout.end();
+  await failed;
+  await client.ensureStarted();
+  oldRespond({ decision: 'accept' });
+  first.emit('exit', 0);
+  first.stdin.emit('error', new Error('old pipe'));
+  assert.equal(client.isRunning(), true);
+  assert.doesNotMatch(second.written, /old-approval/);
+  await client.shutdown();
+});
+
+test('failed spawn without a PID or exit event does not permanently quarantine the client', async () => {
+  const first = fakeChild(), second = fakeChild();
+  first.kill = () => false;
+  autoInit(second);
+  const children = [first, second];
+  const client = makeClient(first, { spawnFn: () => children.shift() });
+  const starting = assert.rejects(client.ensureStarted(), /exited/);
+  first.emit('error', new Error('ENOENT'));
+  await starting;
+  await client.ensureStarted();
+  assert.equal(client.isRunning(), true);
+  await client.shutdown();
+});

@@ -27,6 +27,7 @@ export class EventQueue {
   }
 
   push(ev: NormalizedEvent | null): void {
+    if (this._disposed) return;
     this.lastPushMs = Date.now();
     if (this.waiter) {
       const w = this.waiter;
@@ -51,6 +52,7 @@ export class EventQueue {
 
   async pull(): Promise<NormalizedEvent | null> {
     if (this.buf.length > 0) return this.buf.shift()!;
+    if (this._disposed) return null;
     return new Promise<NormalizedEvent | null>((resolve) => {
       this.waiter = resolve;
     });

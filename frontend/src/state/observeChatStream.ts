@@ -1,4 +1,5 @@
 import type { StreamHandlers } from '../services/chatStreamEvents';
+import { settleCancellationObservation } from '../services/api/stream';
 import type { ChatAction } from './chatTypes';
 
 type Ref<T> = { current: T };
@@ -168,6 +169,9 @@ export function createBackgroundTurnBinding({
         dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
       onDone: (stopReason, incomingAssistantId, incomingTurnId, persisted, completedAt) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
+        settleCancellationObservation(chatId, turnId, persisted === false || stopReason === 'error'
+          ? { state: 'error', detail: 'Cancellation cleanup failed. Retry to check the original session.' }
+          : { state: 'settled' });
         if (!assistantId) return;
         if (persisted === false) {
           dispatch({
@@ -195,6 +199,7 @@ export function createBackgroundTurnBinding({
       },
       onError: (message, incomingAssistantId, incomingTurnId, code) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
+        settleCancellationObservation(chatId, turnId, { state: 'error', detail: message });
         if (assistantId) dispatch({ type: 'error', nodeId, assistantId, message, errorKind: code });
         onTurnEnd?.('error', nodeId);
         onTerminal?.();

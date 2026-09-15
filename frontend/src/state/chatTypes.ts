@@ -344,7 +344,9 @@ export interface ChatNodeState {
    * overwriting the canonical server-side extraction. */
   branchOverviewSourceMessageId?: string;
   status: 'idle' | 'streaming' | 'error';
-  /** Honest cancel machine. Idle is not inferred from Stop click alone. */
+  /** Current foreground or self-turn identity, separate from replay watermarks. */
+  activeTurnId?: string;
+  /** Backend cancel phase; the composer may already be locally idle. */
   cancelPhase?: 'requested' | 'acknowledged' | 'settled';
   compacting?: boolean;
   /** Transient session connection/recovery status; never model answer text. */
@@ -696,6 +698,7 @@ export type ChatAction =
   | { type: 'error'; nodeId: string; assistantId: string; message: string; errorKind?: string }
   | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
   | { type: 'apply-seq'; nodeId: string; turnId: string; seq: number }
+  | { type: 'active-turn'; nodeId: string; assistantId: string; turnId: string }
   | { type: 'apply-background-seq'; nodeId: string; turnId: string; seq: number }
   | { type: 'block-reset'; nodeId: string; assistantId: string }
   | { type: 'realign-assistant-id'; nodeId: string; fromId: string; toId: string }
@@ -789,6 +792,7 @@ export type ChatAction =
   | { type: 'optimistic-cancel'; nodeId: string }
   | { type: 'compaction'; nodeId: string; active: boolean }
   | { type: 'runtime-activity'; nodeId: string; assistantId?: string; detail?: string }
+  | { type: 'cancel-recovery'; nodeId: string; assistantId: string; state: 'pending' | 'settled' | 'error'; detail?: string }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }
   | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null }
   | { type: 'add-comment'; nodeId: string; comment: PendingComment }
@@ -907,6 +911,8 @@ export interface ChatContextValue {
   isObserver: (nodeId: string) => boolean;
   /** Process-global list of ACP agents (Kiro modes). Fetched once on mount. */
   availableModes: SessionMode[];
+  /** The mode ACP assigns to a brand-new session before any user override. Null when unavailable. */
+  defaultModeId: string | null;
   /**
    * Current agent runtime status from `/api/agent/status` (capabilities,
    * runtime label, provider list, etc.). null until first fetch resolves.
@@ -1165,6 +1171,7 @@ export type ChatProjectsValue = Pick<
   | 'edges'
   | 'theme'
   | 'availableModes'
+  | 'defaultModeId'
   | 'agentStatus'
   | 'warmFailedError'
   | 'refreshAgentStatus'

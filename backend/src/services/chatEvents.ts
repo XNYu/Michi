@@ -58,5 +58,5 @@ export type NormalizedEvent =
           nativeType?: string;
       }
     | { kind: "mcp_server_error"; serverName: string; error: string }
-    | { kind: "runtime_error"; error: string }
+    | { kind: "runtime_error"; error: string; recoveryRequired?: boolean }
     | { kind: "turn_end"; stopReason?: string };

@@ -232,6 +232,23 @@ export class ChatManager {
         return this.runtime.getAvailableModes();
     }
 
+    /**
+     * Resolve the mode catalog and the fresh-session default for one cwd.
+     * Warming supplies both values from the same session/new response.
+     */
+    async getModeCatalog(cwd: string = this.defaultCwd): Promise<{ availableModes: any[]; defaultModeId: string | null }> {
+        if (!this.runtime) return { availableModes: [], defaultModeId: null };
+        await this.runtime.warm(cwd);
+        return {
+            availableModes: await this.runtime.getAvailableModes(),
+            defaultModeId: this.runtime.getDefaultModeId(cwd),
+        };
+    }
+
+    getDefaultModeId(cwd: string = this.defaultCwd): string | null {
+        return this.runtime?.getDefaultModeId(cwd) ?? null;
+    }
+
     async setMode(chatId: string, modeId: string): Promise<void> {
         if (!this.runtime) return;
         await this.runtime.setMode(chatId, modeId);
@@ -341,7 +358,7 @@ export class ChatManager {
                 provider,
                 reasoning,
                 replayHistory,
-                mergeContexts: runtime.id === 'kiro'
+                mergeContexts: runtime.id !== 'pi'
                     ? [buildCompatibleResumeContext(replayHistory, { nodeId: input.nodeId, title: node.title })].filter((value): value is string => !!value)
                     : undefined,
                 ...bootstrap,

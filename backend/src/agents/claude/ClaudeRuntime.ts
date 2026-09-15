@@ -24,7 +24,7 @@ import { ClaudeSessionManager, ClaudeConcurrencyError } from './ClaudeSessionMan
 import { chatHub } from '../chatHub';
 import type { CapabilityDescriptor } from 'michi-shared';
 import { describeRuntimeCapabilities } from '../capabilityDescriptors';
-import { NativeResumeUnavailableError } from '../../services/nativeResume';
+import { nativeResumeId, NativeResumeUnavailableError } from '../../services/nativeResume';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -177,7 +177,7 @@ export class ClaudeRuntime implements AgentRuntime {
       : null;
     const externalSessionId = owner.kind === 'agent_run'
       ? explicitResumeToken
-      : node?.external_session_id ?? null;
+      : nativeResumeId('claude', node);
     if (!externalSessionId) {
       throw new ClaudeSessionNotResumableError(
         `Node ${opts.sessionId} has no external_session_id — cannot resume claude session`,

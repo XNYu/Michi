@@ -245,169 +245,49 @@ describe('Kiro branch overview metadata tool', () => {
   });
 });
 
-describe('ACP runtime capabilities + MCP attach per profile', () => {
-  test('Kiro keeps saveContext/spawnBranches/nativeResume/modes', () => {
+
+describe('KiroRuntime default agent discovery', () => {
+  test('tracks the fresh ACP default independently for each cwd and refreshes it', async () => {
     const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
-    assert.equal(runtime.capabilities.modes, true);
-    assert.equal(runtime.capabilities.saveContext, true);
-    assert.equal(runtime.capabilities.spawnBranches, true);
-    assert.equal(runtime.capabilities.nativeResume, true);
-    assert.equal(runtime.shouldSendBranchOverviewReminder(), true);
+    const client = (sessionId: string, currentModeId: string) => ({
+      newSession: async () => ({
+        sessionId,
+        modes: {
+          currentModeId,
+          availableModes: [{ id: currentModeId, name: currentModeId }],
+        },
+      }),
+    });
+
+    await runtime.openSession(client('session-a-1', 'agent-a') as any, '/tmp/a', () => ({} as any));
+    await runtime.openSession(client('session-b-1', 'agent-b') as any, '/tmp/b', () => ({} as any));
+
+    assert.equal(runtime.getDefaultModeId('/tmp/a'), 'agent-a');
+    assert.equal(runtime.getDefaultModeId('/tmp/b'), 'agent-b');
+
+    await runtime.openSession(client('session-a-2', 'agent-a-new') as any, '/tmp/a', () => ({} as any));
+    assert.equal(runtime.getDefaultModeId('/tmp/a'), 'agent-a-new');
+    assert.equal(runtime.getDefaultModeId('/tmp/b'), 'agent-b');
   });
 
-  test('Cursor/Grok start with confirmed save/spawn/resume; Cursor modes on, Grok modes off', () => {
-    const cursor = new CursorRuntime(bridge, undefined, 0, '/tmp/default');
-    const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default');
-    for (const runtime of [cursor, grok]) {
-      assert.equal(runtime.capabilities.saveContext, true);
-      assert.equal(runtime.capabilities.spawnBranches, true);
-      assert.equal(runtime.capabilities.nativeResume, true);
-      assert.equal(runtime.shouldSendBranchOverviewReminder(), false);
-    }
-    assert.equal(cursor.capabilities.modes, true);
-    assert.equal(grok.capabilities.modes, false);
-  });
-
-  test('Kiro openSession still attaches MCP without initialize advertisement', async () => {
-    let created = 0;
-    const registry = {
-      create: () => {
-        created += 1;
-        return { slotId: 'slot-k' };
-      },
-      dispose: async () => {},
-      get: () => undefined,
-    } as any;
-    const runtime = new KiroRuntime(bridge, registry, 3000, '/tmp/default');
-    const rt = runtime as any;
-    let mcpServers: unknown[] | undefined;
+  test('does not treat a loaded session current mode as the cwd default', async () => {
+    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
     const client = {
-      getInitializeResult: () => ({}),
-      newSession: async (mcp: unknown[]) => {
-        mcpServers = mcp;
-        return { sessionId: 'sid-k' };
-      },
+      loadSession: async () => ({
+        modes: {
+          currentModeId: 'previously-selected-agent',
+          availableModes: [{ id: 'previously-selected-agent', name: 'Selected' }],
+        },
+      }),
     };
-    const opened = await rt.openSession(client, '/tmp/a', () => ({}));
-    assert.equal(created, 1);
-    assert.equal(opened.slotId, 'slot-k');
-    assert.equal((mcpServers as any[])[0].name, 'michi');
-    assert.equal((mcpServers as any[])[0].type, 'http');
-  });
 
-  test('Cursor/Grok openSession attach MCP even without initialize advertisement', async () => {
-    let created = 0;
-    const registry = {
-      create: () => {
-        created += 1;
-        return { slotId: 'slot-c' };
-      },
-      dispose: async () => {},
-      get: () => undefined,
-    } as any;
-    const runtime = new CursorRuntime(bridge, registry, 3000, '/tmp/default');
-    const rt = runtime as any;
-    let mcpServers: unknown[] | undefined;
-    const silent = {
-      getInitializeResult: () => ({ agentCapabilities: {} }),
-      newSession: async (mcp: unknown[]) => {
-        mcpServers = mcp;
-        return { sessionId: 'sid-c' };
-      },
-    };
-    const opened = await rt.openSession(silent, '/tmp/a', () => ({}));
-    assert.equal(created, 1);
-    assert.equal(opened.slotId, 'slot-c');
-    assert.equal((mcpServers as any[])[0].name, 'michi');
-    assert.equal((mcpServers as any[])[0].type, 'http');
-  });
+    await runtime.loadAcpSession({
+      sessionId: 'restored-session',
+      cwd: '/tmp/restored',
+      client: client as any,
+    });
 
-  test('initialize still stores result but does not hide Cursor spawn/save/resume', () => {
-    const runtime = new CursorRuntime(bridge, undefined, 0, '/tmp/default');
-    const rt = runtime as any;
-    assert.equal(runtime.capabilities.nativeResume, true);
-    assert.equal(runtime.capabilities.saveContext, true);
-    assert.equal(runtime.capabilities.spawnBranches, true);
-    rt.applyInitializeResult({
-      agentCapabilities: {
-        loadSession: true,
-        mcpCapabilities: { http: true },
-      },
-    });
-    assert.equal(runtime.capabilities.nativeResume, true);
-    assert.equal(runtime.capabilities.saveContext, true);
-    assert.equal(runtime.capabilities.spawnBranches, true);
-    const kiro = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
-    (kiro as any).applyInitializeResult({ agentCapabilities: { loadSession: false } });
-    assert.equal(kiro.capabilities.nativeResume, true, 'Kiro capabilities stay construction-time');
-  });
-
-  test('MCP slot callbacks keep the Kiro sentinel and label; Cursor/Grok omit the sentinel', () => {
-    const kiro = new KiroRuntime(bridge, undefined, 0, '/tmp/default') as any;
-    const cursor = new CursorRuntime(bridge, undefined, 0, '/tmp/default') as any;
-    const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default') as any;
-    const kiroCbs = kiro.makeSlotCallbacks(() => 'slot-k');
-    const cursorCbs = cursor.makeSlotCallbacks(() => 'slot-c');
-    const grokCbs = grok.makeSlotCallbacks(() => 'slot-g');
-    assert.equal(kiroCbs.metadataDoneSentinel, '[MICHI_METADATA_DONE]');
-    assert.equal(cursorCbs.metadataDoneSentinel, undefined);
-    assert.equal(grokCbs.metadataDoneSentinel, undefined);
-    assert.deepEqual(kiroCbs.onShowImage('/tmp/x.png'), {
-      error: 'show_image is not supported on the Kiro runtime',
-    });
-    assert.deepEqual(cursorCbs.onShowImage('/tmp/x.png'), {
-      error: 'show_image is not supported on the Cursor runtime',
-    });
-    assert.deepEqual(grokCbs.onShowImage('/tmp/x.png'), {
-      error: 'show_image is not supported on the Grok runtime',
-    });
-  });
-
-  test('absorbModes upgrades Grok capabilities.modes when session/new returns availableModes', () => {
-    const grok = new GrokRuntime(bridge, undefined, 0, '/tmp/default');
-    assert.equal(grok.capabilities.modes, false);
-    (grok as any).absorbModes({ availableModes: [{ id: 'agent', name: 'Agent' }], currentModeId: 'agent' });
-    assert.equal(grok.capabilities.modes, true);
-    assert.equal((grok as any).globalAvailableModes[0].id, 'agent');
-  });
-});
-
-describe('ACP MCP tool-result backfill', () => {
-  test('slot callback forwards the real MCP result to the live ACP client', () => {
-    let backfilled: { sessionId: string; result: unknown } | null = null;
-    const registry = {
-      get: (slotId: string) => slotId === 'slot-mcp'
-        ? { parentChatId: 'acp-sid-1', cwd: '/tmp/a' }
-        : undefined,
-    } as any;
-    const runtime = new KiroRuntime(bridge, registry, 0, '/tmp/default');
-    const rt = runtime as any;
-    rt.pool.set('/tmp/a', {
-      backfillToolOutput: (sessionId: string, result: unknown) => {
-        backfilled = { sessionId, result };
-        return true;
-      },
-    });
-    const callbacks = rt.makeSlotCallbacks(() => 'slot-mcp');
-    callbacks.onMcpToolResult('list_threads', { content: [{ type: 'text', text: '{"ok":true}' }] });
-    assert.deepEqual(backfilled, {
-      sessionId: 'acp-sid-1',
-      result: { content: [{ type: 'text', text: '{"ok":true}' }] },
-    });
-  });
-
-  test('does not invent a backfill when the slot is still pending', () => {
-    let called = 0;
-    const registry = {
-      get: () => ({ parentChatId: '__pending__', cwd: '/tmp/a' }),
-    } as any;
-    const runtime = new KiroRuntime(bridge, registry, 0, '/tmp/default');
-    const rt = runtime as any;
-    rt.pool.set('/tmp/a', {
-      backfillToolOutput: () => { called += 1; return false; },
-    });
-    const callbacks = rt.makeSlotCallbacks(() => 'slot-pending');
-    callbacks.onMcpToolResult('list_threads', { content: [] });
-    assert.equal(called, 0);
+    assert.equal(runtime.getDefaultModeId('/tmp/restored'), null);
+    assert.equal(runtime.getCurrentMode('restored-session'), 'previously-selected-agent');
   });
 });

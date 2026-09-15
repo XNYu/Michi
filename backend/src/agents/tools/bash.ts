@@ -15,7 +15,7 @@
  */
 
 import { findOnPath } from "../executableLookup";
-import { spawnAgentProcess } from "../processTree";
+import { spawnAgentProcess, killProcessTree } from "../processTree";
 import { resolveWithinCwd, PathSandboxError, getUserSandboxRoot } from "./pathSandbox";
 import { truncateTail, formatSize, type TruncationDetails } from "./truncate";
 import { errorResult, type ToolResult } from "./types";
@@ -45,6 +45,7 @@ export interface BashDetails {
  */
 export interface BashContext {
     ownerUserId?: string | null;
+    signal?: AbortSignal;
 }
 
 export function resolveBashShell(
@@ -62,6 +63,7 @@ export async function executeBash(
     sessionCwd: string,
     ctx: BashContext = {},
 ): Promise<ToolResult<BashDetails>> {
+    ctx.signal?.throwIfAborted();
     if (typeof args?.command !== "string" || args.command.trim().length === 0) {
         return errorResult("command is required");
     }
@@ -101,7 +103,6 @@ export async function executeBash(
     const child = spawnAgentProcess(shell.command, [...shell.prefix, args.command], {
         cwd: runCwd,
         env: spawnEnv,
-        detached: false,
     });
     let buf = "";
     let bufferTruncated = false;
@@ -123,37 +124,36 @@ export async function executeBash(
 
     const result = await new Promise<{ code: number | null; timedOut: boolean }>((resolve) => {
         let resolved = false;
-        const timer = setTimeout(() => {
+        let hardKill: ReturnType<typeof setTimeout> | undefined;
+        const stop = () => {
             if (resolved) return;
-            try {
-                child.kill("SIGTERM");
-            } catch {
-                /* ignore */
-            }
-            // Hard-kill after 2s if SIGTERM didn't take.
-            setTimeout(() => {
-                try {
-                    child.kill("SIGKILL");
-                } catch {
-                    /* ignore */
-                }
+            if (child.pid) killProcessTree(child.pid, "SIGTERM");
+            hardKill ??= setTimeout(() => {
+                if (child.pid) killProcessTree(child.pid, "SIGKILL");
+                finish(null, !ctx.signal?.aborted);
             }, 2000);
-            resolved = true;
-            resolve({ code: null, timedOut: true });
-        }, timeoutMs);
-        child.on("close", (code) => {
+        };
+        const finish = (code: number | null, timedOut: boolean) => {
             if (resolved) return;
             resolved = true;
             clearTimeout(timer);
-            resolve({ code, timedOut: false });
+            if (hardKill) clearTimeout(hardKill);
+            ctx.signal?.removeEventListener('abort', stop);
+            resolve({ code, timedOut });
+        };
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+        ctx.signal?.addEventListener('abort', stop, { once: true });
+        if (ctx.signal?.aborted) stop();
+        child.on("close", (code) => {
+            if (hardKill && child.pid) killProcessTree(child.pid, "SIGKILL");
+            finish(code, timedOut);
         });
         child.on("error", () => {
-            if (resolved) return;
-            resolved = true;
-            clearTimeout(timer);
-            resolve({ code: null, timedOut: false });
+            finish(null, false);
         });
     });
+    ctx.signal?.throwIfAborted();
 
     const durationMs = Date.now() - startedAt;
     const { content: trimmedOutput, details: truncation } = truncateTail(buf);

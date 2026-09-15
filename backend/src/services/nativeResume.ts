@@ -2,10 +2,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { AgentRuntime, AgentSession, LoadAgentSessionOptions } from '../agents/types';
 import { dropSession, getSession } from '../agents/sessionRegistry';
 
-export function nativeResumeId(runtimeId: string, binding: { acp_session_id?: string | null; external_session_id?: string | null } | null | undefined): string | null {
-  return (runtimeId === 'claude' || runtimeId === 'codex'
+export function nativeResumeId(runtimeId: string, binding: { id?: string; acp_session_id?: string | null; external_session_id?: string | null } | null | undefined): string | null {
+  const id = (runtimeId === 'claude' || runtimeId === 'codex'
     ? binding?.external_session_id ?? binding?.acp_session_id
     : binding?.acp_session_id ?? binding?.external_session_id) ?? null;
+  // Claude has no native identity until init. Its public node placeholder is
+  // not a resumable CLI session, even though it occupies the legacy ACP column.
+  return runtimeId === 'claude' && id === binding?.id ? null : id;
 }
 
 /** Only adapters with positive evidence of unavailable native state may throw this. */

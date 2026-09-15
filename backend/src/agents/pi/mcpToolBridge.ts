@@ -160,10 +160,11 @@ export function buildMcpToolsForPi(opts: McpToolBridgeOpts): any[] {
                 label: mcpTool.name,
                 description: mcpTool.description ?? `MCP tool: ${mcpTool.name} (from ${serverName})`,
                 parameters,
-                execute: async (_id: string, args: Record<string, unknown>) => {
+                execute: async (_id: string, args: Record<string, unknown>, signal?: AbortSignal) => {
+                    signal?.throwIfAborted();
                     // Strip the __tool_use_purpose field before forwarding
                     const { __tool_use_purpose, ...cleanArgs } = args;
-                    const result = await mcpManager.callTool(serverName, mcpTool.name, cleanArgs);
+                    const result = await mcpManager.callTool(serverName, mcpTool.name, cleanArgs, signal);
                     // Flatten text content into a single string for the model
                     const textParts = result.content
                         .filter((c) => c.type === "text" && typeof c.text === "string")

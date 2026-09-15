@@ -8,12 +8,17 @@ class MockClaudeChild extends EventEmitter {
   stdin = new PassThrough();
   stdout = new PassThrough();
   stderr = new PassThrough();
-  pid = 1234;
   killed = false;
+  signals: NodeJS.Signals[] = [];
 
-  kill(): boolean {
-    this.killed = true;
-    queueMicrotask(() => this.emit('exit', 0, null));
+  constructor(public pid: number) { super(); }
+
+  kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
+    this.signals.push(signal);
+    if (!this.killed) {
+      this.killed = true;
+      queueMicrotask(() => this.emit('exit', 0, null));
+    }
     return true;
   }
 }
@@ -35,6 +40,7 @@ function makeMcpRegistry() {
 
 describe('ClaudeSessionManager Agent Run ownership', () => {
   let originalSpawn: any;
+  let originalKillProcessTree: typeof import('../src/agents/processTree').killProcessTree;
   let children: MockClaudeChild[];
   let Manager: typeof import('../src/agents/claude/ClaudeSessionManager').ClaudeSessionManager;
 
@@ -43,9 +49,16 @@ describe('ClaudeSessionManager Agent Run ownership', () => {
     const binary = require('../src/agents/claude/claudeBinary');
     originalSpawn = binary.spawnClaude;
     binary.spawnClaude = () => {
-      const child = new MockClaudeChild();
+      const child = new MockClaudeChild(10_000 + children.length);
       children.push(child);
       return child;
+    };
+    const processTree = require('../src/agents/processTree');
+    originalKillProcessTree = processTree.killProcessTree;
+    processTree.killProcessTree = (pid: number, signal: NodeJS.Signals) => {
+      const child = children.find((candidate) => candidate.pid === pid);
+      assert.ok(child, 'only fixture processes may be signaled');
+      child.kill(signal);
     };
     delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
     delete require.cache[require.resolve('../src/agents/claude/ClaudeSessionManager')];
@@ -54,6 +67,7 @@ describe('ClaudeSessionManager Agent Run ownership', () => {
 
   afterEach(() => {
     require('../src/agents/claude/claudeBinary').spawnClaude = originalSpawn;
+    require('../src/agents/processTree').killProcessTree = originalKillProcessTree;
     sessionRegistry.clearAllSessions();
   });
 
@@ -169,10 +183,12 @@ describe('ClaudeSessionManager Agent Run ownership', () => {
     await manager.releaseSession(current.attemptId, stale);
     assert.equal(manager.get(current.attemptId), session);
     assert.equal(children[0].killed, false);
+    assert.deepEqual(children[0].signals, []);
 
     await manager.releaseSession(current.attemptId, current);
     assert.equal(manager.get(current.attemptId), undefined);
     assert.equal(children[0].killed, true);
+    assert.deepEqual(children[0].signals, ['SIGINT', 'SIGKILL']);
     await manager.shutdown();
   });
 });

@@ -591,8 +591,9 @@ export function saveNode(node: NodeRow, userId?: string): void {
       -- claude session UUID back to NULL on the very next sync, permanently breaking
       -- native claude --resume (loadSession threw, then silent fresh+replay). COALESCE
       -- preserves the stored value when the incoming row omits it, matching the rev
-      -- guard on this same statement. An explicit non-null value still wins.
-      external_session_id=COALESCE(excluded.external_session_id, nodes.external_session_id),
+      -- guard on this same statement. Only the binding writer can replace it.
+      external_session_id=CASE WHEN nodes.acp_session_id IS NOT NULL OR nodes.external_session_id IS NOT NULL
+        THEN nodes.external_session_id ELSE excluded.external_session_id END,
       trim_snapshot=excluded.trim_snapshot,
       last_applied_turn_id=excluded.last_applied_turn_id,
       last_applied_seq=excluded.last_applied_seq,
@@ -1570,8 +1571,9 @@ export function getWorkspaceBackend(workspaceId: string): string | null {
 }
 
 export function setNodeExternalSessionId(nodeId: string, externalSessionId: string): void {
-  getDb().prepare('UPDATE nodes SET external_session_id = ? WHERE id = ?')
-         .run(externalSessionId, nodeId);
+  const result = getDb().prepare('UPDATE nodes SET external_session_id = ?, acp_session_id = ? WHERE id = ?')
+         .run(externalSessionId, externalSessionId, nodeId);
+  if (!result.changes) throw new Error(`Cannot bind native session: node ${nodeId} does not exist`);
 }
 
 export function getNodeExternalSessionId(nodeId: string): string | null {
@@ -1599,9 +1601,10 @@ export function updateNodeResumeBinding(
   // mode"; only a non-null mode (e.g. after an explicit switch) overwrites it.
   // The other columns are authoritative from the resume signature and assign
   // unconditionally.
-  getDb().prepare(`
+  const result = getDb().prepare(`
     UPDATE nodes
        SET acp_session_id = ?,
+           external_session_id = ?,
            runtime_id = ?,
            provider_id = ?,
            model_id = ?,
@@ -1611,6 +1614,8 @@ export function updateNodeResumeBinding(
      WHERE id = ?
   `).run(
     fields.acp_session_id,
+    (fields.runtime_id === 'codex' || fields.runtime_id === 'claude') && fields.acp_session_id !== nodeId
+      ? fields.acp_session_id : null,
     fields.runtime_id,
     fields.provider_id ?? null,
     fields.model_id ?? null,
@@ -1619,6 +1624,7 @@ export function updateNodeResumeBinding(
     fields.current_mode_id ?? null,
     nodeId,
   );
+  if (!result.changes) throw new Error(`Cannot persist resume binding: node ${nodeId} does not exist`);
 }
 
 // --- user_agent_configs ---

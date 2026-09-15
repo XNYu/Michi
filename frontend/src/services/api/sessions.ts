@@ -33,11 +33,24 @@ export interface SessionMode {
   description?: string;
 }
 
-export async function listAgentModes(): Promise<SessionMode[]> {
-  const res = await fetch(`${activeBackendApiBase()}/modes`);
+export interface AgentModesResult {
+  availableModes: SessionMode[];
+  /** The mode ACP assigns to a fresh session. Null when unavailable. */
+  defaultModeId: string | null;
+}
+
+export async function listAgentModes(workspaceId?: string): Promise<AgentModesResult> {
+  const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
+  const route = workspaceId
+    ? `/workspaces/${encodeURIComponent(workspaceId)}/modes`
+    : '/modes';
+  const res = await fetch(`${base}${route}`);
   if (!res.ok) throw new Error(`listAgentModes failed: ${res.status}`);
   const body = await res.json();
-  return Array.isArray(body.availableModes) ? body.availableModes : [];
+  return {
+    availableModes: Array.isArray(body.availableModes) ? body.availableModes : [],
+    defaultModeId: typeof body.defaultModeId === 'string' ? body.defaultModeId : null,
+  };
 }
 
 
@@ -110,6 +123,7 @@ export type ResumeStrategy = 'fresh' | 'live' | 'exact' | 'compatible';
 
 export interface EnsureSessionOptions {
   nodeId: string;
+  signal?: AbortSignal;
   chatId?: string | null;
   cwd?: string;
   workspaceId?: string;
@@ -264,6 +278,9 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: opts.signal
+      ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)])
+      : AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
     const raw = await res.text().catch(() => '');

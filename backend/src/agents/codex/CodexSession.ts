@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   CompactResult,
   RuntimePermissionBroker,
+  RuntimePermissionDecision,
   RuntimeSessionOwner,
   RuntimeToolProfile,
   SteerResult,
@@ -17,6 +18,7 @@ import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
 import type { CodexAppServerClient } from './CodexAppServerClient';
 import { EventQueue } from '../eventQueue';
+import { abortable } from '../runtimeLifecycle';
 import { createCodexTranslator } from './codexEventTranslator';
 import { resolveShowImage } from '../claude/showImage';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
@@ -102,6 +104,8 @@ export interface CodexSessionDeps {
   toolProfile?: RuntimeToolProfile;
   /** Durable permission broker for Agent Runs. Chat sessions omit this. */
   permissionBroker?: RuntimePermissionBroker;
+  recover?: (session: CodexSession) => Promise<void>;
+  cancelTimeoutMs?: number;
 }
 
 export class CodexSession implements AgentSession {
@@ -127,7 +131,7 @@ export class CodexSession implements AgentSession {
   public readonly workspaceId: string | null;
   public readonly effort: string | null;
 
-  private readonly cwd: string;
+  public readonly cwd: string;
   private readonly client: CodexAppServerClient;
   private readonly mcpRegistry: McpSlotRegistry;
   private readonly bridge: AgentToolBridge;
@@ -161,6 +165,18 @@ export class CodexSession implements AgentSession {
   private readonly activeTurnThreadIds = new Set<string>();
   private cancelRequested = false;
   private activeNativeTurnId: string | null = null;
+  private readonly nativeTurnIds = new Map<string, string>();
+  private readonly interrupts = new Map<string, Promise<boolean>>();
+  private readonly completedTurnIds = new Set<string>();
+  private nativeSettled = true;
+  private settleNativeTurn: (() => void) | null = null;
+  private turnAbort: AbortController | null = null;
+  private interactionAbort = new AbortController();
+  private transportAbort = new AbortController();
+  private cancelTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly recover?: CodexSessionDeps['recover'];
+  private readonly cancelTimeoutMs: number;
+  public requiresRestart = false;
   /** Native thread/fork id only — never becomes a Michi node id. */
   private alignedForkThreadId: string | null = null;
 
@@ -224,6 +240,8 @@ export class CodexSession implements AgentSession {
     this.nativeSessionId = deps.threadId || null;
     this.toolProfile = deps.toolProfile;
     this.permissionBroker = deps.permissionBroker;
+    this.recover = deps.recover;
+    this.cancelTimeoutMs = deps.cancelTimeoutMs ?? 5_000;
 
     this.queue = new EventQueue((idleMs) => {
       if (this.state === 'in_turn') {
@@ -247,15 +265,19 @@ export class CodexSession implements AgentSession {
       yield { kind: 'turn_end', stopReason: 'error' };
       return;
     }
-    if (this.state === 'crashed') {
-      yield { kind: 'turn_end', stopReason: 'error' };
-      return;
-    }
-
     await this.acquireTurnLock();
+    const controller = new AbortController();
+    this.turnAbort = controller;
     const turnEventGate = { acceptTitle: true };
     try {
       this.cancelRequested = false;
+      if (this.state === 'crashed') {
+        if (!this.recover) throw new Error('Codex session needs native recovery before another turn.');
+        yield { kind: 'retry_start', detail: 'Restoring original Codex session' };
+        await abortable(this.recover(this), controller.signal);
+        yield { kind: 'retry_end' };
+      }
+      controller.signal.throwIfAborted();
       const outgoingText =
         this.firstTurnPrefixConsumed || !this.firstTurnPrefix
           ? text
@@ -277,6 +299,7 @@ export class CodexSession implements AgentSession {
           : '');
 
       this.state = 'in_turn';
+      this.interactionAbort = new AbortController();
       const shouldGenerateTitle =
         this.generateTitleOnFirstTurn
         && !this.titleGenerationAttempted
@@ -292,8 +315,18 @@ export class CodexSession implements AgentSession {
           userText: text,
           onThreadStarted: (threadId) => {
             titleThreadId = threadId;
-            this.activeTurnThreadIds.add(threadId);
-            if (this.cancelRequested) void this.interruptThread(threadId);
+            if (this.turnAbort === controller && !controller.signal.aborted) {
+              this.activeTurnThreadIds.add(threadId);
+            }
+          },
+          signal: controller.signal,
+          onTurnStarted: (threadId, turnId) => {
+            if (this.turnAbort !== controller) {
+              void this.client.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => {});
+              return;
+            }
+            this.nativeTurnIds.set(threadId, turnId);
+            if (controller.signal.aborted) void this.interruptThread(threadId);
           },
         }).catch((err) => {
           if (!this.cancelRequested) {
@@ -321,6 +354,10 @@ export class CodexSession implements AgentSession {
       // Start the real turn immediately. Title and response events share the
       // queue and are delivered in whichever order they actually complete.
       this.activeTurnThreadIds.add(this.threadId);
+      this.nativeSettled = false;
+      const nativeCompletion = new Promise<{ ok: true }>((resolve) => {
+        this.settleNativeTurn = () => resolve({ ok: true });
+      });
       const mainTurnStart = this.client.request('turn/start', {
         threadId: this.threadId,
         input: turnInput,
@@ -328,20 +365,28 @@ export class CodexSession implements AgentSession {
         summary: 'detailed',
       }).then(
         (result) => {
-          const turnId = result && typeof result === 'object' && typeof (result as { turnId?: unknown }).turnId === 'string'
-            ? (result as { turnId: string }).turnId
-            : null;
-          if (turnId) this.activeNativeTurnId = turnId;
+          const payload = result as { turn?: { id?: string }; turnId?: string } | null;
+          const turnId = payload?.turn?.id ?? payload?.turnId;
+          if (turnId && this.turnAbort === controller && !this.nativeSettled) {
+            this.activeNativeTurnId = turnId;
+            this.nativeTurnIds.set(this.threadId, turnId);
+            if (this.cancelRequested) void this.interruptThread(this.threadId);
+          }
           return { ok: true as const };
         },
         (error: unknown) => ({ ok: false as const, error }),
       );
 
-      const mainStartResult = await mainTurnStart;
+      const mainStartResult = await abortable(
+        Promise.race([mainTurnStart, nativeCompletion]),
+        this.transportAbort.signal,
+      );
       if (this.cancelRequested) {
         turnEventGate.acceptTitle = false;
         if (mainStartResult.ok) {
-          for await (const _ev of this.queue.drainUntilTurnEnd()) { /* discard cancelled turn */ }
+          for await (const ev of this.queue.drainUntilTurnEnd()) {
+            if (ev.kind === 'runtime_error') break;
+          }
         }
         yield { kind: 'turn_end', stopReason: 'interrupted' };
         return;
@@ -402,10 +447,26 @@ export class CodexSession implements AgentSession {
       if (stateAfterDrain !== 'crashed' && stateAfterDrain !== 'disposed') {
         this.state = 'idle';
       }
+    } catch (error) {
+      if (!this.cancelRequested && !controller.signal.aborted) throw error;
+      yield { kind: 'turn_end', stopReason: 'cancelled' };
     } finally {
+      const finalState = this.state as SessionState;
+      if (!this.nativeSettled && finalState !== 'crashed' && finalState !== 'disposed') {
+        this.requiresRestart = true;
+        this.markCrashed('Codex turn ended locally before native completion. Original thread retained.');
+      }
+      this.clearInteractions();
+      if (this.cancelTimer) clearTimeout(this.cancelTimer);
+      this.cancelTimer = undefined;
+      controller.abort();
+      if (this.turnAbort === controller) this.turnAbort = null;
+      this.settleNativeTurn = null;
       this.pendingAssistantBuf = null;
       turnEventGate.acceptTitle = false;
       this.activeTurnThreadIds.clear();
+      this.nativeTurnIds.clear();
+      this.interrupts.clear();
       this.activeNativeTurnId = null;
       this.cancelRequested = false;
       if (this.state === 'in_turn') this.state = 'idle';
@@ -415,15 +476,23 @@ export class CodexSession implements AgentSession {
   }
 
   async cancel(): Promise<CancelAck> {
-    if (this.state !== 'in_turn' && this.activeTurnThreadIds.size === 0) {
+    if (!this.turnAbort && this.state !== 'in_turn' && this.activeTurnThreadIds.size === 0) {
       return { acknowledged: false };
     }
     this.cancelRequested = true;
+    this.turnAbort?.abort();
+    this.clearInteractions();
+    if (!this.nativeSettled && !this.cancelTimer) {
+      this.cancelTimer = setTimeout(() => {
+        this.requiresRestart = true;
+        this.markCrashed('Codex cancellation timed out. Original thread retained for native recovery.');
+      }, this.cancelTimeoutMs);
+    }
     const threadIds = this.activeTurnThreadIds.size > 0
       ? [...this.activeTurnThreadIds]
       : [this.threadId];
-    await Promise.all(threadIds.map((threadId) => this.interruptThread(threadId)));
-    return { acknowledged: true };
+    const results = await Promise.all(threadIds.map((threadId) => this.interruptThread(threadId)));
+    return { acknowledged: results.length > 0 && results.every(Boolean) };
   }
 
   async steer(text: string): Promise<SteerResult> {
@@ -497,12 +566,15 @@ export class CodexSession implements AgentSession {
     };
   }
 
-  private async interruptThread(threadId: string): Promise<void> {
-    try {
-      await this.client.request('turn/interrupt', { threadId });
-    } catch {
-      // Best-effort; the turn_end notification or session disposal owns cleanup.
-    }
+  private async interruptThread(threadId: string): Promise<boolean> {
+    const turnId = this.nativeTurnIds.get(threadId);
+    if (!turnId) return false;
+    const key = `${threadId}:${turnId}`;
+    const pending = this.interrupts.get(key);
+    if (pending) return pending;
+    const work = this.client.request('turn/interrupt', { threadId, turnId }, this.cancelTimeoutMs).then(() => true, () => false);
+    this.interrupts.set(key, work);
+    return work;
   }
 
   respondToPermission(requestId: number, optionId: string): void {
@@ -541,6 +613,8 @@ export class CodexSession implements AgentSession {
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
   ): Promise<void> {
+    const isCurrent = this.controlIsCurrent(params);
+    if (!isCurrent()) { respond({ answers: null }); return; }
     const questions = Array.isArray(params.questions) ? params.questions : [];
     const parsedQuestions: UserInputQuestion[] = questions.map((q: Record<string, unknown>) => ({
       question: String(q.question ?? ''),
@@ -556,7 +630,7 @@ export class CodexSession implements AgentSession {
 
     const answers = await this.requestUserInput(parsedQuestions);
 
-    if (answers) {
+    if (answers && isCurrent()) {
       const responseObj: Record<string, string> = {};
       for (const a of answers) {
         responseObj[a.question] = a.answer;
@@ -570,6 +644,8 @@ export class CodexSession implements AgentSession {
   private async requestUserInput(
     questions: UserInputQuestion[],
   ): Promise<Array<{ question: string; answer: string }> | null> {
+    const isCurrent = this.controlIsCurrent();
+    if (!isCurrent()) return null;
     const requestId = ++this.nextRequestId;
     this.queue.push({ kind: 'user_input_request', requestId, questions });
 
@@ -581,6 +657,7 @@ export class CodexSession implements AgentSession {
       this.pendingUserInputs.set(requestId, { resolve, timer });
     });
 
+    if (!isCurrent()) return null;
     this.queue.push({ kind: 'user_input_resolved', requestId, answers: answers ?? [] });
     return answers;
   }
@@ -589,6 +666,8 @@ export class CodexSession implements AgentSession {
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
   ): Promise<void> {
+    const isCurrent = this.controlIsCurrent(params);
+    if (!isCurrent()) { respond({ action: 'cancel', content: null, _meta: null }); return; }
     const requestId = ++this.nextRequestId;
     const serverName = typeof params['serverName'] === 'string' ? params['serverName'] : 'MCP server';
     const message = typeof params['message'] === 'string' ? params['message'] : 'Approve this MCP request?';
@@ -607,6 +686,7 @@ export class CodexSession implements AgentSession {
     });
 
     const result = await this.awaitPermission(requestId);
+    if (!isCurrent()) { respond({ action: 'cancel', content: null, _meta: null }); return; }
     if (result !== null && result.startsWith('allow')) {
       respond({ action: 'accept', content: null, _meta: null });
       return;
@@ -631,18 +711,27 @@ export class CodexSession implements AgentSession {
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
   ): Promise<void> {
+    const isCurrent = this.controlIsCurrent(params);
+    if (!isCurrent()) { respond({ decision: 'decline' }); return; }
     const toolName = canonicalToolNameFromMethod(method);
 
     // Agent Run owner: delegate to the immutable Run permission broker.
     // MUST NOT call resolvePolicy() or grantPermission().
     if (this.owner.kind === 'agent_run' && this.permissionBroker) {
-      const decision = await this.permissionBroker.requestPermission({
-        owner: this.owner,
-        ownerUserId: this.ownerUserId,
-        workspaceId: this.workspaceId,
-        toolName: canonicalPermissionToolName(toolName),
-        input: params,
-      });
+      let decision: RuntimePermissionDecision;
+      try {
+        decision = await abortable(this.permissionBroker.requestPermission({
+          owner: this.owner,
+          ownerUserId: this.ownerUserId,
+          workspaceId: this.workspaceId,
+          toolName: canonicalPermissionToolName(toolName),
+          input: params,
+        }), this.interactionAbort.signal);
+      } catch {
+        respond({ decision: 'decline' });
+        return;
+      }
+      if (!isCurrent()) { respond({ decision: 'decline' }); return; }
 
       switch (decision) {
         case 'allow_once':
@@ -674,6 +763,7 @@ export class CodexSession implements AgentSession {
             source: 'codex_approval',
           });
           const result = await this.awaitPermission(requestId);
+          if (!isCurrent()) { respond({ decision: 'decline' }); return; }
           if (result !== null && result.startsWith('allow')) {
             respond({ decision: 'accept' });
             return;
@@ -703,6 +793,8 @@ export class CodexSession implements AgentSession {
     });
 
     const result = await this.awaitPermission(requestId);
+
+    if (!isCurrent()) { respond({ decision: 'decline' }); return; }
 
     if (result === 'allow_always') {
       const canonical = canonicalPermissionToolName(toolName);
@@ -737,18 +829,11 @@ export class CodexSession implements AgentSession {
   markCrashed(reason: string): void {
     if (this.state === 'crashed' || this.state === 'disposed') return;
     this.state = 'crashed';
+    this.transportAbort.abort(new Error(reason));
+    this.unsubscribeNotification?.();
+    this.unsubscribeNotification = null;
 
-    // Reject all pending permissions and user inputs with cancel
-    for (const [, entry] of this.pendingPermissions) {
-      clearTimeout(entry.timer);
-      entry.resolve(null);
-    }
-    this.pendingPermissions.clear();
-    for (const [, entry] of this.pendingUserInputs) {
-      clearTimeout(entry.timer);
-      entry.resolve(null);
-    }
-    this.pendingUserInputs.clear();
+    this.clearInteractions();
 
     // Clean up child thread tracking
     this.unsubGlobalNotification?.();
@@ -760,6 +845,45 @@ export class CodexSession implements AgentSession {
     this.queue.push({ kind: 'runtime_error', error: reason });
     this.queue.push({ kind: 'turn_end', stopReason: 'error' });
     this.queue.dispose();
+  }
+
+  private clearInteractions(): void {
+    this.interactionAbort.abort();
+    for (const entries of [this.pendingPermissions, this.pendingUserInputs]) {
+      for (const entry of entries.values()) { clearTimeout(entry.timer); entry.resolve(null); }
+      entries.clear();
+    }
+  }
+
+  isBusy(): boolean { return this.state === 'in_turn' || (this.state !== 'crashed' && !!this.turnLock); }
+  needsRecovery(): boolean { return this.state === 'crashed'; }
+  acceptsControl(params: Record<string, unknown>): boolean {
+    if (this.state !== 'in_turn' || this.nativeSettled || !this.turnAbort || this.turnAbort.signal.aborted) return false;
+    if (typeof params.threadId === 'string' && params.threadId !== this.threadId) return false;
+    return typeof params.turnId !== 'string' || params.turnId === this.activeNativeTurnId;
+  }
+
+  private controlIsCurrent(params: Record<string, unknown> = {}): () => boolean {
+    const turn = this.turnAbort;
+    return () => this.turnAbort === turn && this.acceptsControl(params);
+  }
+
+  async prepareNativeResume(): Promise<string> {
+    await this.disposeMcpSlot();
+    return this.createMcpSlot();
+  }
+
+  completeNativeResume(): void {
+    if (this.state === 'disposed') throw new Error('Codex session was disposed during recovery');
+    this.queue.dispose();
+    this.queue = new EventQueue((idleMs) => {
+      if (this.state === 'in_turn') this.queue.push({ kind: 'heartbeat', idleMs });
+    });
+    this.transportAbort = new AbortController();
+    this.nativeSettled = true;
+    this.requiresRestart = false;
+    this.state = 'idle';
+    this.wireNotifications();
   }
 
   // ---- MCP slot setup -------------------------------------------------------
@@ -1065,6 +1189,8 @@ export class CodexSession implements AgentSession {
   // ---- Translator wiring ----------------------------------------------------
 
   wireNotifications(): void {
+    this.unsubscribeNotification?.();
+    this.unsubGlobalNotification?.();
     const translator = createCodexTranslator((ev) => {
       this.observeFollowUpsSentinelEvent(ev);
       if (this.suppressInternalMetadataToolEvent(ev)) return;
@@ -1079,10 +1205,26 @@ export class CodexSession implements AgentSession {
     this.unsubscribeNotification = this.client.onNotification(
       this.threadId,
       (method, params) => {
+        if (this.state === 'crashed' || this.state === 'disposed' || this.nativeSettled) return;
+        const turn = params.turn as { id?: string; status?: string } | undefined;
+        const turnId = typeof params.turnId === 'string' ? params.turnId : turn?.id;
+        if (turnId && (this.completedTurnIds.has(turnId) || (this.activeNativeTurnId && this.activeNativeTurnId !== turnId))) return;
+        if (turnId) {
+          this.activeNativeTurnId = turnId;
+          this.nativeTurnIds.set(this.threadId, turnId);
+        }
         if (method === 'turn/completed') {
+          this.nativeSettled = true;
+          this.settleNativeTurn?.();
+          if (turnId) this.completedTurnIds.add(turnId);
+          if (this.completedTurnIds.size > 100) this.completedTurnIds.delete(this.completedTurnIds.values().next().value!);
+          if (this.cancelTimer) clearTimeout(this.cancelTimer);
+          this.cancelTimer = undefined;
+          this.clearInteractions();
           this.completeFollowUpsOutputBoundary('turn-completed');
         }
         translator.feed(method, params);
+        if (method === 'turn/started' && this.cancelRequested) void this.interruptThread(this.threadId);
         if (method === 'item/completed') {
           const item = (params['item'] ?? params) as Record<string, unknown>;
           if (item['type'] === 'agentMessage') {
@@ -1221,18 +1363,11 @@ export class CodexSession implements AgentSession {
   async dispose(): Promise<void> {
     if (this.state === 'disposed') return;
     this.state = 'disposed';
+    this.turnAbort?.abort();
+    this.transportAbort.abort(new Error('Codex session disposed'));
+    if (this.cancelTimer) clearTimeout(this.cancelTimer);
 
-    // Reject pending permissions
-    for (const [, entry] of this.pendingPermissions) {
-      clearTimeout(entry.timer);
-      entry.resolve(null);
-    }
-    this.pendingPermissions.clear();
-    for (const [, entry] of this.pendingUserInputs) {
-      clearTimeout(entry.timer);
-      entry.resolve(null);
-    }
-    this.pendingUserInputs.clear();
+    this.clearInteractions();
 
     // Unsubscribe notification handler
     this.unsubscribeNotification?.();
@@ -1247,7 +1382,7 @@ export class CodexSession implements AgentSession {
 
     // Best-effort thread/unsubscribe (skip if crashed)
     try {
-      await this.client.request('thread/unsubscribe', { threadId: this.threadId });
+      await this.client.request('thread/unsubscribe', { threadId: this.threadId }, 2_000);
     } catch {
       // Ignore — daemon may be gone
     }

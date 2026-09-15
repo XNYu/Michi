@@ -186,7 +186,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             const rows = getRuntimeDeps().historyStore.listMessages(opts.sessionId);
             initialMessages = rowsToAgentMessages(rows);
         } catch (err) {
-            console.warn(`[piRuntime] loadSession: failed reading state for ${opts.sessionId}:`, err);
+            throw Object.assign(new Error('Pi history could not be restored; original history was retained. Please retry.'), { cause: err });
         }
 
         const ancestorChain: AgentSession[] = [];

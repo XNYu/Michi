@@ -1,4 +1,5 @@
 import type { CodexAppServerClient } from './CodexAppServerClient';
+import { abortable } from '../runtimeLifecycle';
 
 const DEFAULT_TITLE_TIMEOUT_MS = 10_000;
 const MAX_TITLE_INPUT_CHARS = 4_000;
@@ -25,6 +26,8 @@ export interface GenerateCodexTitleOptions {
   userText: string;
   timeoutMs?: number;
   onThreadStarted?: (threadId: string) => void;
+  onTurnStarted?: (threadId: string, turnId: string) => void;
+  signal?: AbortSignal;
 }
 
 function threadIdFrom(result: Record<string, unknown>): string | null {
@@ -87,6 +90,7 @@ export function parseGeneratedCodexTitle(raw: string, userText: string): string 
 }
 
 export async function generateCodexTitle(opts: GenerateCodexTitleOptions): Promise<string> {
+  opts.signal?.throwIfAborted();
   const startResult = await opts.client.request('thread/start', {
     model: opts.model || undefined,
     cwd: opts.cwd,
@@ -98,19 +102,34 @@ export async function generateCodexTitle(opts: GenerateCodexTitleOptions): Promi
   const threadId = threadIdFrom(startResult);
   if (!threadId) throw new Error('codex title thread/start did not return a threadId');
   opts.onThreadStarted?.(threadId);
+  opts.signal?.throwIfAborted();
 
   let output = '';
   let timer: NodeJS.Timeout | undefined;
   let unsubscribe = () => {};
+  let turnId: string | undefined;
+  let timedOut = false;
+  const interrupt = () => {
+    if (turnId) void opts.client.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => {});
+  };
+  const rememberTurn = (id: unknown) => {
+    if (typeof id !== 'string' || id === turnId) return;
+    turnId = id;
+    if (timedOut) { interrupt(); return; }
+    opts.onTurnStarted?.(threadId, id);
+    if (opts.signal?.aborted && !opts.onTurnStarted) interrupt();
+  };
   const timeoutMs = opts.timeoutMs
     ?? parseInt(process.env.MICHI_CODEX_TITLE_TIMEOUT_MS ?? String(DEFAULT_TITLE_TIMEOUT_MS), 10);
 
   const completed = new Promise<string>((resolve, reject) => {
     timer = setTimeout(() => {
-      void opts.client.request('turn/interrupt', { threadId }).catch(() => {});
+      timedOut = true;
+      interrupt();
       reject(new Error(`codex title generation timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     unsubscribe = opts.client.onNotification(threadId, (method, params) => {
+      if (method === 'turn/started') rememberTurn((params.turn as { id?: string } | undefined)?.id);
       if (method === 'item/agentMessage/delta' && typeof params['delta'] === 'string') {
         output += params['delta'];
         return;
@@ -133,8 +152,11 @@ export async function generateCodexTitle(opts: GenerateCodexTitleOptions): Promi
         effort: 'low',
         summary: 'none',
         outputSchema: TITLE_OUTPUT_SCHEMA,
+      }).then((result) => {
+        const value = result as { turn?: { id?: string }; turnId?: string };
+        rememberTurn(value.turn?.id ?? value.turnId);
       }),
-      completed,
+      opts.signal ? abortable(completed, opts.signal) : completed,
     ]);
     return parseGeneratedCodexTitle(rawTitle, opts.userText);
   } finally {

@@ -2,7 +2,7 @@ import { vi } from 'vitest';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
-  listAgentModes: () => Promise.resolve([]),
+  listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   fetchAgentStatus: () => Promise.resolve(null),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchPrefs: () => Promise.resolve(null),

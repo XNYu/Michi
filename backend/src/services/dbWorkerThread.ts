@@ -395,10 +395,11 @@ function persistResumeBinding(args: {
   current_mode_id: string | null;
 }): void {
   const nodeExists = getRow('SELECT id FROM nodes WHERE id = ?', args.nodeId);
-  if (!nodeExists) return;
+  if (!nodeExists) throw new Error(`Cannot persist resume binding: node ${args.nodeId} does not exist`);
   run(`
     UPDATE nodes
        SET acp_session_id = ?,
+           external_session_id = ?,
            runtime_id = ?,
            provider_id = ?,
            model_id = ?,
@@ -408,6 +409,8 @@ function persistResumeBinding(args: {
      WHERE id = ?
   `,
     args.acp_session_id,
+    (args.runtime_id === 'codex' || args.runtime_id === 'claude') && args.acp_session_id !== args.nodeId
+      ? args.acp_session_id : null,
     args.runtime_id,
     args.provider_id,
     args.model_id,

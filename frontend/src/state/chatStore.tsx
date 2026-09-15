@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChat, steerChat, subscribeChat } from '../services/api';
+import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus, type SessionMode } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
@@ -352,19 +352,22 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // auth errors and by Settings when keys change). Not persisted.
   //   - agentStatus: capabilities-shaped descriptor consumed by ApiKeyGate,
   //     Settings (provider/model/reasoning controls), and the TPane toolbar chips.
-  //   - availableModes: process-global list of agents (ACP modes), empirically
-  //     identical across sessions/cwds, reused for every /agent picker.
+  //   - availableModes: runtime Agent catalog reused by every picker.
+  //   - defaultModeId: fresh-session default resolved for the active workspace.
   // Both load via the cold-start-tolerant effect below: on desktop the renderer
   // can mount before the backend is listening, so each fetch retries until it
   // lands instead of failing once and leaving the agent picker stuck on
   // "Loading…" (Kiro-CLI agents never appearing).
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [availableModes, setAvailableModes] = useState<SessionMode[]>([]);
+  /** The mode ACP assigns to a brand-new session. Null when unavailable. */
+  const [defaultModeId, setDefaultModeId] = useState<string | null>(null);
   const [warmFailedError, setWarmFailedError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     setAgentStatus(null);
     setAvailableModes([]);
+    setDefaultModeId(null);
     setWarmFailedError(null);
     let statusLoaded = false;
     let modesLoaded = false;
@@ -430,10 +433,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     // is still spawning — is retryable.
     const loadModes = async (): Promise<boolean> => {
       try {
-        const modes = await listAgentModes();
+        const result = await listAgentModes(activeProjectId ?? undefined);
         if (cancelled) return false;
         modesLoaded = true;
-        setAvailableModes(modes);
+        setAvailableModes(result.availableModes);
+        setDefaultModeId(result.defaultModeId);
         return true;
       } catch {
         // Backend may not be listening yet — loadUntilLoaded retries below.
@@ -479,7 +483,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelled = true;
       window.removeEventListener('michi:reload-agent-status', handler);
     };
-  }, [activeBackendConnectionId]);
+  }, [activeBackendConnectionId, activeProjectId]);
   const refreshAgentStatus = useCallback(() => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
@@ -1144,7 +1148,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           if (!entry || entry.cancel !== cancel || stopped) return;
           // A replay ring miss can be a self-initiated runtime turn. The
           // background feed owns that recovery path and will reconcile it.
-          if (error?.message.endsWith(': 410')) return;
+          if (error?.message.endsWith(': 410')) {
+            finish();
+            return;
+          }
           if (!retryable) {
             dispatch({ type: 'error', nodeId, assistantId, message: error?.message ?? 'turn replay disconnected' });
             finish();
@@ -1159,8 +1166,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         const entry = recoveredForegroundReplayRef.current.get(nodeId);
         if (entry?.retry) clearTimeout(entry.retry);
         cancel();
-        cancelChat(node.chatId!, ownerTokenRef.current, nodesRef.current[nodeId]?.lastAppliedTurnId).catch(() => {});
+        dispatch({ type: 'done', nodeId, assistantId, aborted: true });
+        cancelChatAndObserve(node.chatId!, ownerTokenRef.current, node.lastAppliedTurnId, (status) => {
+          dispatch({ type: 'cancel-recovery', nodeId, assistantId, ...status });
+        });
         finish();
+        turnEndHandlerRef.current('cancel', nodeId);
       };
       recoveredForegroundReplayRef.current.set(nodeId, { cancel });
       cancelFns.current[nodeId] = stop;
@@ -1604,10 +1615,25 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         connectionStatusShown = true;
         dispatch({ type: 'runtime-activity', nodeId, assistantId, detail: 'Connecting to session' });
       }, 1_000);
+      const setupController = new AbortController();
+      let setupCancelled = false;
+      const cancelSetup = () => {
+        if (setupCancelled) return;
+        setupCancelled = true;
+        clearTimeout(connectionStatusTimer);
+        setupController.abort();
+        delete assistantTextBufs.current[assistantId];
+        if (cancelFns.current[nodeId] === cancelSetup) delete cancelFns.current[nodeId];
+        pendingCancels.current.delete(nodeId);
+        dispatch({ type: 'done', nodeId, assistantId, aborted: true });
+        handleTurnEnd('cancel', nodeId);
+      };
+      cancelFns.current[nodeId] = cancelSetup;
       try {
         if (!owningProject) throw new Error('workspace not found for node');
         const ensured = await ensureSession({
           nodeId,
+          signal: setupController.signal,
           chatId,
           cwd,
           workspaceId: owningProject?.id,
@@ -1627,6 +1653,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
           graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
         });
+        // Aborting the HTTP wait does not undo the server's native binding.
+        // A late response must never send the cancelled prompt or bind over a newer turn.
+        if (setupCancelled) return;
         perf.measure('client:ensure_session', tEnsureStart, { nodeId, strategy: ensured.resumeStrategy });
         perf.measure('client:submit_to_ensured', tSubmit, { nodeId });
         // New backends return chatId === nodeId. Ignore a legacy runtime id in
@@ -1653,16 +1682,23 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
             `\n\n---\n\n${text}`;
         }
       } catch (err) {
+        if (setupCancelled) {
+          delete assistantTextBufs.current[assistantId];
+          return;
+        }
         dispatch({
           type: 'error',
           nodeId,
           assistantId,
-          message: (err as Error).message || 'failed to ensure chat session',
+          message: (err as Error).name === 'TimeoutError'
+            ? 'Session connection timed out. The original session binding is retained; please retry.'
+            : (err as Error).message || 'failed to ensure chat session',
         });
         delete assistantTextBufs.current[assistantId];
         pendingCancels.current.delete(nodeId);
         return;
       } finally {
+        if (cancelFns.current[nodeId] === cancelSetup) delete cancelFns.current[nodeId];
         clearTimeout(connectionStatusTimer);
         if (connectionStatusShown) dispatch({ type: 'runtime-activity', nodeId, assistantId });
       }
@@ -2045,9 +2081,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const cancelStream = useCallback((nodeId: string) => {
+    if (ownerStateRef.current[nodeId]?.role === 'observer') return;
     const fn = cancelFns.current[nodeId];
     const node = nodesRef.current[nodeId];
-    const activeTurnId = node?.lastAppliedTurnId ?? node?.lastAppliedBackgroundTurnId;
+    const activeTurnId = node?.activeTurnId ?? node?.lastAppliedTurnId ?? node?.lastAppliedBackgroundTurnId;
+    const observeCancellation = () => {
+      const assistantId = node?.messages.at(-1)?.id;
+      if (assistantId) dispatch({ type: 'done', nodeId, assistantId, aborted: true });
+      cancelChatAndObserve(node!.chatId!, ownerTokenRef.current, activeTurnId, (status) => {
+        if (assistantId) dispatch({ type: 'cancel-recovery', nodeId, assistantId, ...status });
+      });
+    };
     if (node?.status === 'streaming') {
       // Optimistic cancel: immediately transition the node to idle so the
       // composer unlocks. The backend cancel and turn cleanup happen
@@ -2058,14 +2102,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     if (fn) {
       fn();
     } else if (ownerStateRef.current[nodeId]?.role === 'owner' && node?.chatId) {
-      cancelChat(node.chatId, ownerTokenRef.current, activeTurnId).catch(() => {});
-    } else if (ownerStateRef.current[nodeId]?.role === 'observer') {
-      return;
+      observeCancellation();
     } else if (claimInFlightRef.current.has(nodeId) && node?.chatId) {
       // A claim is installed by the server before its response reaches this
       // pane. Send the cancel token now: it is already authoritative if the
       // claim won, and safely rejected if another pane owns the lease.
-      cancelChat(node.chatId, ownerTokenRef.current, activeTurnId).catch(() => {});
+      observeCancellation();
     } else {
       // Stop was pressed before streamMessage registered its cancel fn.
       // Mark it so startStream aborts as soon as cancel is available.
@@ -2897,6 +2939,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       ),
       theme,
       availableModes,
+      defaultModeId,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
@@ -2915,6 +2958,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       activeProject,
       theme,
       availableModes,
+      defaultModeId,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
@@ -2977,6 +3021,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelStream,
       isObserver,
       availableModes,
+      defaultModeId,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
@@ -3107,6 +3152,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelStream,
       isObserver,
       availableModes,
+      defaultModeId,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,

@@ -27,6 +27,11 @@ export type {
   UserInputRequestPayload,
 };
 
+export interface CancelRecoveryStatus {
+  state: 'pending' | 'settled' | 'error';
+  detail?: string;
+}
+
 export interface StreamHandlers {
   /** Runs before the event-specific callback. Returning false drops a replay. */
   onEnvelope?: (envelope: ChatStreamEnvelope) => boolean | void;
@@ -64,6 +69,8 @@ export interface StreamHandlers {
   onMcpServerError?: (data: ChatStreamPayloads['mcp_server_error']) => void;
   onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean, completedAt?: number) => void;
   onAborted?: () => void;
+  /** Local post-cancel observation, independent of the aborted output stream. */
+  onCancelRecovery?: (status: CancelRecoveryStatus) => void;
   onError?: (msg: string, assistantId?: string, turnId?: string, code?: string) => void;
 }
 

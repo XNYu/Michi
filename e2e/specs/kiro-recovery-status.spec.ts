@@ -1,18 +1,24 @@
 import { test, expect } from '@playwright/test';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
 
-test('native recovery is visible before the first token and failure leaves a usable composer', async ({ page }) => {
+for (const runtime of ['Kiro', 'Codex', 'Claude']) {
+for (const outcome of ['failure', 'success']) {
+test(`${runtime} native recovery is visible before the first token and ${outcome} clears the status`, async ({ page }) => {
   await installMockApi(page);
-  await page.addInitScript(() => {
+  await page.addInitScript((runtime) => {
     const original = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('/chats/') && url.endsWith('/message')) {
         const encoder = new TextEncoder();
         const body = new ReadableStream({ start(controller) {
-          controller.enqueue(encoder.encode('event: retry_start\ndata: {"detail":"Restoring original Kiro session"}\n\n'));
+          controller.enqueue(encoder.encode(`event: retry_start\ndata: ${JSON.stringify({ detail: `Restoring original ${runtime} session` })}\n\n`));
           (window as any).__failRecovery = () => {
             controller.enqueue(encoder.encode('event: error\ndata: {"message":"Original session retained. Retry after the other task finishes."}\n\n'));
+            controller.close();
+          };
+          (window as any).__completeRecovery = () => {
+            controller.enqueue(encoder.encode('event: retry_end\ndata: {}\n\nevent: chunk\ndata: {"text":"Continued on the original native session."}\n\nevent: done\ndata: {"stopReason":"end_turn"}\n\n'));
             controller.close();
           };
         } });
@@ -20,24 +26,29 @@ test('native recovery is visible before the first token and failure leaves a usa
       }
       return original(input, init);
     };
-  });
+  }, runtime);
   await bootWithWorkspace(page);
   const composer = page.locator('[contenteditable="true"]').first();
   await composer.fill('Continue with the original session');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
-  const status = page.getByRole('status', { name: /Restoring original Kiro session/ });
+  const status = page.getByRole('status', { name: new RegExp(`Restoring original ${runtime} session`) });
   await expect(status).toBeVisible();
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(status).toBeVisible();
     const bounds = await status.boundingBox();
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width + 1);
-    await page.screenshot({ path: `/tmp/michi-kiro-recovery-${width}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `/tmp/michi-${runtime.toLowerCase()}-recovery-${outcome}-${width}.png`, animations: 'disabled' });
   }
-  await page.evaluate(() => (window as any).__failRecovery());
+  await page.evaluate((outcome) => outcome === 'success'
+    ? (window as any).__completeRecovery() : (window as any).__failRecovery(), outcome);
   await expect(status).toHaveCount(0);
-  await expect(page.getByText('Original session retained. Retry after the other task finishes.').first()).toBeVisible();
+  await expect(page.getByText(outcome === 'success'
+    ? 'Continued on the original native session.'
+    : 'Original session retained. Retry after the other task finishes.').first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Stop stream/ })).toHaveCount(0);
   await composer.fill('Retry when ready');
   await expect(composer).toHaveText('Retry when ready');
 });
+}
+}

@@ -55,3 +55,23 @@ describe('primary Agent session API routing', () => {
     })).toThrow(/different Backend/);
   });
 });
+
+
+describe('workspace Agent mode catalog routing', () => {
+  it('loads the default Agent through the Workspace owning Backend proxy', async () => {
+    const { listAgentModes } = await import('./sessions');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        availableModes: [{ id: 'kiro_default', name: 'Kiro Default' }],
+        defaultModeId: 'kiro_default',
+      }), { status: 200 }),
+    );
+
+    const result = await listAgentModes('remote-ws');
+
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      '/backend-connections/remote-a/proxy/workspaces/remote-ws/modes',
+    );
+    expect(result.defaultModeId).toBe('kiro_default');
+  });
+});

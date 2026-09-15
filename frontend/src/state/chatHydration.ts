@@ -458,6 +458,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
       return entries.length > 0 ? entries[entries.length - 1].text : undefined;
     })(),
     status: row.status === 'streaming' ? 'streaming' : row.status === 'error' ? 'error' : 'idle',
+    activeTurnId: row.status === 'streaming' ? asString(row.last_applied_turn_id) : undefined,
     lastAppliedTurnId: asString(row.last_applied_turn_id),
     lastAppliedSeq: asOptionalNumber(row.last_applied_seq),
     lastAppliedBackgroundTurnId: asString(row.last_applied_turn_id),

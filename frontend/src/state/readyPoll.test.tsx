@@ -12,7 +12,7 @@ vi.mock('../services/api', () => ({
   ensureSession: vi.fn().mockResolvedValue('test-session'),
   fetchAgentStatus: vi.fn(),
   fetchReady: vi.fn(),
-  listAgentModes: vi.fn().mockResolvedValue([]),
+  listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
   listAgentModels: vi.fn().mockResolvedValue({ models: [], sanitizedModel: null }),
   setChatMode: vi.fn(),
   respondToPermission: vi.fn(),
@@ -208,7 +208,7 @@ describe('chatStore boot ready polling', () => {
     const modes = [{ id: 'gpu-dev', name: 'gpu-dev' }];
     (api.listAgentModes as any)
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-      .mockResolvedValue(modes);
+      .mockResolvedValue({ availableModes: modes, defaultModeId: 'gpu-dev' });
     (api.fetchReady as any).mockResolvedValue({ status: 'pending', error: null });
 
     function ModesProbe() {

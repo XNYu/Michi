@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { spawnAgentProcess } from '../processTree';
+import { spawnAgentProcess, killProcessTree } from '../processTree';
+import { withDeadline } from '../runtimeLifecycle';
 import { findCodexBinary, preflightCodexAuth, warnIfCodexVersionBelowMinimum } from './codexBinary';
 import type { CodexIncoming, CodexRpcId } from './codexProtocol';
 
@@ -14,6 +15,12 @@ export class CodexDaemonExitedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CodexDaemonExitedError';
+  }
+}
+
+export class CodexRpcError extends Error {
+  constructor(readonly method: string, readonly code: number, readonly rpcMessage: string) {
+    super(`codex ${method} failed: ${rpcMessage} (code ${code})`);
   }
 }
 
@@ -41,6 +48,7 @@ interface Pending {
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
   method: string;
+  threadId?: string;
 }
 
 /**
@@ -64,6 +72,9 @@ export class CodexAppServerClient {
   private readonly initTimeoutMs: number;
   private readonly spawnFn: () => ChildProcessWithoutNullStreams;
   private shuttingDown = false;
+  private stopping: Promise<void> | null = null;
+  private unsafeChild: ChildProcessWithoutNullStreams | null = null;
+  private readonly failedSpawns = new WeakSet<ChildProcessWithoutNullStreams>();
 
   constructor(deps: CodexAppServerClientDeps = {}) {
     this.rpcTimeoutMs = deps.rpcTimeoutMs ?? RPC_TIMEOUT_MS;
@@ -84,29 +95,47 @@ export class CodexAppServerClient {
     return this.child !== null;
   }
 
-  async ensureStarted(): Promise<void> {
-    if (this.child) return;
+  async ensureStarted(timeoutMs = this.initTimeoutMs): Promise<void> {
+    if (this.stopping) await this.stopping;
+    if (this.unsafeChild) throw new Error('Codex process exit is unconfirmed. Original sessions retained; retry after it stops.');
     if (this.starting) return this.starting;
-    this.starting = this.start().finally(() => {
+    if (this.child) return;
+    this.shuttingDown = false;
+    this.starting = this.start(timeoutMs).finally(() => {
       this.starting = null;
     });
     return this.starting;
   }
 
-  private async start(): Promise<void> {
+  private async start(timeoutMs: number): Promise<void> {
     const child = this.spawnFn();
     this.child = child;
     this.lineBuf = '';
 
-    child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk.toString('utf8')));
+    child.stdout.on('data', (chunk: Buffer) => { if (this.child === child) this.onStdout(chunk.toString('utf8')); });
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf8').trim();
       if (text) console.warn('[codex app-server stderr]', text.slice(0, 500));
     });
-    child.on('exit', (code) => this.onExited(code));
-    child.on('error', (err) => {
-      console.error('[CodexAppServerClient] spawn error:', err);
+    child.on('exit', (code) => {
+      if (child.pid) killProcessTree(child.pid, 'SIGKILL');
+      if (this.unsafeChild === child) this.unsafeChild = null;
+      if (this.child === child) this.onExited(code);
+    });
+    const broken = () => {
+      if (this.child !== child) return;
       this.onExited(null);
+      void this.stopChild(child).catch(() => {});
+    };
+    child.stdout.on('end', broken);
+    child.stdout.on('close', broken);
+    child.stdin.on('error', broken);
+    child.stdout.on('error', broken);
+    child.stderr.on('error', broken);
+    child.on('error', (err) => {
+      if (!child.pid) this.failedSpawns.add(child);
+      console.error('[CodexAppServerClient] spawn error:', err);
+      broken();
     });
 
     await this.requestWithTimeout(
@@ -115,14 +144,10 @@ export class CodexAppServerClient {
         clientInfo: { name: 'michi', title: 'Michi', version: '1.0.0' },
         capabilities: { experimentalApi: true },
       },
-      this.initTimeoutMs,
-    ).catch((err) => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-      this.child = null;
+      timeoutMs,
+    ).catch(async (err) => {
+      if (this.child === child) this.onExited(null);
+      await this.stopChild(child);
       throw err;
     });
 
@@ -156,9 +181,7 @@ export class CodexAppServerClient {
       clearTimeout(entry.timer);
       if (obj.error) {
         entry.reject(
-          new Error(
-            `codex ${entry.method} failed: ${obj.error.message} (code ${obj.error.code})`,
-          ),
+          new CodexRpcError(entry.method, obj.error.code, obj.error.message),
         );
       } else {
         entry.resolve(obj.result);
@@ -169,7 +192,8 @@ export class CodexAppServerClient {
     // Server→client REQUEST (has both id and method) — approval flow
     if (obj.id !== undefined && typeof obj.method === 'string') {
       const rpcId = obj.id as CodexRpcId;
-      const respond = (result: unknown) => this.writeLine({ jsonrpc: '2.0', id: rpcId, result });
+      const child = this.child;
+      const respond = (result: unknown) => { if (this.child === child) this.writeLine({ jsonrpc: '2.0', id: rpcId, result }); };
       if (this.serverRequestHandler) {
         this.serverRequestHandler(
           obj.method,
@@ -206,8 +230,12 @@ export class CodexAppServerClient {
     }
   }
 
-  request(method: string, params: unknown): Promise<unknown> {
-    return this.requestWithTimeout(method, params, this.rpcTimeoutMs);
+  request(method: string, params: unknown, timeoutMs = this.rpcTimeoutMs): Promise<unknown> {
+    return this.requestWithTimeout(method, params, timeoutMs);
+  }
+
+  hasPendingRequests(ignoredThreads: ReadonlySet<string> = new Set()): boolean {
+    return [...this.pending.values()].some((entry) => !entry.threadId || !ignoredThreads.has(entry.threadId));
   }
 
   private requestWithTimeout(
@@ -231,16 +259,27 @@ export class CodexAppServerClient {
           ),
         );
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method });
+      const threadId = (params as { threadId?: string } | null)?.threadId;
+      this.pending.set(id, { resolve, reject, timer, method, threadId });
       this.writeLine({ jsonrpc: '2.0', id, method, params });
     });
   }
 
   private writeLine(obj: unknown): void {
+    const child = this.child;
     try {
-      this.child?.stdin.write(JSON.stringify(obj) + '\n');
+      child?.stdin.write(JSON.stringify(obj) + '\n', (error) => {
+        if (error && this.child === child) {
+          this.onExited(null);
+          void this.stopChild(child).catch(() => {});
+        }
+      });
     } catch (err) {
       console.warn('[CodexAppServerClient] stdin write failed:', err);
+      if (child && this.child === child) {
+        this.onExited(null);
+        void this.stopChild(child).catch(() => {});
+      }
     }
   }
 
@@ -304,31 +343,41 @@ export class CodexAppServerClient {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     const child = this.child;
-    if (!child) return;
-    this.child = null;
-    const exited = await new Promise<boolean>((resolve) => {
-      const t = setTimeout(() => resolve(false), 2000);
-      child.once('exit', () => {
-        clearTimeout(t);
-        resolve(true);
-      });
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        /* already dead */
-      }
-    });
-    if (!exited) {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    }
+    if (!child) { if (this.stopping) await this.stopping; return; }
+    this.onExited(null);
+    await this.stopChild(child);
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
       p.reject(new CodexDaemonExitedError('shutdown'));
     }
     this.pending.clear();
+  }
+
+  private stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+    if (this.stopping) return this.stopping;
+    const signal = (value: NodeJS.Signals) => {
+      if (child.pid) killProcessTree(child.pid, value);
+      else { try { child.kill(value); } catch { /* failed spawn */ } }
+    };
+    this.unsafeChild = child;
+    const work = (async () => {
+      if (this.failedSpawns.has(child) || child.exitCode != null || child.signalCode != null) {
+        if (child.pid) signal('SIGKILL');
+        this.unsafeChild = null;
+        return;
+      }
+      let exited!: () => void;
+      const exit = new Promise<void>((resolve) => { exited = resolve; child.once('exit', resolve); });
+      try {
+        signal('SIGTERM');
+        const stopped = await withDeadline(exit.then(() => true), 2_000, 'exit timeout').catch(() => false);
+        signal('SIGKILL');
+        if (!stopped) await withDeadline(exit, 2_000, 'Codex process exit could not be confirmed. Original sessions retained.');
+        this.unsafeChild = null;
+      } finally { child.removeListener('exit', exited); }
+    })();
+    this.stopping = work;
+    void work.finally(() => { if (this.stopping === work) this.stopping = null; }).catch(() => {});
+    return work;
   }
 }

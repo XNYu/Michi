@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CodexRuntime, CodexConcurrencyError, CodexSessionNotResumableError } from '../src/agents/codex/CodexRuntime';
 import { CodexSession } from '../src/agents/codex/CodexSession';
+import * as db from '../src/services/dbRepository';
 import type { CodexAppServerClient } from '../src/agents/codex/CodexAppServerClient';
 import type { McpSlotRegistry, McpSlot, McpSlotCallbacks } from '../src/services/mcpServer';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
@@ -57,6 +58,7 @@ function makeStubClient(overrides: Partial<Record<string, unknown>> = {}): Codex
       return () => { set!.delete(handler); };
     },
     onServerRequest: (h: ServerRequestHandler) => { serverRequestHandler = h; },
+    onGlobalNotification: (_h: unknown) => () => {},
     onExit: (_cb: () => void) => () => {},
     shutdown: async () => {},
     isRunning: () => true,
@@ -413,7 +415,8 @@ test('one daemon supports multiple Run threads with different models/cwds', asyn
   await runtime.shutdown();
 });
 
-test('chat session newSession still calls setNodeExternalSessionId and uses nodeId', async () => {
+test('chat newSession exposes native identity for route binding commit without an eager write', async (t) => {
+  const writeExternalId = t.mock.method(db, 'setNodeExternalSessionId', () => {});
   const client = makeStubClient({
     request: async (method: string): Promise<unknown> => {
       if (method === 'thread/start') return { threadId: 'chat-thread-001' };
@@ -428,6 +431,7 @@ test('chat session newSession still calls setNodeExternalSessionId and uses node
     3001,
     { client },
   );
+  t.after(() => runtime.shutdown());
 
   // Chat session with no explicit owner — should use nodeId as session id
   const session = await runtime.newSession({
@@ -439,8 +443,8 @@ test('chat session newSession still calls setNodeExternalSessionId and uses node
   assert.equal(session.id, 'node-chat-01');
   // For chat sessions, owner defaults to chat_node
   assert.deepEqual(session.owner, { kind: 'chat_node', nodeId: 'node-chat-01' });
-
-  await runtime.shutdown();
+  assert.equal(session.nativeSessionId, 'chat-thread-001', 'route can commit the complete runtime binding');
+  assert.equal(writeExternalId.mock.callCount(), 0, 'runtime must not persist a partial binding before route commit');
 });
 
 test('agent_run session nativeSessionId is checkpointable thread id', async () => {

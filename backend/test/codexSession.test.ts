@@ -24,6 +24,7 @@ function makeStubClient(overrides: Partial<CodexAppServerClient> = {}): CodexApp
       return () => { set!.delete(handler); };
     },
     onServerRequest: (_h: unknown) => {},
+    onGlobalNotification: (_h: unknown) => () => {},
     onExit: (_cb: () => void) => () => {},
     shutdown: async () => {},
     // Test helper: emit a notification to all handlers for a threadId
@@ -31,6 +32,13 @@ function makeStubClient(overrides: Partial<CodexAppServerClient> = {}): CodexApp
       for (const h of notifHandlers.get(threadId) ?? []) h(method, params);
     },
     ...overrides,
+  };
+  const request = client.request;
+  client.request = async (method: string, params: any) => {
+    const result = await request(method, params);
+    return method === 'turn/start' && !result?.turn && !result?.turnId
+      ? { ...result, turn: { id: `native-${params.threadId}` } }
+      : result;
   };
   return client as CodexAppServerClient;
 }
@@ -458,10 +466,12 @@ test('internal Michi metadata tool calls never enter the visible event stream', 
   assert.equal(events.some((event) => event.kind === 'tool_call_update'), false);
 });
 
-test('cancel issues turn/interrupt', async () => {
+test('cancel waits for native turn identity before issuing turn/interrupt', async () => {
   const requests: string[] = [];
   let resolveTurnStart!: () => void;
   const turnStartPromise = new Promise<void>((r) => { resolveTurnStart = r; });
+  let acceptStart!: (value: unknown) => void;
+  const startResponse = new Promise((resolve) => { acceptStart = resolve; });
 
   const client = makeStubClient({
     request: async (method: string, _params: unknown) => {
@@ -469,7 +479,7 @@ test('cancel issues turn/interrupt', async () => {
       if (method === 'turn/start') {
         resolveTurnStart();
         // Never resolves on its own — simulates a long-running turn
-        await new Promise(() => {});
+        return startResponse;
       }
       return {};
     },
@@ -499,8 +509,13 @@ test('cancel issues turn/interrupt', async () => {
   await turnStartPromise;
 
   await session.cancel();
-
+  assert.equal(requests.includes('turn/interrupt'), false, 'must not issue malformed interrupt before native identity arrives');
+  acceptStart({ turn: { id: 'native-delayed' } });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.ok(requests.includes('turn/interrupt'), 'cancel should issue turn/interrupt');
+  session.markCrashed('test cleanup');
+  await sendPromise;
+  await session.dispose();
 });
 
 test('markCrashed terminates an in-flight drain with turn_end (terminal safety)', async () => {
@@ -552,7 +567,7 @@ test('markCrashed terminates an in-flight drain with turn_end (terminal safety)'
   assert.equal(turnEnd, 'turn_end', 'turn_end should be last event');
 });
 
-test('Codex MCP slot routes ask_user through the session user-input flow', async () => {
+test('Codex MCP slot routes ask_user through the session user-input flow', async (t) => {
   let callbacks: Record<string, (...args: any[]) => any> = {};
   const registry = {
     create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, cbs: typeof callbacks) => {
@@ -562,17 +577,29 @@ test('Codex MCP slot routes ask_user through the session user-input flow', async
     dispose: async () => {},
     get: () => undefined,
   } as unknown as McpSlotRegistry;
+  const client = makeStubClient();
   const session = new CodexSession({
     nodeId: 'node-ask-user',
     threadId: 'thread-ask-user',
     cwd: '/tmp/test',
     workspaceId: null,
-    client: makeStubClient(),
+    client,
     mcpRegistry: registry,
     bridge: makeStubBridge(),
     mcpPort: 3001,
   });
   session.createMcpSlot();
+  session.wireNotifications();
+  const events: string[] = [];
+  const turn = (async () => {
+    for await (const event of session.send('Ask me to pick an option')) events.push(event.kind);
+  })();
+  t.after(async () => {
+    await session.dispose();
+    await turn;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(session.acceptsControl({ threadId: 'thread-ask-user', turnId: 'native-thread-ask-user' }));
 
   assert.equal(typeof callbacks.onAskUser, 'function');
   const answerPromise = callbacks.onAskUser([{
@@ -594,7 +621,13 @@ test('Codex MCP slot routes ask_user through the session user-input flow', async
 
   assert.deepEqual(await answerPromise, { 'Pick one': 'A' });
   assert.equal(pendingUserInputs.size, 0);
-  await session.dispose();
+  (client as any)._emit('thread-ask-user', 'turn/completed', {
+    threadId: 'thread-ask-user',
+    turn: { id: 'native-thread-ask-user', status: 'completed' },
+  });
+  await turn;
+  assert.ok(events.includes('user_input_request'));
+  assert.ok(events.includes('user_input_resolved'));
 });
 
 test('Codex metadata Hook POC requires overview and follow-ups while hiding repair text', async () => {

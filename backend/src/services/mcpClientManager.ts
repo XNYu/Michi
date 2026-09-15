@@ -14,6 +14,10 @@
  * call dispose() when the owning session/workspace is destroyed.
  */
 import { log } from "./logger";
+import { abortable, withDeadline } from '../agents/runtimeLifecycle';
+
+const MCP_SETUP_TIMEOUT_MS = 30_000;
+const MCP_CLEANUP_TIMEOUT_MS = 5_000;
 
 // Lazy-loaded MCP SDK imports. The SDK is ESM-only and the backend is CJS,
 // so we dynamic-import at first use.
@@ -73,6 +77,12 @@ interface ManagedConnection {
 
 export class McpClientManager {
     private connections = new Map<string, ManagedConnection>();
+    private readonly connecting = new Map<string, Promise<{ tools: McpToolInfo[] }>>();
+    private readonly pendingConnections = new Set<ManagedConnection>();
+    private readonly closing = new Map<ManagedConnection, Promise<void>>();
+    private readonly lifetimeAbort = new AbortController();
+    private disposePromise: Promise<void> | undefined;
+    private cleanupError: Error | undefined;
     private disposed = false;
 
     /**
@@ -82,14 +92,30 @@ export class McpClientManager {
      * Throws if the child process fails to start or capability negotiation
      * fails within the timeout.
      */
-    async connect(config: McpServerConfig): Promise<{ tools: McpToolInfo[] }> {
+    async connect(config: McpServerConfig, signal?: AbortSignal): Promise<{ tools: McpToolInfo[] }> {
         if (this.disposed) throw new Error("McpClientManager is disposed");
+        if (this.cleanupError) throw this.cleanupError;
+        signal?.throwIfAborted();
 
         const existing = this.connections.get(config.serverName);
         if (existing) return { tools: existing.tools };
+        const pending = this.connecting.get(config.serverName);
+        if (pending) return signal ? abortable(pending, signal) : pending;
 
-        const { Client } = await loadSdkClient();
-        const { StdioClientTransport } = await loadSdkStdio();
+        const timeout = new AbortController();
+        const setupSignal = AbortSignal.any([this.lifetimeAbort.signal, timeout.signal, ...(signal ? [signal] : [])]);
+        const timer = setTimeout(() => timeout.abort(new Error(`MCP setup timed out: ${config.serverName}`)), MCP_SETUP_TIMEOUT_MS);
+        const work = this.openConnection(config, setupSignal).finally(() => clearTimeout(timer));
+        this.connecting.set(config.serverName, work);
+        const clear = () => { if (this.connecting.get(config.serverName) === work) this.connecting.delete(config.serverName); };
+        void work.then(clear, clear);
+        return work;
+    }
+
+    private async openConnection(config: McpServerConfig, signal: AbortSignal): Promise<{ tools: McpToolInfo[] }> {
+        const { Client } = await abortable(loadSdkClient(), signal);
+        const { StdioClientTransport } = await abortable(loadSdkStdio(), signal);
+        signal.throwIfAborted();
 
         log.info("mcp", `connecting to MCP server: ${config.serverName}`, {
             command: config.command,
@@ -115,43 +141,38 @@ export class McpClientManager {
         const client = new Client(
             { name: "michi", version: "1.0.0" },
         );
+        // Own the transport before either handshake or discovery can suspend.
+        const conn: ManagedConnection = { serverName: config.serverName, client, transport, tools: [] };
+        this.pendingConnections.add(conn);
 
         try {
-            await client.connect(transport);
-        } catch (err) {
-            log.error("mcp", `failed to connect to ${config.serverName}`, {
-                error: (err as Error).message,
+            await abortable(client.connect(transport, { signal, timeout: MCP_SETUP_TIMEOUT_MS }), signal);
+            signal.throwIfAborted();
+            try {
+                const response = await abortable(client.listTools(undefined, { signal, timeout: MCP_SETUP_TIMEOUT_MS }), signal);
+                conn.tools = (response.tools ?? []).map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
+                }));
+            } catch (err) {
+                signal.throwIfAborted();
+                log.warn('mcp', `listTools failed for ${config.serverName}`, { error: (err as Error).message });
+            }
+            signal.throwIfAborted();
+            this.connections.set(config.serverName, conn);
+            this.pendingConnections.delete(conn);
+            log.info('mcp', `connected to ${config.serverName}: ${conn.tools.length} tools discovered`, {
+                toolNames: conn.tools.map((tool) => tool.name),
             });
-            // Clean up partial connection
-            try { await transport.close(); } catch { /* ignore */ }
+            return { tools: conn.tools };
+        } catch (err) {
+            await this.closeConnection(conn);
+            signal.throwIfAborted();
             throw new Error(
                 `Failed to connect to MCP server "${config.serverName}" (${config.command}): ${(err as Error).message}`,
             );
         }
-
-        // Discover available tools
-        let tools: McpToolInfo[] = [];
-        try {
-            const response = await client.listTools();
-            tools = (response.tools ?? []).map((t) => ({
-                name: t.name,
-                description: t.description,
-                inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
-            }));
-        } catch (err) {
-            log.warn("mcp", `listTools failed for ${config.serverName}`, {
-                error: (err as Error).message,
-            });
-            // Non-fatal: the server is connected but has no tools (or hasn't registered them yet).
-        }
-
-        log.info("mcp", `connected to ${config.serverName}: ${tools.length} tools discovered`, {
-            toolNames: tools.map((t) => t.name),
-        });
-
-        const conn: ManagedConnection = { serverName: config.serverName, client, transport, tools };
-        this.connections.set(config.serverName, conn);
-        return { tools };
     }
 
     /** List tools from all connected servers, or from a specific server. */
@@ -171,7 +192,9 @@ export class McpClientManager {
         serverName: string,
         toolName: string,
         args: Record<string, unknown>,
+        signal?: AbortSignal,
     ): Promise<McpToolResult> {
+        signal?.throwIfAborted();
         const conn = this.connections.get(serverName);
         if (!conn) {
             return {
@@ -181,7 +204,7 @@ export class McpClientManager {
         }
 
         try {
-            const result = await conn.client.callTool({ name: toolName, arguments: args });
+            const result = await conn.client.callTool({ name: toolName, arguments: args }, undefined, { signal });
             // Normalize content to always be an array of { type, text?, ... }
             const content = Array.isArray(result.content)
                 ? result.content.map((c: any) => ({
@@ -192,6 +215,7 @@ export class McpClientManager {
                 : [{ type: "text", text: String(result.content ?? "") }];
             return { content, isError: result.isError === true };
         } catch (err) {
+            signal?.throwIfAborted();
             log.error("mcp", `callTool failed: ${serverName}/${toolName}`, {
                 error: (err as Error).message,
             });
@@ -217,24 +241,40 @@ export class McpClientManager {
         const conn = this.connections.get(serverName);
         if (!conn) return;
         this.connections.delete(serverName);
-        try {
-            await conn.client.close();
-        } catch {
-            /* ignore close errors */
-        }
-        try {
-            await conn.transport.close();
-        } catch {
-            /* ignore */
-        }
+        await this.closeConnection(conn);
         log.info("mcp", `disconnected from ${serverName}`);
     }
 
+    private closeConnection(conn: ManagedConnection): Promise<void> {
+        let work = this.closing.get(conn);
+        if (!work) {
+            work = Promise.allSettled([
+                Promise.resolve().then(() => conn.client.close()),
+                Promise.resolve().then(() => conn.transport.close()),
+            ]).then((results) => {
+                const failed = results.find((result) => result.status === 'rejected');
+                if (failed?.status === 'rejected') throw failed.reason;
+                this.pendingConnections.delete(conn);
+            });
+            this.closing.set(conn, work);
+        }
+        return withDeadline(work, MCP_CLEANUP_TIMEOUT_MS, `MCP cleanup timed out: ${conn.serverName}`)
+            .catch((cause) => {
+                this.cleanupError = Object.assign(new Error(`MCP cleanup could not be confirmed: ${conn.serverName}`), {
+                    code: 'MCP_CLEANUP_TIMEOUT', cause,
+                });
+                throw this.cleanupError;
+            });
+    }
+
     /** Disconnect all servers and mark this manager as disposed. */
-    async dispose(): Promise<void> {
-        if (this.disposed) return;
+    dispose(): Promise<void> {
+        if (this.disposePromise) return this.disposePromise;
         this.disposed = true;
-        const names = [...this.connections.keys()];
-        await Promise.allSettled(names.map((n) => this.disconnect(n)));
+        this.lifetimeAbort.abort();
+        const connections = new Set([...this.connections.values(), ...this.pendingConnections, ...this.closing.keys()]);
+        this.connections.clear();
+        this.disposePromise = Promise.all([...connections].map((conn) => this.closeConnection(conn))).then(() => {});
+        return this.disposePromise;
     }
 }

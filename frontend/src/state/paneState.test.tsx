@@ -66,7 +66,7 @@ vi.mock('../services/api', () => ({
   ensureSession: () => Promise.resolve({ chatId: 'fake', currentModeId: null, resumeStrategy: 'fresh' }),
   streamMessage: () => () => {},
   setChatMode: () => Promise.resolve(''),
-  listAgentModes: () => Promise.resolve([]),
+  listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),

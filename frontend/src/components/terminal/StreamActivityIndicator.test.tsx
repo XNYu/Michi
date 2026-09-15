@@ -279,6 +279,12 @@ describe('deriveStreamActivity — Kiro plan steps', () => {
 });
 
 describe('StreamActivityIndicator (render)', () => {
+  it('shows post-cancel cleanup on an idle node without a streaming elapsed timer', () => {
+    const n = { ...node({ status: 'idle' }), runtimeActivity: 'Waiting for cancellation to finish', streamingStartedAt: Date.now() - 30_000 };
+    const { getByRole, queryByText } = render(<StreamActivityIndicator node={n} />);
+    expect(getByRole('status').getAttribute('aria-label')).toBe('Waiting for cancellation to finish');
+    expect(queryByText('30s')).toBeNull();
+  });
   afterEach(() => {
     cleanup();
     vi.useRealTimers();

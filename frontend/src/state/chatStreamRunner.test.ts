@@ -54,6 +54,37 @@ describe('chatStreamRunner — chunk/tool-call ordering', () => {
     expect(reduceNodes(nodes, { type: 'runtime-activity', nodeId: 'n1', assistantId: 'old-turn' })).toBe(nodes);
     expect(reduceNodes(nodes, { type: 'runtime-activity', nodeId: 'n1', assistantId: 'old-turn', detail: 'Waiting' })).toBe(nodes);
   });
+  it('shows post-cancel cleanup without locking the composer or ending the turn twice', () => {
+    let nodes = { n1: makeNode() };
+    const onTurnEnd = vi.fn();
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1',
+      dispatch: (action) => { nodes = reduceNodes(nodes, action) as typeof nodes; },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} }, onTurnEnd,
+    });
+    const handlers = mockStream.mock.calls[0][2];
+    handlers.onAborted();
+    handlers.onCancelRecovery({ state: 'pending', detail: 'Waiting for cancellation to finish' });
+    expect(nodes.n1.status).toBe('idle');
+    expect(nodes.n1.runtimeActivity).toBe('Waiting for cancellation to finish');
+    handlers.onCancelRecovery({ state: 'error', detail: 'Pi cleanup timed out. Original history retained.' });
+    expect(nodes.n1.status).toBe('error');
+    expect(nodes.n1.error).toBe('Pi cleanup timed out. Original history retained.');
+    expect(nodes.n1.runtimeActivity).toBeUndefined();
+    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith('cancel', 'n1');
+  });
+  it('clears cancellation activity on settlement and fences a replaced assistant', () => {
+    let nodes = { n1: { ...makeNode(), status: 'idle' as const } };
+    const pending = { type: 'cancel-recovery', nodeId: 'n1', assistantId: 'a1', state: 'pending', detail: 'Waiting' } as const;
+    let result = reduceNodes(nodes, pending);
+    result = reduceNodes(result, { ...pending, state: 'settled' });
+    expect(result.n1.runtimeActivity).toBeUndefined();
+    nodes = { n1: { ...nodes.n1, messages: [{ id: 'new-a', role: 'assistant', text: '', toolCalls: [] }] } };
+    for (const state of ['pending', 'settled', 'error'] as const) {
+      expect(reduceNodes(nodes, { ...pending, state })).toBe(nodes);
+      const streaming = { n1: makeNode() };
+      expect(reduceNodes(streaming, { ...pending, state })).toBe(streaming);
+    }
+  });
   beforeEach(() => {
     mockStream.mockClear();
     vi.useFakeTimers();

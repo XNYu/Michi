@@ -62,6 +62,7 @@ function planStepActivity(plan: PlanEntry[] | undefined): StreamActivity | null 
  * Exported for unit testing — keep it free of React/timing concerns.
  */
 export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null {
+  if (node.status === 'idle' && node.runtimeActivity) return { label: node.runtimeActivity };
   if (node.status !== 'streaming' || node.visibleResponseComplete) return null;
   if (node.cancelPhase === 'requested') return { label: 'Cancel requested' };
   if (node.cancelPhase === 'acknowledged') return { label: 'Cancel acknowledged' };
@@ -159,7 +160,7 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
   if (!activity) return null;
 
   const seconds = Math.floor(elapsedMs / 1000);
-  const showElapsed = elapsedMs >= ELAPSED_GRACE_MS;
+  const showElapsed = isStreaming && elapsedMs >= ELAPSED_GRACE_MS;
 
   const ariaLabel =
     `${activity.detail ? `${activity.detail}, ` : ''}${activity.label}` +
@@ -191,11 +192,11 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
           {activity.detail}
         </span>
       )}
-      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ minWidth: 0, flex: '1 1 auto', overflowWrap: 'anywhere' }}>
         {activity.label}
       </span>
       {showElapsed && (
-        <span style={{ marginLeft: 'auto', color: 'var(--term-faint)', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--term-faint)', fontVariantNumeric: 'tabular-nums' }}>
           {seconds}s
         </span>
       )}

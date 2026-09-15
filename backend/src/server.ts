@@ -30,7 +30,7 @@ import { McpSlotRegistry, mountMcp } from './services/mcpServer';
 import { initDb, getDb, getDbPath, closeDb, closeAuditDb } from './services/db';
 import { initDbWorker, shutdownDbWorker } from './services/dbWorkerClient';
 import { recordAudit } from './services/audit';
-import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning } from './services/agentConfig';
+import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning, resolveProvider } from './services/agentConfig';
 import { setProviderEnvBindings, getProviderApiKey } from './services/secrets';
 import { getWarmStatus, markReady, markFailed } from './services/readyState';
 import { getRuntime, listRuntimes, registerRuntime } from './agents/registry';
@@ -223,7 +223,11 @@ for (const factory of getEnabledFactories()) {
               }],
               ownerUserId: workspace.owner_user_id ?? null,
             });
-            let child: Awaited<ReturnType<AgentRuntime['newSession']>>;
+            let child: Awaited<ReturnType<AgentRuntime['newSession']>> | undefined;
+            const userId = process.env.MICHI_CLOUD === '1' ? workspace.owner_user_id ?? undefined : undefined;
+            const model = resolveModel(runtime.id, userId);
+            const provider = resolveProvider(runtime.id, userId);
+            const reasoning = resolveReasoning(runtime.id, userId);
             try {
                 child = await runtime.newSession({
                     cwd: args.cwd,
@@ -232,8 +236,22 @@ for (const factory of getEnabledFactories()) {
                     sessionId: nodeId,
                     workspaceId: parentNode.workspace_id,
                     ownerUserId: workspace.owner_user_id ?? null,
+                    model, provider, reasoning,
                 });
+                updateNodeResumeBinding(nodeId, {
+                  acp_session_id: child.nativeSessionId ?? child.id,
+                  runtime_id: child.runtimeId,
+                  provider_id: provider,
+                  model_id: child.currentModelId ?? model,
+                  reasoning,
+                  current_mode_id: child.currentModeId ?? null,
+                });
+                sessionRegistry.registerSession(child, workspace.owner_user_id ?? null);
             } catch (err) {
+                if (child) {
+                  await runtime.releaseSession(child.id);
+                  sessionRegistry.dropSession(child.id);
+                }
                 rollbackProvisionalSpawnNode(
                   nodeId,
                   parentNode.workspace_id,
@@ -241,15 +259,6 @@ for (const factory of getEnabledFactories()) {
                 );
                 throw err;
             }
-            sessionRegistry.registerSession(child, workspace.owner_user_id ?? null);
-            // Runtime ids (notably Kiro/Claude) differ from node ids. Persist
-            // the reverse mapping before publishing the spawn event so cloud
-            // /message ownership accepts this freshly spawned live session.
-            updateNodeResumeBinding(nodeId, {
-              acp_session_id: child.nativeSessionId ?? child.id,
-              runtime_id: child.runtimeId,
-              current_mode_id: child.currentModeId ?? null,
-            });
             return { chatId: child.id, nodeId };
         },
         persistContext: ({ chatId, ownerUserId, name, filePath, size }) => {
