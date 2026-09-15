@@ -1726,8 +1726,8 @@ html[data-vibrancy="on"],
   opacity: 0;
 }
 .t-followup-branch-glyph {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
   line-height: 1;
 }
 @media (hover: none) {

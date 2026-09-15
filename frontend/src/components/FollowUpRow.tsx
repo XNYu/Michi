@@ -1,4 +1,5 @@
 import React, { useCallback } from 'react';
+import { BranchIcon } from './terminal/icons';
 
 export interface FollowUpRowProps {
   index: number;
@@ -69,7 +70,9 @@ export function FollowUpRow({
         disabled={disabled}
         onClick={handleBranchClick}
       >
-        <span className="t-followup-branch-glyph" aria-hidden>⎇</span>
+        <span className="t-followup-branch-glyph" aria-hidden>
+          <BranchIcon size={13} />
+        </span>
         <span className="t-followup-branch-label">Branch</span>
       </button>
     </div>

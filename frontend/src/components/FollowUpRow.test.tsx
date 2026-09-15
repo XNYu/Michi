@@ -51,6 +51,21 @@ describe('FollowUpRow', () => {
     expect(onContinue).not.toHaveBeenCalled();
   });
 
+  it('uses the branch SVG instead of the agent glyph', () => {
+    render(
+      <FollowUpRow
+        index={0}
+        question="hello"
+        onContinue={vi.fn()}
+        onBranch={vi.fn()}
+      />,
+    );
+
+    const branchButton = screen.getByRole('button', { name: /Branch follow-up 1/i });
+    expect(branchButton.querySelector('svg')).toBeTruthy();
+    expect(branchButton.textContent).not.toContain('⎇');
+  });
+
   it('pressing B while text button is focused calls onBranch', () => {
     const onContinue = vi.fn();
     const onBranch = vi.fn();
