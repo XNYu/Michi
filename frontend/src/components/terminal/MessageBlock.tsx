@@ -94,7 +94,9 @@ function formatTokenCount(value: number): string {
   if (value < 1_000) return Math.round(value).toLocaleString('en-US');
   if (value < 1_000_000) {
     const compact = value / 1_000;
-    return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, '')}k`;
+    const label = compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, '');
+    if (label === '1000') return '1m';
+    return `${label}k`;
   }
   const compact = value / 1_000_000;
   return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, '')}m`;
