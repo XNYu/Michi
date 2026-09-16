@@ -145,6 +145,8 @@ export interface SidecarTitleRequest {
   nodeId: string;
   /** The user's message as displayed, without mention expansion or attachments. */
   userText: string;
+  /** Quoted/selected text the user is replying to, giving the title its subject. */
+  contextText?: string;
 }
 
 /**
@@ -154,10 +156,10 @@ export interface SidecarTitleRequest {
  */
 export type SidecarTitleGenerator = (request: SidecarTitleRequest) => Promise<string | null>;
 
-const runtimeSidecarTitleGenerator: SidecarTitleGenerator = async ({ session, userText }) => {
+const runtimeSidecarTitleGenerator: SidecarTitleGenerator = async ({ session, userText, contextText }) => {
   const runtime = getRuntime(session.runtimeId);
   if (!runtime?.generateTitle) return null;
-  return runtime.generateTitle({ userText });
+  return runtime.generateTitle({ userText, contextText });
 };
 
 export interface StartedTurn {
@@ -1461,6 +1463,7 @@ export class ChatHub {
     if (owner && owner.kind !== 'chat_node') return;
     const userText = (args.displayText ?? args.text).trim();
     if (!userText) return;
+    const contextText = args.userMetadata?.quotedText?.trim() || undefined;
     let existing: string | null;
     try {
       existing = this.nodeTitle(log.nodeId);
@@ -1472,7 +1475,7 @@ export class ChatHub {
     const startedAt = Date.now();
     let pending: Promise<string | null>;
     try {
-      pending = Promise.resolve(generator({ session: args.session, nodeId: log.nodeId, userText }));
+      pending = Promise.resolve(generator({ session: args.session, nodeId: log.nodeId, userText, contextText }));
     } catch (err) {
       pending = Promise.reject(err);
     }

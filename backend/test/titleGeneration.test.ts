@@ -38,6 +38,23 @@ describe('titleGeneration helpers', () => {
     assert.ok(prompt.includes('USER MESSAGE:'));
   });
 
+  it('embeds quoted context so the title can name its subject', () => {
+    const prompt = buildTitlePrompt('具体修复的原理是什么？', '持久修复序列化：不要先调用 writeValueAsBytes()；应让 Jackson 直接写入 GZIP');
+    assert.ok(prompt.includes('CONTEXT'));
+    assert.ok(prompt.includes('writeValueAsBytes'));
+    assert.ok(prompt.includes('USER MESSAGE:\n具体修复的原理是什么？'));
+  });
+
+  it('omits the context block when no context is given', () => {
+    const prompt = buildTitlePrompt('hello', '   ');
+    assert.ok(!prompt.includes('CONTEXT'));
+  });
+
+  it('caps the embedded context length', () => {
+    const prompt = buildTitlePrompt('q', 'y'.repeat(5_000));
+    assert.ok(Array.from(prompt.match(/CONTEXT[\s\S]*?USER MESSAGE:/)?.[0] ?? '').length < 1_200);
+  });
+
   it('reads per-runtime models from the environment with off switches', () => {
     const saved = { ...process.env };
     try {
@@ -142,6 +159,15 @@ describe('KiroTitleGenerator', () => {
     assert.deepEqual(calls.setModel, ['gpt-5.6-luna']);
     assert.deepEqual(calls.cancelledPermissions, [7, 7]);
     assert.ok(calls.prompts[0].includes('USER MESSAGE:\nHow do I fix flaky tests?'));
+  });
+
+  it('passes quoted context into the title prompt', async () => {
+    const { client, calls } = fakeClient({ replies: [['S3 序列化 GZIP 修复']] });
+    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000 });
+    await generator.generate('具体修复的原理是什么？', undefined, '持久修复序列化：应让 Jackson 直接写入 GZIP');
+    assert.ok(calls.prompts[0].includes('CONTEXT'));
+    assert.ok(calls.prompts[0].includes('Jackson'));
+    assert.ok(calls.prompts[0].includes('USER MESSAGE:\n具体修复的原理是什么？'));
   });
 
   it('keeps working on the session default model when set_model is rejected', async () => {

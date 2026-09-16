@@ -58,13 +58,13 @@ export class KiroTitleGenerator {
         this.maxTurns = deps.maxTurnsPerSession ?? DEFAULT_KIRO_TITLE_SESSION_TURNS;
     }
 
-    async generate(userText: string, signal?: AbortSignal): Promise<string | null> {
+    async generate(userText: string, signal?: AbortSignal, contextText?: string): Promise<string | null> {
         const handle = await this.ensureSession();
         handle.turns += 1;
         const rotateAfter = handle.turns >= this.maxTurns;
         try {
             const title = await withTitleTimeout(
-                (timeoutSignal) => this.promptOnce(handle, userText, mergeSignals(signal, timeoutSignal)),
+                (timeoutSignal) => this.promptOnce(handle, userText, mergeSignals(signal, timeoutSignal), contextText),
                 this.deps.timeoutMs,
                 "kiro title generation",
             );
@@ -124,9 +124,9 @@ export class KiroTitleGenerator {
         return this.opening;
     }
 
-    private async promptOnce(handle: TitleSessionHandle, userText: string, signal: AbortSignal): Promise<string> {
+    private async promptOnce(handle: TitleSessionHandle, userText: string, signal: AbortSignal, contextText?: string): Promise<string> {
         let collected = "";
-        for await (const update of handle.client.prompt(handle.sid, buildTitlePrompt(userText), [], signal)) {
+        for await (const update of handle.client.prompt(handle.sid, buildTitlePrompt(userText, contextText), [], signal)) {
             const kind = update?.sessionUpdate;
             if (kind === "agent_message_chunk") {
                 const content = update.content;

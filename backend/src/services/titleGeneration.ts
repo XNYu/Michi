@@ -15,13 +15,17 @@ export const MAX_TITLE_CHARS = 80;
 export const TITLE_INSTRUCTIONS = `You generate a short thread title from a user's message in a knowledge-exploration chat app.
 Do not answer the request, plan the work, call tools, or explain your reasoning.
 Capture the TOPIC or INTENT of the message. Match the user's language.
+The title MUST be self-contained: include the specific subject so it makes sense in a sidebar without extra context. Never produce a generic verb-only title like "修复原理详解" or "Implementation Details" — always name WHAT is being discussed.
 Prefer 4-8 words for space-delimited languages or 8-20 characters for Chinese/Japanese.
 Plain text only: no quotes, no trailing period, no markdown, no "Title:" prefix.
 Avoid meta phrasing such as "User asks about…" or "关于…".
 Output ONLY the title.`;
 
-export function buildTitlePrompt(userText: string): string {
-  return `${TITLE_INSTRUCTIONS}\n\n---\nUSER MESSAGE:\n${truncateChars(userText, MAX_TITLE_INPUT_CHARS)}`;
+export function buildTitlePrompt(userText: string, contextText?: string): string {
+  const contextBlock = contextText?.trim()
+    ? `\nCONTEXT (the user is replying to or quoting this):\n${truncateChars(contextText.trim(), 1_000)}\n`
+    : '';
+  return `${TITLE_INSTRUCTIONS}\n\n---${contextBlock}\nUSER MESSAGE:\n${truncateChars(userText, MAX_TITLE_INPUT_CHARS)}`;
 }
 
 export function truncateChars(value: string, maxChars: number): string {

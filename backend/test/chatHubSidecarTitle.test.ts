@@ -103,6 +103,27 @@ describe('ChatHub sidecar title generation', () => {
     await done;
   });
 
+  it('forwards the quoted reply text as title context', async () => {
+    const requests: SidecarTitleRequest[] = [];
+    const hub = makeHub({ titleGenerator: async (request) => { requests.push(request); return 'S3 序列化 GZIP 修复'; } });
+    const { session, finish } = holdingSession();
+    const { done } = await hub.startTurn({
+      chatId: 'chat-ctx',
+      nodeId: 'node-ctx',
+      text: 'wire text',
+      displayText: '具体修复的原理是什么？',
+      userMetadata: { quotedText: '持久修复序列化：应让 Jackson 直接写入 GZIP' },
+      session,
+      enableKiroSidecarTitle: true,
+    });
+    await flush();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].userText, '具体修复的原理是什么？');
+    assert.equal(requests[0].contextText, '持久修复序列化：应让 Jackson 直接写入 GZIP');
+    finish();
+    await done;
+  });
+
   it('skips generation when the node already has a title', async () => {
     let calls = 0;
     const hub = makeHub({

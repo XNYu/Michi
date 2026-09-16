@@ -122,6 +122,7 @@ export class ClaudeRuntime implements AgentRuntime {
       const title = await generateClaudeTitle(opts.userText, {
         model: config.model,
         timeoutMs: config.timeoutMs,
+        contextText: opts.contextText,
       });
       return title || null;
     } catch (err) {

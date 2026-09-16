@@ -18,6 +18,8 @@ export interface ClaudeTitleGeneratorOptions {
   /** Michi alias or concrete id; `haiku` resolves through the model catalog. */
   model: string;
   timeoutMs: number;
+  /** Quoted/selected text the user is replying to; gives the title its subject. */
+  contextText?: string;
   /** Override the neutral cwd (tests). Defaults to an empty folder under the Michi data dir. */
   cwd?: string;
   /** Test seam. */
@@ -101,7 +103,12 @@ export async function generateClaudeTitle(userText: string, opts: ClaudeTitleGen
     });
 
     child.stdin.on('error', () => { /* child exited before reading stdin */ });
-    child.stdin.end(`USER MESSAGE:\n${truncateChars(userText, MAX_TITLE_INPUT_CHARS)}`);
+    // TITLE_INSTRUCTIONS already live in --append-system-prompt, so stdin
+    // carries only the CONTEXT block (if any) plus the user message.
+    const context = opts.contextText?.trim()
+      ? `CONTEXT (the user is replying to or quoting this):\n${truncateChars(opts.contextText.trim(), 1_000)}\n\n`
+      : '';
+    child.stdin.end(`${context}USER MESSAGE:\n${truncateChars(userText, MAX_TITLE_INPUT_CHARS)}`);
 
     try {
       const code = await exited;

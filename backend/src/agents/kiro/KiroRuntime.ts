@@ -303,7 +303,7 @@ export class KiroRuntime implements AgentRuntime {
     async generateTitle(opts: GenerateTitleOptions): Promise<string | null> {
         if (!this.titleGenerator) return null;
         try {
-            return await this.titleGenerator.generate(opts.userText, opts.signal);
+            return await this.titleGenerator.generate(opts.userText, opts.signal, opts.contextText);
         } catch (err) {
             log.warn("chat", "kiro title generation failed", { error: (err as Error).message });
             return null;
