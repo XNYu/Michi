@@ -37,7 +37,8 @@ describe('capabilityDescriptor', () => {
     assert.equal(CODEX_DESCRIPTOR.steer.availability, 'native');
     assert.equal(CODEX_DESCRIPTOR.compact.availability, 'native');
     assert.equal(shouldSteerInsteadOfQueue(CODEX_DESCRIPTOR), true);
-    assert.equal(CODEX_DESCRIPTOR.subagents.availability, 'invisible');
+    assert.equal(CODEX_DESCRIPTOR.subagents.availability, 'native');
+    assert.equal(CODEX_DESCRIPTOR.subagents.confidence, 'projected');
   });
 
   test('Pi without SDK flag stays native_unwired for steer', () => {

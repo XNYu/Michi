@@ -130,8 +130,7 @@ describe('turn persistence repository', () => {
     assert.equal(node.status, 'idle');
     assert.equal(node.last_applied_turn_id, 'turn-1');
     assert.equal(node.last_applied_seq, 9);
-    assert.equal(typeof node.resume_fingerprint, 'string');
-    assert.ok(String(node.resume_fingerprint).length > 0);
+    assert.equal(node.resume_fingerprint, null, 'turn persistence must not fabricate a transcript fingerprint');
 
     const fts = getDb().prepare("SELECT content FROM messages_fts WHERE messages_fts MATCH 'answer'").all();
     assert.equal(fts.length, 1);

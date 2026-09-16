@@ -351,16 +351,17 @@ describe('KiroRuntime idle cleanup', () => {
 
         const client = fakeClient('/tmp/worktree-reuse');
         rt.pool.set('/tmp/worktree-reuse', client);
-        rt.ensureClient = async () => client;
-
         // Creating a session should cancel the idle timer.
-        await runtime.newSession({
-            cwd: '/tmp/worktree-reuse',
-            owner: makeOwner('run-reuse', 'attempt-reuse'),
-        });
-
-        assert.ok(!rt.idleTimers.has('/tmp/worktree-reuse'));
-        clearTimeout(timer);
+        try {
+            await runtime.newSession({
+                cwd: '/tmp/worktree-reuse',
+                owner: makeOwner('run-reuse', 'attempt-reuse'),
+            });
+            assert.ok(!rt.idleTimers.has('/tmp/worktree-reuse'));
+        } finally {
+            clearTimeout(timer);
+            await runtime.shutdown();
+        }
     });
 });
 

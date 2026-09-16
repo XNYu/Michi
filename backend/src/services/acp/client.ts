@@ -37,30 +37,9 @@ const DEFAULT_TIMEOUT_MS = (() => {
 const PROMPT_TIMEOUT_MS = 0;
 const MAX_RPC_ERROR_DATA_CHARS = 4 * 1024;
 
-export interface ACPErrorDetails {
-    method?: string;
-    sessionId?: string;
-    rpcCode?: unknown;
-    rpcData?: unknown;
-}
-
-export class ACPError extends Error {
-    readonly method?: string;
-    readonly sessionId?: string;
-    readonly rpcCode?: unknown;
-    readonly rpcData?: unknown;
-
-    constructor(message: string, details: ACPErrorDetails = {}) {
-        super(message);
-        this.name = new.target.name;
-        this.method = details.method;
-        this.sessionId = details.sessionId;
-        this.rpcCode = details.rpcCode;
-        this.rpcData = details.rpcData;
-    }
-}
-export class ACPNotRunningError extends ACPError {}
-export class ACPProcessExitedError extends ACPError {}
+import { ACPError, ACPNotRunningError, ACPProcessExitedError, ACPSessionRecoveryRequiredError } from "./errors";
+export { ACPError, ACPNotRunningError, ACPProcessExitedError, ACPSessionRecoveryRequiredError } from "./errors";
+export type { ACPErrorDetails } from "./errors";
 
 export type { AcpUpdate };
 

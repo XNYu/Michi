@@ -44,10 +44,10 @@ describe('KiroRuntime warm session handoff', () => {
     let releaseWarm!: () => void;
     const warmLock = new Promise<void>((resolve) => {
       releaseWarm = () => {
-        rt.warmedSessions.set('/tmp/a', {
+        rt.warmedSessions.set('/tmp/a', [{
           sid: 'warm-sid',
           currentModeId: 'mode-warm',
-        });
+        }]);
         resolve();
       };
     });
@@ -107,7 +107,7 @@ describe('KiroRuntime warm session handoff', () => {
     rt.warmNextSession = () => {};
     const slot: any = { slotId: 'slot-a', parentChatId: '__pending__', nodeId: null, cwd: '/tmp/a', workspaceId: null, ownerUserId: null };
     slots.set(slot.slotId, slot);
-    rt.warmedSessions.set('/tmp/a', { sid: 'kiro-session-a', slotId: slot.slotId });
+    rt.warmedSessions.set('/tmp/a', [{ sid: 'kiro-session-a', slotId: slot.slotId }]);
     await runtime.newSession({ cwd: '/tmp/a', sessionId: 'node-a', workspaceId: 'ws-a', ownerUserId: 'owner-a' });
     assert.ok(slot.agentRuns);
     assert.deepEqual(bindings, [{

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AcpClient } from '../src/services/acpClient';
+import { AcpClient } from '../src/services/acp/client';
 import { createKiroProfile } from '../src/services/acp/profiles/kiro';
 import { createCursorProfile } from '../src/services/acp/profiles/cursor';
 import { createGrokProfile } from '../src/services/acp/profiles/grok';

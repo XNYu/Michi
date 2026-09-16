@@ -68,7 +68,7 @@ describe('KiroRuntime Agent Run newSession', () => {
             },
         });
         // Warm sessions should NOT be consumed for runs.
-        rt.warmedSessions.set('/tmp/cwd', { sid: 'warm-sid', slotId: 'warm-slot' });
+        rt.warmedSessions.set('/tmp/cwd', [{ sid: 'warm-sid', slotId: 'warm-slot' }]);
 
         const toolProfile: RuntimeToolProfile = { allowedToolNames: ['submit_agent_result', 'read'] };
 
@@ -111,7 +111,7 @@ describe('KiroRuntime Agent Run newSession', () => {
         const rt = runtime as any;
         rt.ensureClient = async () => ({});
         rt.warmNextSession = () => {};
-        rt.warmedSessions.set('/tmp/cwd', { sid: 'warm-chat-sid', currentModeId: 'default' });
+        rt.warmedSessions.set('/tmp/cwd', [{ sid: 'warm-chat-sid', currentModeId: 'default' }]);
 
         const session = await runtime.newSession({
             cwd: '/tmp/cwd',

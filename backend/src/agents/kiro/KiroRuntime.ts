@@ -271,9 +271,11 @@ export class KiroRuntime implements AgentRuntime {
     private readonly titleGenerator: KiroTitleGenerator | null;
 
     constructor(
-        bridge: AgentToolBridge,
-        mcpRegistry: McpSlotRegistry | undefined,
+        /** Bridge for spawn_branches/save_artifact/update_artifact business effects. */
+        private readonly bridge: AgentToolBridge,
+        private readonly mcpRegistry: McpSlotRegistry | undefined,
         mcpPort: number,
+        /** Default cwd used by `getAvailableModes` when no session-specific cwd applies. */
         defaultCwd: string = process.cwd(),
         modelCache?: RuntimeModelCache,
     ) {

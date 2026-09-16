@@ -1,19 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { extractToolUsePurpose } from "michi-shared";
-import type {
-    AgentSession,
-    AgentTurnInput,
-    ChatMessage,
-    RuntimePermissionBroker,
-    RuntimeSessionOwner,
-    RuntimeToolProfile,
-} from "../types";
+import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
-import type { AcpPromptBlock } from "../../services/acpClient";
-import type { KiroRuntime } from "./KiroRuntime";
+import type { AcpPromptBlock } from "../../services/acp/client";
+import { translateAcpToolCall } from "../../services/acp/toolCallTranslate";
+import type { AcpAgentRuntime } from "./AcpRuntime";
 import { followUpReminder } from "../preamble";
-import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "./acpErrors";
+import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "../kiro/acpErrors";
 
 const KIRO_IMAGE_MEDIA_TYPES: Record<string, string> = {
     ".gif": "image/gif",
@@ -53,6 +46,33 @@ const KIRO_METADATA_DONE_TOOL_RESULT =
 
 function stripMetadataCompletionInstruction(output: string): string {
     return output.split(KIRO_METADATA_DONE_TOOL_RESULT).join("Branch overview updated.");
+}
+
+const MAX_TOOL_PAYLOAD = 16 * 1024;
+
+function clipToolPayload(value: string | undefined): string | undefined {
+    if (value == null) return undefined;
+    return value.length > MAX_TOOL_PAYLOAD ? value.slice(0, MAX_TOOL_PAYLOAD) : value;
+}
+
+function toToolEvent(
+    kind: "tool_call" | "tool_call_update",
+    update: Record<string, any>,
+): Extract<NormalizedEvent, { kind: "tool_call" | "tool_call_update" }> {
+    const translated = translateAcpToolCall(update);
+    const output = translated.output
+        ? stripMetadataCompletionInstruction(translated.output)
+        : undefined;
+    return {
+        kind,
+        toolCallId: translated.toolCallId,
+        title: translated.title,
+        status: translated.status,
+        kindType: translated.kindType,
+        detail: translated.detail,
+        inputJson: clipToolPayload(translated.inputJson),
+        output: clipToolPayload(output),
+    };
 }
 
 class StreamingSentinelStripper {
@@ -101,7 +121,7 @@ const BRANCH_OVERVIEW_TOOL_REMINDER = `
 [Before ending this turn, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered. It appends to the branch's journal; do not restate earlier turns. Match the user's language. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
 
 /**
- * KiroSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
+ * AcpSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
  * generator. Each instance corresponds to one ACP sessionId on a specific
  * cwd. The `send()` method translates raw `session/update` payloads into
  * the unified `NormalizedEvent` stream that ChatManager (and the SSE
@@ -113,38 +133,23 @@ const BRANCH_OVERVIEW_TOOL_REMINDER = `
  *     auto-branch shared buffer (ChatManager).
  *   - Perf timing of `first_chunk` (ChatManager — needs the original `tStart`).
  */
-export class KiroSession implements AgentSession {
-    public readonly runtimeId = "kiro";
-    public readonly owner?: RuntimeSessionOwner;
-    public readonly runtimeProfileHash?: string | null;
+export class AcpSession implements AgentSession {
+    public readonly runtimeId: string;
     public parentChatId?: string;
     private history: ChatMessage[] = [];
     private pendingAssistantBuf: string[] | undefined;
-    private activeTurn: AbortController | null = null;
     private enableFollowUps: boolean;
-    private readonly toolProfile?: RuntimeToolProfile;
-    private readonly permissionBroker?: RuntimePermissionBroker;
 
     constructor(
         public readonly id: string,
         public readonly nativeSessionId: string,
-        private readonly runtime: KiroRuntime,
+        private readonly runtime: AcpAgentRuntime,
         private readonly cwd: string,
-        opts?: {
-            parentChatId?: string;
-            enableFollowUps?: boolean;
-            owner?: RuntimeSessionOwner;
-            runtimeProfileHash?: string | null;
-            toolProfile?: RuntimeToolProfile;
-            permissionBroker?: RuntimePermissionBroker;
-        },
+        opts?: { parentChatId?: string; enableFollowUps?: boolean },
     ) {
+        this.runtimeId = runtime.id;
         this.parentChatId = opts?.parentChatId;
         this.enableFollowUps = opts?.enableFollowUps !== false;
-        this.owner = opts?.owner;
-        this.runtimeProfileHash = opts?.runtimeProfileHash ?? null;
-        this.toolProfile = opts?.toolProfile;
-        this.permissionBroker = opts?.permissionBroker;
     }
 
     getEnableFollowUps(): boolean {
@@ -179,24 +184,28 @@ export class KiroSession implements AgentSession {
     private firstMessagePreamble: string | null = null;
 
     async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
-        const turn = new AbortController();
-        this.activeTurn = turn;
         this.history.push({ role: "user", content: text });
 
         // Append follow-up reminder for the model only — history stays clean.
         const userTurnCount = this.history.filter(m => m.role === "user").length;
         const reminder = followUpReminder(userTurnCount, this.enableFollowUps);
-        const textForModel = text + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
+        const sendOverviewReminder = typeof this.runtime.shouldSendBranchOverviewReminder === "function"
+            ? this.runtime.shouldSendBranchOverviewReminder()
+            : this.runtimeId !== "cursor" && this.runtimeId !== "grok";
+        const overviewReminder = sendOverviewReminder ? BRANCH_OVERVIEW_TOOL_REMINDER : "";
+        const textForModel = text + (reminder || "") + overviewReminder;
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`
             : textForModel;
         this.firstMessagePreamble = null;
-        const imageBlocks = buildKiroImageBlocks(input);
+        const imageBlocks = this.runtime.allowsImagePrompt?.(this.cwd) !== false
+            ? buildKiroImageBlocks(input)
+            : [];
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
         try {
-            for await (const ev of this.streamUpdates(transportText, imageBlocks, turn.signal)) {
+            for await (const ev of this.streamUpdates(transportText, imageBlocks)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 yield ev;
                 if (ev.kind === "turn_end") break;
@@ -205,10 +214,7 @@ export class KiroSession implements AgentSession {
             if (buf.length > 0) {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
-            if (this.activeTurn === turn) {
-                this.activeTurn = null;
-                this.pendingAssistantBuf = undefined;
-            }
+            this.pendingAssistantBuf = undefined;
         }
     }
 
@@ -230,31 +236,18 @@ export class KiroSession implements AgentSession {
      *
      * The thrown error carries `acpErrorKind` (connection | auth | generic) so
      * ChatHub can hand the UI a class-appropriate banner.
-     *
-     * Agent Run sessions (`agent_run` owner) disable the hidden auto-retry.
-     * A tool may have produced a non-visible side effect before the transport
-     * failed, making an automatic resend unsafe. Durable Run recovery is owned
-     * by the Coordinator and uses the persisted ACP session id.
      */
-    private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
+    private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
         let attempt = 0;
         while (true) {
             let firstVisibleYielded = false;
             try {
-                for await (const ev of this.runPromptOnce(text, imageBlocks, signal)) {
+                for await (const ev of this.runPromptOnce(text, imageBlocks)) {
                     if (ev.kind !== "heartbeat") firstVisibleYielded = true;
                     yield ev;
                 }
                 return;
             } catch (err) {
-                // A cancelled prompt can fail with a normal connection/transient
-                // error. Retrying it would restart work the user just stopped
-                // (and connection recovery kills other sessions on this cwd).
-                if (signal.aborted) {
-                    yield { kind: "turn_end", stopReason: "cancelled" };
-                    return;
-                }
-                if (this.owner?.kind === "agent_run") throw err;
                 const cls = classifyAcpError(err);
                 const canRetry = attempt === 0 && !firstVisibleYielded && isRetryable(cls);
                 if (!canRetry) {
@@ -284,24 +277,11 @@ export class KiroSession implements AgentSession {
      * `chunk` before rethrowing, so a turn that produced ANY visible output is
      * observable to the wrapper (which then declines to retry).
      */
-    private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
-        if (signal.aborted) {
-            yield { kind: "turn_end", stopReason: "cancelled" };
-            return;
-        }
-        let c = await this.runtime.ensureClient(this.cwd);
-        if (c.needsSessionRecovery?.(this.nativeSessionId)) {
-            yield { kind: 'retry_start', detail: 'Restoring original Kiro session' };
-            c = await this.runtime.recoverCancelledSession(this.nativeSessionId, this.cwd);
-            yield { kind: 'retry_end' };
-        }
-        if (signal.aborted) {
-            yield { kind: 'turn_end', stopReason: 'cancelled' };
-            return;
-        }
+    private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[] = []): AsyncIterableIterator<NormalizedEvent> {
+        const c = await this.runtime.ensureClient(this.cwd);
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         try {
-            for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks, signal)) {
+            for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks)) {
                 const kind = update.sessionUpdate;
                 if (kind === "agent_message_chunk") {
                     const content = update.content;
@@ -335,29 +315,7 @@ export class KiroSession implements AgentSession {
                     })),
                 };
             } else if (kind === "tool_call" || kind === "tool_call_update") {
-                const rawInput = update.rawInput;
-                const toolTitle = update.title || "";
-                const purpose = extractToolUsePurpose(rawInput);
-                const inputStr = rawInput != null
-                    ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
-                    : undefined;
-                const rawOutputStr = update.rawOutput != null
-                    ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
-                    : undefined;
-                const outputStr = rawOutputStr
-                    ? stripMetadataCompletionInstruction(rawOutputStr)
-                    : undefined;
-                const MAX_PAYLOAD = 16 * 1024;
-                yield {
-                    kind,
-                    toolCallId: update.toolCallId || "",
-                    title: toolTitle,
-                    status: update.status || "",
-                    kindType: update.kind || undefined,
-                    detail: purpose,
-                    inputJson: inputStr && inputStr.length > MAX_PAYLOAD ? inputStr.slice(0, MAX_PAYLOAD) : inputStr,
-                    output: outputStr && outputStr.length > MAX_PAYLOAD ? outputStr.slice(0, MAX_PAYLOAD) : outputStr,
-                };
+                yield toToolEvent(kind, update);
             } else if (kind === "__heartbeat__") {
                 yield { kind: "heartbeat", idleMs: update.idleMs || 0 };
             } else if (kind === "spawn_branches") {
@@ -400,57 +358,25 @@ export class KiroSession implements AgentSession {
                     yield { kind: "follow_ups" as const, followUps };
                 }
             } else if (kind === "permission_request") {
-                // Incoming permission request from kiro-cli — agent_run owners
-                // route through the Run permission broker; chat_node owners
-                // forward to SSE for the frontend approval dialog.
-                if (this.owner?.kind === "agent_run" && this.permissionBroker) {
-                    // Broker the permission asynchronously. ACP is blocked
-                    // waiting for our JSON-RPC response, so the agent stays
-                    // paused until we answer.
-                    const toolName = update.toolCall?.title ?? "unknown";
-                    const decision = await this.permissionBroker.requestPermission({
-                        owner: this.owner,
-                        ownerUserId: null,
-                        workspaceId: null,
-                        toolName,
-                        input: update.toolCall,
-                        toolCallId: update.toolCall?.toolCallId,
-                    });
-                    const rawOptions: any[] = Array.isArray(update.options) ? update.options : [];
-                    if (decision === "allow_once" || decision === "allow_always") {
-                        // Find the "allow" option by optionId; fall back to first option.
-                        const allowOption = rawOptions.find(
-                            (o: any) => o.optionId === "allow" || o.optionId === "allowForSession" || o.optionId === "yes",
-                        ) ?? rawOptions[0];
-                        if (allowOption) {
-                            this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allowOption.optionId);
-                        }
-                        // allow_always for Runs is Attempt-scoped only — do NOT
-                        // write a normal chat Workspace grant.
-                    } else if (decision === "deny") {
-                        this.runtime.cancelPermission(this.nativeSessionId, update.requestId);
-                    } else {
-                        // "ask" — surface as a Run interaction so the Executor/UI
-                        // can handle it. Yield the permission_request event.
-                        yield {
-                            kind: "permission_request" as const,
-                            requestId: update.requestId,
-                            toolCallId: update.toolCall?.toolCallId,
-                            title: update.toolCall?.title ?? "Tool call",
-                            options: rawOptions,
-                            source: "acp_permission",
-                        };
-                    }
-                } else {
-                    yield {
-                        kind: "permission_request" as const,
-                        requestId: update.requestId,
-                        toolCallId: update.toolCall?.toolCallId,
-                        title: update.toolCall?.title ?? "Tool call",
-                        options: Array.isArray(update.options) ? update.options : [],
-                        source: "acp_permission",
-                    };
+                // Incoming permission request from the ACP agent — forward to
+                // SSE so the frontend can show an approval dialog. Cursor (and
+                // similar) put the real tool name / args on toolCall here
+                // while the earlier tool_call event was an empty "MCP: tool"
+                // stub, so also emit a tool_call_update to enrich the chip.
+                const toolCall = update.toolCall && typeof update.toolCall === "object"
+                    ? update.toolCall
+                    : {};
+                const enriched = toToolEvent("tool_call_update", toolCall);
+                if (enriched.toolCallId) {
+                    yield enriched;
                 }
+                yield {
+                    kind: "permission_request" as const,
+                    requestId: update.requestId,
+                    toolCallId: enriched.toolCallId || update.toolCall?.toolCallId,
+                    title: enriched.title || update.toolCall?.title || "Tool call",
+                    options: Array.isArray(update.options) ? update.options : [],
+                };
             } else if (kind === "subagent_list_update") {
                 yield {
                     kind: "subagent_list_update" as const,
@@ -477,18 +403,6 @@ export class KiroSession implements AgentSession {
                 if (Number.isFinite(pct)) {
                     yield { kind: "context_usage" as const, contextUsagePercentage: pct };
                 }
-            } else if (kind === "compaction_start") {
-                yield { kind: "compaction_start" as const, detail: "compact" };
-            } else if (kind === "compaction_end") {
-                yield {
-                    kind: "compaction_end" as const,
-                    detail: typeof update.summary === "string" ? update.summary : "compact",
-                };
-            } else if (kind === "clear_status") {
-                // Session history was cleared. Emit as a compaction pair so the
-                // UI can show a brief "cleared" indicator without a new event kind.
-                yield { kind: "compaction_start" as const, detail: "clear" };
-                yield { kind: "compaction_end" as const, detail: "clear" };
             } else if (kind === "usage_summary") {
                 const pct = Number(update.contextUsagePercentage);
                 const credits = (update.meteringUsage ?? []).reduce(
@@ -555,24 +469,8 @@ export class KiroSession implements AgentSession {
     }
 
     async cancel(): Promise<void> {
-        this.activeTurn?.abort();
         const c = this.runtime.getClient(this.cwd);
         await c?.cancel(this.nativeSessionId);
-    }
-
-    /**
-     * Execute a Kiro slash command via the dedicated ACP RPC instead of
-     * sending it as prompt text. Returns the structured response. Side
-     * effects (compaction/clear notifications) arrive on the session queue
-     * and will be yielded during the next prompt turn, or can be consumed
-     * by polling the session queue directly.
-     */
-    async executeCommand(
-        command: string,
-        args?: Record<string, unknown>,
-    ): Promise<{ success: boolean; message?: string; data?: unknown }> {
-        const c = await this.runtime.ensureClient(this.cwd);
-        return c.executeCommand(this.nativeSessionId, command, args);
     }
 
     async setMode(modeId: string): Promise<void> {

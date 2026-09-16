@@ -1,28 +1,29 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { AcpSession } from '../src/agents/acp/AcpSession';
+import type { AcpAgentRuntime } from '../src/agents/acp/AcpRuntime';
 import {
     formatMcpToolOutput,
     isPlaceholderToolOutput,
     translateAcpToolCall,
 } from '../src/services/acp/toolCallTranslate';
 
-function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntime {
+function runtimeWithUpdates(updates: Array<Record<string, unknown>>): AcpAgentRuntime {
     const client = {
         async *prompt() {
             for (const update of updates) yield update;
         },
     };
     return {
+        id: 'cursor',
         ensureClient: async () => client,
         getCurrentMode: () => null,
         getCurrentModel: () => null,
-    } as unknown as KiroRuntime;
+    } as unknown as AcpAgentRuntime;
 }
 
-async function collect(session: KiroSession, text = 'hello') {
+async function collect(session: AcpSession, text = 'hello') {
     const events = [];
     for await (const event of session.send(text)) events.push(event);
     return events;
@@ -89,9 +90,9 @@ describe('translateAcpToolCall', () => {
     });
 });
 
-describe('KiroSession permission enrichment', () => {
+describe('AcpSession permission enrichment', () => {
     it('emits tool_call_update from permission.toolCall title + fenced JSON content', async () => {
-        const session = new KiroSession('node-1', 'sid-1', runtimeWithUpdates([
+        const session = new AcpSession('node-1', 'sid-1', runtimeWithUpdates([
             {
                 sessionUpdate: 'tool_call',
                 toolCallId: 'call-cursor-1',
@@ -141,7 +142,7 @@ describe('KiroSession permission enrichment', () => {
     });
 
     it('uses content[] as output when rawOutput is {success:true}', async () => {
-        const session = new KiroSession('node-2', 'sid-2', runtimeWithUpdates([
+        const session = new AcpSession('node-2', 'sid-2', runtimeWithUpdates([
             {
                 sessionUpdate: 'tool_call_update',
                 toolCallId: 'call-grok-1',
@@ -162,7 +163,7 @@ describe('KiroSession permission enrichment', () => {
     });
 
     it('uses rawInput.tool_name when ACP title is "MCP: tool"', async () => {
-        const session = new KiroSession('node-3', 'sid-3', runtimeWithUpdates([
+        const session = new AcpSession('node-3', 'sid-3', runtimeWithUpdates([
             {
                 sessionUpdate: 'tool_call',
                 toolCallId: 'call-3',

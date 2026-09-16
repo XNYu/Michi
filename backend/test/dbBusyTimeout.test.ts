@@ -3,7 +3,7 @@
  *
  * Without PRAGMA busy_timeout, a writer that loses the WAL write-lock race
  * gets SQLITE_BUSY immediately (busy_timeout defaults to 0). We set it to
- * 5000ms on both the main data.db and the audit.db so a contended writer
+ * 15000ms on both the main data.db and the audit.db so a contended writer
  * waits-and-retries instead of throwing.
  *
  * Mirrors migrationV9.test.ts: a fresh tmp-dir DB per test, singleton reset
@@ -38,15 +38,15 @@ afterEach(() => {
 });
 
 describe('PRAGMA busy_timeout', () => {
-  test('initDb sets busy_timeout = 5000 on the main data.db', () => {
+  test('initDb sets busy_timeout = 15000 on the main data.db', () => {
     initDb();
     const row = getDb().prepare('PRAGMA busy_timeout').get() as { timeout: number };
-    assert.equal(row.timeout, 5000, 'data.db busy_timeout must be 5000ms');
+    assert.equal(row.timeout, 15000, 'data.db busy_timeout must be 15000ms');
   });
 
-  test('getAuditDb sets busy_timeout = 5000 on the audit.db', () => {
+  test('getAuditDb sets busy_timeout = 15000 on the audit.db', () => {
     const row = getAuditDb().prepare('PRAGMA busy_timeout').get() as { timeout: number };
-    assert.equal(row.timeout, 5000, 'audit.db busy_timeout must be 5000ms');
+    assert.equal(row.timeout, 15000, 'audit.db busy_timeout must be 15000ms');
   });
 
   test('WAL and foreign_keys remain set alongside busy_timeout (no regression)', () => {

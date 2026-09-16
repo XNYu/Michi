@@ -147,6 +147,8 @@ export interface McpSlot {
     agentRuns?: AgentRunToolInvoker;
     agentRunToolNames?: readonly AgentRunToolName[];
     onSubmitAgentResult?: (payload: unknown) => ResultBundleV1;
+    /** Best-effort UI backfill of the real MCP result onto the in-flight ACP tool card. */
+    onMcpToolResult?: (toolName: string, result: unknown) => void;
 }
 
 export interface McpSlotCallbacks {
@@ -174,6 +176,7 @@ export interface McpSlotCallbacks {
     agentRuns?: AgentRunToolInvoker;
     agentRunToolNames?: readonly AgentRunToolName[];
     onSubmitAgentResult?: McpSlot["onSubmitAgentResult"];
+    onMcpToolResult?: McpSlot["onMcpToolResult"];
 }
 
 export class McpSlotRegistry {

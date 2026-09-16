@@ -1,4 +1,4 @@
-import { AcpClient } from "../../services/acpClient";
+import { AcpClient } from "../../services/acp/client";
 import type { AcpInitializeResult, AcpMcpAttach, AcpProfile } from "../../services/acp/types";
 import {
     acpShouldAttachMcp,
@@ -17,7 +17,7 @@ import type {
     NewAgentSessionOptions,
     SessionMode,
 } from "../types";
-import { KIRO_METADATA_DONE_SENTINEL, KiroSession } from "../kiro/KiroSession";
+import { KIRO_METADATA_DONE_SENTINEL, AcpSession } from "./AcpSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble } from "../preamble";
 import type { AgentToolBridge, BridgeContextResult, SpawnedBranch } from "../toolBridge";
@@ -299,7 +299,7 @@ export class AcpAgentRuntime implements AgentRuntime {
             onUpdateArtifact: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
             onSetFollowUps: (followUps) => this.handleSetFollowUps(getSlotId()!, followUps),
             onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
-            // Kiro-only: KiroSession strips this token after set_branch_overview.
+            // Kiro-only: AcpSession strips this token after set_branch_overview.
             // Cursor/Grok must not inherit the sentinel instruction.
             ...(this.id === "kiro" ? { metadataDoneSentinel: KIRO_METADATA_DONE_SENTINEL } : {}),
             // show_image is a Claude-runtime side-effect tool; ACP CLI runtimes
@@ -320,7 +320,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         if (parentSid === "__pending__") return [];
         const parentNodeId = slot.nodeId ?? this.nodeIdBySid.get(parentSid) ?? parentSid;
         const cwd = slot.cwd;
-        const parentSession = sessionRegistry.getSession(parentNodeId) as KiroSession | undefined;
+        const parentSession = sessionRegistry.getSession(parentNodeId) as AcpSession | undefined;
 
         const created = await this.bridge.spawnBranches({
             parentChatId: parentNodeId,
@@ -553,7 +553,7 @@ export class AcpAgentRuntime implements AgentRuntime {
      * the process, then `session/load` the SAME sid so kiro restores the full
      * on-disk transcript (~/.kiro/sessions/cli/<sid>.jsonl) — the model keeps
      * its memory of prior turns. The nativeSessionId is unchanged, so the
-     * caller's KiroSession stays valid; only the MCP slot + runtime maps are
+     * caller's AcpSession stays valid; only the MCP slot + runtime maps are
      * rebuilt (loadAcpSession handles both). Returns true iff the reload
      * succeeded; on failure the caller surfaces the original error.
      *
@@ -962,7 +962,7 @@ export class AcpAgentRuntime implements AgentRuntime {
      * slot wired to this runtime's bridge, optionally consume a warmed
      * session, waiting for an in-flight warm slot before falling back to
      * a cold session/new, build the first-message preamble (including
-     * ancestor stitching from sessionRegistry), prime the KiroSession,
+     * ancestor stitching from sessionRegistry), prime the AcpSession,
      * and return it. The caller is expected to register the returned
      * session in sessionRegistry so subsequent ancestor lookups find it.
      */
@@ -1035,7 +1035,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         }
 
         const enableFollowUps = opts.enableFollowUps !== false;
-        const session = new KiroSession(nodeId, sid, this, opts.cwd, {
+        const session = new AcpSession(nodeId, sid, this, opts.cwd, {
             parentChatId: opts.parentChatId,
             enableFollowUps,
         });
@@ -1095,7 +1095,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         if (result.slotId) this.slotByChatId.set(result.sid, result.slotId);
         this.sessionCwd.set(result.sid, opts.cwd);
         this.bindNodeSession(nodeId, result.sid);
-        return new KiroSession(nodeId, result.sid, this, opts.cwd);
+        return new AcpSession(nodeId, result.sid, this, opts.cwd);
     }
 
     async releaseSession(sessionId: string): Promise<void> {

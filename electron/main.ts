@@ -712,6 +712,14 @@ function probeClaudeCli(): boolean {
   return probeNamedBins('claude');
 }
 
+/** Pick the first installed CLI, falling back to the CLI-free Pi runtime. */
+function detectDefaultRuntime(): string {
+  if (probeCodexCli()) return 'codex';
+  if (probeClaudeCli()) return 'claude';
+  if (probeKiroCli()) return 'kiro';
+  return 'pi';
+}
+
 /**
  * Load a .env file into an object (does NOT pollute process.env).
  * Supports KEY=VALUE, KEY="VALUE", KEY='VALUE', comments (#), blank lines.

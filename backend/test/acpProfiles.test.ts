@@ -16,14 +16,14 @@ import {
   grokSpawnArgs,
   isOfficialGrokCli,
 } from '../src/services/acp/profiles/grok';
-import { AcpClient } from '../src/services/acpClient';
+import { AcpClient } from '../src/services/acp/client';
 import {
   acpShouldAttachMcp,
   acpSupportsHttpMcp,
   acpSupportsImagePrompt,
   acpSupportsLoadSession,
 } from '../src/services/acp/types';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
+import { AcpSession } from '../src/agents/acp/AcpSession';
 
 describe('Kiro ACP profile (bit-identical contract)', () => {
   test('spawns acp -a, uses protocolVersion 2025-01-01, and has no authenticate step', () => {
@@ -454,7 +454,7 @@ describe('Cursor/Grok do not inherit the Kiro set_branch_overview reminder', () 
       getCurrentMode: () => undefined,
       getCurrentModel: () => undefined,
     };
-    const session = new KiroSession('n', 's', fakeRuntime as any, '/tmp');
+    const session = new AcpSession('n', 's', fakeRuntime as any, '/tmp');
     for await (const _ of session.send('hello')) { /* drain */ }
     return prompts[0];
   }

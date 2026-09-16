@@ -28,6 +28,7 @@
     "katex": "^0.17.0",
     "marked": "^17.0.6",
     "mermaid": "^11.12.2",
+    "michi-shared": "file:../shared",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.1",

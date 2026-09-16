@@ -9,17 +9,19 @@ conversation, run them side by side, and fold the good ones back together.
 
 [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white)](https://github.com/XNYu/Michi/releases/latest)
 [![Electron](https://img.shields.io/badge/desktop-Electron-47848F?logo=electron&logoColor=white)](#desktop-app)
-[![Stack](https://img.shields.io/badge/stack-React%20%C2%B7%20TypeScript%20%C2%B7%20SQLite-3178C6?logo=typescript&logoColor=white)](#useful-commands)
+[![Stack](https://img.shields.io/badge/stack-React%20%C2%B7%20TypeScript%20%C2%B7%20SQLite-3178C6?logo=typescript&logoColor=white)](#common-commands)
 [![License](https://img.shields.io/badge/license-ISC-blue)](#license)
 [![Built with Codex + GPT-5.6](https://img.shields.io/badge/built%20with-Codex%20%2B%20GPT--5.6-412991?logo=openai&logoColor=white)](#built-with-codex--gpt-56)
 
 [Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Built With](#built-with-codex--gpt-56) · [Shortcuts](#shortcuts) · [Configuration](#configuration)
 
+</div>
+
 - **Branching work, not disposable chats**: create manual branches, let an
   agent fan out child branches, weave selected nodes, build digests, inspect a
   thread map, and follow an append-only branch Overview journal.
-- **Four agent runtimes**: Kiro over ACP, Pi with multiple API providers,
-  Claude Code CLI, and Codex app-server. Runtime, provider,
+- **Seven agent runtimes**: Kiro, Cursor and Grok over ACP, Pi with multiple
+  API providers, Claude Code CLI, Codex app-server, and Antigravity. Runtime, provider,
   model, reasoning, and permission options are selected per conversation where
   the runtime supports them.
 - **Durable streaming**: turns are persisted with IDs and sequence watermarks.
@@ -46,8 +48,6 @@ conversation, run them side by side, and fold the good ones back together.
 - **Local + remote backends together**: bind each workspace to the bundled
   local backend or to a self-hosted Michi backend. Both kinds of session can
   stream side by side, and remote turns continue when the desktop app exits.
-
-</div>
 
 ---
 
@@ -255,16 +255,6 @@ remote turns keep running.
 See [docs/remote-backend.md](docs/remote-backend.md) for deployment and
 security details.
 
-### Desktop installation
-
-On macOS or Linux:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
-```
-
-After installation, use `michi` to launch and `michi update` to update.
-
 ## Common Commands
 
 Run these from the repository root unless noted.
@@ -370,22 +360,15 @@ people touch:
 - Cursor CLI — `CURSOR_CLI_BIN` (defaults to `~/.local/bin/agent`; never Grok's `~/.grok/bin/agent`), `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`.
 - Grok CLI — `GROK_CLI_BIN` (official xAI binary). Auth: `grok login` cache, optional `XAI_API_KEY`. Default model `grok-4.6`. Do not implement `grok -p`.
 
----
-
-## Data & Privacy
-
+```env
 # Self-hosted remote backend
 MICHI_REMOTE_ACCESS=0
 MICHI_REMOTE_TOKEN=
 MICHI_BIND_HOST=127.0.0.1
 
 # Runtime registry
-MICHI_ENABLED_RUNTIMES=kiro,pi,claude,codex
+MICHI_ENABLED_RUNTIMES=kiro,pi,claude,codex,cursor,grok,antigravity
 MICHI_DEFAULT_RUNTIME=kiro
-
----
-
-## License
 
 # Diagnostics
 MICHI_METRICS=0
@@ -457,6 +440,8 @@ Express API + ChatHub
               |-- Pi           -> provider APIs through pi-agent-core/pi-ai
               |-- Claude       -> Claude Code CLI warm pool
               |-- Codex        -> codex app-server JSON-RPC
+              |-- Cursor/Grok  -> shared ACP client and runtime profiles
+              |-- Antigravity  -> Antigravity runtime adapter
 ```
 
 The `shared/` workspace owns protocol types and turn projection logic used by
@@ -543,6 +528,9 @@ Runtime-specific notes:
 - **Codex** speaks app-server JSON-RPC, performs auth/version preflight, resumes
   native threads, renders rich tool activity, and generates a first-turn title
   in parallel.
+- **Cursor and Grok** use the shared ACP client with runtime-specific handshake,
+  authentication, model, and tool translation profiles.
+- **Antigravity** retains its dedicated runtime adapter and model discovery.
 
 ### Tools and permissions
 
@@ -661,7 +649,7 @@ michi/
 |-- shared/                      # shared stream types and turn projection
 |-- electron/                    # Electron main, preload, startup metrics
 |-- e2e/                         # Playwright fixtures and specs
-|-- docs/                        # environment, deployment, specs, plans
+|-- docs/                        # environment and deployment guides
 |-- scripts/                     # dev, metrics, and performance helpers
 |-- bin/michi                    # macOS/Linux launcher and updater
 |-- install.sh                   # Desktop bootstrap installer (macOS/Linux)
@@ -720,3 +708,14 @@ runs.
   script handles this.
 - The live UI is terminal-native. Do not restore the archived React Flow canvas
   or removed mobile shell without an explicit product decision.
+
+## Data & Privacy
+
+Michi stores workspace state on your machine (by default under `~/.michi`, where
+the local backend also writes logs). Messages are sent to whichever agent
+runtime or model provider you choose, so review that provider's data policy
+before using it with private work.
+
+## License
+
+[ISC](LICENSE) © 2026 Nan Yu.
