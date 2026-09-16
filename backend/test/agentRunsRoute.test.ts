@@ -22,7 +22,10 @@ let seenOperation = '';
 beforeEach(() => { delete process.env.MICHI_CLOUD; });
 afterEach(async () => { if (server) await new Promise<void>((resolve) => server.close(() => resolve())); });
 
-function start(serviceOverrides: Partial<AgentRunRouteService> = {}): void {
+function start(
+  serviceOverrides: Partial<AgentRunRouteService> = {},
+  isEnabled: () => boolean = () => true,
+): void {
   const service: AgentRunRouteService = {
     async spawn(_owner, _request, operationId) { seenOperation = operationId; return run('local-user'); },
     list(_owner, query) { seenQuery = query; return [run('local-user')]; },
@@ -36,7 +39,8 @@ function start(serviceOverrides: Partial<AgentRunRouteService> = {}): void {
   app.use((req: any, _res, next) => { const value = req.header('x-user'); if (value) req.user = { id: value }; next(); });
   const events = new AgentRunEventBus();
   const allow = (_req: express.Request, _res: express.Response, next: express.NextFunction) => next();
-  app.use('/api', setupAgentRunRoutes({ service, sse: { source: { getRun: () => null, listEvents: () => [], listRuns: () => [] }, events }, createOperationId: () => 'generated-op', ownership: { run: allow, interaction: allow, watch: allow } }));
+  app.use('/api', setupAgentRunRoutes({ service, sse: { source: { getRun: () => null, listEvents: () => [], listRuns: () => [] }, events }, createOperationId: () => 'generated-op', ownership: { run: allow, interaction: allow, watch: allow }, isEnabled }));
+  app.get('/api/persistence/capabilities', (_req, res) => res.json({ protocolVersion: 2 }));
   server = app.listen(0); base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 }
 
@@ -49,6 +53,18 @@ async function request(method: string, path: string, body?: unknown, user?: stri
 }
 
 describe('Agent Run REST routes', () => {
+  test('returns feature-disabled while the backend gate is off', async () => {
+    start({}, () => false);
+
+    const response = await request('GET', '/agent-runs?workspaceId=ws-a');
+    const unrelated = await request('GET', '/persistence/capabilities');
+
+    assert.equal(response.response.status, 404);
+    assert.deepEqual(response.body, { error: 'custom_agents_disabled' });
+    assert.equal(unrelated.response.status, 200);
+    assert.deepEqual(unrelated.body, { protocolVersion: 2 });
+  });
+
   test('Run-origin service spawns preserve the exact durable Parent Attempt id', async () => {
     let forwarded: any;
     const service = new AgentRunApiService({

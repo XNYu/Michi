@@ -9,6 +9,7 @@ import {
 export interface CustomAgentRouteDeps {
   service?: AgentDefinitionService;
   definitionOwnerMiddleware?: (req: any, res: Response, next: NextFunction) => void;
+  isEnabled?: () => boolean;
 }
 
 export { LOCAL_AGENT_OWNER_ID } from '../services/agentOwner';
@@ -51,7 +52,16 @@ export function setupCustomAgentRoutes(deps: CustomAgentRouteDeps = {}): express
       }
     };
 
-  router.use((req: any, _res, next) => {
+  const routeRoots = ['/agents', '/agent-capabilities'];
+  router.use(routeRoots, (_req, res, next) => {
+    if (deps.isEnabled?.() === false) {
+      res.status(404).json({ error: 'custom_agents_disabled' });
+      return;
+    }
+    next();
+  });
+
+  router.use(routeRoots, (req: any, _res, next) => {
     if (!req.user && process.env.MICHI_CLOUD !== '1') req.user = { id: LOCAL_AGENT_OWNER_ID };
     next();
   });

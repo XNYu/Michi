@@ -4,6 +4,7 @@ import type { PageId } from '../../../state/commands';
 import { isArchiveGroupId } from '../../../state/trashActions';
 import { useAuthSession } from '../../../services/auth';
 import { AppearancePane } from './settings/AppearancePane';
+import { CustomAgentsPane } from './settings/CustomAgentsPane';
 import { ModelPane } from './settings/ModelPane';
 import { NotificationsPane } from './settings/NotificationsPane';
 import { ShortcutsPane } from './settings/ShortcutsPane';
@@ -11,7 +12,7 @@ import { AccountPane } from './settings/AccountPane';
 import { ConnectionsPane } from './settings/ConnectionsPane';
 import './Settings.css';
 
-export type SettingsSection = 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
+export type SettingsSection = 'model' | 'custom-agents' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account';
 
 export default function TerminalSettings({
   onNav,
@@ -58,6 +59,7 @@ export default function TerminalSettings({
   const sections: Array<[SettingsSection, string]> = [
     ['appearance', 'Appearance'],
     ['model', 'Model'],
+    ['custom-agents', 'Custom Agents'],
     ['connections', 'Connections'],
     ['notifications', 'Notifications'],
     ['shortcuts', 'Shortcuts'],
@@ -112,6 +114,7 @@ export default function TerminalSettings({
           {section === 'account' && <h2 className="terminal-settings-heading">Account</h2>}
           {section === 'appearance' && <AppearancePane />}
           {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
+          {section === 'custom-agents' && <CustomAgentsPane />}
           {section === 'connections' && <ConnectionsPane projects={projects} />}
           {section === 'notifications' && <NotificationsPane />}
           {section === 'shortcuts' && <ShortcutsPane />}

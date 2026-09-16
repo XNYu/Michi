@@ -41,12 +41,42 @@ import {
 import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
+import type { CustomAgentsFeatureControl } from '../services/customAgentsFeatureGate';
+import { CustomAgentsFeatureBusyError } from '../services/customAgentsFeatureGate';
+import { requireLocalControlRequest } from './middleware/localControl';
 
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
-export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; customAgentsEnabled?: boolean }): Router {
+export interface AgentRouteOptions {
+  catalogCache?: RuntimeCatalogCache;
+  customAgentsEnabled?: boolean;
+  customAgents?: CustomAgentsFeatureControl;
+}
+
+export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   const catalogCache = opts?.catalogCache ?? null;
+  const isCustomAgentsEnabled = () => opts?.customAgents?.isEnabled() ?? opts?.customAgentsEnabled ?? false;
   const router = Router();
+
+  router.put('/agent/custom-agents', requireLocalControlRequest, async (req: Request, res: Response) => {
+    if (typeof req.body?.enabled !== 'boolean') {
+      res.status(400).json({ ok: false, error: 'enabled must be a boolean' });
+      return;
+    }
+    if (!opts?.customAgents?.setEnabled) {
+      res.status(405).json({ ok: false, error: 'custom_agents_not_configurable' });
+      return;
+    }
+    try {
+      await opts.customAgents.setEnabled(req.body.enabled);
+      res.json({ ok: true, customAgentsEnabled: isCustomAgentsEnabled() });
+    } catch (error) {
+      res.status(error instanceof CustomAgentsFeatureBusyError ? 409 : 500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'failed to update Custom Agents',
+      });
+    }
+  });
 
   router.get("/agent/status", async (_req: Request, res: Response) => {
     const userId = (_req as any).user?.id as string | undefined;
@@ -66,7 +96,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       const status: AgentStatus = {
         runtime: cfg.runtime,
         label: cfg.runtime,
-        customAgentsEnabled: opts?.customAgentsEnabled ?? false,
+        customAgentsEnabled: isCustomAgentsEnabled(),
         capabilities: {
           modes: false, permissions: false, models: false, providerModels: false, reasoning: false, supportedReasoningLevels: [],
           apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false,
@@ -126,7 +156,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     const status: AgentStatus = {
       runtime: cfg.runtime,
       label: active.label,
-      customAgentsEnabled: opts?.customAgentsEnabled ?? false,
+      customAgentsEnabled: isCustomAgentsEnabled(),
       capabilities: active.capabilities,
       capabilityDescriptor: active.capabilityDescriptor ?? describeRuntimeCapabilities(active.id),
       availableRuntimes,

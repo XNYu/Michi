@@ -25,6 +25,7 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     archivedTrees: [],
     bypassPermissions: false,
     toggleBypassPermissions: vi.fn(),
+    customAgentsEnabled: true,
     ...overrides,
   };
 }
@@ -39,6 +40,12 @@ describe('buildCommands', () => {
       'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
     ]);
     expect(cmds.map((c) => c.label)).toContain('Open thread digest');
+  });
+
+  it('omits the Agent Library command when the backend feature is disabled', () => {
+    const cmds = buildCommands(makeCtx({ customAgentsEnabled: false }));
+
+    expect(cmds.map((command) => command.id)).not.toContain('agents.open');
   });
 
   it('omits selection action commands when selection is empty', () => {

@@ -31,6 +31,7 @@ let baseUrl: string;
 let nextId: number;
 let readiness: FakeReadiness;
 let service: AgentDefinitionService;
+let customAgentsEnabled: boolean;
 
 class StaticCapabilitySource implements AgentCapabilityCatalogSource {
   constructor(private readonly entries: readonly AgentCapabilityCatalogEntryV1[]) {}
@@ -91,6 +92,7 @@ describe('Custom Agent Definition HTTP router', () => {
     process.env.MICHI_DATA_DIR = tmpDir;
     process.env.MICHI_CLOUD = '1';
     closeDb(); initDb(); nextId = 0; readiness = new FakeReadiness();
+    customAgentsEnabled = true;
     seedWorkspace('ws-a', 'owner-a'); seedWorkspace('ws-b', 'owner-b');
     seedWorkspace('ws-local', null);
     const catalog = new AgentCapabilityCatalog([new StaticCapabilitySource([
@@ -112,7 +114,8 @@ describe('Custom Agent Definition HTTP router', () => {
       if (owner) req.user = { id: owner };
       next();
     });
-    app.use('/api', setupCustomAgentRoutes({ service }));
+    app.use('/api', setupCustomAgentRoutes({ service, isEnabled: () => customAgentsEnabled }));
+    app.get('/api/persistence/capabilities', (_req, res) => res.json({ protocolVersion: 2 }));
     server = app.listen(0);
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
   });
@@ -121,6 +124,18 @@ describe('Custom Agent Definition HTTP router', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     closeDb(); delete process.env.MICHI_CLOUD;
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('returns feature-disabled for every definition route while the backend gate is off', async () => {
+    customAgentsEnabled = false;
+
+    const response = await request('GET', '/agents?workspaceId=ws-a', 'owner-a');
+    const unrelated = await request('GET', '/persistence/capabilities');
+
+    assert.equal(response.response.status, 404);
+    assert.deepEqual(response.payload, { error: 'custom_agents_disabled' });
+    assert.equal(unrelated.response.status, 200);
+    assert.deepEqual(unrelated.payload, { protocolVersion: 2 });
   });
 
   test('Draft CRUD returns explicit revisions and is not discoverable or spawnable', async () => {

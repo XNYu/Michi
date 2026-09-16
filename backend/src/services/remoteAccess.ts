@@ -81,6 +81,7 @@ export function createRemoteAccessMiddleware(): RequestHandler {
     if (!actual || !secureEqual(actual, expected)) {
       return res.status(401).json({ error: 'invalid remote access token' });
     }
+    res.locals.remoteAccessAuthenticated = true;
     next();
   };
 }

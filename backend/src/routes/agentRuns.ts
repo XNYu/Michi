@@ -59,6 +59,7 @@ export interface AgentRunRouteDeps {
   sse: AgentRunSseDeps;
   createOperationId?: () => string;
   actions?: AgentRunActionsService;
+  isEnabled?: () => boolean;
   ownership?: {
     run: (req: Request, res: Response, next: NextFunction) => void;
     interaction: (req: Request, res: Response, next: NextFunction) => void;
@@ -159,7 +160,15 @@ export function setupAgentRunRoutes(deps: AgentRunRouteDeps): express.Router {
     try { await fn(req, res); }
     catch (error) { res.status(status(error)).json({ error: error instanceof Error ? error.message : 'invalid request' }); }
   };
-  router.use((req: any, _res, next) => { if (!req.user && process.env.MICHI_CLOUD !== '1') req.user = { id: LOCAL_AGENT_OWNER_ID }; next(); });
+  const routeRoots = ['/agent-runs', '/agent-run-watches'];
+  router.use(routeRoots, (_req, res, next) => {
+    if (deps.isEnabled?.() === false) {
+      res.status(404).json({ error: 'custom_agents_disabled' });
+      return;
+    }
+    next();
+  });
+  router.use(routeRoots, (req: any, _res, next) => { if (!req.user && process.env.MICHI_CLOUD !== '1') req.user = { id: LOCAL_AGENT_OWNER_ID }; next(); });
   const ownership = deps.ownership ?? {
     run: requireAgentRunOwner,
     interaction: requireAgentRunInteractionOwner,

@@ -67,10 +67,107 @@ describe('AgentRunAssembly', () => {
     assert.equal(assembly.enabled, false);
     assert.deepEqual(await assembly.start(), { launched: 0, reclaimed: 0, waiting: 0, watchesEvaluated: 0, deliveriesRetried: 0, failures: [] });
     assert.equal(assembly.activeTimerCount(), 0);
-    assert.throws(() => assembly.createToolInvoker({ kind: 'conversation', ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' }), /disabled/);
+    const disabledInvoker = assembly.createToolInvoker({ kind: 'conversation', ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' });
+    await assert.rejects(() => disabledInvoker.invoke('list_agents', {}), /disabled/);
     await assert.rejects(() => assembly.routeService.spawn('owner-1', {} as any, 'operation-1'), /unavailable/);
     await assembly.runMaintenance();
     assert.equal(clock.timers.size, 0);
+  });
+
+  test('dynamic feature gate can start lazily and immediately blocks new tool entry points when disabled', async () => {
+    let enabled = false;
+    const clock = new FakeClock();
+    const assembly = createAgentRunAssembly({ isEnabled: () => enabled, dataDir: tmpDir, clock,
+      coordinator: fakeCoordinator(), watches: fakeWatches(),
+      recoverySource: { list: () => [], reclaimExpired: () => false },
+      retention: { cleanupExpired: async () => [] } as any });
+
+    assert.equal(assembly.enabled, false);
+    await assembly.start();
+    assert.equal(assembly.activeTimerCount(), 0);
+
+    enabled = true;
+    await assembly.start();
+    assert.equal(assembly.enabled, true);
+    assert.equal(assembly.activeTimerCount(), 2);
+    await assert.rejects(() => assembly.routeService.spawn('owner-1', {} as any, 'before-enable-commit'), /unavailable/);
+    assembly.completeFeatureEnable();
+    const existingInvoker = assembly.createToolInvoker({ kind: 'conversation', ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' });
+
+    enabled = false;
+    assert.equal(assembly.enabled, false);
+    const newlyDisabledInvoker = assembly.createToolInvoker({ kind: 'conversation', ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' });
+    await assert.rejects(() => newlyDisabledInvoker.invoke('list_agents', {}), /disabled/);
+    await assert.rejects(() => existingInvoker.invoke('list_agents', {}), /disabled/);
+  });
+
+  test('failed startup rolls back and a later enable installs maintenance timers', async () => {
+    let recoveryAttempts = 0;
+    const clock = new FakeClock();
+    const watches = fakeWatches();
+    watches.recoverStartupWatches = async () => {
+      recoveryAttempts += 1;
+      if (recoveryAttempts === 1) throw new Error('transient recovery failure');
+      return { activeEvaluated: 0, deliveriesRetried: 0, failures: [] };
+    };
+    const assembly = createAgentRunAssembly({ enabled: true, dataDir: tmpDir, clock,
+      coordinator: fakeCoordinator(), watches,
+      recoverySource: { list: () => [], reclaimExpired: () => false },
+      retention: { cleanupExpired: async () => [] } as any });
+
+    await assert.rejects(() => assembly.start(), /transient recovery failure/);
+    assert.equal(assembly.activeTimerCount(), 0);
+    await assembly.start();
+    assert.equal(assembly.activeTimerCount(), 2);
+  });
+
+  test('concurrent start calls share one recovery pass', async () => {
+    let recoveryCalls = 0;
+    let releaseRecovery!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+    const watches = fakeWatches();
+    watches.recoverStartupWatches = async () => {
+      recoveryCalls += 1;
+      await blocked;
+      return { activeEvaluated: 0, deliveriesRetried: 0, failures: [] };
+    };
+    const assembly = createAgentRunAssembly({ enabled: true, dataDir: tmpDir, clock: new FakeClock(),
+      coordinator: fakeCoordinator(), watches,
+      recoverySource: { list: () => [], reclaimExpired: () => false },
+      retention: { cleanupExpired: async () => [] } as any });
+
+    const first = assembly.start();
+    const second = assembly.start();
+    releaseRecovery();
+    await Promise.all([first, second]);
+
+    assert.equal(recoveryCalls, 1);
+  });
+
+  test('disable closes admission before an in-flight spawn can commit', async () => {
+    let releaseSpawn!: () => void;
+    let markSpawnEntered!: () => void;
+    const spawnBlocked = new Promise<void>((resolve) => { releaseSpawn = resolve; });
+    const spawnEntered = new Promise<void>((resolve) => { markSpawnEntered = resolve; });
+    const coordinator = {
+      ...fakeCoordinator(),
+      spawn: async () => {
+        markSpawnEntered();
+        await spawnBlocked;
+        return run('spawned', AgentRunStatus.Queued);
+      },
+    } as any;
+    const assembly = createAgentRunAssembly({ enabled: true, dataDir: tmpDir, clock: new FakeClock(),
+      coordinator, watches: fakeWatches(),
+      recoverySource: { list: () => [], reclaimExpired: () => false },
+      retention: { cleanupExpired: async () => [] } as any });
+
+    const admitted = assembly.routeService.spawn('owner-1', {} as any, 'admitted');
+    await spawnEntered;
+    assert.equal(assembly.beginFeatureDisable(), 1);
+    await assert.rejects(() => assembly.routeService.spawn('owner-1', {} as any, 'blocked'), /unavailable/);
+    releaseSpawn();
+    await admitted;
   });
 
   test('startup audits queued, expired-running, waiting, and fired-pending state without awaiting long Run completion', async () => {

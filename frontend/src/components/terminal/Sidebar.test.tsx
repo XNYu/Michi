@@ -19,6 +19,7 @@ describe('TerminalSidebar BottomNav', () => {
       wrap(
         <TerminalSidebar
           activePage="dashboard"
+          customAgentsEnabled
           onNav={() => {}}
           onOpenPalette={() => {}}
           onNewThread={() => {}}
@@ -27,6 +28,7 @@ describe('TerminalSidebar BottomNav', () => {
     );
     // getByText throws if missing — finding the element is the assertion.
     expect(screen.getByText('Workspaces')).toBeTruthy();
+    expect(screen.getByText('Agents')).toBeTruthy();
     expect(screen.getByText('Home')).toBeTruthy();
     expect(screen.getByText('Settings')).toBeTruthy();
     // Branches / Map / Digest / Artifacts are thread-scoped views — their
@@ -35,6 +37,22 @@ describe('TerminalSidebar BottomNav', () => {
     expect(screen.queryByText('Map')).toBeNull();
     expect(screen.queryByText('Digest')).toBeNull();
     expect(screen.queryByText('Artifacts')).toBeNull();
+  });
+
+  it('hides Agents when the backend Custom Agents feature is disabled', () => {
+    render(
+      wrap(
+        <TerminalSidebar
+          activePage="dashboard"
+          customAgentsEnabled={false}
+          onNav={() => {}}
+          onOpenPalette={() => {}}
+          onNewThread={() => {}}
+        />,
+      ),
+    );
+
+    expect(screen.queryByText('Agents')).toBeNull();
   });
 
   it('navigates to the home page when the Home row is clicked', () => {

@@ -77,6 +77,31 @@ export interface AgentStatus {
   capabilityDescriptor?: CapabilityDescriptor;
 }
 
+export interface SetCustomAgentsEnabledResponse {
+  ok: true;
+  customAgentsEnabled: boolean;
+}
+
+export async function setCustomAgentsEnabled(
+  enabled: boolean,
+  connectionId?: string,
+): Promise<SetCustomAgentsEnabledResponse> {
+  const base = connectionId === undefined ? activeBackendApiBase() : backendApiBase(connectionId);
+  const res = await fetch(`${base}/agent/custom-agents`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  const body = await res.json().catch(() => ({})) as Partial<SetCustomAgentsEnabledResponse> & { error?: string };
+  if (!res.ok) {
+    throw new Error(body.error || `setCustomAgentsEnabled failed: ${res.status}`);
+  }
+  return {
+    ok: true,
+    customAgentsEnabled: body.customAgentsEnabled === true,
+  };
+}
+
 export interface AgentModelInfo extends ModelReasoningCapabilities {
   id: string;
   label?: string;

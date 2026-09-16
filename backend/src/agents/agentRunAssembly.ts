@@ -101,6 +101,7 @@ export interface AgentRunRecoverySummary {
 
 export interface AgentRunAssemblyDeps {
   enabled?: boolean;
+  isEnabled?: () => boolean;
   instanceId?: string;
   clock?: AgentRunClock;
   dataDir?: string;
@@ -359,7 +360,6 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 export class AgentRunAssembly {
-  readonly enabled: boolean;
   readonly repository: AgentRunsRepository;
   readonly definitionService: AgentDefinitionService;
   readonly coordinator: AgentRunCoordinator;
@@ -369,6 +369,7 @@ export class AgentRunAssembly {
   readonly resourceCleaner: AgentRunResourceCleaner;
 
   private readonly clock: AgentRunClock;
+  private readonly isFeatureEnabled: () => boolean;
   private readonly instanceId: string;
   private readonly recoverySource: AgentRunRecoverySource;
   private readonly retention: AgentRunRetention;
@@ -379,14 +380,19 @@ export class AgentRunAssembly {
   private readonly background = new Set<Promise<unknown>>();
   private readonly activeTurns: ActiveTurnResolver;
   private watchSubscription: (() => void) | null = null;
+  private startPromise: Promise<AgentRunRecoverySummary> | null = null;
   private started = false;
   private stopping = false;
   private accepting = true;
+  private admissionOpen: boolean;
+  private inFlightAdmissions = 0;
   private watchEvaluationRunning = false;
   private watchEvaluationDirty = false;
 
   constructor(private readonly deps: AgentRunAssemblyDeps) {
-    this.enabled = deps.enabled ?? process.env.MICHI_CUSTOM_AGENTS === '1';
+    const initialEnabled = deps.enabled ?? process.env.MICHI_CUSTOM_AGENTS === '1';
+    this.isFeatureEnabled = deps.isEnabled ?? (() => initialEnabled);
+    this.admissionOpen = deps.isEnabled ? false : this.enabled;
     this.clock = deps.clock ?? systemAgentRunClock;
     this.instanceId = deps.instanceId ?? `agent-run-${process.pid}`;
     this.heartbeatIntervalMs = deps.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_MS;
@@ -396,7 +402,7 @@ export class AgentRunAssembly {
     const defaultCwd = deps.defaultCwd ?? process.cwd();
     const platformPolicy = deps.platformPermissionPolicy ?? DEFAULT_PLATFORM_POLICY;
     const catalog = deps.definitionService?.capabilityCatalog ?? new AgentCapabilityCatalog(
-      this.enabled
+      deps.isEnabled || this.enabled
         ? [new BuiltinAgentCapabilitySource(), new AgentRunToolCapabilitySource()]
         : [new BuiltinAgentCapabilitySource()],
     );
@@ -459,9 +465,25 @@ export class AgentRunAssembly {
     };
   }
 
+  get enabled(): boolean {
+    return this.isFeatureEnabled();
+  }
+
+  beginFeatureDisable(): number {
+    this.admissionOpen = false;
+    return this.inFlightAdmissions;
+  }
+
+  cancelFeatureDisable(): void {
+    if (this.enabled && !this.stopping) this.admissionOpen = true;
+  }
+
+  completeFeatureEnable(): void {
+    if (this.enabled && !this.stopping) this.admissionOpen = true;
+  }
+
   createToolInvoker(caller: AgentRunCaller): AgentRunToolInvoker {
-    if (!this.enabled || !this.accepting) throw new Error('Custom Agents are disabled or shutting down');
-    return createAgentRunToolBridge({
+    const invoker = createAgentRunToolBridge({
       caller,
       activeTurns: this.activeTurns,
       definitions: this.definitionService,
@@ -469,6 +491,17 @@ export class AgentRunAssembly {
       repository: this.repository,
       watches: this.watches,
     });
+    return {
+      invoke: (name, args, meta) => {
+        if (!this.enabled || !this.accepting) {
+          return Promise.reject(new Error('Custom Agents are disabled or shutting down'));
+        }
+        if (name === 'spawn_agent') {
+          return this.withSpawnAdmission(() => invoker.invoke(name, args, meta));
+        }
+        return invoker.invoke(name, args, meta);
+      },
+    };
   }
 
   async recoverStartup(): Promise<AgentRunRecoverySummary> {
@@ -536,18 +569,40 @@ export class AgentRunAssembly {
   async start(): Promise<AgentRunRecoverySummary> {
     if (!this.enabled) return this.recoverStartup();
     if (this.started) return this.recoverStartup();
-    this.started = true;
-    this.accepting = true;
-    this.watchSubscription = this.coordinator.events.subscribeAll(() => this.scheduleWatchEvaluation());
-    const summary = await this.recoverStartup();
-    this.scheduleRecurring(() => {
-      const coordinator = this.coordinator as AgentRunCoordinator & { heartbeatAll?: () => number };
-      coordinator.heartbeatAll?.();
-    }, this.heartbeatIntervalMs);
-    this.scheduleRecurring(() => { void this.runMaintenance().catch((error) => {
-      log.warn('boot', 'Agent Run maintenance failed; will retry', { error: error instanceof Error ? error.message : String(error) });
-    }); }, this.maintenanceIntervalMs);
-    return summary;
+    if (this.startPromise) return this.startPromise;
+
+    const startPromise = (async () => {
+      this.accepting = true;
+      const unsubscribe = this.coordinator.events.subscribeAll(() => this.scheduleWatchEvaluation());
+      try {
+        const summary = await this.recoverStartup();
+        if (!this.enabled || this.stopping) {
+          unsubscribe();
+          return summary;
+        }
+        this.watchSubscription = unsubscribe;
+        this.scheduleRecurring(() => {
+          const coordinator = this.coordinator as AgentRunCoordinator & { heartbeatAll?: () => number };
+          coordinator.heartbeatAll?.();
+        }, this.heartbeatIntervalMs);
+        this.scheduleRecurring(() => { void this.runMaintenance().catch((error) => {
+          log.warn('boot', 'Agent Run maintenance failed; will retry', { error: error instanceof Error ? error.message : String(error) });
+        }); }, this.maintenanceIntervalMs);
+        this.started = true;
+        return summary;
+      } catch (error) {
+        unsubscribe();
+        this.watchSubscription = null;
+        this.started = false;
+        throw error;
+      }
+    })();
+    this.startPromise = startPromise;
+    try {
+      return await startPromise;
+    } finally {
+      if (this.startPromise === startPromise) this.startPromise = null;
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -609,6 +664,7 @@ export class AgentRunAssembly {
   }
 
   private scheduleWatchEvaluation(): void {
+    if (!this.enabled || this.stopping) return;
     if (this.watchEvaluationRunning) {
       this.watchEvaluationDirty = true;
       return;
@@ -623,12 +679,22 @@ export class AgentRunAssembly {
     this.trackBackground(task);
   }
 
+  private async withSpawnAdmission<T>(operation: () => Promise<T>): Promise<T> {
+    if (!this.enabled || !this.accepting || !this.admissionOpen) {
+      throw new Error('Agent Run service is unavailable');
+    }
+    this.inFlightAdmissions += 1;
+    try {
+      return await operation();
+    } finally {
+      this.inFlightAdmissions -= 1;
+    }
+  }
+
   private guardedRouteService(api: AgentRunApiService): AgentRunRouteService {
     return {
-      spawn: (owner, request, operationId) => {
-        if (!this.enabled || !this.accepting) return Promise.reject(new Error('Agent Run service is unavailable'));
-        return api.spawn(owner, request, operationId);
-      },
+      spawn: (owner, request, operationId) =>
+        this.withSpawnAdmission(() => api.spawn(owner, request, operationId)),
       list: (...args) => api.list(...args),
       getDetail: (...args) => api.getDetail(...args),
       events: (...args) => api.events(...args),

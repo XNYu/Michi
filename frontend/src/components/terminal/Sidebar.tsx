@@ -37,6 +37,7 @@ const SIDEBAR_DENSITY: Record<
 
 export default function TerminalSidebar({
   activePage,
+  customAgentsEnabled = false,
   onNav,
   onOpenPalette,
   onNewThread,
@@ -45,6 +46,7 @@ export default function TerminalSidebar({
   onCloseOverlay,
 }: {
   activePage: PageId;
+  customAgentsEnabled?: boolean;
   onNav: (p: PageId) => void;
   onOpenPalette: () => void;
   onNewThread: () => void;
@@ -56,8 +58,8 @@ export default function TerminalSidebar({
   const asideRef = useRef<HTMLElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const contents = useMemo(
-    () => <SidebarContents activePage={activePage} onNav={onNav} />,
-    [activePage, onNav],
+    () => <SidebarContents activePage={activePage} customAgentsEnabled={customAgentsEnabled} onNav={onNav} />,
+    [activePage, customAgentsEnabled, onNav],
   );
 
   // Clamp persisted width to current MIN so legacy narrower values auto-correct.
@@ -233,8 +235,9 @@ export default function TerminalSidebar({
   return aside;
 }
 
-function SidebarContents({ activePage, onNav }: {
+function SidebarContents({ activePage, customAgentsEnabled, onNav }: {
   activePage: PageId;
+  customAgentsEnabled: boolean;
   onNav: (p: PageId) => void;
 }) {
   const { prefs } = usePrefs();
@@ -247,16 +250,18 @@ function SidebarContents({ activePage, onNav }: {
     ) : (
       <WorkspaceTree onActivate={onActivate} chatViewActive={activePage === 'dashboard'} />
     )}
-    <BottomNav activePage={activePage} onNav={onNav} geom={geom} />
+    <BottomNav activePage={activePage} customAgentsEnabled={customAgentsEnabled} onNav={onNav} geom={geom} />
   </>;
 }
 
 function BottomNav({
   activePage,
+  customAgentsEnabled,
   onNav,
   geom,
 }: {
   activePage: PageId;
+  customAgentsEnabled: boolean;
   onNav: (p: PageId) => void;
   geom: RowGeom;
 }) {
@@ -355,7 +360,9 @@ function BottomNav({
       }}
     >
       <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
-      <Item id="agents" glyph={<span aria-hidden style={{ fontFamily: 'var(--mono-font)', fontSize: 15 }}>◇</span>} label="Agents" />
+      {customAgentsEnabled && (
+        <Item id="agents" glyph={<span aria-hidden style={{ fontFamily: 'var(--mono-font)', fontSize: 15 }}>◇</span>} label="Agents" />
+      )}
       <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
       <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />
       {PROFILE_PAGE_ENABLED && (

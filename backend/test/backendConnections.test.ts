@@ -141,6 +141,25 @@ class StaticTunnelManager extends SshTunnelManager {
   }
 }
 
+test('backend connection routes reject unapproved localhost origins', async () => {
+  const gateway = express();
+  gateway.use(express.json());
+  gateway.use('/api', setupBackendConnectionRoutes());
+  const server = http.createServer(gateway);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/backend-connections`, {
+      headers: { origin: 'http://localhost:9999' },
+    });
+    assert.equal(response.status, 403);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test('SSH proxy resolves the upstream URL through the injected tunnel manager', async () => {
   const remote = express();
   remote.get('/api/echo', (req, res) => {

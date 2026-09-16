@@ -1,6 +1,38 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from 'michi-shared';
-import { allocateNodeIds, ensureSession, streamMessage } from './api';
+import { allocateNodeIds, ensureSession, setCustomAgentsEnabled, streamMessage } from './api';
+
+describe('setCustomAgentsEnabled', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('updates the active backend feature gate', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      customAgentsEnabled: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(setCustomAgentsEnabled(true)).resolves.toEqual({
+      ok: true,
+      customAgentsEnabled: true,
+    });
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/agent\/custom-agents$/);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'PUT',
+      body: JSON.stringify({ enabled: true }),
+    });
+  });
+
+  it('surfaces backend refusal instead of changing UI-only state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'custom_agents_not_configurable',
+    }), { status: 405, headers: { 'Content-Type': 'application/json' } })));
+
+    await expect(setCustomAgentsEnabled(false)).rejects.toThrow('custom_agents_not_configurable');
+  });
+});
 
 describe('ensureSession', () => {
   it('preserves an explicit cleared reasoning value on the wire', async () => {

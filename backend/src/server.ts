@@ -64,6 +64,7 @@ import { chatHub } from './agents/chatHub';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 import { createStreamTransport } from './services/streamTransport';
 
+import { CustomAgentsFeatureBusyError, CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
 // repo root, so `backend/.env` would silently be missed. Resolving from
@@ -128,12 +129,13 @@ initDb();
 void initDbWorker(getDbPath()).catch((err) => {
   log.warn('boot', 'dbWorker failed to initialize; falling back to sync writes', { error: (err as Error).message });
 });
-const customAgentsEnabled = process.env.MICHI_CUSTOM_AGENTS === '1';
-const pendingAgentDeliveryTurnIds = customAgentsEnabled
-  ? new Set((getDb().prepare(`SELECT requested_turn_id FROM agent_run_watches
-      WHERE delivery_status = 'pending' AND requested_turn_id IS NOT NULL`).all() as Array<{ requested_turn_id: string }>)
-    .map((row) => row.requested_turn_id))
-  : new Set<string>();
+const customAgentsFeature = new CustomAgentsFeatureGate({
+  dataDir: getMichiDataDir(),
+  defaultEnabled: process.env.MICHI_CUSTOM_AGENTS === '1',
+});
+const pendingAgentDeliveryTurnIds = new Set((getDb().prepare(`SELECT requested_turn_id FROM agent_run_watches
+    WHERE delivery_status = 'pending' AND requested_turn_id IS NOT NULL`).all() as Array<{ requested_turn_id: string }>)
+  .map((row) => row.requested_turn_id));
 const interruptedTurns = recoverInterruptedTurns(Date.now(), pendingAgentDeliveryTurnIds);
 if (interruptedTurns > 0) {
   log.warn('boot', 'recovered interrupted turns', { count: interruptedTurns });
@@ -279,7 +281,7 @@ for (const factory of getEnabledFactories()) {
             });
         },
         agentRunToolsForSession: (binding) => {
-            if (!agentRunAssembly?.enabled || !binding.workspaceId) return null;
+            if (!agentRunAssembly || !binding.workspaceId) return null;
             const ownerUserId = binding.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
             if (binding.owner.kind === 'agent_run') {
                 return agentRunAssembly.createToolInvoker({
@@ -319,7 +321,7 @@ reconcileRuntimeWithRegistered(listRuntimes().map((r) => r.id));
 // ChatManager guards its Kiro-specific methods accordingly.
 const chatManager = new ChatManager(kiroRuntime, defaultCwd);
 agentRunAssembly = createAgentRunAssembly({
-  enabled: customAgentsEnabled,
+  isEnabled: () => customAgentsFeature.isEnabled(),
   chatManager,
   defaultCwd,
   dataDir: getMichiDataDir(),
@@ -365,10 +367,14 @@ agentRunCleanupTimer.unref();
 
 const agentRunRecoveryPromise = agentRunAssembly.start()
   .then((summary) => {
-    if (customAgentsEnabled) {
+    if (customAgentsFeature.isEnabled()) {
+      agentRunAssembly!.completeFeatureEnable();
       log.info('boot', 'Agent Run recovery audit complete', { ...summary });
     }
-    const remaining = recoverInterruptedTurns(Date.now(), chatHub.activeDurableTurnIds());
+    const remaining = recoverInterruptedTurns(Date.now(), new Set([
+      ...chatHub.activeDurableTurnIds(),
+      ...pendingAgentDeliveryTurnIds,
+    ]));
     if (remaining > 0) log.warn('boot', 'recovered deferred interrupted turns', { count: remaining });
     return summary;
   });
@@ -625,11 +631,50 @@ app.use('/api', streamTransport.router);
 mountMcp(mcpRouter, mcpRegistry);
 app.use('/api', mcpRouter);
 
-app.use('/api', setupAgentRoutes({ catalogCache: runtimeModelCache, customAgentsEnabled }));
-if (agentRunAssembly.enabled) {
-  app.use('/api', setupCustomAgentRoutes({ service: agentRunAssembly.definitionService }));
-  app.use('/api', setupAgentRunRoutes({ service: agentRunAssembly.routeService, sse: agentRunAssembly.sse }));
-}
+const customAgentsControl = {
+  isEnabled: () => customAgentsFeature.isEnabled(),
+  ...(!REQUIRE_AUTH ? {
+    setEnabled: async (enabled: boolean) => {
+      if (!enabled) {
+        const inFlightAdmissions = agentRunAssembly!.beginFeatureDisable();
+        const row = getDb().prepare(`SELECT COUNT(*) AS count FROM agent_runs
+          WHERE status IN ('queued','preparing','running','waiting','recovering')`).get() as { count: number };
+        const activeRunCount = Math.max(row.count, inFlightAdmissions);
+        if (activeRunCount > 0) {
+          agentRunAssembly!.cancelFeatureDisable();
+          throw new CustomAgentsFeatureBusyError(activeRunCount);
+        }
+        try {
+          customAgentsFeature.setEnabled(false);
+        } catch (error) {
+          agentRunAssembly!.cancelFeatureDisable();
+          throw error;
+        }
+        return;
+      }
+
+      customAgentsFeature.setEnabled(true);
+      try {
+        await agentRunAssembly!.start();
+        agentRunAssembly!.completeFeatureEnable();
+      } catch (error) {
+        customAgentsFeature.setEnabled(false);
+        agentRunAssembly!.beginFeatureDisable();
+        throw error;
+      }
+    },
+  } : {}),
+};
+app.use('/api', setupAgentRoutes({ catalogCache: runtimeModelCache, customAgents: customAgentsControl }));
+app.use('/api', setupCustomAgentRoutes({
+  service: agentRunAssembly.definitionService,
+  isEnabled: customAgentsControl.isEnabled,
+}));
+app.use('/api', setupAgentRunRoutes({
+  service: agentRunAssembly.routeService,
+  sse: agentRunAssembly.sse,
+  isEnabled: customAgentsControl.isEnabled,
+}));
 // Connection credentials belong to the local desktop gateway. A remotely
 // exposed execution backend never needs to manage or replay another server's
 // saved token, so keep this surface unavailable in remote mode.

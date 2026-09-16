@@ -24,13 +24,15 @@ vi.mock('../../state/chatStore', async () => {
 vi.mock('../../state/agentDomain', () => ({ useAgentDomain: () => ({ state: domainState, loadDefinitions, dispatch }) }));
 vi.mock('../../state/prefs', async () => { const actual = await vi.importActual<typeof import('../../state/prefs')>('../../state/prefs'); return { ...actual, usePrefs: () => ({ prefs: actual.DEFAULT_PREFS, setPref: vi.fn() }) }; });
 vi.mock('../../services/api', () => ({ createAgentDefinition: vi.fn(), deleteAgentDefinition: vi.fn(), disableAgentDefinition: vi.fn(), duplicateAgentDefinition: vi.fn(), enableAgentDefinition: vi.fn(), getAgentDefinition: vi.fn(), updateAgentDefinition: vi.fn() }));
+vi.mock('../../state/featureFlags', () => ({ PROFILE_PAGE_ENABLED: true }));
 vi.mock('./useTerminalColors', () => ({ useTerminalColors: () => ({}) }));
 vi.mock('./Topbar', () => ({ default: ({ onToggleSidebar }: { onToggleSidebar: () => void }) => <button onClick={onToggleSidebar}>toggle sidebar</button> }));
-vi.mock('./Sidebar', () => ({ default: ({ onNav, narrowMode, narrowOverlayOpen }: { onNav: (page: string) => void; narrowMode: boolean; narrowOverlayOpen: boolean }) => narrowMode && !narrowOverlayOpen ? null : <nav aria-label="test sidebar"><button onClick={() => onNav('agents')}>Agents</button></nav> }));
+vi.mock('./Sidebar', () => ({ default: ({ onNav, narrowMode, narrowOverlayOpen }: { onNav: (page: string) => void; narrowMode: boolean; narrowOverlayOpen: boolean }) => narrowMode && !narrowOverlayOpen ? null : <nav aria-label="test sidebar"><button onClick={() => onNav('agents')}>Agents</button><button onClick={() => onNav('profile')}>Profile</button></nav> }));
 vi.mock('./WarmFailedBanner', () => ({ default: () => null }));
 vi.mock('./AskUserAlertBar', () => ({ default: () => null }));
 vi.mock('./pages/Home', () => ({ default: () => <div>Home page</div> }));
 vi.mock('./pages/Dashboard', () => ({ default: () => <div>Dashboard page</div> }));
+vi.mock('./pages/Profile', () => ({ default: ({ onNav }: { onNav: (page: string) => void }) => <div>Profile page<button onClick={() => onNav('home')}>Profile home</button></div> }));
 vi.mock('../NewWorkspaceDialog', () => ({ default: () => null }));
 vi.mock('./agents/AgentLibraryPage', () => ({ default: (props: { definitions: Array<{ backendConnectionId: string; value: { name: string } }>; onCreate: (scope: 'workspace' | 'global') => void; onEdit: (resource: { backendConnectionId: string; value: { id: string; scope: 'workspace'; workspaceId: string; name: string } }) => void }) => <div><h1>Library route</h1><div data-testid="library-resources">{props.definitions.map((resource) => `${resource.backendConnectionId}:${resource.value.name}`).join(',')}</div><button onClick={() => props.onCreate('workspace')}>create workspace Agent</button><button onClick={() => props.onCreate('global')}>create global Agent</button>{props.definitions[0] && <button onClick={() => props.onEdit(props.definitions[0] as never)}>edit Agent</button>}</div> }));
 vi.mock('./agents/AgentEditorPage', () => ({ default: (props: { initialScope: string; workspaceId: string | null; definition?: { backendConnectionId: string } | null; onCancel: () => void }) => <div><h1>Editor route</h1><span data-testid="editor-scope">{props.initialScope}:{props.workspaceId ?? 'none'}:{props.definition?.backendConnectionId ?? 'new'}</span><button onClick={props.onCancel}>back to Library</button></div> }));
@@ -80,5 +82,27 @@ describe('TerminalShell Agent management routes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
     expect(await screen.findByRole('heading', { name: 'Library route' })).not.toBeNull();
     await waitFor(() => expect(screen.queryByRole('navigation', { name: 'test sidebar' })).toBeNull());
+  });
+
+  it('uses a full-width content area on the Profile page', async () => {
+    render(<TerminalShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Profile page')).not.toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'test sidebar' })).toBeNull();
+  });
+
+  it('clears a narrow sidebar overlay while Profile is fullscreen', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 });
+    render(<TerminalShell />);
+    fireEvent.click(screen.getByRole('button', { name: 'toggle sidebar' }));
+    expect(screen.getByRole('navigation', { name: 'test sidebar' })).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: 'p', metaKey: true });
+    expect(await screen.findByText('Profile page')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Profile home' }));
+
+    expect(await screen.findByText('Home page')).not.toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'test sidebar' })).toBeNull();
   });
 });

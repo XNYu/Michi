@@ -213,6 +213,7 @@ export default function CommandPalette({
   const {
     activeProject,
     projects,
+    agentStatus,
     selection,
     clearSelection,
     openPane,
@@ -370,8 +371,9 @@ export default function CommandPalette({
         archivedTrees,
         bypassPermissions: prefs.bypassPermissions,
         toggleBypassPermissions: () => { setPref('bypassPermissions', !prefs.bypassPermissions); },
+        customAgentsEnabled: agentStatus?.customAgentsEnabled === true,
       }),
-    [activePage, selection, allChats, navDeps, selectProject, activeProject, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace, prefs.bypassPermissions, setPref],
+    [activePage, selection, allChats, navDeps, selectProject, activeProject, agentStatus?.customAgentsEnabled, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace, prefs.bypassPermissions, setPref],
   );
   const visible = useMemo(() => {
     const q = query.trim();

@@ -531,6 +531,7 @@ export default function TerminalShell() {
         {!profileFullscreen && (
           <TerminalSidebar
             activePage={page}
+            customAgentsEnabled={agentStatus?.customAgentsEnabled === true}
             onNav={narrowMode ? handleNavWithClose : handleNav}
             onOpenPalette={() => setPaletteOpen(true)}
             onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}

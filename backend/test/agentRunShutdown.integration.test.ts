@@ -46,7 +46,8 @@ describe('Agent Run shutdown integration', () => {
     assert.equal(liveSessions, 0);
     assert.equal(assembly.activeTimerCount(), 0);
     assert.equal(clock.timers.size, 0);
-    assert.throws(() => assembly.createToolInvoker({ kind: 'conversation', ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' }), /shutting down/);
+    const stoppedInvoker = assembly.createToolInvoker({ kind: 'conversation', ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' });
+    await assert.rejects(() => stoppedInvoker.invoke('list_agents', {}), /shutting down/);
     await assert.rejects(() => assembly.routeService.spawn('owner-1', {} as any, 'after-shutdown'), /unavailable/);
   });
 

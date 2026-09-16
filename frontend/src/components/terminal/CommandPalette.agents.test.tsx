@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CommandPalette from './CommandPalette';
 
 vi.mock('../../state/chatStore', () => ({
-  useChatStore: () => ({ activeProject: null, projects: [], selection: new Set(), clearSelection: vi.fn(), openPane: vi.fn(), openPaneInTree: vi.fn(), createDigest: vi.fn(), createMergedChat: vi.fn(), createThread: vi.fn(), activateTree: vi.fn(), archiveTree: vi.fn(), unarchiveTree: vi.fn(), selectProject: vi.fn(), setFocusedNodeId: vi.fn(), setSearchHighlightTerm: vi.fn() }),
+  useChatStore: () => ({ activeProject: null, projects: [], selection: new Set(), clearSelection: vi.fn(), openPane: vi.fn(), openPaneInTree: vi.fn(), createDigest: vi.fn(), createMergedChat: vi.fn(), createThread: vi.fn(), activateTree: vi.fn(), archiveTree: vi.fn(), unarchiveTree: vi.fn(), selectProject: vi.fn(), setFocusedNodeId: vi.fn(), setSearchHighlightTerm: vi.fn(), agentStatus: { customAgentsEnabled: true } }),
   useChatNodesSnapshot: () => ({}),
   selectAllChats: () => [],
 }));

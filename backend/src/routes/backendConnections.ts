@@ -11,6 +11,7 @@ import {
   saveBackendConnection,
 } from '../services/backendConnections';
 import { sshTunnelManager, type SshTunnelManager } from '../services/sshTunnelManager';
+import { requireLocalControlRequest } from './middleware/localControl';
 
 const FORWARDED_REQUEST_HEADERS = ['accept', 'content-type', 'range', 'last-event-id'] as const;
 const SKIPPED_RESPONSE_HEADERS = new Set([
@@ -24,17 +25,6 @@ const SKIPPED_RESPONSE_HEADERS = new Set([
 function proxySuffix(raw: string | string[] | undefined): string {
   if (Array.isArray(raw)) return raw.join('/');
   return raw ?? '';
-}
-
-function isAllowedRendererOrigin(origin: string | undefined): boolean {
-  if (!origin || origin === 'null') return true;
-  try {
-    const url = new URL(origin);
-    return (url.protocol === 'http:' || url.protocol === 'https:')
-      && (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1');
-  } catch {
-    return false;
-  }
 }
 
 function optionalNumber(value: unknown): number | null | undefined {
@@ -61,16 +51,9 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   const router = express.Router();
   const tunnelManager = options.tunnelManager ?? sshTunnelManager;
 
-  // These routes can replay a stored remote credential. Reject browser calls
-  // from non-local origins; same-origin desktop/dev requests and CLI calls
-  // (which carry no Origin header) remain allowed.
-  router.use('/backend-connections', (req, res, next) => {
-    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
-    if (!isAllowedRendererOrigin(origin)) {
-      return res.status(403).json({ error: 'backend connections are only available to the local Michi app' });
-    }
-    next();
-  });
+  // These routes can replay a stored remote credential. Apply the same strict
+  // local-control boundary used by the Custom Agents backend toggle.
+  router.use('/backend-connections', requireLocalControlRequest);
 
   router.get('/backend-connections', (_req, res) => {
     res.json({
