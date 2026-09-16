@@ -12,6 +12,8 @@ dist/
 .env
 .env.local
 .env.*.local
+# Deployment-provider configuration is local to each checkout.
+/railway.toml
 # Re-include committed templates (root + per-package). See docs/environment.md.
 !.env.example
 !**/.env.example
