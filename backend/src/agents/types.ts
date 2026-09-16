@@ -327,6 +327,8 @@ export interface AgentRuntime {
 export interface GenerateTitleOptions {
   /** The user's first message, as shown in the UI (no mention expansion). */
   userText: string;
+  /** Quoted or selected text the user is replying to; gives the title subject context. */
+  contextText?: string;
   /** Workspace folder of the chat that needs a title. Runtimes may ignore it. */
   cwd?: string | null;
   signal?: AbortSignal;
@@ -338,8 +340,6 @@ export interface VerifyProviderKeyOptions {
   model?: string;
 }
 
-  /** Quoted or selected text the user is replying to; gives the title subject context. */
-  contextText?: string;
 export interface VerifyProviderKeyResult {
   ok: boolean;
   provider: string;
