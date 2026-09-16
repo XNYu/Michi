@@ -44,6 +44,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project } from './chatTypes';
 import type { PaneItem, PaneItemKind } from './paneItems';
+import { usePanePresenceDashboardVisible } from './panePresenceVisibility';
 import {
   fetchPersistenceCapabilities,
   supportsPaneInspection,
@@ -80,6 +81,7 @@ function isBareNodeId(uiPaneId: string): boolean {
 }
 
 interface SurfaceMappingEntry {
+  kind: SurfacePaneKind;
   registrationId: string;
   /** The backend connection + workspace this registration was allocated against. A mapping
    *  allocated for a previous connection/workspace (e.g. before a workspace switch) is stale and
@@ -143,6 +145,7 @@ export function usePanePresenceIntegration({
   openPanesMap,
   paneItems,
 }: UsePanePresenceIntegrationArgs): void {
+  const dashboardVisible = usePanePresenceDashboardVisible();
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) ?? null,
     [projects, activeProjectId],
@@ -226,6 +229,7 @@ export function usePanePresenceIntegration({
    *  closes. */
   const allocationGenerationsRef = useRef(new Map<string, number>());
   const inFlightAllocationKeysRef = useRef(new Set<string>());
+  const allocationKindsRef = useRef(new Map<string, SurfacePaneKind>());
 
   /** Invalidates one allocation key: advances its generation counter FIRST, then frees its
    *  in-flight marker. Order matters — advancing the generation before freeing the marker means
@@ -319,9 +323,13 @@ export function usePanePresenceIntegration({
       if (!isSurfaceKind(item.kind)) continue; // Unknown/future kind — nothing to allocate yet.
 
       const existing = surfaceMappingsRef.current.get(uiPaneId);
-      if (existing && existing.backendConnectionId === connectionId && existing.workspaceId === workspaceId) continue;
+      if (existing && existing.backendConnectionId === connectionId && existing.workspaceId === workspaceId && existing.kind === item.kind) continue;
 
       const allocationKey = `${connectionId}\u0000${workspaceId}\u0000${uiPaneId}`;
+      if (allocationKindsRef.current.get(allocationKey) !== item.kind) {
+        invalidateAllocationKey(allocationKey);
+        allocationKindsRef.current.set(allocationKey, item.kind);
+      }
       if (inFlightAllocationKeysRef.current.has(allocationKey)) continue; // Already in flight.
       inFlightAllocationKeysRef.current.add(allocationKey);
 
@@ -344,6 +352,7 @@ export function usePanePresenceIntegration({
           if (generations.get(allocationKey) !== token) return;
           inFlightAllocationKeysRef.current.delete(allocationKey);
           surfaceMappingsRef.current.set(uiPaneId, {
+            kind: item.kind as SurfacePaneKind,
             registrationId: result.registrationId,
             backendConnectionId: connectionId,
             workspaceId,
@@ -433,7 +442,7 @@ export function usePanePresenceIntegration({
     }
     const mapping = surfaceMappingsRef.current.get(uiPaneId);
     if (!mapping) return undefined; // Not yet allocated — omitted from this submission.
-    if (mapping.backendConnectionId !== activeBackendConnectionId || mapping.workspaceId !== activeProjectId) {
+    if (mapping.backendConnectionId !== activeBackendConnectionId || mapping.workspaceId !== activeProjectId || mapping.kind !== item.kind) {
       return undefined; // Stale scope — omitted until reallocated for the current scope.
     }
     return {
@@ -448,27 +457,11 @@ export function usePanePresenceIntegration({
   // nothing relevant changed, so the reporter's submission effect (which lists `backends` as a
   // dependency) doesn't resubmit on every unrelated render.
   //
-  // `usePanePresenceReporter` keys its internal per-connection lease state (and decides when a
-  // connection has been "dropped" and must be torn down via its empty-backends cleanup) strictly
-  // by `backendConnectionId` — it has no notion that the SAME connection id can carry a DIFFERENT
-  // `workspaceId` across renders. In this app, though, one backend connection (e.g. `'local'`)
-  // routinely hosts many workspaces/projects, and switching the active project changes
-  // `workspaceId` while `backendConnectionId` stays the same. Reported verbatim, the reporter
-  // would treat that as "same connection, new pane content" and PUT the new workspace's views
-  // under the OLD workspace's still-open lease — which the backend would reject (or worse,
-  // silently misattribute), since a lease is authorized against one workspace body per the
-  // route's own contract.
-  //
-  // Fix: report a LEASE-SCOPE key (`${backendConnectionId}::${workspaceId}`) as the reporter's
-  // `backendConnectionId` field instead of the raw connection id. A workspace switch then always
-  // produces a brand-new key, so the reporter's own "this connection dropped out of `backends`"
-  // cleanup path fires — DELETEing the old lease — exactly the same way it would for a real
-  // dropped connection. `leaseScopedTransport` below un-mangles this key back to the real
-  // `backendConnectionId` before calling the real transport, so the network calls themselves are
-  // unaffected; `workspaceId` was always passed correctly (it comes straight from `slot.workspaceId`,
-  // set directly below), so it needs no unmangling.
+  // Retain this integration's lease-scope key for its transport and invalidation callbacks.
+  // The reporter also isolates leases by connection/workspace/window; it is safe for callers
+  // that pass raw connection IDs too. The transport below restores the real connection ID.
   // ---------------------------------------------------------------------------
-  const activeSlotKey = activeProject
+  const activeSlotKey = activeProject && dashboardVisible
     ? `${activeProject.id}::${activeProject.activeTreeId ?? 'workspace'}`
     : null;
 

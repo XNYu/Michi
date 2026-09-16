@@ -42,6 +42,7 @@ import type { AgentRunEventBus } from '../agents/runs/agentRunEventBus';
 const SETTLED_EXECUTION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 export interface WaitPaneInput {
+  signal?: AbortSignal;
   locator: PaneLocator;
   until: WaitUntil;
   /** Required and only meaningful for until: 'changed'. The observation cursor the caller last
@@ -156,7 +157,8 @@ function runWait(
   input: WaitPaneInput,
   deps: WaitPaneDeps,
 ): Promise<WaitPaneResultV1> {
-  return new Promise<WaitPaneResultV1>((resolve) => {
+  return new Promise<WaitPaneResultV1>((resolve, reject) => {
+    if (input.signal?.aborted) { resolve(result('unavailable', null, '')); return; }
     // ---- check #1 -----------------------------------------------------------------------------
     let descriptor: PaneDescriptorV1;
     try {
@@ -179,7 +181,7 @@ function runWait(
       // until: 'changed' — a stale cursor (one that no longer resolves to the object's current
       // revision) means a change already happened before this call was even made.
       const resolution = paneInspectionRing.resolveCursor(input.cursor!, scope);
-      if (!resolution.ok || resolution.replay.length > 0) {
+      if (!resolution.ok || resolution.paneId !== descriptor.ref.paneId || resolution.cursorRevision < resolution.revision) {
         resolve(result('changed', descriptor, mintCursor(descriptor, target, scope)));
         return;
       }
@@ -191,15 +193,22 @@ function runWait(
     let settled = false;
     let timeoutHandle: unknown;
     let detach: (() => void) | undefined;
+    let latestDescriptor = descriptor;
 
-    const finish = (out: WaitPaneResultV1): void => {
-      if (settled) return;
+    const cleanup = (): void => {
       settled = true;
       if (timeoutHandle !== undefined) deps.clock.clearTimeout(timeoutHandle);
       detach?.();
       feed.stop();
+      input.signal?.removeEventListener('abort', abort);
+    };
+    const finish = (out: WaitPaneResultV1): void => {
+      if (settled) return;
+      cleanup();
       resolve(out);
     };
+    const abort = (): void => finish(result('unavailable', null, ''));
+    input.signal?.addEventListener('abort', abort, { once: true });
 
     /** Arms exactly one `oncePerObject` listener against `sinceContent`. `oncePerObject` fires at
      *  most once per arm-call (P3-2's documented one-shot contract), so `until: 'terminal'`
@@ -217,6 +226,7 @@ function runWait(
         paneId,
         sinceContent,
         (changedDescriptor) => {
+          latestDescriptor = changedDescriptor;
           if (input.until !== 'terminal') {
             finish(result('changed', changedDescriptor, mintCursor(changedDescriptor, target, scope)));
             return;
@@ -232,7 +242,8 @@ function runWait(
       );
     };
 
-    arm(baselineContent);
+    try { arm(baselineContent); } catch (err) { cleanup(); reject(err); return; }
+    if (settled) { detach?.(); return; }
 
     // ---- check #2 (closes the check-subscribe-check race) --------------------------------------
     // A change landing strictly between check #1 and the listener attach above is caught here:
@@ -248,8 +259,11 @@ function runWait(
         finish(result('unavailable', null, ''));
         return;
       }
-      throw err;
+      cleanup();
+      reject(err);
+      return;
     }
+    latestDescriptor = secondDescriptor;
     if (input.until === 'terminal') {
       const { settled: nowSettled } = outcomeFor(secondDescriptor);
       if (nowSettled) { finish(result('terminal', secondDescriptor, mintCursor(secondDescriptor, target, scope))); return; }
@@ -258,13 +272,24 @@ function runWait(
       return;
     }
 
-    timeoutHandle = deps.clock.setTimeout(() => finish(result('timed_out', secondDescriptor, mintCursor(secondDescriptor, target, scope))), input.timeoutMs);
+    timeoutHandle = deps.clock.setTimeout(() => {
+      try {
+        latestDescriptor = inspect(caller, { locator: input.locator, executionRef: input.executionRef });
+        const reason = input.until === 'terminal' && outcomeFor(latestDescriptor).settled ? 'terminal'
+          : input.until === 'changed' && !deepEqual(baselineContent, toContentSnapshot(latestDescriptor)) ? 'changed' : 'timed_out';
+        finish(result(reason, latestDescriptor, latestDescriptor.observation.cursor));
+      } catch (err) {
+        if (err instanceof PaneInspectionError && (err.code === 'NOT_FOUND' || err.code === 'NAVIGATION_DISABLED')) {
+          finish(result('unavailable', null, ''));
+        } else { cleanup(); reject(err); }
+      }
+    }, input.timeoutMs);
   });
 }
 
 function mintCursor(descriptor: PaneDescriptorV1, target: ReturnType<typeof resolvePaneTarget>, scope: ReturnType<typeof scopeForCaller>): string {
   void target;
-  return paneInspectionRing.mintInspectionCursor(descriptor.ref.paneId, scope, toContentSnapshot(descriptor));
+  return descriptor.observation.cursor;
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {

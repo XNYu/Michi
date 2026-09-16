@@ -17,6 +17,7 @@ import type {
 } from 'michi-shared';
 import { PANE_INSPECTION_LIMITS } from 'michi-shared';
 import { compactResultHandoff } from '../agents/runs/resultBundle';
+import { truncateTailToCodePointUtf8 } from './paneInspectionProjection.chat';
 
 /** Cancellation-related events for the SELECTED attempt/run, needed to derive `cancelling` per
  *  §6.1 — CancellationRequested with no subsequent terminal RunStatusChanged means "cancelling".
@@ -40,6 +41,7 @@ export interface AgentRunProjectionInput {
   presence: PaneDescriptorV1['presence'];
   backendConnectionId: string;
   observedAt: number;
+  lineage?: PaneDescriptorV1['lineage'];
 }
 
 const RUN_STATUS_TO_ACTIVITY: Partial<Record<AgentRunStatus, PaneActivity>> = {
@@ -116,13 +118,7 @@ function selectedAttempt(run: AgentRunDtoV1, attempts: readonly AgentRunAttemptD
 
 /** UTF-8 byte-safe truncation to at most `maxBytes`, never splitting a multi-byte code point. */
 function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
-  const encoded = Buffer.from(text, 'utf8');
-  if (encoded.length <= maxBytes) return { text, truncated: false };
-  // Walk backwards from the byte cap to the start of the last complete UTF-8 code point.
-  let end = maxBytes;
-  // Continuation bytes have the high bits 10xxxxxx (0x80-0xBF); back up over them to the lead byte.
-  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end -= 1;
-  return { text: encoded.subarray(0, end).toString('utf8'), truncated: true };
+  return truncateTailToCodePointUtf8(text, maxBytes);
 }
 
 function assistantTextForAttempt(events: readonly AgentRunEventV1[], attemptId: string | null): string {
@@ -277,7 +273,7 @@ export function agentRunToDescriptor(input: AgentRunProjectionInput): PaneDescri
     // chains requires repository access this pure module does not have — P1-6 (the fetching layer)
     // owns joining parentRunId/parentNodeId into a PaneLineageSummary. This module reports
     // unsupported rather than guessing to avoid inventing success (COMMON.md rule 8).
-    lineage: {
+    lineage: input.lineage ?? {
       status: 'unsupported',
       reason: 'Run lineage resolution requires repository access; not available in a pure projection.',
     },

@@ -29,6 +29,7 @@ import {
   PaneInspectionError,
   type ChatStreamEvent,
   type EffectiveAgentDefinitionV1,
+  type PaneFeedEventV1,
 } from 'michi-shared';
 import { closeDb, initDb, getDb } from '../src/services/db';
 import {
@@ -39,6 +40,10 @@ import {
   saveTree,
   saveWorkspace,
   setAiGlobalContext,
+  updateNodeTitle,
+  saveMessage,
+  getCompletedTurnCount,
+  getNodesMetadataByIds,
   type NodeRow,
 } from '../src/services/dbRepository';
 import { chatHub } from '../src/agents/chatHub';
@@ -48,6 +53,12 @@ import { inspect, authorizeCaller, resolvePaneTarget, scopeForCaller, type PaneI
 import { paneInspectionRing } from '../src/services/paneInspectionRing';
 import { PanePresenceRegistry } from '../src/services/panePresence';
 import { SURFACE_PANE_KINDS, type SurfacePaneKind } from '../src/services/paneInspectionProjection.surface';
+import { readOutput } from '../src/services/paneInspectionOutput';
+import { waitPane } from '../src/services/paneInspectionWait';
+import { PaneFeed, systemPaneSubscribeClock, configurePaneInspectionEventBus } from '../src/services/paneInspectionSubscribe';
+import { AgentRunEventBus } from '../src/agents/runs/agentRunEventBus';
+import { buildPaneInspectionCaller } from '../src/agents/paneInspectionTools';
+import { McpSlotRegistry, buildMcpServerForSlot } from '../src/services/mcpServer';
 
 function freshTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'michi-pane-inspection-'));
@@ -189,8 +200,225 @@ describe('PaneInspectionService.inspect', () => {
   });
 
   afterEach(() => {
+    configurePaneInspectionEventBus(undefined);
     closeDb();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('desktop null-owner MCP tools use the bound workspace; cloud remains fail-closed', async () => {
+    seedNode('desktop-node');
+    const slot = new McpSlotRegistry().create('desktop-session', tmpDir, null, {
+      onSpawnBranches: async () => [], onSaveArtifact: () => null,
+      onUpdateArtifact: () => null, onShowImage: () => ({ error: 'unused' }),
+    }, { workspaceId: WORKSPACE, nodeId: 'desktop-node' });
+    const tools = (buildMcpServerForSlot(slot) as unknown as {
+      _registeredTools: Record<string, { handler: (args: unknown) => Promise<{ isError?: boolean; content: Array<{ text: string }> }> }>;
+    })._registeredTools;
+    for (const [name, args] of Object.entries({
+      inspect_pane: { nodeId: 'desktop-node' }, read_pane_output: { nodeId: 'desktop-node' },
+      list_panes: { scope: 'all' }, wait_pane: { nodeId: 'desktop-node', until: 'changed', cursor: 'unknown', timeoutMs: 1 },
+    })) {
+      const result = await tools[name].handler(args);
+      assert.notEqual(result.isError, true, result.content[0].text);
+    }
+    const binding = { ownerUserId: null, workspaceId: WORKSPACE, backendConnectionId: 'local' };
+    assert.equal(buildPaneInspectionCaller(binding).ownerUserId, OWNER);
+    process.env.MICHI_CLOUD = '1';
+    try { assert.throws(() => buildPaneInspectionCaller(binding), /not yet bound/); }
+    finally { delete process.env.MICHI_CLOUD; }
+    assert.throws(() => buildPaneInspectionCaller({ ...binding, workspaceId: null }), /not yet bound/);
+  });
+
+  test('MCP inspection tools respect both registration and invocation allowlists', async () => {
+    const slot = new McpSlotRegistry().create('run-session', tmpDir, OWNER, {
+      onSpawnBranches: async () => [], onSaveArtifact: () => null,
+      onUpdateArtifact: () => null, onShowImage: () => ({ error: 'unused' }),
+    }, { workspaceId: WORKSPACE });
+    slot.exposedToolNames = new Set(['inspect_pane']);
+    const tools = (buildMcpServerForSlot(slot) as unknown as {
+      _registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }>;
+    })._registeredTools;
+    for (const name of ['read_pane_output', 'wait_pane', 'list_panes']) assert.equal(tools[name], undefined);
+    slot.exposedToolNames = new Set();
+    await assert.rejects(() => tools.inspect_pane.handler({ nodeId: 'ignored' }), /not exposed/);
+  });
+
+  test('Run message-context denial applies to previews, output, and resumed feeds', () => {
+    seedNode('restricted-target');
+    seedCompletedTurn('restricted-target', 'restricted-turn');
+    const run = createRun(new AgentRunsRepository(), 'restricted-caller');
+    const restricted = caller({ runOwner: { runId: run.id } });
+    const before = inspect(restricted, { locator: { nodeId: 'restricted-target' } });
+    const definition = { ...run.effectiveDefinition, contextPolicy: { ...run.effectiveDefinition.contextPolicy, allowMessageContext: false } };
+    getDb().prepare('UPDATE agent_runs SET effective_definition = ? WHERE id = ?').run(JSON.stringify(definition), run.id);
+    assert.throws(() => inspect(restricted, { locator: { nodeId: 'restricted-target' } }), /context policy/);
+    assert.throws(() => readOutput(restricted, { locator: { nodeId: 'restricted-target' }, selection: 'latest', limitBytes: 1024 }), /context policy/);
+    const events: PaneFeedEventV1[] = [];
+    const feed = new PaneFeed({ clock: systemPaneSubscribeClock, ring: paneInspectionRing });
+    try {
+      feed.subscribe(restricted, before.ref.paneId, before.observation.cursor, { emit: (event) => { events.push(event); } });
+      assert.deepEqual(events.map((event) => event.type), ['access_revoked']);
+    } finally { feed.stop(); }
+  });
+
+  test('persisted previews and first-start survive a new empty turn without misattributing output', () => {
+    seedNode('persisted-node');
+    seedCompletedTurn('persisted-node', 'first-turn', 100);
+    const empty = createDurableTurn({ turnId: 'second-turn', assistantId: 'second-answer', nodeId: 'persisted-node', workspaceId: WORKSPACE, displayUserText: 'again', startedAt: 200 });
+    beginTurn(empty);
+    const descriptor = inspect(caller(), { locator: { nodeId: 'persisted-node' } });
+    assert.equal(descriptor.timeline.firstExecutionStartedAt, 100);
+    assert.equal(descriptor.latestOutput.status, 'ready');
+    if (descriptor.latestOutput.status === 'ready') {
+      assert.equal(descriptor.latestOutput.value?.text, 'hi there');
+      assert.equal(descriptor.latestOutput.value?.outputId, 'chat_turn:first-turn');
+      const output = readOutput(caller(), { locator: { nodeId: 'persisted-node' }, outputId: descriptor.latestOutput.value!.outputId, selection: 'latest', limitBytes: 1024 });
+      assert.equal(output.text, 'hi there');
+    }
+    const revision = paneInspectionRing.getRevision(descriptor.ref.paneId);
+    inspect(caller(), { locator: { nodeId: 'persisted-node' }, executionRef: { kind: 'chat_turn', nodeId: 'persisted-node', turnId: 'first-turn' } });
+    assert.equal(paneInspectionRing.getRevision(descriptor.ref.paneId), revision);
+  });
+
+  test('mixed legacy history remains partial in both individual and batch metadata', () => {
+    seedNode('legacy-node');
+    saveMessage({ id: 'legacy-answer', node_id: 'legacy-node', role: 'assistant', content: 'old answer', seq: 0, created_at: 1 });
+    seedCompletedTurn('legacy-node', 'modern-turn');
+    assert.deepEqual(getCompletedTurnCount('legacy-node', OWNER), { count: null, coverage: 'partial' });
+    assert.deepEqual(getNodesMetadataByIds(['legacy-node'], OWNER).get('legacy-node')?.completedTurns, { count: null, coverage: 'partial' });
+    assert.equal(inspect(caller(), { locator: { nodeId: 'legacy-node' } }).timeline.firstExecutionStartedAt, null);
+  });
+
+  test('legacy previews can be read by output identity without exposing user messages or another node', () => {
+    seedNode('legacy-only');
+    seedNode('unrelated-node');
+    saveMessage({ id: 'legacy-visible', node_id: 'legacy-only', role: 'assistant', content: 'legacy answer', seq: 0, created_at: 1 });
+    saveMessage({ id: 'user-input', node_id: 'legacy-only', role: 'user', content: 'private prompt', seq: 1, created_at: 2 });
+    const descriptor = inspect(caller(), { locator: { nodeId: 'legacy-only' } });
+    assert.ok(descriptor.latestOutput.status === 'ready' && descriptor.latestOutput.value);
+    const preview = descriptor.latestOutput.value;
+    assert.equal(preview.outputId, 'chat-message:legacy-visible');
+    const input = { locator: { nodeId: 'legacy-only' }, selection: 'latest' as const, limitBytes: 1024 };
+    const output = readOutput(caller(), { ...input, outputId: preview.outputId });
+    assert.equal(output.text, 'legacy answer');
+    assert.equal(output.outputRevision, preview.outputRevision);
+    assert.equal(output.execution, null);
+    assert.equal(readOutput(caller(), input).outputId, preview.outputId);
+    assert.throws(() => readOutput(caller(), { ...input, outputId: 'chat-message:user-input' }), /not available/);
+    assert.throws(() => readOutput(caller(), { ...input, locator: { nodeId: 'unrelated-node' }, outputId: preview.outputId }), /not available/);
+  });
+
+  test('an explicit outputId cannot override a conflicting execution identity', () => {
+    seedNode('output-target');
+    seedCompletedTurn('output-target', 'output-turn');
+    const input = { locator: { nodeId: 'output-target' }, selection: 'execution' as const, limitBytes: 1024, outputId: 'chat_turn:output-turn' };
+    assert.throws(() => readOutput(caller(), { ...input, executionRef: { kind: 'agent_run', runId: 'other-run' } }), /not available/);
+    assert.throws(() => readOutput(caller(), { ...input, executionRef: { kind: 'chat_turn', nodeId: 'other-node', turnId: 'output-turn' } }), /not available/);
+  });
+
+  test('Run lineage exposes visible parents and hides parents outside the workspace', () => {
+    seedTree('run-tree', 'run-parent');
+    seedNode('run-parent', { treeId: 'run-tree' });
+    seedCompletedTurn('run-parent', 'parent-turn');
+    const repo = new AgentRunsRepository();
+    const parent = createRun(repo, 'parent-run');
+    const attempt = repo.createAttempt({ operationId: 'parent-attempt', ownerUserId: OWNER, runId: parent.id,
+      profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, publicSessionId: 'parent-session', recoveryEnvelope: null });
+    const runChild = createRun(repo, 'run-child');
+    getDb().prepare("UPDATE agent_runs SET invocation_mode = 'delegated', parent_run_id = ?, parent_attempt_id = ? WHERE id = ?")
+      .run(parent.id, attempt.id, runChild.id);
+    const runLineage = inspect(caller(), { locator: { runId: runChild.id } }).lineage;
+    assert.ok(runLineage.status === 'ready');
+    assert.equal(runLineage.value.parentRunId, parent.id);
+    assert.equal(runLineage.value.parentNodeId, null);
+
+    const run = createRun(repo, 'chat-child');
+    getDb().prepare("UPDATE agent_runs SET invocation_mode = 'delegated', parent_node_id = ?, parent_turn_id = ?, parent_message_id = ? WHERE id = ?")
+      .run('run-parent', 'parent-turn', 'a-parent-turn', run.id);
+    const descriptor = inspect(caller(), { locator: { runId: run.id } });
+    assert.ok(descriptor.lineage.status === 'ready');
+    assert.deepEqual(descriptor.lineage.value, { parentNodeId: 'run-parent', parentRunId: null, originMessageId: 'a-parent-turn',
+      treeRootNodeId: 'run-parent', childNodeIds: [], childrenTruncated: false });
+    seedWorkspace('hidden-workspace');
+    getDb().prepare('UPDATE agent_runs SET workspace_id = ? WHERE id = ?').run('hidden-workspace', parent.id);
+    getDb().prepare('UPDATE nodes SET workspace_id = ? WHERE id = ?').run('hidden-workspace', 'run-parent');
+    const hidden = inspect(caller(), { locator: { runId: run.id } });
+    assert.ok(hidden.lineage.status === 'ready');
+    assert.equal(hidden.lineage.value.parentNodeId, null);
+    assert.equal(hidden.lineage.value.parentRunId, null);
+    assert.equal(hidden.lineage.value.originMessageId, null);
+    assert.equal(hidden.lineage.value.treeRootNodeId, null);
+    const hiddenRunLineage = inspect(caller(), { locator: { runId: runChild.id } }).lineage;
+    assert.ok(hiddenRunLineage.status === 'ready');
+    assert.equal(hiddenRunLineage.value.parentRunId, null);
+  });
+
+  test('archive-lane persistence is reflected even when node status stays idle', () => {
+    const node = seedNode('archived-node');
+    saveNode({ ...node, deleted_at: 5, deletion_group_id: 'arch-group' });
+    assert.equal(inspect(caller(), { locator: { nodeId: node.id } }).archived, true);
+  });
+
+  test('real inspect, wait and resumed feed preserve intervening changes and usable replay cursors', async () => {
+    seedNode('resumed-node');
+    const before = inspect(caller(), { locator: { nodeId: 'resumed-node' } });
+    updateNodeTitle('resumed-node', 'renamed before wait');
+    const waited = await waitPane(caller(), { locator: { nodeId: 'resumed-node' }, until: 'changed', cursor: before.observation.cursor, timeoutMs: 10 });
+    assert.equal(waited.reason, 'changed');
+    const events: PaneFeedEventV1[] = [];
+    const feed = new PaneFeed({ clock: systemPaneSubscribeClock, ring: paneInspectionRing });
+    try {
+      feed.subscribe(caller(), before.ref.paneId, before.observation.cursor, { emit: (event) => { events.push(event); } });
+      assert.ok(events.some((event) => 'descriptor' in event && event.descriptor?.title === 'renamed before wait'));
+      const replay = paneInspectionRing.resolveCursor(before.observation.cursor, scopeForCaller(caller()));
+      assert.ok(replay.ok && replay.replay.length > 0);
+      if (replay.ok) for (const retained of replay.replay) {
+        const payload = retained.event.payload as PaneFeedEventV1;
+        assert.ok(payload.cursor);
+        assert.equal(paneInspectionRing.resolveCursor(payload.cursor, scopeForCaller(caller())).ok, true);
+      }
+    } finally { feed.stop(); }
+  });
+
+  test('run output pages past 1000 events and preserves old attempt output identities', () => {
+    const repo = new AgentRunsRepository();
+    const run = createRun(repo, 'large-output');
+    const first = repo.createAttempt({ operationId: 'attempt-one', ownerUserId: OWNER, runId: run.id, profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, publicSessionId: 'session-one', recoveryEnvelope: null });
+    for (let i = 0; i < 1005; i++) repo.appendEventAndProject(OWNER, run.id, i, {
+      type: AgentRunEventType.Assistant, attemptId: first.id, payload: { version: 1, text: i === 1004 ? 'LATEST_MARKER' : 'abcd' },
+    });
+    const output = readOutput(caller(), { locator: { runId: run.id }, selection: 'latest', limitBytes: 65536 });
+    assert.ok(output.text.endsWith('LATEST_MARKER'));
+    const descriptor = inspect(caller(), { locator: { runId: run.id } });
+    assert.ok(descriptor.latestOutput.status === 'ready' && descriptor.latestOutput.value?.text.endsWith('LATEST_MARKER'));
+    repo.createAttempt({ operationId: 'attempt-two', ownerUserId: OWNER, runId: run.id, profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, publicSessionId: 'session-two', recoveryEnvelope: null });
+    assert.equal(readOutput(caller(), { locator: { runId: run.id }, selection: 'latest', outputId: output.outputId, limitBytes: 65536 }).text, output.text);
+  });
+
+  test('production event-bus configuration wakes default waits immediately and sends the final descriptor', async () => {
+    const repo = new AgentRunsRepository();
+    const run = createRun(repo, 'live-run');
+    repo.appendEventAndProject(OWNER, run.id, 0, { type: AgentRunEventType.RunStatusChanged,
+      payload: { version: 1, from: AgentRunStatus.Queued, to: AgentRunStatus.Preparing } }, { status: AgentRunStatus.Preparing });
+    repo.appendEventAndProject(OWNER, run.id, 1, { type: AgentRunEventType.RunStatusChanged,
+      payload: { version: 1, from: AgentRunStatus.Preparing, to: AgentRunStatus.Running } }, { status: AgentRunStatus.Running, startedAt: run.createdAt });
+    const bus = new AgentRunEventBus();
+    configurePaneInspectionEventBus(bus);
+    const events: PaneFeedEventV1[] = [];
+    const feed = new PaneFeed({ clock: systemPaneSubscribeClock, ring: paneInspectionRing });
+    try {
+      feed.subscribe(caller(), `run:${run.id}`, undefined, { emit: (event) => { events.push(event); } });
+      const waiting = waitPane(caller(), { locator: { runId: run.id }, until: 'terminal', executionRef: { kind: 'agent_run', runId: run.id }, timeoutMs: 500 });
+      const event = repo.appendEventAndProject(OWNER, run.id, 2, {
+        type: AgentRunEventType.RunStatusChanged, payload: { version: 1, from: AgentRunStatus.Running, to: AgentRunStatus.Completed },
+      }, { status: AgentRunStatus.Completed, completedAt: run.createdAt + 100 });
+      bus.publishCommitted(event);
+      assert.equal((await waiting).reason, 'terminal');
+      const final = events.find((entry) => entry.type === 'execution_settled');
+      assert.ok(final?.type === 'execution_settled');
+      assert.equal(final.descriptor?.activity, 'idle');
+      assert.equal(final.descriptor?.observation.cursor, final.cursor);
+    } finally { feed.stop(); }
   });
 
   // -------------------------------------------------------------------------

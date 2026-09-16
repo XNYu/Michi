@@ -73,7 +73,7 @@ function seedNode(nodeId: string, workspaceId: string): void {
 }
 
 let seq = 0;
-function seedMessage(nodeId: string, role: string, content = 'hi'): void {
+function seedMessage(nodeId: string, role: string, content = 'hi'): string {
   const msg: MessageRow = {
     id: `msg-${nodeId}-${seq}`,
     node_id: nodeId,
@@ -87,6 +87,7 @@ function seedMessage(nodeId: string, role: string, content = 'hi'): void {
     rev: null,
   };
   saveMessage(msg);
+  return msg.id;
 }
 
 /** Seed a turns row directly — the beginTurn/checkpointTurn/finalizeTurn state
@@ -180,9 +181,9 @@ describe('paneInspection message/turn count queries', () => {
   test('getCompletedTurnCount counts only completed turns', () => {
     seedWorkspace('ws-1');
     seedNode('node-1', 'ws-1');
-    seedMessage('node-1', 'user', 'u1');
-    seedMessage('node-1', 'assistant', 'a1');
-    seedTurn({ turnId: 't-completed', nodeId: 'node-1', userMessageId: 'u1', assistantMessageId: 'a1', status: 'completed' });
+    const userMessageId = seedMessage('node-1', 'user', 'u1');
+    const assistantMessageId = seedMessage('node-1', 'assistant', 'a1');
+    seedTurn({ turnId: 't-completed', nodeId: 'node-1', userMessageId, assistantMessageId, status: 'completed' });
     seedTurn({ turnId: 't-cancelled', nodeId: 'node-1', userMessageId: null, assistantMessageId: 'a2', status: 'cancelled' });
     seedTurn({ turnId: 't-error', nodeId: 'node-1', userMessageId: null, assistantMessageId: 'a3', status: 'error' });
     seedTurn({ turnId: 't-active', nodeId: 'node-1', userMessageId: null, assistantMessageId: 'a4', status: 'active' });
@@ -224,9 +225,9 @@ describe('paneInspection message/turn count queries', () => {
     try {
       seedWorkspace('ws-owned', 'owner-a');
       seedNode('node-1', 'ws-owned');
-      seedMessage('node-1', 'user');
-      seedMessage('node-1', 'assistant');
-      seedTurn({ turnId: 't-completed', nodeId: 'node-1', userMessageId: 'u1', assistantMessageId: 'a1', status: 'completed' });
+      const userMessageId = seedMessage('node-1', 'user');
+      const assistantMessageId = seedMessage('node-1', 'assistant');
+      seedTurn({ turnId: 't-completed', nodeId: 'node-1', userMessageId, assistantMessageId, status: 'completed' });
 
       const countsAsOwner = getMessageCountsByNode('node-1', 'owner-a');
       assert.deepEqual(countsAsOwner, { total: 2, user: 1, assistant: 1 });

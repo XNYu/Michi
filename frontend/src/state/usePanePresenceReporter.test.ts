@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   usePanePresenceReporter,
@@ -87,6 +88,103 @@ describe('usePanePresenceReporter', () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(transport.submitCalls).toHaveLength(0);
+  });
+
+  it('retries rejected targets after node persistence catches up without a rerender', async () => {
+    const transport = makeTransport();
+    const submit = vi.spyOn(transport, 'submit');
+    submit.mockResolvedValueOnce({ ok: true, rendererLeaseId: 'lease-retry', accepted: 0,
+      rejectedTargets: [{ paneId: 'node:n1', reason: 'NOT_FOUND' }] });
+    const backends = [backendSlot({ openPanesMap: { 'proj::tree-1': ['n1'] } })];
+    const hook = renderHook(() => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends, resolveViewSource, transport }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(submit).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit.mock.calls[1][2].rendererLeaseId).toBe('lease-retry');
+    await act(async () => { await vi.advanceTimersByTimeAsync(80_000); });
+    expect(submit).toHaveBeenCalledTimes(2);
+    hook.unmount();
+  });
+
+  it('retries failed last-pane deletion and never keeps the ghost alive', async () => {
+    const transport = makeTransport();
+    const remove = vi.spyOn(transport, 'remove').mockRejectedValueOnce(new Error('offline'));
+    const backends = [backendSlot({ openPanesMap: { 'proj::tree-1': ['n1'] } })];
+    const hook = renderHook(({ slots }) => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends: slots, resolveViewSource, transport }), { initialProps: { slots: backends } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    hook.rerender({ slots: [backendSlot()] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(remove).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(80_000); });
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(transport.keepaliveCalls).toHaveLength(0);
+    hook.unmount();
+  });
+
+  it('a delayed DELETE finishes before a reopened pane is registered again', async () => {
+    const transport = makeTransport();
+    let finishDelete!: (result: { ok: true; removed: number }) => void;
+    vi.spyOn(transport, 'remove').mockImplementationOnce(() => new Promise((resolve) => { finishDelete = resolve; }));
+    const backends = [backendSlot({ openPanesMap: { 'proj::tree-1': ['n1'] } })];
+    const hook = renderHook(({ slots }) => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends: slots, resolveViewSource, transport }), { initialProps: { slots: backends } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    hook.rerender({ slots: [backendSlot()] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    hook.rerender({ slots: backends });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(transport.submitCalls).toHaveLength(1);
+    finishDelete({ ok: true, removed: 1 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(transport.submitCalls).toHaveLength(2);
+    expect(transport.submitCalls[1].req.views[0].paneId).toBe('node:n1');
+    hook.unmount();
+  });
+
+  it('cleans up a lease allocated after unmount', async () => {
+    const transport = makeTransport();
+    let finishSubmit!: (result: { ok: true; rendererLeaseId: string; accepted: number; rejectedTargets: [] }) => void;
+    vi.spyOn(transport, 'submit').mockImplementationOnce(() => new Promise((resolve) => { finishSubmit = resolve; }));
+    const backends = [backendSlot({ openPanesMap: { 'proj::tree-1': ['n1'] } })];
+    const hook = renderHook(() => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends, resolveViewSource, transport }));
+    hook.unmount();
+    finishSubmit({ ok: true, rendererLeaseId: 'late-lease', accepted: 1, rejectedTargets: [] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(transport.removeCalls[0].req.rendererLeaseId).toBe('late-lease');
+    expect(transport.keepaliveCalls).toHaveLength(0);
+  });
+
+  it('registers the surviving StrictMode mount and removes only the retired mount lease', async () => {
+    const transport = makeTransport();
+    let finishRetiredSubmit!: (result: { ok: true; rendererLeaseId: string; accepted: number; rejectedTargets: [] }) => void;
+    const submit = vi.spyOn(transport, 'submit').mockImplementationOnce(() => new Promise((resolve) => { finishRetiredSubmit = resolve; }));
+    const backends = [backendSlot({ openPanesMap: { 'proj::tree-1': ['n1'] } })];
+    const hook = renderHook(() => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends, resolveViewSource, transport }), { wrapper: StrictMode });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(submit).toHaveBeenCalledTimes(2);
+    finishRetiredSubmit({ ok: true, rendererLeaseId: 'retired-lease', accepted: 1, rejectedTargets: [] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(80_000); });
+    expect(transport.removeCalls.map((call) => call.req.rendererLeaseId)).toEqual(['retired-lease']);
+    expect(transport.keepaliveCalls.length).toBeGreaterThan(0);
+    expect(transport.keepaliveCalls.every((call) => call.rendererLeaseId === 'lease-local-1')).toBe(true);
+    hook.unmount();
+    expect(transport.removeCalls.map((call) => call.req.rendererLeaseId)).toEqual(['retired-lease', 'lease-local-1']);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses independent leases for two workspaces on the same backend', async () => {
+    const transport = makeTransport();
+    const backends = [
+      backendSlot({ workspaceId: 'ws-a', openPanesMap: { 'ws-a::workspace': ['n1'] } }),
+      backendSlot({ workspaceId: 'ws-b', openPanesMap: { 'ws-b::workspace': ['n2'] } }),
+    ];
+    const hook = renderHook(() => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends, resolveViewSource, transport }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(transport.submitCalls.map((call) => call.workspaceId)).toEqual(['ws-a', 'ws-b']);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(transport.keepaliveCalls.map((call) => call.workspaceId)).toEqual(['ws-a', 'ws-b']);
+    expect(new Set(transport.keepaliveCalls.map((call) => call.rendererLeaseId)).size).toBe(2);
+    hook.unmount();
   });
 
   it('submits nothing if hydration failed (never observably different from not-yet-hydrated)', async () => {
@@ -389,7 +487,7 @@ describe('usePanePresenceReporter', () => {
     expect(keepaliveByConnection.get('remote-1')).toBe('ws-2');
   });
 
-  it('two normal submit dispatches resolving out of order leave the newest response authoritative', async () => {
+  it('serializes initial submissions and reuses the allocated lease for the newest snapshot', async () => {
     // Models a rapid pane-state change dispatching a second submit while the first is still
     // in flight — no reacquire, no keepalive failure, just two ordinary render-driven PUTs. The
     // FIRST dispatched request resolves SECOND (out of order). Without a per-dispatch
@@ -432,22 +530,22 @@ describe('usePanePresenceReporter', () => {
       activeSlotKey: 'proj::tree-1',
     })] });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(transport.submitCalls).toHaveLength(2);
+    expect(transport.submitCalls).toHaveLength(1);
     expect(resolveFirst).toBeTruthy();
-    expect(resolveSecond).toBeTruthy();
+    expect(resolveSecond).toBeUndefined();
 
-    // The SECOND (newer) request resolves FIRST, installing the fresh lease/revision.
-    resolveSecond?.({ ok: true, rendererLeaseId: 'lease-newest', accepted: 2, rejectedTargets: [] });
+    resolveFirst?.({ ok: true, rendererLeaseId: 'lease-only', accepted: 1, rejectedTargets: [] });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    // The FIRST (older) request resolves LAST — its response must be discarded, not applied.
-    resolveFirst?.({ ok: true, rendererLeaseId: 'lease-stale-older', accepted: 1, rejectedTargets: [] });
+    expect(transport.submitCalls).toHaveLength(2);
+    expect(transport.submitCalls[1].req.rendererLeaseId).toBe('lease-only');
+    expect(transport.submitCalls[1].req.views.map((v) => v.paneId)).toEqual(['node:n1', 'node:n2']);
+    resolveSecond?.({ ok: true, rendererLeaseId: 'lease-only', accepted: 2, rejectedTargets: [] });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     // Confirm the newest response's lease is what the next keepalive actually uses.
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(transport.keepaliveCalls).toHaveLength(1);
-    expect(transport.keepaliveCalls[0].rendererLeaseId).toBe('lease-newest');
+    expect(transport.keepaliveCalls[0].rendererLeaseId).toBe('lease-only');
   });
 
   it('a later normal submit invalidates an earlier keepalive response, not the reverse', async () => {
@@ -577,7 +675,7 @@ describe('usePanePresenceReporter', () => {
       expect(transport.submitCalls).toHaveLength(1);
     });
 
-    it('a stale in-flight submit response cannot clobber a lease the reacquire already installed', async () => {
+    it('defers keepalive recovery until the pending lease mutation has settled', async () => {
       const transport = makeTransport();
       const backends: PanePresenceBackendSlots[] = [backendSlot({
         openPanesMap: { 'proj::tree-1': ['n1'] },
@@ -637,14 +735,17 @@ describe('usePanePresenceReporter', () => {
       };
       await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
 
-      const reacquireSubmit = transport.submitCalls.find((c, i) => i > 1 && c.req.rendererLeaseId === undefined);
-      expect(reacquireSubmit).toBeTruthy();
+      expect(transport.keepaliveCalls).toHaveLength(0);
+      expect(transport.submitCalls).toHaveLength(2);
 
       // Now release the stale in-flight submit's response. Its resolution must not overwrite
       // the freshly-reacquired lease.
       expect(releaseSlowSubmit).toBeTruthy();
       releaseSlowSubmit?.();
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      const reacquireSubmit = transport.submitCalls.find((c, i) => i > 1 && c.req.rendererLeaseId === undefined);
+      expect(reacquireSubmit).toBeTruthy();
 
       // A subsequent keepalive tick still uses the NEW lease id (from the reacquire), not the
       // ORIGINAL lease id the stale in-flight submit's response would have reinstated had the

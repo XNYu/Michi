@@ -491,13 +491,12 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
   // cursor/executionRef + timeoutMs, matching parseWaitPaneRequestV1's shape (same
   // flat-locator/nested-result convention as parseInspectPaneRequestV1 above). Caller identity is
   // server-derived exactly like inspect/output/subscribe: never taken from the body. A client
-  // disconnecting mid-wait does not cancel the underlying `waitPane()` call — there is no
-  // `res.on('close')` handler here at all, unlike the SSE /panes/subscribe route above, because
-  // the service call is a single bounded Promise with its own listener/timer cleanup on every
-  // exit path (paneInspectionWait.ts) and nothing in this handler owns a cancellable resource of
-  // its own to tear down; the wait simply keeps running server-side and its result is discarded if
-  // the response can no longer be written (guarded by `res.writableEnded` below).
+  // disconnect aborts only this observer's wait and releases its listeners and owner slot;
+  // it never cancels the underlying chat turn or Run.
   router.post('/panes/wait', (req, res) => {
+    const controller = new AbortController();
+    const onClose = () => controller.abort();
+    res.on('close', onClose);
     void (async () => {
       try {
         const ownerUserId = resolveOwnerUserId(req);
@@ -516,12 +515,15 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
           cursor: parsed.cursor,
           executionRef: parsed.executionRef,
           timeoutMs: parsed.timeoutMs,
-        });
+          signal: controller.signal,
+        }, { clock: deps.clock, agentRunEvents: deps.agentRunEvents });
         if (res.writableEnded || res.destroyed) return;
         res.status(200).json(outcome);
       } catch (err) {
         if (res.writableEnded || res.destroyed) return;
         sendError(res, err);
+      } finally {
+        res.off('close', onClose);
       }
     })();
   });

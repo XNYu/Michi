@@ -1168,11 +1168,9 @@ export function getMessageCountsByNode(
 
 /**
  * Coverage signal for `getCompletedTurnCount` — whether durable turn history
- * exists for the node at all. `'partial'` means the node has assistant
- * messages but zero rows in `turns` (pre-`0014_turns.sql` legacy data); the
- * caller must not infer a completed-turn count from message rows in that
- * case. `'complete'` covers both "turn rows exist" and "node genuinely has
- * no messages at all" (0 is a known value there, not an unknown one).
+ * covers the node's assistant messages. `'partial'` means at least one assistant
+ * message has no matching durable turn, including mixed legacy/new history.
+ * A genuinely empty node has complete coverage and a known count of zero.
  */
 export type TurnHistoryCoverage = 'complete' | 'partial';
 
@@ -1185,10 +1183,8 @@ export type TurnHistoryCoverage = 'complete' | 'partial';
  * filter on `user_message_id` at all.
  *
  * Returns `null` for `count` — with `coverage: 'partial'` — when the node
- * has at least one assistant message but zero rows in `turns`: that is
- * legacy data older than the durable turn table, and the design forbids
- * inferring a completed-turn count from messages in that case. A node with
- * no messages at all is genuinely 0 turns, not unknown.
+ * has an assistant message not tracked by `turns`. Starting new turns does not
+ * fill gaps in legacy history; completed counts cannot be inferred from messages.
  */
 export function getCompletedTurnCount(
   nodeId: string,
@@ -1206,35 +1202,22 @@ export function getCompletedTurnCount(
         ).get(nodeId)
   ) as unknown as { cnt: number };
 
-  const anyTurnRow = (
-    cloudScoped
-      ? getDb().prepare(
-          'SELECT COUNT(*) as cnt FROM turns t JOIN nodes n ON t.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id WHERE t.node_id = ? AND w.owner_user_id = ?'
-        ).get(nodeId, userId)
-      : getDb().prepare('SELECT COUNT(*) as cnt FROM turns WHERE node_id = ?').get(nodeId)
-  ) as unknown as { cnt: number };
-
-  if (anyTurnRow.cnt > 0) {
-    return { count: turnRow.cnt, coverage: 'complete' };
-  }
-
-  // Zero turn rows for this node. Distinguish "genuinely no history" (0,
-  // known) from "legacy data predating the turns table" (null, unknown) by
-  // checking whether any assistant message exists.
+  // A new durable turn does not make older, untracked assistant messages complete.
+  const untracked = 'NOT EXISTS (SELECT 1 FROM turns t WHERE t.node_id = m.node_id AND t.assistant_message_id = m.id)';
   const assistantRow = (
     cloudScoped
       ? getDb().prepare(
-          "SELECT COUNT(*) as cnt FROM messages m JOIN nodes n ON m.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id WHERE m.node_id = ? AND m.role = 'assistant' AND w.owner_user_id = ?"
+          `SELECT COUNT(*) as cnt FROM messages m JOIN nodes n ON m.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id WHERE m.node_id = ? AND m.role = 'assistant' AND w.owner_user_id = ? AND ${untracked}`
         ).get(nodeId, userId)
       : getDb().prepare(
-          "SELECT COUNT(*) as cnt FROM messages WHERE node_id = ? AND role = 'assistant'"
+          `SELECT COUNT(*) as cnt FROM messages m WHERE m.node_id = ? AND m.role = 'assistant' AND ${untracked}`
         ).get(nodeId)
   ) as unknown as { cnt: number };
 
   if (assistantRow.cnt > 0) {
     return { count: null, coverage: 'partial' };
   }
-  return { count: 0, coverage: 'complete' };
+  return { count: turnRow.cnt, coverage: 'complete' };
 }
 
 /** Per-node non-execution metadata batched for a whole set of node ids in ONE round trip per
@@ -1274,9 +1257,8 @@ export function getNodesMetadataByIds(
   interface NodeRowSlim { id: string; title: string | null; status: string; workspace_id: string }
   const nodeRows = new Map<string, NodeRowSlim>();
   const messageCountRows = new Map<string, { total: number; user: number; assistant: number }>();
-  const anyTurnCountByNode = new Map<string, number>();
   const completedTurnCountByNode = new Map<string, number>();
-  const assistantMessageCountByNode = new Map<string, number>();
+  const untrackedAssistantCountByNode = new Map<string, number>();
 
   for (let i = 0; i < nodeIds.length; i += CHUNK) {
     const chunk = nodeIds.slice(i, i + CHUNK);
@@ -1313,22 +1295,25 @@ export function getNodesMetadataByIds(
       const existing = messageCountRows.get(row.node_id) ?? { total: 0, user: 0, assistant: 0 };
       existing.total += row.cnt;
       if (row.role === 'user') existing.user = row.cnt;
-      else if (row.role === 'assistant') { existing.assistant = row.cnt; assistantMessageCountByNode.set(row.node_id, row.cnt); }
+      else if (row.role === 'assistant') existing.assistant = row.cnt;
       messageCountRows.set(row.node_id, existing);
     }
 
-    // Batched turn counts: total rows per node, and completed-only rows per node — mirrors
+    // Batched coverage and completed-turn counts — mirrors
     // getCompletedTurnCount's two queries but widened to an IN() list with GROUP BY node_id.
-    const anyTurnRows = (
+    const untrackedAssistantRows = (
       cloudScoped
         ? db.prepare(
-            `SELECT t.node_id as node_id, COUNT(*) as cnt FROM turns t
-             JOIN nodes n ON t.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id
-             WHERE t.node_id IN (${placeholders}) AND w.owner_user_id = ? GROUP BY t.node_id`
+            `SELECT m.node_id, COUNT(*) as cnt FROM messages m
+             JOIN nodes n ON m.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id
+             WHERE m.node_id IN (${placeholders}) AND m.role = 'assistant' AND w.owner_user_id = ?
+             AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.node_id = m.node_id AND t.assistant_message_id = m.id) GROUP BY m.node_id`
           ).all(...chunk, userId)
-        : db.prepare(`SELECT node_id, COUNT(*) as cnt FROM turns WHERE node_id IN (${placeholders}) GROUP BY node_id`).all(...chunk)
+        : db.prepare(`SELECT m.node_id, COUNT(*) as cnt FROM messages m WHERE m.node_id IN (${placeholders})
+            AND m.role = 'assistant' AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.node_id = m.node_id AND t.assistant_message_id = m.id)
+            GROUP BY m.node_id`).all(...chunk)
     ) as unknown as Array<{ node_id: string; cnt: number }>;
-    for (const row of anyTurnRows) anyTurnCountByNode.set(row.node_id, row.cnt);
+    for (const row of untrackedAssistantRows) untrackedAssistantCountByNode.set(row.node_id, row.cnt);
 
     const completedTurnRows = (
       cloudScoped
@@ -1348,15 +1333,12 @@ export function getNodesMetadataByIds(
     const nodeRow = nodeRows.get(nodeId);
     if (!nodeRow) continue; // deleted / not owned / not found — omitted, not a sentinel.
     const messageCounts = messageCountRows.get(nodeId) ?? { total: 0, user: 0, assistant: 0 };
-    const anyTurns = anyTurnCountByNode.get(nodeId) ?? 0;
     const completedTurns = completedTurnCountByNode.get(nodeId) ?? 0;
     let turns: { count: number | null; coverage: TurnHistoryCoverage };
-    if (anyTurns > 0) {
-      turns = { count: completedTurns, coverage: 'complete' };
-    } else if ((assistantMessageCountByNode.get(nodeId) ?? 0) > 0) {
+    if ((untrackedAssistantCountByNode.get(nodeId) ?? 0) > 0) {
       turns = { count: null, coverage: 'partial' };
     } else {
-      turns = { count: 0, coverage: 'complete' };
+      turns = { count: completedTurns, coverage: 'complete' };
     }
     result.set(nodeId, {
       title: nodeRow.title,

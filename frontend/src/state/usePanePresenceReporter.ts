@@ -170,6 +170,12 @@ export interface UsePanePresenceReporterArgs {
 // ---------------------------------------------------------------------------
 
 interface ConnectionState {
+  connectionId: string;
+  scopeKey: string;
+  inFlight: boolean;
+  queuedSlot: PanePresenceBackendSlots | null;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  retryDelayMs: number;
   rendererLeaseId: string | null;
   viewRevision: number;
   /** paneId -> registeredAt (openedAtClient), so a re-submission of a still-open pane keeps its
@@ -299,13 +305,18 @@ export function usePanePresenceReporter({
     lastReported: Map<string, Set<string>>,
     opts: { forceNewLease?: boolean } = {},
   ): void {
+    // One writer per lease. In particular, never create two leases while the initial PUT
+    // is pending, and never let an older DELETE run after a reopened pane's PUT.
+    if (state.inFlight) { state.queuedSlot = slot; return; }
+    if (state.retryTimer) { clearTimeout(state.retryTimer); state.retryTimer = null; }
     if (opts.forceNewLease) {
       state.rendererLeaseId = null;
       state.viewRevision = nowRef.current();
+      lastReported.delete(state.scopeKey);
     }
     state.lastWorkspaceId = slot.workspaceId;
 
-    const { views } = computeViewsForConnection(
+    const { views, openUiPaneIds } = computeViewsForConnection(
       slot,
       resolveRef.current,
       windowIdRef.current,
@@ -319,7 +330,7 @@ export function usePanePresenceReporter({
     }
 
     const currentPaneIds = new Set(views.map((v) => v.paneId));
-    const previousPaneIds = lastReported.get(connectionId) ?? new Set<string>();
+    const previousPaneIds = lastReported.get(state.scopeKey) ?? new Set<string>();
     const wentAway = opts.forceNewLease ? [] : [...previousPaneIds].filter((id) => !currentPaneIds.has(id));
 
     state.viewRevision += 1;
@@ -334,65 +345,74 @@ export function usePanePresenceReporter({
     // non-empty at least once — closing the LAST pane must be an explicit DELETE, never an
     // empty PUT. Skip the PUT entirely in that case and go straight to the DELETE below; this
     // also avoids burning a viewRevision on a submission the server will silently drop.
-    const skipEmptyPut = views.length === 0 && state.rendererLeaseId !== null;
-    if (!skipEmptyPut) {
-      const activeState = state;
-      // Every state-changing submit dispatch owns its own generation, not only a forced
-      // reacquire. Two normal PUTs can resolve out of order (e.g. a slow first request and a
-      // fast second one triggered by a rapid pane-state change) — without bumping generation
-      // here, both would share the dispatch-time generation and the STALE first response could
-      // still land after the second and clobber viewRevision/rendererLeaseId with older data.
-      // Bumping unconditionally on every dispatch means only the response for the MOST
-      // RECENTLY dispatched submit can ever apply; any earlier one is stale by construction the
-      // moment a newer dispatch fires, whether or not that newer dispatch was itself a reacquire.
-      activeState.generation += 1;
-      const dispatchedGeneration = activeState.generation;
-      void transportRef.current.submit(connectionId, slot.workspaceId, submitReq).then((result) => {
-        // A newer submit/reacquire may have already superseded this one (e.g. this request was
-        // in flight when a subsequent submit or a keepalive NOT_FOUND reacquire dispatched) —
-        // never let a stale response overwrite what the newer request already installed.
-        if (activeState.generation !== dispatchedGeneration) return;
-        if (result.ok) {
-          activeState.rendererLeaseId = result.rendererLeaseId;
-          ensureKeepalive(connectionId, activeState);
-        } else if (result.code === 'EMPTY_SNAPSHOT_IGNORED') {
-          activeState.rendererLeaseId = result.rendererLeaseId;
-        } else if (result.code === 'STALE_REVISION') {
-          activeState.viewRevision = result.currentRevision;
-        } else if (result.code === 'WRONG_WINDOW') {
-          // This lease is no longer ours (e.g. a stale id from a previous process). Drop it
-          // so the next submission starts a fresh lease.
-          activeState.rendererLeaseId = null;
-        }
-      }).catch(() => { /* Best-effort; the next render's submission will retry. */ });
+    if (!openUiPaneIds.size && state.keepaliveTimer) {
+      clearInterval(state.keepaliveTimer);
+      state.keepaliveTimer = null;
     }
-    // else: nothing open anywhere for this connection and a lease already exists — the
-    // brief's PUT/DELETE asymmetry means an empty PUT would be silently ignored by the
-    // server anyway, so skip it. The DELETE below (driven by `wentAway`) is what actually
-    // clears the last pane.
-
-    if (wentAway.length > 0 && state.rendererLeaseId) {
-      const activeState = state;
-      const dispatchedGeneration = activeState.generation;
-      void transportRef.current.remove(connectionId, slot.workspaceId, {
-        rendererLeaseId: state.rendererLeaseId,
-        paneIds: wentAway,
-      }).then((result) => {
-        if (activeState.generation !== dispatchedGeneration) return;
-        // A lease-not-found DELETE (already expired/reacquired elsewhere) is a no-op — the
-        // reacquire path (if any) already replaced it; nothing further to do here.
-        if (!result.ok) return;
-      }).catch(() => { /* Best-effort; a stale registration expires via TTL regardless. */ });
-    }
-
-    lastReported.set(connectionId, currentPaneIds);
+    state.inFlight = true;
+    const generation = ++state.generation;
+    let retry = false;
+    const invalidate = () => {
+      state.rendererLeaseId = null;
+      lastReported.delete(state.scopeKey);
+      try { onLeaseInvalidatedRef.current?.(connectionId, slot.workspaceId); } catch { /* Cache cleanup cannot stop recovery. */ }
+    };
+    void (async () => {
+      if (wentAway.length && state.rendererLeaseId) {
+        const removed = await transportRef.current.remove(connectionId, slot.workspaceId, {
+          rendererLeaseId: state.rendererLeaseId, paneIds: wentAway,
+        });
+        if (state.generation !== generation) return;
+        if (!removed.ok && removed.code !== 'NOT_FOUND') { retry = true; return; }
+        if (!removed.ok) { invalidate(); retry = views.length > 0; return; }
+        for (const id of wentAway) previousPaneIds.delete(id);
+        lastReported.set(state.scopeKey, previousPaneIds);
+      }
+      if (!views.length && state.rendererLeaseId) return;
+      const submittedLease = state.rendererLeaseId;
+      const result = await transportRef.current.submit(connectionId, slot.workspaceId, submitReq);
+      if (state.generation !== generation) {
+        // Closing the window/scope during its first PUT still needs to remove the lease
+        // that was allocated by that in-flight request.
+        if (result.ok) await transportRef.current.remove(connectionId, slot.workspaceId, { rendererLeaseId: result.rendererLeaseId });
+        return;
+      }
+      if (result.ok) {
+        if (submittedLease && submittedLease !== result.rendererLeaseId) invalidate();
+        state.rendererLeaseId = result.rendererLeaseId;
+        const rejected = new Set(result.rejectedTargets.map((target) => target.paneId));
+        lastReported.set(state.scopeKey, new Set([...currentPaneIds].filter((id) => !rejected.has(id))));
+        retry = rejected.size > 0;
+        if (submittedLease && submittedLease !== result.rendererLeaseId) retry = true;
+        ensureKeepalive(connectionId, state);
+      } else {
+        retry = true;
+        if (result.code === 'STALE_REVISION') state.viewRevision = result.currentRevision;
+        else if (result.code === 'EMPTY_SNAPSHOT_IGNORED') state.rendererLeaseId = result.rendererLeaseId;
+        else invalidate();
+      }
+    })().catch(() => { retry = true; }).finally(() => {
+      state.inFlight = false;
+      if (state.generation !== generation) return;
+      const queued = state.queuedSlot;
+      state.queuedSlot = null;
+      if (queued) { submitForConnection(connectionId, state, queued, lastReported); return; }
+      if (!retry) { state.retryDelayMs = 1_000; return; }
+      state.retryTimer = setTimeout(() => {
+        state.retryTimer = null;
+        if (!hydratedRef.current) return;
+        const latestSlot = backendsRef.current.find((s) => s.backendConnectionId === connectionId && s.workspaceId === slot.workspaceId);
+        if (latestSlot) submitForConnection(connectionId, state, latestSlot, lastReported);
+      }, state.retryDelayMs);
+      state.retryDelayMs = Math.min(state.retryDelayMs * 2, 20_000);
+    });
 
     function ensureKeepalive(connectionId: string, state: ConnectionState): void {
       if (state.keepaliveTimer) return;
       state.keepaliveTimer = setInterval(() => {
-        if (!hydratedRef.current || !state.rendererLeaseId) return;
-        const slotNow = backendsRef.current.find((s) => s.backendConnectionId === connectionId);
-        if (!slotNow) return;
+        if (!hydratedRef.current || !state.rendererLeaseId || state.inFlight) return;
+        const slotNow = backendsRef.current.find((s) => s.backendConnectionId === connectionId && s.workspaceId === state.lastWorkspaceId);
+        if (!slotNow || !Object.values(slotNow.openPanesMap).some((ids) => ids.length > 0)) return;
         const rendererLeaseId = state.rendererLeaseId;
         const dispatchedGeneration = state.generation;
         void transportRef.current.keepalive(connectionId, slotNow.workspaceId, { rendererLeaseId })
@@ -422,7 +442,7 @@ export function usePanePresenceReporter({
             // generation again for its own dispatch when it actually submits; this bump alone
             // is what invalidates in-flight requests on the early-return "nothing open" path.)
             state.generation += 1;
-            const latestSlot = backendsRef.current.find((s) => s.backendConnectionId === connectionId);
+            const latestSlot = backendsRef.current.find((s) => s.backendConnectionId === connectionId && s.workspaceId === state.lastWorkspaceId);
             if (!latestSlot) {
               // This connection is no longer open at all; nothing to reacquire for.
               if (state.keepaliveTimer) { clearInterval(state.keepaliveTimer); state.keepaliveTimer = null; }
@@ -456,10 +476,17 @@ export function usePanePresenceReporter({
     const seenConnectionIds = new Set<string>();
 
     for (const slot of backendsRef.current) {
-      seenConnectionIds.add(slot.backendConnectionId);
-      let state = connections.get(slot.backendConnectionId);
+      const scopeKey = JSON.stringify([slot.backendConnectionId, slot.workspaceId, windowId]);
+      seenConnectionIds.add(scopeKey);
+      let state = connections.get(scopeKey);
       if (!state) {
         state = {
+          connectionId: slot.backendConnectionId,
+          scopeKey,
+          inFlight: false,
+          queuedSlot: null,
+          retryTimer: null,
+          retryDelayMs: 1_000,
           rendererLeaseId: null,
           viewRevision: nowRef.current(),
           openedAtClientByPaneId: new Map(),
@@ -467,7 +494,7 @@ export function usePanePresenceReporter({
           generation: 0,
           lastWorkspaceId: null,
         };
-        connections.set(slot.backendConnectionId, state);
+        connections.set(scopeKey, state);
       }
 
       submitForConnection(slot.backendConnectionId, state, slot, lastReported);
@@ -475,9 +502,11 @@ export function usePanePresenceReporter({
 
     // Backends this window no longer talks to at all (e.g. its last pane on that connection
     // closed and the connection itself was dropped from `backends`): remove the whole lease.
-    for (const [connectionId, state] of connections) {
-      if (seenConnectionIds.has(connectionId)) continue;
+    for (const [scopeKey, state] of connections) {
+      if (seenConnectionIds.has(scopeKey)) continue;
+      const connectionId = state.connectionId;
       if (state.keepaliveTimer) clearInterval(state.keepaliveTimer);
+      if (state.retryTimer) clearTimeout(state.retryTimer);
       state.generation += 1;
       if (state.rendererLeaseId) {
         // Use the last known workspaceId recorded for this connection — it is no longer present
@@ -490,8 +519,8 @@ export function usePanePresenceReporter({
             .catch(() => { /* Best-effort. */ });
         }
       }
-      connections.delete(connectionId);
-      lastReported.delete(connectionId);
+      connections.delete(scopeKey);
+      lastReported.delete(scopeKey);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, windowId, backends, resolveViewSource, transport, onLeaseInvalidated]);
@@ -504,17 +533,23 @@ export function usePanePresenceReporter({
   useEffect(() => {
     const connections = connectionsRef.current;
     const cleanup = () => {
-      for (const [connectionId, state] of connections) {
+      for (const state of connections.values()) {
+        const connectionId = state.connectionId;
         if (state.keepaliveTimer) {
           clearInterval(state.keepaliveTimer);
           state.keepaliveTimer = null;
         }
         state.generation += 1;
+        if (state.retryTimer) { clearTimeout(state.retryTimer); state.retryTimer = null; }
         if (state.rendererLeaseId && state.lastWorkspaceId) {
           void transportRef.current.remove(connectionId, state.lastWorkspaceId, { rendererLeaseId: state.rendererLeaseId })
             .catch(() => { /* Best-effort on unmount/unload; TTL is the fallback. */ });
         }
       }
+      // StrictMode may immediately mount these effects again. Pending requests retain their
+      // retired state for late-lease cleanup; the surviving mount must create fresh state.
+      connections.clear();
+      lastReportedPaneIdsRef.current.clear();
     };
     window.addEventListener('beforeunload', cleanup);
     return () => {

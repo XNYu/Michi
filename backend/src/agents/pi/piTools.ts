@@ -370,7 +370,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
                     runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
-                    backendConnectionId: parentChatId,
+                    backendConnectionId: 'local',
                 };
                 return {
                     name: t.name,
@@ -394,7 +394,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
                     runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
-                    backendConnectionId: parentChatId,
+                    backendConnectionId: 'local',
                 };
                 return {
                     name: t.name,
@@ -422,7 +422,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
                     runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
-                    backendConnectionId: parentChatId,
+                    backendConnectionId: 'local',
                 };
                 return {
                     name: t.name,
@@ -449,7 +449,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
                     runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
-                    backendConnectionId: parentChatId,
+                    backendConnectionId: 'local',
                 };
                 return {
                     name: t.name,

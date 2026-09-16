@@ -83,6 +83,21 @@ describe('paneInspection external store', () => {
     subscribeSpy.mockRestore();
   });
 
+  it('settlement replaces the complete descriptor, including final output and commit state', () => {
+    const handle = attach(BASE, ['node:n1']);
+    handlersByCallIndex[0].onEvent(snapshotEvent('node:n1', 'c1', { activity: 'running' }));
+    const final = descriptor({ activity: 'idle', execution: { status: 'ready', value: {
+      ref: { kind: 'chat_turn', nodeId: 'n1', turnId: 't1' }, assistantId: 'a1', attemptId: null, attemptIndex: null,
+      status: 'completed', startedAt: 1, endedAt: 2, commitState: 'committed', waitingReason: null, error: null,
+    } }, latestOutput: { status: 'ready', value: { outputId: 'chat_turn:t1', outputRevision: 'r2',
+      execution: { kind: 'chat_turn', nodeId: 'n1', turnId: 't1' }, kind: 'answer', text: 'final answer', updatedAt: 2, partial: false, truncated: false } } });
+    handlersByCallIndex[0].onEvent({ version: 1, type: 'execution_settled', paneId: 'node:n1', cursor: 'c2', emittedAt: 2,
+      execution: { kind: 'chat_turn', nodeId: 'n1', turnId: 't1' }, outcome: 'completed', commitState: 'committed', descriptor: final });
+    expect(handle.getSnapshot().panes['node:n1'].descriptor).toEqual(final);
+    expect(handle.getSnapshot().panes['node:n1'].executionStatus).toBe('completed');
+    handle.detach();
+  });
+
   describe('ref-counted feed lifecycle', () => {
     it('opens no feed until the first subscriber attaches', () => {
       expect(subscribeSpy).not.toHaveBeenCalled();

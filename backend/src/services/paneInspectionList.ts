@@ -22,10 +22,9 @@ import {
   type PaneSummaryV1,
   type PaneTarget,
 } from 'michi-shared';
-import { inspect, type PaneInspectionCaller } from './paneInspection';
-import { getAiGlobalContext, getWorkspace, listNodes, type NodeRow } from './dbRepository';
+import { assertPaneInspectionCaller, inspect, type PaneInspectionCaller } from './paneInspection';
+import { getWorkspace, listNodes, type NodeRow } from './dbRepository';
 import { AgentRunsRepository } from './agentRunsRepository';
-import { AgentPolicyCategory, AgentPolicyDecision } from 'michi-shared';
 import { panePresenceRegistry as sharedPanePresenceRegistry } from './panePresence';
 import { surfaceToDescriptor, SURFACE_PANE_KINDS, type SurfacePaneKind } from './paneInspectionProjection.surface';
 import type { PanePresenceRegistry } from './panePresence';
@@ -184,19 +183,7 @@ export function list(caller: PaneInspectionCaller, request: ListPanesRequestV1):
 // ---------------------------------------------------------------------------
 
 function assertCallerGates(caller: PaneInspectionCaller): void {
-  if (!getAiGlobalContext(caller.workspaceId, caller.ownerUserId)) {
-    throw new PaneInspectionError('NAVIGATION_DISABLED', 'list', 'AI navigation is disabled for this workspace.');
-  }
-  if (caller.runOwner) {
-    const callerRun = runsRepository.getRun(caller.ownerUserId, caller.runOwner.runId);
-    if (!callerRun) {
-      throw new PaneInspectionError('NOT_FOUND', 'list', 'caller run not found');
-    }
-    const readDecision = callerRun.effectiveDefinition.permissionPolicy.categories[AgentPolicyCategory.Read];
-    if (readDecision !== AgentPolicyDecision.Allow) {
-      throw new PaneInspectionError('NAVIGATION_DISABLED', 'list', "caller Run's Read policy does not allow this.");
-    }
-  }
+  assertPaneInspectionCaller(caller, 'list');
   // The caller's OWN workspace must exist and be owned by them — mirrors authorizeCaller's
   // node/run existence+ownership check, applied to the workspace itself since `list` has no
   // single target to authorise against. An unowned/absent workspace returns NOT_FOUND, never

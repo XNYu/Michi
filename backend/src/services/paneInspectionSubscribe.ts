@@ -404,6 +404,13 @@ export interface PaneFeedDeps {
  * addition) adapts that to `res.write`; a future `wait_pane` (P3-5) can reuse this exact class by
  * calling `oncePerObject` instead of `start`.
  */
+let processAgentRunEvents: AgentRunEventBus | undefined;
+
+/** Installed once at boot; tool waits and HTTP feeds observe the same committed bus. */
+export function configurePaneInspectionEventBus(events: AgentRunEventBus | undefined): void {
+  processAgentRunEvents = events;
+}
+
 export class PaneFeed {
   private readonly clock: PaneSubscribeClock;
   private readonly ring: PaneInspectionRing;
@@ -430,7 +437,7 @@ export class PaneFeed {
     this.clock = deps.clock;
     this.ring = deps.ring;
     this.chatHub = deps.chatHub ?? systemChatHub;
-    this.agentRunEvents = deps.agentRunEvents;
+    this.agentRunEvents = deps.agentRunEvents ?? processAgentRunEvents;
     this.pollIntervalMs = deps.pollIntervalMs ?? 2_000;
     this.metadataWatcher = new WorkspaceMetadataWatcher({
       clock: this.clock,
@@ -463,16 +470,21 @@ export class PaneFeed {
     this.states.set(paneId, { lastEmittedContent: undefined, pendingOutputTimer: undefined, pendingDescriptor: null, settled: false, caller, emitter });
 
     if (resumeCursor) {
+      // Reauthorize before replay: retained payloads are not permission grants. A fresh
+      // snapshot below reconciles changes that have not yet entered the ring.
+      const descriptor = this.tryAuthorizedInspect(caller, paneId, emitter);
+      if (!descriptor) return;
       const resolution = this.ring.resolveCursor(resumeCursor, scope);
-      if (resolution.ok) {
+      if (resolution.ok && resolution.paneId === paneId) {
         for (const retained of resolution.replay) {
           emitter.emit(retained.event.payload as PaneFeedEventV1);
         }
         // Establish lastEmittedContent from a fresh authorised read so the NEXT diff has a
         // correct baseline even if the replay's own payloads don't fully reconstruct it (they
         // are opaque to the ring — see RingEvent's doc comment).
-        const descriptor = this.tryAuthorizedInspect(caller, paneId);
-        if (descriptor) this.states.get(paneId)!.lastEmittedContent = toContentSnapshot(descriptor);
+        // Always reconcile against the authoritative snapshot. A feed may have been idle,
+        // or a prior partial event may not contain every section of the descriptor.
+        this.emitFreshSnapshot(caller, paneId, emitter);
         this.armWatcher(caller, paneId, emitter);
         return;
       }
@@ -830,6 +842,12 @@ export class PaneFeed {
     const state = this.states.get(paneId);
     if (!state || state.settled) return;
     const scope = scopeFor(caller);
+    // A coalesced preview may outlive a policy change; never flush it without a fresh check.
+    try { authorizeCaller(caller, resolvePaneTarget({ paneId })); }
+    catch (err) {
+      if (err instanceof PaneInspectionError && (err.code === 'NOT_FOUND' || err.code === 'NAVIGATION_DISABLED')) this.revoke(caller, paneId, emitter);
+      return;
+    }
     const content = toContentSnapshot(descriptor);
     const payloadSizeHint = utf8Bytes(descriptor);
 
@@ -844,7 +862,7 @@ export class PaneFeed {
       const execution = descriptor.execution.value;
       event = {
         version: 1, paneId, cursor: '', emittedAt: this.clock.now(),
-        type: 'execution_settled', execution: execution.ref, outcome: execution.status, commitState: execution.commitState,
+        type: 'execution_settled', execution: execution.ref, outcome: execution.status, commitState: execution.commitState, descriptor,
       };
     } else {
       event = {
@@ -855,6 +873,9 @@ export class PaneFeed {
 
     const cursor = this.ring.recordContentChange(paneId, scope, content, { kind: event.type as 'changed' | 'output_changed' | 'execution_settled', payload: event, sizeBytes: payloadSizeHint });
     event = { ...event, cursor };
+    if ('descriptor' in event && event.descriptor) {
+      event.descriptor = { ...event.descriptor, observation: { ...event.descriptor.observation, cursor } };
+    }
     state.lastEmittedContent = content;
     emitter.emit(event);
   }
@@ -864,10 +885,14 @@ export class PaneFeed {
     if (!descriptor) return;
     const scope = scopeFor(caller);
     const content = toContentSnapshot(descriptor);
-    const cursor = this.ring.recordSnapshot(paneId, scope, content);
+    const payload: PaneFeedEventV1 = { version: 1, paneId, cursor: '', type: 'changed',
+      changedSections: Object.keys(descriptor), descriptor, emittedAt: this.clock.now() };
+    const cursor = this.ring.recordSnapshot(paneId, scope, content, { kind: 'changed', payload, sizeBytes: utf8Bytes(payload) });
     const state = this.states.get(paneId);
     if (state) state.lastEmittedContent = content;
-    emitter.emit({ version: 1, paneId, cursor, type: 'snapshot', descriptor, emittedAt: this.clock.now() });
+    emitter.emit({ version: 1, paneId, cursor, type: 'snapshot', descriptor: {
+      ...descriptor, observation: { ...descriptor.observation, cursor },
+    }, emittedAt: this.clock.now() });
   }
 
   /**
@@ -882,7 +907,7 @@ export class PaneFeed {
     if (!target) return this.revoke(caller, paneId, emitter);
     try {
       authorizeCaller(caller, target);
-      return inspect(caller, { locator: paneIdLocator(paneId) });
+      return inspect(caller, { locator: paneIdLocator(paneId) }, { publishObservation: false });
     } catch (err) {
       if (err instanceof PaneInspectionError && (err.code === 'NOT_FOUND' || err.code === 'NAVIGATION_DISABLED')) {
         return this.revoke(caller, paneId, emitter);

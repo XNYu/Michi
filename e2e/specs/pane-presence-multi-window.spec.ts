@@ -90,11 +90,11 @@ async function openPaneFromSidebar(page: Page) {
  *  used instead of a fixed sleep because the reporter's first submission fires from a `useEffect`
  *  after hydration, not synchronously on `goto`. */
 async function waitForNonEmptySubmits(controller: PanePresenceMockController, count: number) {
-  await expect.poll(() => controller.submitCalls.filter((c) => c.viewCount > 0).length).toBeGreaterThanOrEqual(count);
+  await expect.poll(() => new Set(controller.submitCalls.filter((c) => c.viewCount > 0).map((c) => c.rendererLeaseId)).size).toBeGreaterThanOrEqual(count);
 }
 
 test.describe('pane presence — two windows on one workspace', () => {
-  test('two pages opening the same pane get distinct leases and coexist', async ({ browser }) => {
+  test('two pages opening the same pane get distinct leases and coexist', async ({ browser }, testInfo) => {
     const controller = createPanePresenceMockController();
     const context = await browser.newContext();
     const page1 = await context.newPage();
@@ -124,6 +124,9 @@ test.describe('pane presence — two windows on one workspace', () => {
     // two different objects that happen to both exist.
     expect(lease1.paneIds).toEqual([`node:${NODE_ID}`]);
     expect(lease2.paneIds).toEqual([`node:${NODE_ID}`]);
+
+    await page1.screenshot({ path: testInfo.outputPath('pane-window-1.png'), fullPage: true });
+    await page2.screenshot({ path: testInfo.outputPath('pane-window-2.png'), fullPage: true });
 
     await context.close();
   });

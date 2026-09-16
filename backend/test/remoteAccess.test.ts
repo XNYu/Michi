@@ -55,6 +55,7 @@ describe('remote access token middleware', () => {
     let body: unknown;
     let nextCalls = 0;
     const response = {
+      locals: {},
       status(code: number) { status = code; return this; },
       json(value: unknown) { body = value; return this; },
     } as any;
@@ -74,6 +75,7 @@ describe('remote access token middleware', () => {
       let status = 0;
       let nextCalls = 0;
       const response = {
+        locals: {},
         status(code: number) { status = code; return this; },
         json() { return this; },
       } as any;

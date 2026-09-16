@@ -120,7 +120,9 @@ describe('POST /api/panes/wait', () => {
     const body = await asJson(res);
     assert.deepEqual(body, SAMPLE_RESULT);
     assert.equal(capture.waitCalls.length, 1);
-    assert.deepEqual(capture.waitCalls[0].input, {
+    const { signal, ...input } = capture.waitCalls[0].input;
+    assert.ok(signal instanceof AbortSignal);
+    assert.deepEqual(input, {
       locator: { nodeId: 'n-1' },
       until: 'changed',
       cursor: 'node:n-1:cursor-1',
@@ -290,14 +292,17 @@ describe('POST /api/panes/wait', () => {
   // Request disconnect does not cancel the underlying execution
   // -------------------------------------------------------------------------
 
-  test('client disconnect while the service call is pending does not abort or cancel it', async () => {
+  test('client disconnect aborts observation without cancelling the target execution', async () => {
     let released: () => void = () => {};
     let cancelled = false;
+    let onDisconnect!: () => void;
+    const disconnected = new Promise<void>((resolve) => { onDisconnect = resolve; });
     const pending = new Promise<WaitPaneResultV1>((resolve) => {
       released = () => resolve(SAMPLE_RESULT);
     });
     const capture = start({
-      resolveWait: async () => {
+      resolveWait: async (input) => {
+        input.signal?.addEventListener('abort', onDisconnect, { once: true });
         try {
           return await pending;
         } catch {
@@ -322,6 +327,8 @@ describe('POST /api/panes/wait', () => {
     // Disconnect the client before the service call resolves.
     controller.abort();
     await assert.rejects(fetchPromise);
+    await disconnected;
+    assert.equal(capture.waitCalls[0].input.signal?.aborted, true);
 
     // The underlying service promise is still running and completes normally — nothing in the
     // route handler ever calls anything that would reject/cancel it. Resolve it now and confirm

@@ -145,7 +145,7 @@ function createRun(repo: AgentRunsRepository, id: string, overrides: Partial<Eff
 
 /** Registers a live surface presence view against the shared registry — the only way for a
  *  surface pane to become visible under either scope (design §4.2; no persisted row exists). */
-function registerSurface(kind: string, opts: { workspaceId?: string; treeId?: string | null } = {}): string {
+function registerSurface(kind: string, opts: { workspaceId?: string; treeId?: string | null } = {}): () => void {
   const presenceCaller = { ownerUserId: OWNER, workspaceId: opts.workspaceId ?? WORKSPACE, connectionId: 'conn-1' };
   const { registrationId, paneId } = panePresenceRegistry.allocateSurfaceRegistration(presenceCaller, kind);
   const result = panePresenceRegistry.submitPresence(
@@ -161,7 +161,8 @@ function registerSurface(kind: string, opts: { workspaceId?: string; treeId?: st
     },
   );
   assert.equal(result.ok, true, 'test setup: surface presence submission must succeed');
-  return paneId;
+  assert.ok(result.ok);
+  return () => { panePresenceRegistry.removePresence(presenceCaller, { rendererLeaseId: result.rendererLeaseId }); };
 }
 
 describe('paneInspectionList.list', () => {
@@ -180,6 +181,24 @@ describe('paneInspectionList.list', () => {
     closeDb();
     delete process.env.MICHI_CLOUD;
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('caller policy gates reject even empty and surface-only lists', () => {
+    const run = createRun(new AgentRunsRepository(), 'restricted-caller');
+    const definition = { ...run.effectiveDefinition, contextPolicy: { ...run.effectiveDefinition.contextPolicy, allowMessageContext: false } };
+    getDb().prepare('UPDATE agent_runs SET effective_definition = ? WHERE id = ?').run(JSON.stringify(definition), run.id);
+    const restricted = caller({ runOwner: { runId: run.id } });
+    assert.throws(() => list(restricted, baseRequest({ scope: 'open' })), /context policy/);
+    const cleanup = registerSurface('terminal');
+    try { assert.throws(() => list(restricted, baseRequest({ scope: 'open' })), /context policy/); }
+    finally { cleanup(); }
+  });
+
+  test('a caller Run cannot inspect another workspace through list', () => {
+    const run = createRun(new AgentRunsRepository(), 'other-workspace-caller');
+    seedWorkspace('ws-other');
+    getDb().prepare('UPDATE agent_runs SET workspace_id = ? WHERE id = ?').run('ws-other', run.id);
+    assert.throws(() => list(caller({ runOwner: { runId: run.id } }), baseRequest({ scope: 'open' })), /caller run not found/);
   });
 
   // -------------------------------------------------------------------------

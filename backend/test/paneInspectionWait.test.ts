@@ -261,6 +261,48 @@ describe('waitPane — until: terminal', () => {
 });
 
 describe('waitPane — timeout', () => {
+  test('aborting an observer releases listeners, timers and its owner wait slot', async () => {
+    stubService();
+    inspectImpl = () => baseDescriptor();
+    const clock = makeFakeClock();
+    for (let i = 0; i < 12; i++) {
+      const controller = new AbortController();
+      const waiting = waitPane(CALLER, { locator: { nodeId: 'n-1' }, until: 'terminal',
+        executionRef: { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' }, timeoutMs: 30_000, signal: controller.signal }, { clock: clock.clock });
+      controller.abort();
+      assert.equal((await waiting).reason, 'unavailable');
+      assert.equal(clock.liveTimerCount(), 0);
+    }
+  });
+
+  test('an unexpected second-check failure cleans up the already attached observer', async () => {
+    stubService();
+    const clock = makeFakeClock();
+    let calls = 0;
+    inspectImpl = () => {
+      if (++calls > 1) throw new Error('source failed');
+      return baseDescriptor();
+    };
+    await assert.rejects(waitPane(CALLER, { locator: { nodeId: 'n-1' }, until: 'terminal',
+      executionRef: { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' }, timeoutMs: 100 }, { clock: clock.clock }), /source failed/);
+    assert.equal(clock.liveTimerCount(), 0);
+  });
+
+  test('timeout refreshes the descriptor instead of returning its setup snapshot', async () => {
+    stubService();
+    const clock = makeFakeClock();
+    let current = baseDescriptor();
+    inspectImpl = () => current;
+    const waiting = waitPane(CALLER, { locator: { nodeId: 'n-1' }, until: 'terminal',
+      executionRef: { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' }, timeoutMs: 100 }, { clock: clock.clock });
+    current = { ...current, title: 'changed before timeout' };
+    clock.advance(100);
+    const result = await waiting;
+    assert.equal(result.reason, 'timed_out');
+    assert.equal(result.descriptor?.title, current.title);
+    assert.equal(clock.liveTimerCount(), 0);
+  });
+
   test('times out with reason=timed_out and asserts no cancel call happened', async () => {
     stubService();
     const { clock, advance } = makeFakeClock();

@@ -446,7 +446,8 @@ function isPaneFeedEventV1(value: unknown): value is PaneFeedEventV1 {
     case 'output_changed':
       return typeof v.outputId === 'string' && typeof v.outputRevision === 'string' && !!v.preview && typeof v.preview === 'object';
     case 'execution_settled':
-      return !!v.execution && typeof v.execution === 'object' && typeof v.outcome === 'string' && typeof v.commitState === 'string';
+      return !!v.execution && typeof v.execution === 'object' && typeof v.outcome === 'string' && typeof v.commitState === 'string'
+        && (v.descriptor === undefined || (!!v.descriptor && typeof v.descriptor === 'object'));
     default:
       // removed / access_revoked / resync_required / heartbeat carry no extra fields.
       return true;

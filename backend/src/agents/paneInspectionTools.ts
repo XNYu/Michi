@@ -55,6 +55,7 @@ import { readOutput, type ReadPaneOutputResult } from "../services/paneInspectio
 import { list, type ListPanesResult } from "../services/paneInspectionList";
 import { waitPane } from "../services/paneInspectionWait";
 import { DISABLED_MESSAGE } from "../services/globalContext";
+import { LOCAL_AGENT_OWNER_ID } from "../services/agentOwner";
 
 // ---------------------------------------------------------------------------
 // Caller binding — the security core (brief step 3 / design §10 / COMMON.md decision 10).
@@ -90,7 +91,8 @@ export interface PaneInspectionToolBinding {
  * an unexplained tool failure, mirroring the design's discriminated-result convention.
  */
 export function buildPaneInspectionCaller(binding: PaneInspectionToolBinding): PaneInspectionCaller {
-  if (!binding.ownerUserId || !binding.workspaceId) {
+  const ownerUserId = binding.ownerUserId ?? (process.env.MICHI_CLOUD === '1' ? null : LOCAL_AGENT_OWNER_ID);
+  if (!ownerUserId || !binding.workspaceId) {
     throw new PaneInspectionError(
       "SOURCE_UNAVAILABLE",
       "caller",
@@ -98,7 +100,7 @@ export function buildPaneInspectionCaller(binding: PaneInspectionToolBinding): P
     );
   }
   return {
-    ownerUserId: binding.ownerUserId,
+    ownerUserId,
     workspaceId: binding.workspaceId,
     backendConnectionId: binding.backendConnectionId,
     runOwner: binding.runOwnerRunId ? { runId: binding.runOwnerRunId } : null,
@@ -230,6 +232,7 @@ function renderDescriptor(descriptor: PaneDescriptorV1): string {
       value === null
         ? "execution: none yet"
         : `execution: ${renderExecutionRef(value.ref)} status=${value.status} commitState=${value.commitState}` +
+          ` startedAt=${value.startedAt ?? 'unknown'} endedAt=${value.endedAt ?? 'unknown'}` +
           (value.error ? ` error=${value.error.code}: ${value.error.message}` : ""),
     ),
   );
@@ -237,6 +240,10 @@ function renderDescriptor(descriptor: PaneDescriptorV1): string {
   lines.push(
     `timeline: resourceCreatedAt=${descriptor.timeline.resourceCreatedAt ?? "unknown"} firstExecutionStartedAt=${descriptor.timeline.firstExecutionStartedAt ?? "unknown"}`,
   );
+  lines.push(`presence: coverage=${descriptor.presence.coverage} views=${descriptor.presence.views.length}`);
+  for (const view of descriptor.presence.views) {
+    lines.push(`view: windowId=${view.windowId} uiPaneId=${view.uiPaneId} visible=${view.visible} openedAtClient=${view.openedAtClient ?? 'unknown'} registeredAt=${view.registeredAt}`);
+  }
 
   lines.push(
     renderSection("conversation", descriptor.conversation, (value) =>
@@ -246,7 +253,7 @@ function renderDescriptor(descriptor: PaneDescriptorV1): string {
 
   lines.push(
     renderSection("lineage", descriptor.lineage, (value) =>
-      `lineage: parentNodeId=${value.parentNodeId ?? "none"} treeRootNodeId=${value.treeRootNodeId ?? "none"} children=${value.childNodeIds.length}${value.childrenTruncated ? " (truncated)" : ""}`,
+      `lineage: parentNodeId=${value.parentNodeId ?? "none"} parentRunId=${value.parentRunId ?? 'none'} originMessageId=${value.originMessageId ?? 'none'} treeRootNodeId=${value.treeRootNodeId ?? "none"} children=${value.childNodeIds.length}${value.childrenTruncated ? " (truncated)" : ""}`,
     ),
   );
 
@@ -260,7 +267,7 @@ function renderDescriptor(descriptor: PaneDescriptorV1): string {
     renderSection("latestOutput", descriptor.latestOutput, (value) =>
       value === null
         ? "latestOutput: none yet"
-        : `latestOutput (${value.kind}${value.partial ? ", partial" : ""}${value.truncated ? ", truncated" : ""}): ${value.text}`,
+        : `latestOutput (${value.kind}${value.partial ? ", partial" : ""}${value.truncated ? ", truncated" : ""}): ${value.text}\noutputId=${value.outputId} outputRevision=${value.outputRevision} execution=${value.execution ? renderExecutionRef(value.execution) : 'unknown'}`,
     ),
   );
 

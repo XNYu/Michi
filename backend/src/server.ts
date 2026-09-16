@@ -10,6 +10,7 @@ import { setupMichiRoutes } from './routes/michi';
 import { setupDigestRoutes } from './routes/digests';
 import { setupPersistenceRoutes } from './routes/persistence';
 import { setupPaneInspectionRoutes } from './routes/paneInspection';
+import { configurePaneInspectionEventBus } from './services/paneInspectionSubscribe';
 import { setupBackupRoutes } from './routes/backup';
 import { setupSearchRoutes } from './routes/search';
 import { setupVersionRoutes } from './routes/version';
@@ -63,8 +64,8 @@ import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
 import { chatHub } from './agents/chatHub';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 import { createStreamTransport } from './services/streamTransport';
-
 import { CustomAgentsFeatureBusyError, CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
+
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
 // repo root, so `backend/.env` would silently be missed. Resolving from
@@ -698,7 +699,8 @@ app.use('/api', setupDiffRoutes());
 app.use('/api', setupMichiRoutes(chatManager));
 app.use('/api', setupDigestRoutes(chatManager));
 app.use('/api', setupPersistenceRoutes());
-app.use('/api', setupPaneInspectionRoutes());
+configurePaneInspectionEventBus(agentRunAssembly.enabled ? agentRunAssembly.coordinator.events : undefined);
+app.use('/api', setupPaneInspectionRoutes({ agentRunEvents: agentRunAssembly.enabled ? agentRunAssembly.coordinator.events : undefined }));
 app.use('/api', setupBackupRoutes());
 app.use('/api', setupSearchRoutes());
 app.use('/api', setupVersionRoutes());

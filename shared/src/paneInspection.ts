@@ -397,7 +397,7 @@ export type PaneFeedEventV1 =
   | (PaneFeedEventBase & { type: 'snapshot'; descriptor: PaneDescriptorV1 })
   | (PaneFeedEventBase & { type: 'changed'; changedSections: string[]; descriptor: PaneDescriptorV1 })
   | (PaneFeedEventBase & { type: 'output_changed'; outputId: string; outputRevision: string; preview: OutputPreview })
-  | (PaneFeedEventBase & { type: 'execution_settled'; execution: ExecutionRef; outcome: ExecutionStatus; commitState: CommitState })
+  | (PaneFeedEventBase & { type: 'execution_settled'; execution: ExecutionRef; outcome: ExecutionStatus; commitState: CommitState; descriptor?: PaneDescriptorV1 })
   | (PaneFeedEventBase & { type: 'removed' })
   | (PaneFeedEventBase & { type: 'access_revoked' })
   | (PaneFeedEventBase & { type: 'resync_required' })

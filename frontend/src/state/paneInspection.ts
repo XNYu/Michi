@@ -246,12 +246,16 @@ function applyEvent(snapshot: PaneInspectionStoreSnapshot, event: PaneFeedEventV
         // the cursor and leaves the entry loading; after a snapshot it preserves the structural
         // descriptor. Non-ready terminal states were handled above and require a fresh snapshot
         // before any incremental event may reactivate them.
-        if (!previous || previous.status !== 'ready') {
+        if (!previous || previous.status !== 'ready' || !previous.descriptor) {
           return { status: 'loading', descriptor: null, cursor: event.cursor, executionStatus: carryForwardExecutionStatus(previous) };
         }
-        return { status: 'ready', descriptor: previous.descriptor, cursor: event.cursor, executionStatus: previous.executionStatus };
+        return { status: 'ready', descriptor: { ...previous.descriptor,
+          observation: { ...previous.descriptor.observation, cursor: event.cursor },
+          latestOutput: { status: 'ready', value: event.preview } }, cursor: event.cursor, executionStatus: previous.executionStatus };
       }
       case 'execution_settled': {
+        if (event.descriptor) return { status: 'ready', descriptor: event.descriptor,
+          cursor: event.cursor, executionStatus: executionStatusFromDescriptor(event.descriptor) };
         // The outcome is authoritative even if it precedes the first descriptor, but it cannot by
         // itself make the entry structurally ready.
         if (!previous || previous.status !== 'ready') {

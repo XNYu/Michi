@@ -31,7 +31,8 @@ import {
 } from 'michi-shared';
 import { chatHub, type ChatObservationSnapshot } from '../agents/chatHub';
 import { agentRunToDescriptor, type AgentRunCancellationEventsInput } from './paneInspectionProjection.run';
-import { chatNodeToDescriptor } from './paneInspectionProjection.chat';
+import { chatNodeToDescriptor, isArchivedPaneNode } from './paneInspectionProjection.chat';
+import { persistedChatPreview, readRunEventsThrough } from './paneInspectionSources';
 import { surfaceToDescriptor, SURFACE_PANE_KINDS, type SurfacePaneKind } from './paneInspectionProjection.surface';
 import { paneInspectionRing, type AuthorizationScope } from './paneInspectionRing';
 import {
@@ -99,7 +100,7 @@ export function scopeForCaller(caller: PaneInspectionCaller): AuthorizationScope
  * `paneInspectionSubscribe.ts` strips them. `cursor` is never part of "content" either way — it
  * is derived FROM the content, not a member of it, so including it here would be circular.
  */
-function toRingContentSnapshot(descriptor: PaneDescriptorV1): unknown {
+export function toRingContentSnapshot(descriptor: PaneDescriptorV1): unknown {
   const { observation, presence, ...rest } = descriptor;
   return {
     ...rest,
@@ -188,31 +189,38 @@ const runsRepository = new AgentRunsRepository();
  * projection did not yet exist on this branch when P1-6 was written).
  */
 export function authorizeCaller(caller: PaneInspectionCaller, target: PaneTarget): AuthorizedTarget {
+  assertPaneInspectionCaller(caller);
+
+  return authorizeTarget(caller, target);
+}
+
+/** Caller gates also apply to discovery, including empty and surface-only lists. */
+export function assertPaneInspectionCaller(caller: PaneInspectionCaller, operation = 'inspect'): void {
   // §2.2 caller's own AI-navigation gate — before any read of the TARGET.
   if (!getAiGlobalContext(caller.workspaceId, caller.ownerUserId)) {
-    throw new PaneInspectionError('NAVIGATION_DISABLED', 'inspect', 'AI navigation is disabled for this workspace.');
+    throw new PaneInspectionError('NAVIGATION_DISABLED', operation, 'AI navigation is disabled for this workspace.');
   }
 
   // §2.3 caller's own Run policy, if the caller itself is an agent run.
   if (caller.runOwner) {
     const callerRun = runsRepository.getRun(caller.ownerUserId, caller.runOwner.runId);
-    if (!callerRun) {
+    if (!callerRun || callerRun.workspaceId !== caller.workspaceId) {
       // The caller's own run cannot be resolved owner-scoped — never trust the id blindly.
-      throw new PaneInspectionError('NOT_FOUND', 'inspect', 'caller run not found');
+      throw new PaneInspectionError('NOT_FOUND', operation, 'caller run not found');
     }
     const readDecision = callerRun.effectiveDefinition.permissionPolicy.categories[AgentPolicyCategory.Read];
     if (readDecision !== AgentPolicyDecision.Allow) {
-      throw new PaneInspectionError('NAVIGATION_DISABLED', 'inspect', "caller Run's Read policy does not allow this.");
+      throw new PaneInspectionError('NAVIGATION_DISABLED', operation, "caller Run's Read policy does not allow this.");
     }
-    // contextPolicy has no single boolean "allowed" flag to check generically beyond the
-    // Read category decision above — the policy's finer-grained flags (allowMessageContext,
-    // allowFileContext, allowArtifactContext) govern what CONTEXT the run may assemble for
-    // itself, not whether it may call a read-only inspection tool. Read is the gating category
-    // per COMMON.md decision 7 / design §10 ("must additionally satisfy its own Run's Read
-    // policy AND context policy") — contextPolicy is consulted by the tool layer (P1-9) when it
-    // decides what to fold into the model's own context, not by this service.
+    // Inspection previews and feed replay are model context too. Enforce this before any
+    // descriptor/content read, including reauthorization of an existing subscription.
+    if (!callerRun.effectiveDefinition.contextPolicy.allowMessageContext) {
+      throw new PaneInspectionError('NAVIGATION_DISABLED', operation, "caller Run's context policy does not allow message inspection.");
+    }
   }
+}
 
+function authorizeTarget(caller: PaneInspectionCaller, target: PaneTarget): AuthorizedTarget {
   // §2.1 existence + real ownership.
   if (target.kind === 'node') {
     const node = getNode(target.nodeId);
@@ -273,23 +281,22 @@ export interface InspectPaneInput {
  * function delegates to P2-3's `surfaceToDescriptor` (added for P1-6b — P1-6 and P2-3 shipped in
  * the same wave and could not see each other; both are now present on this branch).
  */
-export function inspect(caller: PaneInspectionCaller, input: InspectPaneInput): PaneDescriptorV1 {
+export function inspect(caller: PaneInspectionCaller, input: InspectPaneInput, options: { publishObservation?: boolean } = {}): PaneDescriptorV1 {
   const target = resolvePaneTarget(input.locator);
   const authorized = authorizeCaller(caller, target);
   const observedAt = Date.now();
 
+  let descriptor: PaneDescriptorV1;
   if (authorized.kind === 'agent_run') {
-    return inspectAgentRun(caller, authorized.run, input.executionRef, observedAt);
-  }
-
-  if (authorized.kind === 'surface') {
+    descriptor = inspectAgentRun(caller, authorized.run, input.executionRef, observedAt);
+  } else if (authorized.kind === 'surface') {
     // No side effects, no executionRef: surfaces have no execution concept to select a specific
     // historical attempt of (COMMON.md decision 10 / brief: "no side effects"). An executionRef
     // passed alongside a surface locator is simply ignored rather than validated against
     // anything, since ExecutionRef's own variants (`chat_turn` | `agent_run`) have no surface
     // form to validate against in the first place.
     const presence = panePresenceRegistry.getPresence({ kind: 'surface', registrationId: authorized.registrationId });
-    return surfaceToDescriptor({
+    descriptor = surfaceToDescriptor({
       registrationId: authorized.registrationId,
       kind: authorized.surfaceKind,
       workspaceId: authorized.workspaceId,
@@ -299,9 +306,16 @@ export function inspect(caller: PaneInspectionCaller, input: InspectPaneInput): 
       backendConnectionId: caller.backendConnectionId,
       observedAt,
     });
+  } else {
+    descriptor = inspectNode(caller, authorized.node, input.executionRef, observedAt);
   }
-
-  return inspectNode(caller, authorized.node, input.executionRef, observedAt);
+  // Feed sampling is published by its own flush, after coalescing. Historical turn reads
+  // must not replace the canonical current-pane baseline either.
+  if (options.publishObservation === false) return descriptor;
+  const scope = scopeForCaller(caller);
+  if (input.executionRef?.kind === 'chat_turn') return { ...descriptor, observation: { ...descriptor.observation,
+    cursor: paneInspectionRing.recordObservedAtRefresh(descriptor.ref.paneId, scope) } };
+  return mintChatCursor(descriptor, descriptor.ref.paneId, scope);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,9 +402,13 @@ function chatDescriptor(
     presence,
     backendConnectionId: caller.backendConnectionId,
     observedAt,
+    previousOutput: persistedChatPreview(node.id, executionRef?.kind === 'chat_turn' ? executionRef.turnId : undefined),
+    firstExecutionStartedAt: turns.coverage === 'complete'
+      ? (getDb().prepare('SELECT MIN(started_at) AS started_at FROM turns WHERE node_id = ?').get(node.id) as { started_at: number | null }).started_at
+      : null,
   });
 
-  return mintChatCursor(descriptor, paneId, scope);
+  return descriptor;
 }
 
 // ---------------------------------------------------------------------------
@@ -447,7 +465,11 @@ function sameChatWatermark(a: ChatObservationSnapshot | null, b: ChatObservation
  *  makes "inspect run repeatedly does not advance revision" true here for free. */
 function mintChatCursor(descriptor: PaneDescriptorV1, paneId: string, scope: AuthorizationScope): PaneDescriptorV1 {
   const content = toRingContentSnapshot(descriptor);
-  const cursor = paneInspectionRing.mintInspectionCursor(paneId, scope, content);
+  const payload = { version: 1, paneId, cursor: '', emittedAt: descriptor.observation.observedAt,
+    type: 'changed', changedSections: Object.keys(descriptor), descriptor };
+  const cursor = paneInspectionRing.mintInspectionCursor(paneId, scope, content, {
+    kind: 'changed', payload, sizeBytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
+  });
   return { ...descriptor, observation: { ...descriptor.observation, cursor } };
 }
 
@@ -467,7 +489,7 @@ function digestDescriptor(caller: PaneInspectionCaller, node: NodeRow, observedA
     title: node.title ?? '',
     workspaceId: node.workspace_id,
     treeId: node.tree_id ?? null,
-    archived: node.status === 'archived',
+    archived: isArchivedPaneNode(node),
     truncatedFields: [],
     // Placeholder — `mintChatCursor` below overwrites this with a ring-minted token before the
     // descriptor is returned. Never the literal `node:${node.id}` pattern (P3-3b's whole point).
@@ -482,7 +504,7 @@ function digestDescriptor(caller: PaneInspectionCaller, node: NodeRow, observedA
     runtime: { status: 'unsupported', reason: 'Digest has no runtime binding.' },
     latestOutput: { status: 'unsupported', reason: 'Digest output is not modeled in the first release.' },
   };
-  return mintChatCursor(descriptor, paneId, scope);
+  return descriptor;
 }
 
 /** design §5.1: artifact execution is 'not_applicable' (never started/completed at all — it is a
@@ -499,7 +521,7 @@ function artifactDescriptor(caller: PaneInspectionCaller, node: NodeRow, observe
     title: node.title ?? '',
     workspaceId: node.workspace_id,
     treeId: node.tree_id ?? null,
-    archived: node.status === 'archived',
+    archived: isArchivedPaneNode(node),
     truncatedFields: [],
     // Placeholder — `mintChatCursor` below overwrites this with a ring-minted token before the
     // descriptor is returned. Never the literal `node:${node.id}` pattern (P3-3b's whole point).
@@ -514,7 +536,7 @@ function artifactDescriptor(caller: PaneInspectionCaller, node: NodeRow, observe
     runtime: { status: 'unsupported', reason: 'Artifact has no runtime binding.' },
     latestOutput: { status: 'unsupported', reason: 'Use existing file APIs to read Artifact content (design §5.1).' },
   };
-  return mintChatCursor(descriptor, paneId, scope);
+  return descriptor;
 }
 
 /** Maps a persisted `nodes.kind` value onto the shared `PaneKind` union. Only 'digest' and
@@ -587,46 +609,30 @@ function inspectAgentRun(
     presence,
     backendConnectionId: caller.backendConnectionId,
     observedAt,
+    lineage: buildRunLineage(run, caller),
   });
 
-  return mintRunCursor(descriptor, paneId, scope);
+  return descriptor;
 }
 
-/** Bounded attempts to fetch a run's event list that is still consistent with the watermark
- *  (`run.latestEventSeq`) already captured by the caller's single `getRun()` read (design §8 /
- *  brief: "a Run's latestEventSeq is written in the same transaction as every event append, so a
- *  single getRun() already gives a consistent pair"). `listEvents` itself is a second, later
- *  read — re-fetching `getRun` here and comparing `latestEventSeq` is what actually PROVES that
- *  no event landed between the watermark being captured and the events being read, rather than
- *  assuming a single-process SQLite deployment makes that impossible forever. Bounded exactly
- *  like `alignChatObservation` — a fixed attempt count over synchronous reads bounds wall-clock
- *  time by construction, no clock needed. */
-const RUN_ALIGNMENT_MAX_ATTEMPTS = 3;
-
+/** Events are immutable. Stop at the watermark captured with the Run projection, even if
+ *  newer events arrive during paging; otherwise old Run state would mix with newer output. */
 function alignRunEvents(caller: PaneInspectionCaller, run: import('michi-shared').AgentRunDtoV1): AgentRunEventV1[] {
-  let watermark = run.latestEventSeq;
-  for (let attempt = 0; attempt < RUN_ALIGNMENT_MAX_ATTEMPTS; attempt += 1) {
-    const events = runsRepository.listEvents(caller.ownerUserId, run.id, -1, Math.max(1, watermark + 1));
-    const recheck = runsRepository.getRun(caller.ownerUserId, run.id);
-    // A run that vanished between authorizeCaller and here (deleted mid-request) is a real
-    // absence, not a would-be alignment failure — surface it as SOURCE_UNAVAILABLE rather than
-    // retrying against nothing.
-    if (!recheck) break;
-    if (recheck.latestEventSeq === watermark) return events;
-    // The watermark moved since we captured it — realign to the NEW watermark and retry, rather
-    // than returning events read against a now-stale bound.
-    watermark = recheck.latestEventSeq;
-  }
-  throw new PaneInspectionError('SOURCE_UNAVAILABLE', 'inspect', 'agent run events did not settle within the bounded alignment window');
+  return readRunEventsThrough(runsRepository, caller.ownerUserId, run.id, run.latestEventSeq);
 }
 
-/** Mirrors `mintChatCursor` for the Run adapter — see that function's doc comment for why the
- *  overwrite happens here rather than inside `paneInspectionProjection.run.ts` (P1-3, not owned
- *  by this task). */
-function mintRunCursor(descriptor: PaneDescriptorV1, paneId: string, scope: AuthorizationScope): PaneDescriptorV1 {
-  const content = toRingContentSnapshot(descriptor);
-  const cursor = paneInspectionRing.mintInspectionCursor(paneId, scope, content);
-  return { ...descriptor, observation: { ...descriptor.observation, cursor } };
+/** Resolve only parents still visible in the authorized workspace. */
+function buildRunLineage(run: import('michi-shared').AgentRunDtoV1, caller: PaneInspectionCaller): PaneDescriptorV1['lineage'] {
+  const parentNode = run.parentNodeId ? getNode(run.parentNodeId) : null;
+  const visibleNode = parentNode?.workspace_id === caller.workspaceId && parentNode.deleted_at === null ? parentNode : null;
+  const parentRun = run.parentRunId ? runsRepository.getRun(caller.ownerUserId, run.parentRunId) : null;
+  const visibleRun = parentRun?.workspaceId === caller.workspaceId ? parentRun : null;
+  return { status: 'ready', value: {
+    parentNodeId: visibleNode?.id ?? null, parentRunId: visibleRun?.id ?? null,
+    originMessageId: visibleNode ? run.parentMessageId : null,
+    treeRootNodeId: visibleNode ? resolveTreeRootNodeId(visibleNode) : null,
+    childNodeIds: [], childrenTruncated: false,
+  } };
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import { AgentDefinitionStatus } from 'michi-shared';
 import type { AgentDefinitionFormValue } from './agents/AgentDefinitionForm';
 import type { ChatNodeState } from '../../state/chatTypes';
 import { PanePresentationProvider } from './PanePresentation';
+import { setPanePresenceDashboardVisible } from '../../state/panePresenceVisibility';
 
 const NARROW_THRESHOLD = 700;
 const TerminalMap = React.lazy(() => import('./pages/Map'));
@@ -69,6 +70,10 @@ export default function TerminalShell() {
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   );
   const [page, setPage] = useState<PageId>('home');
+  React.useLayoutEffect(() => {
+    setPanePresenceDashboardVisible(page === 'dashboard');
+    return () => setPanePresenceDashboardVisible(false);
+  }, [page]);
   const manageWorkspaceId = useManageWorkspaceId();
   const manageAgentRoute = useManageAgentRoute();
   const [paletteOpen, setPaletteOpen] = useState(false);

@@ -34,6 +34,7 @@ import { getDb } from './db';
 import { listMessages, type MessageRow, type TurnRow } from './dbRepository';
 import { AgentRunsRepository } from './agentRunsRepository';
 import { compactResultHandoff } from '../agents/runs/resultBundle';
+import { readRunEventsThrough } from './paneInspectionSources';
 
 // ---------------------------------------------------------------------------
 // Public request/result shapes
@@ -237,8 +238,8 @@ export function readOutput(caller: PaneInspectionCaller, input: ReadPaneOutputIn
   }
 
   const resolved = authorized.kind === 'agent_run'
-    ? resolveAgentRunOutput(caller, authorized.run.id, input.selection, input.executionRef)
-    : resolveNodeOutput(caller, authorized.node.id, input.selection, input.executionRef);
+    ? resolveAgentRunOutput(caller, authorized.run.id, input.selection, input.executionRef, input.outputId)
+    : resolveNodeOutput(caller, authorized.node.id, input.selection, input.executionRef, input.outputId);
 
   // outputId mismatch against a caller-supplied outputId (re-requesting a SPECIFIC prior output
   // identity) means the underlying object no longer resolves to that output at all.
@@ -294,7 +295,27 @@ function resolveNodeOutput(
   nodeId: string,
   selection: ExecutionSelection,
   executionRef: ExecutionRef | undefined,
+  outputId?: string,
 ): ResolvedOutput {
+  if (outputId?.startsWith('chat-message:')) {
+    const message = fetchMessageById(nodeId, outputId.slice('chat-message:'.length), caller.ownerUserId);
+    if (!message || message.role !== 'assistant' || executionRef || selection !== 'latest') {
+      throw new PaneInspectionError('OUTPUT_UNAVAILABLE', 'outputId', 'the requested output is not available for this target');
+    }
+    const text = stripTurnMetadataSentinels(message.content);
+    return { outputId, execution: null, kind: 'answer', fullText: text,
+      outputRevision: outputRevisionFor(text, message.created_at), partial: false };
+  }
+  if (outputId?.startsWith('chat_turn:')) {
+    const turn = fetchTurnById(outputId.slice('chat_turn:'.length), caller.ownerUserId);
+    if (!turn || turn.node_id !== nodeId || (executionRef && (executionRef.kind !== 'chat_turn'
+      || executionRef.nodeId !== nodeId || executionRef.turnId !== turn.turn_id))
+      || (selection === 'last_completed' && turn.status !== 'completed')) {
+      throw new PaneInspectionError('OUTPUT_UNAVAILABLE', 'outputId', 'the requested output is not available for this target');
+    }
+    executionRef = { kind: 'chat_turn', nodeId, turnId: turn.turn_id };
+    selection = 'execution';
+  }
   if (selection === 'execution') {
     if (!executionRef || executionRef.kind !== 'chat_turn') {
       throw new PaneInspectionError('INVALID_ARGUMENT', 'executionRef', 'executionRef.kind must be "chat_turn" for a chat target');
@@ -321,7 +342,10 @@ function resolveNodeOutput(
   if (selection === 'latest') {
     if (observation) return resolvedFromObservationAnswer(observation, null);
     const latestTurn = fetchLatestTurnForNode(nodeId, caller.ownerUserId);
-    if (!latestTurn) return emptyResolved(null);
+    if (!latestTurn) {
+      const previous = listMessages(nodeId, caller.ownerUserId).reverse().find((message) => message.role === 'assistant' && message.content);
+      return previous ? resolveNodeOutput(caller, nodeId, selection, undefined, `chat-message:${previous.id}`) : emptyResolved(null);
+    }
     return resolvedFromPersistedTurn(caller, latestTurn);
   }
 
@@ -420,6 +444,7 @@ function resolveAgentRunOutput(
   runId: string,
   selection: ExecutionSelection,
   executionRef: ExecutionRef | undefined,
+  outputId?: string,
 ): ResolvedOutput {
   const run = runsRepository.getRun(caller.ownerUserId, runId);
   if (!run) throw new PaneInspectionError('NOT_FOUND', 'runId', 'target not found');
@@ -435,11 +460,11 @@ function resolveAgentRunOutput(
     // no per-attempt ExecutionRef exists in the shared contract (design §7.2/§7.3 both note this),
     // so "a specific execution" for a Run means the Run's own current/terminal selection, same as
     // `latest` — see the report for why this is a deliberate no-op beyond the validation above.
-    return resolveRunLatestOrExecution(caller, run);
+    return resolveRunLatestOrExecution(caller, run, outputId);
   }
 
   if (selection === 'latest') {
-    return resolveRunLatestOrExecution(caller, run);
+    return resolveRunLatestOrExecution(caller, run, outputId);
   }
 
   // last_completed: only a Run that reached AgentRunStatus.Completed. A Failed/Cancelled run's
@@ -448,17 +473,18 @@ function resolveAgentRunOutput(
   // (see above); a caller wanting a FAILED run's partial text uses `latest`/`execution` while the
   // Run's own status is still Failed, not `last_completed`.
   if (run.status !== 'completed') return emptyResolved({ kind: 'agent_run', runId: run.id });
-  return resolveRunLatestOrExecution(caller, run);
+  return resolveRunLatestOrExecution(caller, run, outputId);
 }
 
 function resolveRunLatestOrExecution(
   caller: PaneInspectionCaller,
   run: import('michi-shared').AgentRunDtoV1,
+  outputId?: string,
 ): ResolvedOutput {
   const ref: ExecutionRef = { kind: 'agent_run', runId: run.id };
   const terminal = run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled';
 
-  if (terminal && run.resultBundle) {
+  if (terminal && run.resultBundle && !outputId?.startsWith('run-attempt:')) {
     const text = compactResultHandoff(run.resultBundle);
     return {
       outputId: `run-handoff:${run.id}`,
@@ -471,7 +497,9 @@ function resolveRunLatestOrExecution(
   }
 
   const attempts = runsRepository.listAttempts(caller.ownerUserId, run.id);
-  const attempt = run.activeAttemptId
+  const attempt = outputId?.startsWith('run-attempt:')
+    ? attempts.find((a) => `run-attempt:${a.id}` === outputId) ?? null
+    : run.activeAttemptId
     ? attempts.find((a) => a.id === run.activeAttemptId) ?? null
     : (attempts.length > 0 ? attempts.reduce((latest, a) => (a.attemptIndex > latest.attemptIndex ? a : latest)) : null);
 
@@ -482,7 +510,7 @@ function resolveRunLatestOrExecution(
   // DELTAS stamped with attemptId by the coordinator (runtimeRunExecutor.ts:150), per P1-3.
   // listEvents already returns rows ordered by seq (agent_run_events PK is (run_id, seq) and the
   // repository selects in that order) — re-sorting defensively rather than trusting call order.
-  const allEvents = runsRepository.listEvents(caller.ownerUserId, run.id, -1, Math.max(1, run.latestEventSeq + 1));
+  const allEvents = readRunEventsThrough(runsRepository, caller.ownerUserId, run.id, run.latestEventSeq);
   const text = assistantTextForAttempt(allEvents, attempt.id);
 
   return {
@@ -491,7 +519,7 @@ function resolveRunLatestOrExecution(
     kind: 'answer',
     fullText: text,
     outputRevision: `${attempt.id}:${run.latestEventSeq}`,
-    partial: !terminal,
+    partial: !terminal && !['completed', 'failed', 'cancelled'].includes(attempt.status),
   };
 }
 

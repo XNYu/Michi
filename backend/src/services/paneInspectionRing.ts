@@ -126,7 +126,7 @@ export type ResyncReason =
   | 'unknown_cursor';
 
 export type CursorResolution =
-  | { ok: true; paneId: string; revision: number; replay: RetainedEvent[] }
+  | { ok: true; paneId: string; revision: number; cursorRevision: number; replay: RetainedEvent[] }
   | { ok: false; reason: ResyncReason };
 
 export interface RegisterOptions {
@@ -344,13 +344,13 @@ export class PaneInspectionRing {
     const changed = ring.lastContent === undefined || !contentEquals(ring.lastContent, content);
     ring.lastContent = content;
     if (!changed) {
-      const cursor = this.mintCursorForRing(ring, now);
+      const cursor = this.mintCursorForRing(ring, now, scope);
       this.enforceWorkspaceBudget(ring.scope.workspaceId, now);
       return cursor;
     }
 
     ring.revision += 1;
-    const cursor = this.mintCursorForRing(ring, now);
+    const cursor = this.mintCursorForRing(ring, now, scope);
     this.appendEvent(ring, event, cursor, now);
     // Budget enforcement runs LAST, after this call's own byte growth (both the new ring event
     // and the fresh cursor's bookkeeping) has already landed — enforcing it any earlier would
@@ -368,7 +368,7 @@ export class PaneInspectionRing {
    *  forcing a revision bump purely for being called again — only an actual content difference
    *  from the PREVIOUS `lastContent` bumps revision, exactly like `recordContentChange`. Returns a
    *  cursor for the snapshot itself. */
-  recordSnapshot(paneId: string, scope: AuthorizationScope, content: ContentSnapshot): string {
+  recordSnapshot(paneId: string, scope: AuthorizationScope, content: ContentSnapshot, event?: RingEvent): string {
     const ring = this.getOrCreate(paneId, scope);
     const now = this.now();
     ring.lastTouchedAt = now;
@@ -381,10 +381,10 @@ export class PaneInspectionRing {
     const changed = !isFirstSnapshot && !contentEquals(ring.lastContent, content);
     ring.lastContent = content;
     if (changed) ring.revision += 1;
-    const cursor = this.mintCursorForRing(ring, now);
-    // A snapshot never appends a ring event (no bytes added to the ring itself), but minting a
-    // cursor and creating a fresh ring via getOrCreate both still count toward this workspace's
-    // object set, so re-check the budget for consistency with every other mutating call.
+    const cursor = this.mintCursorForRing(ring, now, scope);
+    if (changed && event) this.appendEvent(ring, event, cursor, now);
+    // Changed snapshots retain their supplied event so inspect cannot create a replay gap.
+    // Enforce the budget after both the snapshot and cursor have been recorded.
     this.enforceWorkspaceBudget(ring.scope.workspaceId, now);
     return cursor;
   }
@@ -404,8 +404,8 @@ export class PaneInspectionRing {
    * never advance `revision`, so polling `inspect` in a loop cannot wake a `wait_pane(until=changed)`
    * waiter (brief acceptance item).
    */
-  mintInspectionCursor(paneId: string, scope: AuthorizationScope, content: ContentSnapshot): string {
-    return this.recordSnapshot(paneId, scope, content);
+  mintInspectionCursor(paneId: string, scope: AuthorizationScope, content: ContentSnapshot, event?: RingEvent): string {
+    return this.recordSnapshot(paneId, scope, content, event);
   }
 
   /** A plain `inspect` re-touching `observedAt` on an otherwise-unchanged object. Never advances
@@ -417,7 +417,7 @@ export class PaneInspectionRing {
     const ring = this.getOrCreate(paneId, scope);
     const now = this.now();
     ring.lastTouchedAt = now;
-    return this.mintCursorForRing(ring, now);
+    return this.mintCursorForRing(ring, now, scope);
   }
 
   /** A presence keepalive renewing `lastSeenAt` for a view of this object. Same non-advancing
@@ -446,9 +446,19 @@ export class PaneInspectionRing {
   // -------------------------------------------------------------------------
 
   private appendEvent(ring: ObjectRing, event: RingEvent, cursor: string, now: number): void {
+    event = this.withCursor(event, cursor);
     ring.events.push({ event, revision: ring.revision, emittedAt: now, cursor });
     ring.bytes += event.sizeBytes;
     this.trimRing(ring, now);
+  }
+
+  private withCursor(event: RingEvent, cursor: string): RingEvent {
+    if (!event.payload || typeof event.payload !== 'object') return event;
+    const payload = { ...event.payload } as Record<string, unknown>;
+    if ('cursor' in payload) payload.cursor = cursor;
+    const descriptor = payload.descriptor as { observation?: object } | undefined;
+    if (descriptor?.observation) payload.descriptor = { ...descriptor, observation: { ...descriptor.observation, cursor } };
+    return { ...event, payload };
   }
 
   /** Trims the FRONT of the ring (oldest first) until all three per-object bounds are satisfied —
@@ -530,12 +540,19 @@ export class PaneInspectionRing {
    *  budget LAST, once the call's own growth has actually landed; enforcing here would run against
    *  byte totals that don't yet include what the caller is about to add. Every call site is
    *  responsible for calling `enforceWorkspaceBudget` itself once it is done growing anything. */
-  private mintCursorForRing(ring: ObjectRing, now: number): string {
+  private mintCursorForRing(ring: ObjectRing, now: number, scope: AuthorizationScope = ring.scope): string {
+    // TTL cleanup must run even when clients never resolve their old tokens. The hard cap
+    // bounds a burst of inspect calls within one retention window as well.
+    for (const [token, stored] of this.cursors) {
+      if (stored.expiresAt < now) this.cursors.delete(token);
+      else break;
+    }
+    while (this.cursors.size >= 10_000) this.cursors.delete(this.cursors.keys().next().value!);
     const token = this.createToken();
     this.cursors.set(token, {
       token,
       paneId: ring.paneId,
-      scope: ring.scope,
+      scope,
       epoch: this.epoch,
       revision: ring.revision,
       mintedAt: now,
@@ -595,6 +612,7 @@ export class PaneInspectionRing {
       return { ok: false, reason: 'not_replayable' };
     }
 
+    this.trimRing(ring, now);
     const replay = ring.events.filter((entry) => entry.revision > stored.revision);
     // If the ring has been trimmed past the point this cursor was minted at (its own baseline
     // event, if any, aged/counted/byte-evicted out from under it) there is no way to prove the
@@ -605,8 +623,20 @@ export class PaneInspectionRing {
     if (ring.events.length > 0 && oldestRetainedRevision > stored.revision + 1 && stored.revision < ring.revision) {
       return { ok: false, reason: 'not_replayable' };
     }
+    if (stored.revision < ring.revision && (replay.length !== ring.revision - stored.revision)) {
+      return { ok: false, reason: 'not_replayable' };
+    }
 
-    return { ok: true, paneId: stored.paneId, revision: ring.revision, replay };
+    // Content is shared, but cursors remain caller-scoped even when another subscriber
+    // published the retained event. Authorization must still precede replay at the feed.
+    const scopedReplay = replay.map((entry) => {
+      const existing = this.cursors.get(entry.cursor);
+      if (existing && scopesEqual(existing.scope, requesterScope)) return entry;
+      const cursor = this.mintCursorForRing(ring, now, requesterScope);
+      this.cursors.get(cursor)!.revision = entry.revision;
+      return { ...entry, cursor, event: this.withCursor(entry.event, cursor) };
+    });
+    return { ok: true, paneId: stored.paneId, revision: ring.revision, cursorRevision: stored.revision, replay: scopedReplay };
   }
 
   // -------------------------------------------------------------------------

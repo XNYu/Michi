@@ -66,6 +66,7 @@ export interface ChatNodeToDescriptorInput {
    *  when it has one available (e.g. from its own prior read or a cache); omitted or null both
    *  mean "no earlier preview known", not an error. */
   previousOutput?: OutputPreview | null;
+  firstExecutionStartedAt?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ export function chatNodeToDescriptor(input: ChatNodeToDescriptorInput): PaneDesc
     title: node.title ?? '',
     workspaceId: node.workspace_id,
     treeId: node.tree_id ?? null,
-    archived: node.status === 'archived',
+    archived: isArchivedPaneNode(node),
     truncatedFields: [],
     observation: {
       observedAt,
@@ -97,7 +98,7 @@ export function chatNodeToDescriptor(input: ChatNodeToDescriptorInput): PaneDesc
     execution,
     timeline: {
       resourceCreatedAt: node.created_at,
-      firstExecutionStartedAt: durableTurn?.started_at ?? observation?.startedAt ?? null,
+      firstExecutionStartedAt: input.firstExecutionStartedAt ?? null,
     },
     presence,
     conversation: {
@@ -446,7 +447,7 @@ export function truncateTailToCodePointUtf8(text: string, maxBytes: number): { t
   return { text: codePoints.slice(startIndex).join(''), truncated: true };
 }
 
-function buildOutputPreview(
+export function buildOutputPreview(
   fullText: string,
   ref: ExecutionRef | null,
   updatedAt: number | null,
@@ -458,11 +459,15 @@ function buildOutputPreview(
     execution: ref,
     kind: 'answer',
     text,
-    outputRevision: outputRevisionFor(text, updatedAt),
+    outputRevision: outputRevisionFor(fullText, updatedAt),
     updatedAt,
     partial,
     truncated,
   };
+}
+
+export function isArchivedPaneNode(node: NodeRow): boolean {
+  return node.status === 'archived' || (node.deleted_at !== null && (node.deletion_group_id ?? '').startsWith('arch-'));
 }
 
 function outputIdFor(ref: ExecutionRef | null): string {

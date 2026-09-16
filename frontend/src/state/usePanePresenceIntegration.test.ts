@@ -15,6 +15,7 @@ import type { Project } from './chatTypes';
 import type { PaneItem } from './paneItems';
 import * as persistenceApi from '../services/api/persistence';
 import * as panePresenceApi from '../services/api/panePresence';
+import { setPanePresenceDashboardVisible } from './panePresenceVisibility';
 
 const WINDOW_ID = 'window-1';
 const CONN = 'local';
@@ -48,6 +49,7 @@ function capabilities(paneInspection: unknown) {
 describe('usePanePresenceIntegration', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    setPanePresenceDashboardVisible(true);
   });
 
   afterEach(() => {
@@ -83,6 +85,48 @@ describe('usePanePresenceIntegration', () => {
     expect(submitSpy).toHaveBeenCalledTimes(1);
     const [, , req] = submitSpy.mock.calls[0];
     expect(req.views).toEqual([expect.objectContaining({ paneId: 'node:root-1' })]);
+  });
+
+  it('navigation away from Dashboard keeps panes open but reports them invisible', async () => {
+    vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockResolvedValue(capabilities('v1'));
+    const submit = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit')
+      .mockResolvedValue({ ok: true, rendererLeaseId: 'lease-visible', accepted: 1, rejectedTargets: [] });
+    const project = makeProject();
+    const projects = [project];
+    const openPanesMap = { [`${project.id}::tree-1`]: ['root-1'] };
+    const paneItems = {};
+    const hook = renderHook(() => usePanePresenceIntegration({ windowId: WINDOW_ID, hydrated: true, projects,
+      activeProjectId: project.id, activeBackendConnectionId: CONN, openPanesMap, paneItems }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(submit.mock.calls.at(-1)![2].views[0].visible).toBe(true);
+    await act(async () => { setPanePresenceDashboardVisible(false); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(submit.mock.calls.at(-1)![2].views).toEqual([expect.objectContaining({ paneId: 'node:root-1', visible: false })]);
+    hook.unmount();
+  });
+
+  it('reallocates a surface when its kind changes without changing its UI pane id', async () => {
+    vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockResolvedValue(capabilities('v1'));
+    const allocate = vi.spyOn(panePresenceApi, 'allocateSurfaceRegistration')
+      .mockResolvedValueOnce({ registrationId: 'launcher-registration', paneId: 'surface:launcher-registration' })
+      .mockResolvedValueOnce({ registrationId: 'terminal-registration', paneId: 'surface:terminal-registration' });
+    const submit = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit')
+      .mockResolvedValue({ ok: true, rendererLeaseId: 'surface-lease', accepted: 1, rejectedTargets: [] });
+    vi.spyOn(panePresenceApi.panePresenceTransport, 'remove').mockResolvedValue({ ok: true, removed: 1 });
+    const project = makeProject();
+    const projects = [project];
+    const id = 'pane:launcher:same-id';
+    const openPanesMap = { [`${project.id}::tree-1`]: [id] };
+    const launcher: PaneItem = { id, projectId: project.id, treeId: 'tree-1', kind: 'launcher', title: 'New pane', createdAt: 1 };
+    const hook = renderHook<void, { item: PaneItem }>(({ item }) => usePanePresenceIntegration({ windowId: WINDOW_ID, hydrated: true, projects,
+      activeProjectId: project.id, activeBackendConnectionId: CONN, openPanesMap, paneItems: { [id]: item } }), { initialProps: { item: launcher } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(allocate).toHaveBeenCalledTimes(1);
+    hook.rerender({ item: { ...launcher, kind: 'terminal', surfaceId: 'pty', cwd: '/tmp' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(allocate).toHaveBeenLastCalledWith(CONN, project.id, 'terminal');
+    expect(submit.mock.calls.at(-1)![2].views[0].paneId).toBe('surface:terminal-registration');
+    hook.unmount();
   });
 
   it('capability gate: a probe failure never submits (never claims an empty pane list)', async () => {
