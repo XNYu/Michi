@@ -120,6 +120,8 @@ export async function fetchReady(): Promise<ReadyResponse> {
 export interface AgentOptionsPatch {
   runtime?: RuntimeId;
   provider?: string;
+  /** null disables web search. */
+  webSearchProvider?: string | null;
   model?: string;
   reasoning?: AgentReasoning;
 }
@@ -145,8 +147,6 @@ export interface AgentModelsResponse {
 }
 
 export async function listAgentModels(opts?: { provider?: string }): Promise<AgentModelsResponse> {
-  /** null disables web search. */
-  webSearchProvider?: string | null;
   const url = new URL(`${activeBackendApiBase()}/agent/models`, window.location.href);
   if (opts?.provider) url.searchParams.set('provider', opts.provider);
   const res = await fetch(url.toString());
@@ -227,31 +227,6 @@ export async function verifyProviderKey(
   return body;
 }
 
-// ---------------------------------------------------------------------------
-// Bedrock credential configuration
-// ---------------------------------------------------------------------------
-
-export type BedrockCredentialSource = 'bearer-token' | 'access-keys' | 'profile' | 'auto';
-
-export interface BedrockConfigSanitized {
-  configured: boolean;
-  region: string | null;
-  credentialSource: BedrockCredentialSource | 'env' | null;
-  hasProfile: boolean;
-  hasBearerToken: boolean;
-  hasAccessKeys: boolean;
-  hasAuthRefresh: boolean;
-  envDetected: boolean;
-  envProfile?: string;
-  envRegion?: string;
-}
-
-export interface BedrockConfigInput {
-  region?: string;
-  credentialSource?: BedrockCredentialSource;
-  bearerToken?: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
 export async function saveWebSearchKey(
   provider: string,
   key: string,
@@ -282,6 +257,31 @@ export async function clearWebSearchKey(
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// Bedrock credential configuration
+// ---------------------------------------------------------------------------
+
+export type BedrockCredentialSource = 'bearer-token' | 'access-keys' | 'profile' | 'auto';
+
+export interface BedrockConfigSanitized {
+  configured: boolean;
+  region: string | null;
+  credentialSource: BedrockCredentialSource | 'env' | null;
+  hasProfile: boolean;
+  hasBearerToken: boolean;
+  hasAccessKeys: boolean;
+  hasAuthRefresh: boolean;
+  envDetected: boolean;
+  envProfile?: string;
+  envRegion?: string;
+}
+
+export interface BedrockConfigInput {
+  region?: string;
+  credentialSource?: BedrockCredentialSource;
+  bearerToken?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
   profile?: string;
   authRefreshCommand?: string;
 }
