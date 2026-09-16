@@ -231,6 +231,58 @@ describe('McpSlotRegistry', () => {
         assert.equal(tools['list_agents'], undefined);
         assert.equal(tools['wait_agent'], undefined);
     });
+
+    test('run-owned slots intersect Agent tools with the immutable exposed-tool allow-list', () => {
+        const slot = registry.create('attempt-reenabled', '/tmp', 'owner-a', {
+            ...makeCallbacks(),
+            owner: { kind: 'agent_run', runId: 'run-a', attemptId: 'attempt-reenabled' },
+            exposedToolNames: new Set(['check_agent']),
+            agentRuns: { invoke: async () => ({ ok: true }) },
+        } as never);
+        const tools = (buildMcpServerForSlot(slot) as any)._registeredTools;
+
+        assert.ok(tools['check_agent']);
+        assert.equal(tools['spawn_agent'], undefined);
+        assert.equal(tools['cancel_agent'], undefined);
+    });
+
+    test('run-owned slots without an explicit tool allow-list expose no nested Agent tools', () => {
+        const slot = registry.create('attempt-default-deny', '/tmp', 'owner-a', {
+            ...makeCallbacks(),
+            owner: { kind: 'agent_run', runId: 'run-a', attemptId: 'attempt-default-deny' },
+            agentRuns: { invoke: async () => ({ ok: true }) },
+        } as never);
+        const tools = (buildMcpServerForSlot(slot) as any)._registeredTools;
+
+        assert.equal(tools['list_agents'], undefined);
+        assert.equal(tools['spawn_agent'], undefined);
+        assert.equal(tools['check_agent'], undefined);
+    });
+
+    test('run-owned slots do not register any tool outside exposedToolNames', () => {
+        const slot = registry.create('attempt-strict-tools', '/tmp', 'owner-a', {
+            ...makeCallbacks(),
+            owner: { kind: 'agent_run', runId: 'run-a', attemptId: 'attempt-strict-tools' },
+            exposedToolNames: new Set(['submit_agent_result']),
+            onSubmitAgentResult: () => ({ version: 1, status: 'completed' }),
+            onSetFollowUps: () => {},
+            onSetBranchOverview: () => {},
+            onValidateFollowUps: () => ({}),
+            onAskUser: async () => ({}),
+            onApprove: async () => ({ behavior: 'allow' }),
+        } as never);
+        const tools = (buildMcpServerForSlot(slot) as any)._registeredTools;
+
+        assert.ok(tools['submit_agent_result']);
+        for (const denied of [
+            'spawn_branches', 'save_artifact', 'update_artifact', 'show_image',
+            'set_follow_ups', 'set_branch_overview', 'validate_follow_ups', 'validate_turn_metadata',
+            'list_threads', 'search_messages', 'read_node', 'read_node_overview',
+            'inspect_pane', 'read_pane_output', 'list_panes', 'wait_pane', 'ask_user', 'approve',
+        ]) {
+            assert.equal(tools[denied], undefined, `${denied} must not be registered`);
+        }
+    });
 });
 
 describe('Claude follow-up POC MCP tools', () => {
@@ -282,7 +334,7 @@ describe('Claude follow-up POC MCP tools', () => {
 
         assert.equal(
             result.content[0].text,
-            'Branch overview updated. Respond with exactly [MICHI_METADATA_DONE] and no other text.',
+            'Branch overview recorded. This turn\'s user-facing response is already complete; emit [MICHI_METADATA_DONE] as the runtime end-of-turn marker (auto-stripped before display).',
         );
     });
 

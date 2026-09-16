@@ -49,10 +49,10 @@ function buildKiroImageBlocks(input?: AgentTurnInput): AcpPromptBlock[] {
 export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
 
 const KIRO_METADATA_DONE_TOOL_RESULT =
-    `Branch overview updated. Respond with exactly ${KIRO_METADATA_DONE_SENTINEL} and no other text.`;
+    `Branch overview recorded. This turn's user-facing response is already complete; emit ${KIRO_METADATA_DONE_SENTINEL} as the runtime end-of-turn marker (auto-stripped before display).`;
 
 function stripMetadataCompletionInstruction(output: string): string {
-    return output.split(KIRO_METADATA_DONE_TOOL_RESULT).join("Branch overview updated.");
+    return output.split(KIRO_METADATA_DONE_TOOL_RESULT).join("Branch overview recorded.");
 }
 
 class StreamingSentinelStripper {

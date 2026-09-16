@@ -123,9 +123,11 @@ export interface McpSlot {
      * the metadata tools they can route back into their own event stream. */
     onSetFollowUps?: (followUps: string[]) => void;
     onSetBranchOverview?: (overview: string) => void;
-    /** Runtime-only assistant token requested after set_branch_overview so an
-     * ACP turn can finish with a non-empty model response. The owning runtime
-     * must strip this token before exposing assistant text. */
+    /** Runtime end-of-turn marker emitted after set_branch_overview so an
+     * ACP turn can finish with a non-empty model response. Described to the
+     * model as a protocol marker (not a directive) to avoid triggering
+     * prompt-injection defenses. The owning runtime strips it before
+     * exposing assistant text. */
     metadataDoneSentinel?: string;
     onValidateFollowUps?: () => Record<string, unknown>;
     onApprove?: (params: {
@@ -262,6 +264,14 @@ function isToolExposed(slot: McpSlot, toolName: string): boolean {
     return slot.exposedToolNames.has(toolName);
 }
 
+function allowedAgentRunToolNames(slot: McpSlot): AgentRunToolName[] {
+    const configured = slot.agentRunToolNames
+        ?? (slot.exposedToolNames
+            ? AGENT_RUN_TOOL_NAMES
+            : slot.owner?.kind === 'agent_run' ? [] : AGENT_RUN_TOOL_NAMES);
+    return configured.filter((name) => isToolExposed(slot, name));
+}
+
 /**
  * Build an MCP server bound to a slot. Side-effect tools delegate to the
  * slot's callbacks, which own ACP session creation and context file writes.
@@ -303,7 +313,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     // callback indirection.
     const SIDE_EFFECT_TOOL_NAMES = new Set(["spawn_branches", "save_artifact", "update_artifact", "show_image"]);
     for (const tool of BUILTIN_TOOLS) {
-        if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name)) continue;
+        if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name) || !isToolExposed(slot, tool.name)) continue;
         server.registerTool(
             tool.name,
             { description: tool.description, inputSchema: builtinToZodShape(tool) },
@@ -352,7 +362,10 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         );
     }
 
-    if (slot.agentRuns) registerAgentRunTools(server, slot.agentRuns, slot.agentRunToolNames);
+    if (slot.agentRuns) {
+        const allowedNames = allowedAgentRunToolNames(slot);
+        if (allowedNames.length > 0) registerAgentRunTools(server, slot.agentRuns, allowedNames);
+    }
 
     // submit_agent_result is registered only for agent_run owners with a bound
     // Attempt collector callback AND when the tool passes the exposed-tool
@@ -378,7 +391,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         );
     }
 
-    if (slot.onSetFollowUps) {
+    if (slot.onSetFollowUps && isToolExposed(slot, "set_follow_ups")) {
         server.registerTool(
             "set_follow_ups",
             {
@@ -401,7 +414,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         );
     }
 
-    if (slot.onSetBranchOverview) {
+    if (slot.onSetBranchOverview && isToolExposed(slot, "set_branch_overview")) {
         server.registerTool(
             "set_branch_overview",
             {
@@ -419,7 +432,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
                         type: "text",
                         text: overview
                             ? slot.metadataDoneSentinel
-                                ? `Branch overview updated. Respond with exactly ${slot.metadataDoneSentinel} and no other text.`
+                                ? `Branch overview recorded. This turn's user-facing response is already complete; emit ${slot.metadataDoneSentinel} as the runtime end-of-turn marker (auto-stripped before display).`
                                 : "Branch overview updated."
                             : "Branch overview was empty; no update applied.",
                     }],
@@ -435,7 +448,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
                 text: JSON.stringify(slot.onValidateFollowUps?.() ?? {}),
             }],
         });
-        server.registerTool(
+        if (isToolExposed(slot, "validate_follow_ups")) server.registerTool(
             "validate_follow_ups",
             {
                 description:
@@ -444,7 +457,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             },
             validateTurnMetadata,
         );
-        server.registerTool(
+        if (isToolExposed(slot, "validate_turn_metadata")) server.registerTool(
             "validate_turn_metadata",
             {
                 description:
@@ -455,7 +468,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         );
     }
 
-    server.registerTool(
+    if (isToolExposed(slot, "list_threads")) server.registerTool(
         "list_threads",
         {
             description:
@@ -476,7 +489,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "search_messages")) server.registerTool(
         "search_messages",
         {
             description:
@@ -500,7 +513,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "read_node")) server.registerTool(
         "read_node",
         {
             description:
@@ -528,7 +541,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "read_node_overview")) server.registerTool(
         "read_node_overview",
         {
             description:
@@ -565,11 +578,11 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             ownerUserId: slot.ownerUserId,
             workspaceId: resolved.workspaceId,
             runOwnerRunId: slot.owner?.kind === "agent_run" ? slot.owner.runId : null,
-            backendConnectionId: slot.slotId,
+            backendConnectionId: 'local',
         };
     }
 
-    server.registerTool(
+    if (isToolExposed(slot, "inspect_pane")) server.registerTool(
         "inspect_pane",
         {
             description:
@@ -586,6 +599,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             },
         },
         async (args) => {
+            if (!isToolExposed(slot, "inspect_pane")) throw new Error("Tool is not exposed: inspect_pane");
             const binding = paneInspectionBinding();
             return inspectPaneTool(binding, {
                 paneId: args?.paneId,
@@ -596,7 +610,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "read_pane_output")) server.registerTool(
         "read_pane_output",
         {
             description:
@@ -617,6 +631,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             },
         },
         async (args) => {
+            if (!isToolExposed(slot, "read_pane_output")) throw new Error("Tool is not exposed: read_pane_output");
             const binding = paneInspectionBinding();
             return readPaneOutputTool(binding, {
                 paneId: args?.paneId,
@@ -631,7 +646,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "list_panes")) server.registerTool(
         "list_panes",
         {
             description:
@@ -653,6 +668,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             },
         },
         async (args) => {
+            if (!isToolExposed(slot, "list_panes")) throw new Error("Tool is not exposed: list_panes");
             const binding = paneInspectionBinding();
             return listPanesTool(binding, {
                 treeId: args?.treeId,
@@ -666,7 +682,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "wait_pane")) server.registerTool(
         "wait_pane",
         {
             description:
@@ -690,6 +706,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             },
         },
         async (args) => {
+            if (!isToolExposed(slot, "wait_pane")) throw new Error("Tool is not exposed: wait_pane");
             const binding = paneInspectionBinding();
             return waitPaneTool(binding, {
                 paneId: args?.paneId,
@@ -703,7 +720,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "ask_user")) server.registerTool(
         "ask_user",
         {
             description:
@@ -756,7 +773,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    server.registerTool(
+    if (isToolExposed(slot, "approve")) server.registerTool(
         "approve",
         {
             description:

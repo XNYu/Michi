@@ -67,7 +67,7 @@ describe('KiroSession metadata completion tail', () => {
                         Json: {
                             content: [{
                                 type: 'text',
-                                text: 'Branch overview updated. Respond with exactly [MICHI_METADATA_DONE] and no other text.',
+                                text: 'Branch overview recorded. This turn\'s user-facing response is already complete; emit [MICHI_METADATA_DONE] as the runtime end-of-turn marker (auto-stripped before display).',
                             }],
                         },
                     }],
@@ -83,7 +83,7 @@ describe('KiroSession metadata completion tail', () => {
         const toolUpdate = events.find((event) => event.kind === 'tool_call_update');
         assert.ok(toolUpdate && toolUpdate.kind === 'tool_call_update');
         assert.equal(toolUpdate.output?.includes('[MICHI_METADATA_DONE]'), false);
-        assert.equal(toolUpdate.output?.includes('Branch overview updated.'), true);
+        assert.equal(toolUpdate.output?.includes('Branch overview recorded.'), true);
     });
 
     it('extracts __tool_use_purpose from object and stringified rawInput', async () => {
