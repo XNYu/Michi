@@ -19,7 +19,7 @@ COPY frontend/package.json frontend/
 COPY backend/package.json backend/
 COPY shared/package.json shared/
 
-RUN npm ci --include=dev --no-audit --no-fund
+RUN npm ci --workspaces --include-workspace-root=false --include=dev --no-audit --no-fund
 
 # Source
 COPY . .
@@ -73,7 +73,7 @@ COPY <<'EOF' /entrypoint.sh
 #!/bin/sh
 set -e
 chown -R node:node /data || true
-exec runuser -u node -- node /app/backend/dist/server.js
+exec runuser -u node -- node --experimental-sqlite /app/backend/dist/server.js
 EOF
 RUN chmod +x /entrypoint.sh
 
