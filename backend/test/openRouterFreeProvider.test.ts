@@ -90,6 +90,41 @@ describe("OpenRouter free trial provider", () => {
     assert.equal(getProviderApiKey(OPENROUTER_FREE_PROVIDER_ID, "user-123"), "trial-key");
   });
 
+  test("reports Pi ready when another desktop provider has a usable key", () => {
+    const { evaluateProviderReadiness } = require("../src/services/providerReadiness");
+    const { getProviderInfo, OPENROUTER_FREE_PROVIDER_ID } = require("../src/agents/pi/piProviders");
+    const builtInProvider = getProviderInfo(OPENROUTER_FREE_PROVIDER_ID);
+    const anthropicProvider = getProviderInfo("anthropic");
+    assert.ok(builtInProvider);
+    assert.ok(anthropicProvider);
+
+    const readiness = evaluateProviderReadiness(
+      [
+        {
+          ...builtInProvider,
+          label: builtInProvider.name,
+          keyLabel: builtInProvider.apiKeyLabel,
+        },
+        {
+          ...anthropicProvider,
+          label: anthropicProvider.name,
+          keyLabel: anthropicProvider.apiKeyLabel,
+        },
+      ],
+      {
+        keyPresence: { anthropic: true },
+        resolveOperatorKey: () => null,
+        hasAwsCredentials: false,
+      },
+    );
+
+    assert.equal(readiness.hasRequiredKey, true);
+    assert.equal(
+      readiness.providers.find((provider: { id: string }) => provider.id === OPENROUTER_FREE_PROVIDER_ID)?.hasKey,
+      false,
+    );
+  });
+
   test("rejects attempts to save a user key for the built-in provider", async () => {
     const { OPENROUTER_FREE_PROVIDER_ID } = require("../src/agents/pi/piProviders");
     const app = express();

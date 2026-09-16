@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { fetchAgentStatus, saveAgentOptions, saveProviderKey, verifyProviderKey } from '../services/api';
 import type { AgentStatus, VerifyProviderKeyResult } from '../services/api';
 import { providerOptionSuffix, providerRequiresUserKey, shouldPromptForProviderKey } from '../lib/providerCapabilities';
@@ -40,17 +40,21 @@ export default function ApiKeyGate() {
   const [error, setError] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<VerifyProviderKeyResult | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const loadRequestIdRef = useRef(0);
 
   // Backoff schedule for cold backend startup. Caps at ~5s between retries
   // so the user sees a "loading" state instead of a stuck blank screen.
   const load = async () => {
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     setBackendUnreachable(false);
     const delays = [0, 250, 500, 1000, 2000, 5000, 5000];
     for (let i = 0; i < delays.length; i++) {
       if (delays[i]! > 0) await new Promise((r) => setTimeout(r, delays[i]!));
+      if (requestId !== loadRequestIdRef.current) return;
       try {
         const s = await fetchAgentStatus();
+        if (requestId !== loadRequestIdRef.current) return;
         setStatus(s);
         setLoading(false);
         return;
@@ -58,6 +62,7 @@ export default function ApiKeyGate() {
         // Try again
       }
     }
+    if (requestId !== loadRequestIdRef.current) return;
     setBackendUnreachable(true);
     setLoading(false);
   };
@@ -76,7 +81,10 @@ export default function ApiKeyGate() {
       void load();
     };
     window.addEventListener('michi:reload-agent-status', handler);
-    return () => window.removeEventListener('michi:reload-agent-status', handler);
+    return () => {
+      loadRequestIdRef.current += 1;
+      window.removeEventListener('michi:reload-agent-status', handler);
+    };
   }, []);
 
   // Follow the backend's active provider when it changes (Settings switched

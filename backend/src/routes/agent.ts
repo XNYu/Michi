@@ -24,7 +24,8 @@ import { listRuntimes, getRuntime } from "../agents/registry";
 import { describeRuntimeCapabilities } from "../agents/capabilityDescriptors";
 import { hasProviders } from "../agents/types";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
-import { getProviderInfo, providerRequiresUserKey, providerUsesAwsCredentials } from "../agents/pi/piProviders";
+import { getProviderInfo, providerRequiresUserKey } from "../agents/pi/piProviders";
+import { evaluateProviderReadiness } from "../services/providerReadiness";
 import {
   hasBedrockCredentials,
   getBedrockConfigSanitized,
@@ -92,27 +93,18 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
             listUserProviderKeys(userId).map((r) => [r.provider, true]),
           )
         : listProviderKeyPresence(list.map((p) => p.id));
-      const hasUsableKey = (p: (typeof list)[number]): boolean =>
-        providerUsesAwsCredentials(p.id)
-          ? hasBedrockCredentials()
-          : p.requiresUserKey === false
-            ? !!getProviderApiKey(p.id)
-            : !!presence[p.id];
-      providers = list.map((p) => ({ ...p, hasKey: hasUsableKey(p) }));
-      // hasRequiredKey gates the welcome modal. In cloud BYOK mode the
-      // global `cfg.provider` is shared across all users — another user
-      // switching provider in Settings, or a redeploy resetting the
-      // ephemeral config.json, would otherwise force a returning user
-      // with a saved key (for some *other* provider) to see the modal
-      // again. So as long as the user has at least one key for a
-      // currently-listed provider, treat the gate as satisfied; the
-      // ApiKeyGate / Settings picker shows which providers are saved
-      // and the user can switch to one of them.
-      if (userId) {
-        hasRequiredKey = list.some((p) => hasUsableKey(p));
-      } else {
-        hasRequiredKey = !!getProviderApiKey(effectiveProvider, userId);
-      }
+      const readiness = evaluateProviderReadiness(list, {
+        keyPresence: presence,
+        resolveOperatorKey: (providerId) => getProviderApiKey(providerId, userId),
+        hasAwsCredentials: hasBedrockCredentials(),
+      });
+      providers = readiness.providers;
+      // hasRequiredKey gates the welcome modal. Provider selection can be
+      // stale or point at an operator-managed provider that is temporarily
+      // unavailable, while another provider already has usable credentials.
+      // Treat Pi as configured when any currently-listed provider is usable;
+      // ApiKeyGate separately checks whether the active provider needs a key.
+      hasRequiredKey = readiness.hasRequiredKey;
     }
 
     const model = resolveModel(cfg.runtime, userId);

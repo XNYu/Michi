@@ -41,6 +41,18 @@ const cerebras = {
   hasKey: false,
 };
 
+const openRouterFree = {
+  id: 'openrouter-free',
+  label: 'OpenRouter Free Trial',
+  keyLabel: 'Built-in OpenRouter trial',
+  envVars: ['OPENROUTER_FREE_API_KEY', 'OPENROUTER_API_KEY'],
+  defaultModel: 'nvidia/nemotron-3-nano-30b-a3b:free',
+  supportsReasoning: false,
+  requiresUserKey: false,
+  modelLocked: true,
+  hasKey: false,
+};
+
 function status(overrides: Partial<AgentStatus> = {}): AgentStatus {
   return {
     runtime: 'pi',
@@ -117,6 +129,59 @@ describe('ApiKeyGate', () => {
     });
 
     await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Add a provider key')).toBeNull();
+  });
+
+  it('stays closed when another provider is usable and the active provider does not accept a user key', async () => {
+    fetchAgentStatus.mockResolvedValue(status({
+      provider: 'openrouter-free',
+      providers: [deepseek, cerebras, openRouterFree],
+      model: openRouterFree.defaultModel,
+      hasRequiredKey: true,
+    }));
+
+    render(<ApiKeyGate />);
+    await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(1));
+
+    expect(screen.queryByText('Add a provider key')).toBeNull();
+  });
+
+  it('ignores an older status response that resolves after a provider switch', async () => {
+    let resolveInitial!: (value: AgentStatus) => void;
+    let resolveReload!: (value: AgentStatus) => void;
+    fetchAgentStatus
+      .mockImplementationOnce(() => new Promise<AgentStatus>((resolve) => {
+        resolveInitial = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<AgentStatus>((resolve) => {
+        resolveReload = resolve;
+      }));
+
+    render(<ApiKeyGate />);
+    await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
+    });
+    await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveReload(status({
+        provider: 'openrouter-free',
+        providers: [deepseek, cerebras, openRouterFree],
+        model: openRouterFree.defaultModel,
+        hasRequiredKey: true,
+      }));
+    });
+    expect(screen.queryByText('Add a provider key')).toBeNull();
+
+    await act(async () => {
+      resolveInitial(status({
+        provider: 'cerebras',
+        model: cerebras.defaultModel,
+        hasRequiredKey: false,
+      }));
+    });
     expect(screen.queryByText('Add a provider key')).toBeNull();
   });
 });
