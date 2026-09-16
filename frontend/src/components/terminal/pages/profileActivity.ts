@@ -1,7 +1,7 @@
-import { visibleMessageText } from '../../../state/assistantBlocks';
-import type { ChatMessage, ChatNodeState, Project } from '../../../state/chatTypes';
+import type { ChatNodeState, Project } from '../../../state/chatTypes';
+import type { ProfileActivitySnapshot } from '../../../services/api/persistence';
 
-export type ActivityMetric = 'nodes' | 'branches' | 'tokens';
+export type ActivityMetric = 'nodes' | 'branches' | 'messages';
 
 export interface ActivityCell {
   dateKey: string;
@@ -23,6 +23,7 @@ export interface ProfileActivity {
   totalNodes: number;
   totalThreads: number;
   totalBranches: number;
+  totalMessages: number;
   metrics: Record<ActivityMetric, ActivityMetricSummary>;
 }
 
@@ -49,10 +50,11 @@ export function buildProfileActivity(
   const dayCounts: Record<ActivityMetric, Map<string, number>> = {
     nodes: new Map(),
     branches: new Map(),
-    tokens: new Map(),
+    messages: new Map(),
   };
 
   let totalNodes = 0;
+  let totalMessages = 0;
   for (const nodeId of nodeIds) {
     const node = nodes[nodeId];
     if (!node || node.deletedAt || node.kind === 'digest') continue;
@@ -66,10 +68,11 @@ export function buildProfileActivity(
     }
 
     for (const message of node.messages) {
+      if (message.role !== 'user') continue;
       const ts = message.createdAt ?? firstActivityAt;
       if (!ts) continue;
-      const approxTokens = estimateTokens(message);
-      if (approxTokens > 0) addCount(dayCounts.tokens, ts, approxTokens);
+      totalMessages += 1;
+      addCount(dayCounts.messages, ts, 1);
     }
   }
 
@@ -77,10 +80,11 @@ export function buildProfileActivity(
     totalNodes,
     totalThreads,
     totalBranches,
+    totalMessages,
     metrics: {
       nodes: summarizeMetric(dayCounts.nodes, nowMs),
       branches: summarizeMetric(dayCounts.branches, nowMs),
-      tokens: summarizeMetric(dayCounts.tokens, nowMs),
+      messages: summarizeMetric(dayCounts.messages, nowMs),
     },
   };
 }
@@ -103,10 +107,27 @@ function isBranchNode(node: ChatNodeState, project?: Project): boolean {
   );
 }
 
-function estimateTokens(message: ChatMessage): number {
-  const text = visibleMessageText(message).trim();
-  if (!text) return 0;
-  return Math.max(1, Math.ceil(text.length / 4));
+export function buildProfileActivityFromSnapshot(
+  snapshot: ProfileActivitySnapshot,
+  nowMs = Date.now(),
+): ProfileActivity {
+  const countsFor = (metric: ActivityMetric) => new Map(
+    snapshot.days
+      .filter((day) => day[metric] > 0)
+      .map((day) => [day.dateKey, day[metric]]),
+  );
+
+  return {
+    totalNodes: snapshot.totalNodes,
+    totalThreads: snapshot.totalThreads,
+    totalBranches: snapshot.totalBranches,
+    totalMessages: snapshot.totalMessages,
+    metrics: {
+      nodes: summarizeMetric(countsFor('nodes'), nowMs),
+      branches: summarizeMetric(countsFor('branches'), nowMs),
+      messages: summarizeMetric(countsFor('messages'), nowMs),
+    },
+  };
 }
 
 function addCount(counts: Map<string, number>, timestamp: number, count: number) {

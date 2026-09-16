@@ -482,7 +482,9 @@ export default function TerminalTopbar({
         {showBrowserBrand && (
           <BrandHomeButton onClick={() => _onNav('home')} />
         )}
-        <SidebarToggleButton collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
+        {page !== 'profile' && (
+          <SidebarToggleButton collapsed={sidebarCollapsed} onToggle={onToggleSidebar} />
+        )}
         {onNewThread && (
           <Zone1IconButton onClick={onNewThread} tooltip="new chat" tooltipKbd={kbd('mod', 'T')} aria-label="New chat">
             <PlusIcon />
@@ -493,19 +495,21 @@ export default function TerminalTopbar({
             <SearchGlyph />
           </Zone1IconButton>
         )}
-        <Zone1IconButton
-          onClick={onUnreadClick}
-          tooltip={prefs.sidebarView === 'activity' ? 'Activity view — click for structure' : 'Activity view'}
-          aria-label={prefs.sidebarView === 'activity' ? 'Switch to structure view' : 'Switch to activity view'}
-          active={prefs.sidebarView === 'activity'}
-        >
-          <UnreadIcon />
-          {unreadDisplay && (
-            <span style={{ marginLeft: 3, fontSize: 10, fontWeight: 600, lineHeight: 1 }}>
-              {unreadDisplay}
-            </span>
-          )}
-        </Zone1IconButton>
+        {page !== 'profile' && (
+          <Zone1IconButton
+            onClick={onUnreadClick}
+            tooltip={prefs.sidebarView === 'activity' ? 'Activity view — click for structure' : 'Activity view'}
+            aria-label={prefs.sidebarView === 'activity' ? 'Switch to structure view' : 'Switch to activity view'}
+            active={prefs.sidebarView === 'activity'}
+          >
+            <UnreadIcon />
+            {unreadDisplay && (
+              <span style={{ marginLeft: 3, fontSize: 10, fontWeight: 600, lineHeight: 1 }}>
+                {unreadDisplay}
+              </span>
+            )}
+          </Zone1IconButton>
+        )}
         <Zone1IconButton
           onClick={navBack}
           disabled={!canNavBack}

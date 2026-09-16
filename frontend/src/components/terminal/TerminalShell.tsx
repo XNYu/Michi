@@ -289,14 +289,14 @@ export default function TerminalShell() {
         }
         return;
       }
-      // ⌘B toggle sidebar
-      if (!e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
+      // ⌘B toggle sidebar (Profile owns a fullscreen navigation rail).
+      if (page !== 'profile' && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         setPref('sidebarCollapsed', !prefs.sidebarCollapsed);
         return;
       }
       // ⌥⌘U toggle sidebar Activity/Structure lens
-      if (e.altKey && !e.shiftKey && (e.key === 'u' || e.key === 'U' || e.key === '¨')) {
+      if (page !== 'profile' && e.altKey && !e.shiftKey && (e.key === 'u' || e.key === 'U' || e.key === '¨')) {
         e.preventDefault();
         setPref('sidebarView', prefs.sidebarView === 'activity' ? 'structure' : 'activity');
         // Ensure sidebar is visible when toggling the lens
@@ -427,6 +427,11 @@ export default function TerminalShell() {
   useEffect(() => {
     if (!narrowMode && narrowOverlayOpen) setNarrowOverlayOpen(false);
   }, [narrowMode, narrowOverlayOpen]);
+  // Profile suppresses the app sidebar. Clear any open narrow overlay while
+  // it is hidden so it cannot reappear over the destination page on exit.
+  React.useLayoutEffect(() => {
+    if (page === 'profile' && narrowOverlayOpen) setNarrowOverlayOpen(false);
+  }, [page, narrowOverlayOpen]);
   // Esc closes the overlay too.
   useEffect(() => {
     if (!narrowOverlayOpen) return;
@@ -440,9 +445,11 @@ export default function TerminalShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [narrowOverlayOpen]);
 
-  // In narrow mode: the toggle controls the overlay rather than the persisted
-  // pref. Going wide again restores the user's pref.
-  const sidebarCollapsedEffective = narrowMode ? !narrowOverlayOpen : prefs.sidebarCollapsed;
+  // Profile owns its own navigation rail, so the application sidebar stays
+  // out of the layout without overwriting the user's persisted preference.
+  const profileFullscreen = page === 'profile';
+  const sidebarCollapsedEffective = profileFullscreen
+    || (narrowMode ? !narrowOverlayOpen : prefs.sidebarCollapsed);
   const handleToggleSidebarEffective = React.useCallback(() => {
     if (narrowMode) setNarrowOverlayOpen((v) => !v);
     else setPref('sidebarCollapsed', !prefs.sidebarCollapsed);
@@ -521,15 +528,17 @@ export default function TerminalShell() {
       <WarmFailedBanner />
       <AskUserAlertBar onNav={handleNav} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>
-        <TerminalSidebar
-          activePage={page}
-          onNav={narrowMode ? handleNavWithClose : handleNav}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
-          narrowMode={narrowMode}
-          narrowOverlayOpen={narrowOverlayOpen}
-          onCloseOverlay={() => setNarrowOverlayOpen(false)}
-        />
+        {!profileFullscreen && (
+          <TerminalSidebar
+            activePage={page}
+            onNav={narrowMode ? handleNavWithClose : handleNav}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
+            narrowMode={narrowMode}
+            narrowOverlayOpen={narrowOverlayOpen}
+            onCloseOverlay={() => setNarrowOverlayOpen(false)}
+          />
+        )}
         <div className="terminal-content-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
           {page === 'home' && <TerminalHome onSubmitted={() => setPage('dashboard')} />}
           {page === 'dashboard' && <TerminalDashboard />}

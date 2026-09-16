@@ -8,16 +8,24 @@ import {
   saveProviderKey,
   clearProviderKey,
   fetchAgentStatus,
+  fetchProfileActivity,
   type AgentStatus,
   type AgentProviderInfo,
+  type ProfileActivitySnapshot,
 } from '../../../services/api';
 import {
   buildProfileActivity,
+  buildProfileActivityFromSnapshot,
   type ActivityMetric,
   type ProfileActivity,
 } from './profileActivity';
 import { providerRequiresUserKey } from '../../../lib/providerCapabilities';
 import { confirmDialog } from '../../ui/ConfirmDialog';
+import {
+  activeBackendApiBase,
+  backendConnectionIdForWorkspace,
+} from '../../../config/backendConnections';
+import { backendConnectionIdFromApiBase } from '../../../state/agentIdentity';
 
 /**
  * Profile page — implementation of the Claude-Design profile.html mock.
@@ -29,17 +37,48 @@ import { confirmDialog } from '../../ui/ConfirmDialog';
  *   - Theme swatches drive prefs.terminalPalette.
  *   - Sign-out hits authClient.signOut() and reloads to drop the cookie.
  *
- * The heatmap is derived from persisted local chat activity. The usage card
- * still shows illustrative numbers — the backend has no per-user usage
- * telemetry yet.
+ * The activity heatmap is loaded from backend-persisted messages so unloaded
+ * threads are still counted. If an older backend does not expose that route,
+ * the page falls back to the messages already hydrated in the frontend.
  */
 export default function ProfilePage({ onNav }: { onNav?: (p: PageId) => void } = {}) {
   const session = useAuthSession();
   const user = session?.user;
   const { prefs, setPref } = usePrefs();
   const { projects } = useChatStore();
-  const activity = useNodesSelector(
-    React.useCallback((nodes) => buildProfileActivity(projects, nodes), [projects]),
+  const activeBackendConnectionId = backendConnectionIdFromApiBase(activeBackendApiBase());
+  const scopedProjects = useMemo(
+    () => projects.filter(
+      (project) => backendConnectionIdForWorkspace(project.id) === activeBackendConnectionId,
+    ),
+    [activeBackendConnectionId, projects],
+  );
+  const localActivity = useNodesSelector(
+    React.useCallback((nodes) => buildProfileActivity(scopedProjects, nodes), [scopedProjects]),
+  );
+  const [activitySnapshot, setActivitySnapshot] = useState<ProfileActivitySnapshot | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    setActivitySnapshot(null);
+    fetchProfileActivity(timeZone, {
+      connectionId: activeBackendConnectionId,
+      signal: controller.signal,
+    })
+      .then((snapshot) => {
+        if (!controller.signal.aborted) setActivitySnapshot(snapshot);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (!controller.signal.aborted) setActivitySnapshot(null);
+      });
+    return () => controller.abort();
+  }, [activeBackendConnectionId]);
+  const activity = useMemo(
+    () => activitySnapshot
+      ? buildProfileActivityFromSnapshot(activitySnapshot)
+      : localActivity,
+    [activitySnapshot, localActivity],
   );
 
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
@@ -85,12 +124,11 @@ export default function ProfilePage({ onNav }: { onNav?: (p: PageId) => void } =
             email={user?.email || ''}
             image={user?.image ?? null}
             initials={initials}
+            streakDays={activity.metrics.messages.currentStreak}
             onSignOut={() => void onSignOut()}
           />
 
           <HeatmapCard activity={activity} />
-
-          <UsageCard />
 
           <ApiKeysSection status={agentStatus} onChanged={refreshAgent} />
 
@@ -142,9 +180,9 @@ function SideNav({
             <KeyIcon /> <span>api keys</span>
             <span className="profile-sidenav__count">{providerCount}</span>
           </a>
-          <a className="profile-sidenav__item" href="#a-usage">
+          <a className="profile-sidenav__item" href="#a-activity">
             <span className="profile-sidenav__caret" />
-            <ChartIcon /> <span>usage</span>
+            <ChartIcon /> <span>activity</span>
           </a>
         </div>
       </div>
@@ -195,12 +233,14 @@ function ProfileHero({
   email,
   image,
   initials,
+  streakDays,
   onSignOut,
 }: {
   name: string;
   email: string;
   image: string | null;
   initials: string;
+  streakDays: number;
   onSignOut: () => void;
 }) {
   return (
@@ -225,10 +265,12 @@ function ProfileHero({
         </div>
       </div>
       <div className="phero__right">
-        <div className="phero__streak">
-          <span className="phero__streak-dot" />
-          <span>streak <b>18d</b></span>
-        </div>
+        {streakDays > 0 && (
+          <div className="phero__streak">
+            <span className="phero__streak-dot" />
+            <span>streak <b>{streakDays}d</b></span>
+          </div>
+        )}
         <button
           type="button"
           className="phero__signout"
@@ -268,16 +310,16 @@ function HeatmapCard({ activity }: { activity: ProfileActivity }) {
   const current = summary.currentStreak;
 
   return (
-    <div className="heatmap-card">
+    <div className="heatmap-card" id="a-activity">
       <div className="heatmap-card__top">
         <div className="heatmap-card__title">
           <h3>activity</h3>
-          <em>{formatCompact(activity.totalNodes)} nodes · {formatCompact(activity.totalThreads)} threads</em>
+          <em>{formatCompact(activity.totalNodes)} nodes · {formatCompact(activity.totalThreads)} threads · {formatCompact(activity.totalMessages)} messages</em>
         </div>
         <div className="seg-toggle" role="tablist" aria-label="Heatmap metric">
           <MetricButton metric="nodes" activeMetric={metric} onSelect={setMetric}>nodes</MetricButton>
           <MetricButton metric="branches" activeMetric={metric} onSelect={setMetric}>branches</MetricButton>
-          <MetricButton metric="tokens" activeMetric={metric} onSelect={setMetric}>tokens</MetricButton>
+          <MetricButton metric="messages" activeMetric={metric} onSelect={setMetric}>messages</MetricButton>
         </div>
       </div>
 
@@ -349,14 +391,14 @@ function MetricButton({
 }
 
 function metricLabel(metric: ActivityMetric): string {
-  if (metric === 'tokens') return 'estimated tokens';
+  if (metric === 'messages') return 'messages sent';
   if (metric === 'branches') return 'branches';
   return 'nodes';
 }
 
 function formatMetricCount(value: number, metric: ActivityMetric): string {
   const formatted = formatCompact(value);
-  if (metric === 'tokens') return `${formatted} est. tokens`;
+  if (metric === 'messages') return `${formatted} ${value === 1 ? 'message' : 'messages'} sent`;
   if (metric === 'branches') return `${formatted} ${value === 1 ? 'branch' : 'branches'}`;
   return `${formatted} ${value === 1 ? 'node' : 'nodes'}`;
 }
@@ -366,39 +408,6 @@ function formatCompact(value: number): string {
     notation: value >= 10_000 ? 'compact' : 'standard',
     maximumFractionDigits: value >= 10_000 ? 1 : 0,
   }).format(value);
-}
-
-// ─── model usage ───────────────────────────────────────────────────────────
-
-function UsageCard() {
-  return (
-    <div className="usage-card" id="a-usage">
-      <p className="usage-card__label">Tokens by model · 30d</p>
-      <div className="usage-bar" role="img" aria-label="Token usage by model — illustrative only">
-        <span className="usage-bar__seg" style={{ width: '46%', background: '#b85d17' }} />
-        <span className="usage-bar__seg" style={{ width: '24%', background: '#2f6b4e' }} />
-        <span className="usage-bar__seg" style={{ width: '18%', background: '#6d4aa8' }} />
-        <span className="usage-bar__seg" style={{ width: '12%', background: '#c48300' }} />
-      </div>
-      <div className="usage-list">
-        <UsageRow color="#b85d17" name="claude-sonnet-4-5" toks="3.86M tok" pct="46%" />
-        <UsageRow color="#2f6b4e" name="gpt-5" toks="2.02M tok" pct="24%" />
-        <UsageRow color="#6d4aa8" name="claude-opus-4-5" toks="1.51M tok" pct="18%" />
-        <UsageRow color="#c48300" name="deepseek-v3 · via OpenRouter" toks="1.01M tok" pct="12%" />
-      </div>
-    </div>
-  );
-}
-
-function UsageRow({ color, name, toks, pct }: { color: string; name: string; toks: string; pct: string }) {
-  return (
-    <div className="usage-row">
-      <span className="usage-row__swatch" style={{ background: color }} />
-      <span className="usage-row__name">{name}</span>
-      <span className="usage-row__tokens">{toks}</span>
-      <span className="usage-row__pct">{pct}</span>
-    </div>
-  );
 }
 
 // ─── api keys ──────────────────────────────────────────────────────────────
@@ -974,37 +983,6 @@ function ProfilePageStyles() {
         font-size: 10.5px; color: var(--fg-subtle);
       }
       .heatmap__legend-scale .heatmap__cell { width: 11px; height: 11px; }
-
-      /* usage — sharp bar, dotted rule rows */
-      .usage-card { margin-top: 18px; }
-      .usage-card__label {
-        font-family: var(--ui-font); font-size: 10.5px;
-        letter-spacing: .06em; text-transform: uppercase; color: var(--fg-muted);
-        margin: 0 0 12px;
-      }
-      .usage-bar {
-        display: flex; height: 10px;
-        background: var(--surface-alt); border: 1px solid var(--line);
-        margin-bottom: 14px;
-      }
-      .usage-bar__seg { height: 100%; }
-      .usage-list { display: grid; gap: 8px; font-size: 12.5px; }
-      .usage-row {
-        display: grid; grid-template-columns: 12px auto 1fr auto auto;
-        gap: 12px; align-items: center; font-family: var(--ui-font); min-width: 0;
-      }
-      .usage-row__swatch { width: 10px; height: 10px; }
-      .usage-row__name {
-        color: var(--fg); font-weight: 500; min-width: 0;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      }
-      .usage-row::after {
-        content: ''; height: 1px;
-        background-image: repeating-linear-gradient(to right, var(--line), var(--line) 2px, transparent 2px, transparent 5px);
-        grid-column: 3;
-      }
-      .usage-row__tokens { color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-      .usage-row__pct { color: var(--fg-muted); font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
 
       /* sections — uppercase header w/ accent bar */
       .profile-section { margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 24px; }

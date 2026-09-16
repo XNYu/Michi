@@ -43,13 +43,23 @@ describe('TerminalTopbar', () => {
     onToggleSidebar: () => {},
   };
 
-  it('renders the sidebar toggle button always', () => {
+  it('renders the sidebar toggle button outside Profile', () => {
     render(
       <Wrap>
         <TerminalTopbar {...baseProps} />
       </Wrap>,
     );
     expect(screen.getByLabelText(/sidebar/i)).toBeTruthy();
+  });
+
+  it('hides the sidebar toggle button on the fullscreen Profile page', () => {
+    render(
+      <Wrap>
+        <TerminalTopbar {...baseProps} page="profile" />
+      </Wrap>,
+    );
+    expect(screen.queryByLabelText(/sidebar/i)).toBeNull();
+    expect(screen.queryByLabelText(/switch to (structure|activity) view/i)).toBeNull();
   });
 
   it('does not render any tab strip on dashboard', () => {

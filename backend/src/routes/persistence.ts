@@ -19,6 +19,7 @@ import { normalizeIncomingMessageRow } from '../services/messageSerialization';
 import { requireWorkspaceOwner, requireNodeOwner } from './middleware/ownership';
 import { ensureDurableGraphNode } from '../services/graphCommands';
 import { applyWorkspaceCommands } from '../services/domainCommands';
+import { loadProfileActivity } from '../services/profileActivity';
 
 export function setupPersistenceRoutes(): express.Router {
   const router = express.Router();
@@ -39,6 +40,24 @@ export function setupPersistenceRoutes(): express.Router {
       // in shared/src/paneInspection.ts.
       paneInspection: 'v1',
     });
+  });
+
+  router.get('/profile/activity', (req, res) => {
+    const timeZone = typeof req.query.timeZone === 'string' ? req.query.timeZone : 'UTC';
+    const userId = req.user?.id;
+    if (process.env.MICHI_CLOUD === '1' && !userId) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    try {
+      res.json(loadProfileActivity({ userId, timeZone }));
+    } catch (err) {
+      if (err instanceof RangeError) {
+        return res.status(400).json({ error: err.message });
+      }
+      log.error('workspace', 'profile activity aggregation failed', { error: (err as Error).message });
+      res.status(500).json({ error: 'Failed to load profile activity' });
+    }
   });
 
   // Backend-owned node identity allocation. This intentionally does not write

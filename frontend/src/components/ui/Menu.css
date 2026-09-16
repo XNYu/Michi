@@ -60,6 +60,7 @@
 .michi-menu[data-menu='context'] {
   --m-width: 252px;
   --m-minHeight: 32px;
+  --m-maxHeight: none;
   --m-background: var(--term-surface);
   --m-backdrop: none;
 }

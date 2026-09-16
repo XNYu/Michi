@@ -1,4 +1,5 @@
 import {
+  activeBackendApiBase,
   backendApiBase,
   workspaceBackendApiBase,
 } from '../../config/backendConnections';
@@ -6,6 +7,68 @@ import { configureStreamTransport } from './streamTransport';
 import { STREAM_TRANSPORT_PROTOCOL } from 'michi-shared';
 
 // ── Persistence API ──
+
+export interface ProfileActivityDay {
+  dateKey: string;
+  nodes: number;
+  branches: number;
+  messages: number;
+}
+
+export interface ProfileActivitySnapshot {
+  totalNodes: number;
+  totalThreads: number;
+  totalBranches: number;
+  totalMessages: number;
+  days: ProfileActivityDay[];
+}
+
+function isActivityCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isProfileActivityDay(value: unknown): value is ProfileActivityDay {
+  if (!value || typeof value !== 'object') return false;
+  const day = value as Record<string, unknown>;
+  return typeof day.dateKey === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(day.dateKey)
+    && isActivityCount(day.nodes)
+    && isActivityCount(day.branches)
+    && isActivityCount(day.messages);
+}
+
+function isProfileActivitySnapshot(value: unknown): value is ProfileActivitySnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const snapshot = value as Record<string, unknown>;
+  return isActivityCount(snapshot.totalNodes)
+    && isActivityCount(snapshot.totalThreads)
+    && isActivityCount(snapshot.totalBranches)
+    && isActivityCount(snapshot.totalMessages)
+    && Array.isArray(snapshot.days)
+    && snapshot.days.every(isProfileActivityDay);
+}
+
+export interface FetchProfileActivityOptions {
+  connectionId?: string;
+  signal?: AbortSignal;
+}
+
+export async function fetchProfileActivity(
+  timeZone: string,
+  options: FetchProfileActivityOptions = {},
+): Promise<ProfileActivitySnapshot> {
+  const query = new URLSearchParams({ timeZone });
+  const base = options.connectionId === undefined
+    ? activeBackendApiBase()
+    : backendApiBase(options.connectionId);
+  const res = await fetch(`${base}/profile/activity?${query}`, { signal: options.signal });
+  if (!res.ok) throw new Error(`fetchProfileActivity failed: ${res.status}`);
+  const body: unknown = await res.json();
+  if (!isProfileActivitySnapshot(body)) {
+    throw new Error('fetchProfileActivity returned a malformed snapshot');
+  }
+  return body;
+}
 
 export async function fetchWorkspaces(connectionId?: string): Promise<unknown[]> {
   const res = await fetch(`${backendApiBase(connectionId)}/workspaces`);

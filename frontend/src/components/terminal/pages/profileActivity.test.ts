@@ -1,4 +1,4 @@
-import { buildProfileActivity } from './profileActivity';
+import { buildProfileActivity, buildProfileActivityFromSnapshot } from './profileActivity';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 
 const atNoon = (date: string) => new Date(`${date}T12:00:00`).getTime();
@@ -31,7 +31,7 @@ function node(overrides: Partial<ChatNodeState>): ChatNodeState {
 }
 
 describe('buildProfileActivity', () => {
-  it('aggregates real node, branch, and estimated-token activity', () => {
+  it('aggregates real node, branch, and user-message activity', () => {
     const activity = buildProfileActivity(
       [project()],
       {
@@ -39,6 +39,7 @@ describe('buildProfileActivity', () => {
           nodeId: 'root',
           messages: [
             { id: 'u1', role: 'user', text: 'hello world', toolCalls: [], createdAt: atNoon('2026-05-24') },
+            { id: 'a1', role: 'assistant', text: 'hello back', toolCalls: [], createdAt: atNoon('2026-05-24') },
           ],
         }),
         child: node({
@@ -62,20 +63,45 @@ describe('buildProfileActivity', () => {
     expect(activity.totalNodes).toBe(2);
     expect(activity.totalThreads).toBe(1);
     expect(activity.totalBranches).toBe(1);
+    expect(activity.totalMessages).toBe(2);
 
     expect(activity.metrics.nodes.total).toBe(2);
     expect(activity.metrics.branches.total).toBe(1);
-    expect(activity.metrics.tokens.total).toBe(5);
+    expect(activity.metrics.messages.total).toBe(2);
     expect(activity.metrics.nodes.longestStreak).toBe(2);
     expect(activity.metrics.nodes.currentStreak).toBe(2);
 
     const nodesByDate = new Map(activity.metrics.nodes.cells.map((cell) => [cell.dateKey, cell]));
     const branchesByDate = new Map(activity.metrics.branches.cells.map((cell) => [cell.dateKey, cell]));
+    const messagesByDate = new Map(activity.metrics.messages.cells.map((cell) => [cell.dateKey, cell]));
 
     expect(nodesByDate.get('2026-05-24')?.count).toBe(1);
     expect(nodesByDate.get('2026-05-25')?.count).toBe(1);
     expect(branchesByDate.get('2026-05-25')?.count).toBe(1);
+    expect(messagesByDate.get('2026-05-24')?.count).toBe(1);
+    expect(messagesByDate.get('2026-05-25')?.count).toBe(1);
     expect(nodesByDate.get('2026-05-26')?.isFuture).toBe(true);
+  });
+
+  it('builds the heatmap from the complete backend snapshot', () => {
+    const activity = buildProfileActivityFromSnapshot(
+      {
+        totalNodes: 19,
+        totalThreads: 12,
+        totalBranches: 7,
+        totalMessages: 42,
+        days: [
+          { dateKey: '2026-05-24', nodes: 2, branches: 1, messages: 5 },
+          { dateKey: '2026-05-25', nodes: 1, branches: 0, messages: 3 },
+        ],
+      },
+      atNoon('2026-05-25'),
+    );
+
+    expect(activity.totalMessages).toBe(42);
+    expect(activity.metrics.messages.total).toBe(8);
+    expect(activity.metrics.messages.longestStreak).toBe(2);
+    expect(activity.metrics.messages.currentStreak).toBe(2);
   });
 
   it('falls back to the workspace created date for legacy messages without timestamps', () => {

@@ -57,4 +57,30 @@ describe('ContextMenu confirmation', () => {
     fireEvent.keyDown(window, { key: 'o' });
     expect(run).toHaveBeenCalledTimes(1);
   });
+
+  it('sets default max-height token on the list and accepts explicit maxHeight prop', () => {
+    const { unmount } = render(
+      <ContextMenu
+        x={20}
+        y={40}
+        onClose={() => {}}
+        sections={[{ items: [{ id: '1', label: 'Item 1', run: () => {} }] }]}
+      />,
+    );
+    const list = screen.getByRole('menu').querySelector('.michi-menu-list') as HTMLElement;
+    expect(list.style.maxHeight).toBe('var(--m-maxHeight)');
+    unmount();
+
+    render(
+      <ContextMenu
+        x={20}
+        y={40}
+        maxHeight={500}
+        onClose={() => {}}
+        sections={[{ items: [{ id: '1', label: 'Item 1', run: () => {} }] }]}
+      />,
+    );
+    const customList = screen.getByRole('menu').querySelector('.michi-menu-list') as HTMLElement;
+    expect(customList.style.maxHeight).toBe('500px');
+  });
 });
