@@ -51,6 +51,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
   router.get("/agent/status", async (_req: Request, res: Response) => {
     const userId = (_req as any).user?.id as string | undefined;
     const cfg = getAgentConfig(userId);
+    const webSearchProviders = getWebSearchProviderStatuses(userId);
     const active = getRuntime(cfg.runtime);
     const all = listRuntimes();
     const availableRuntimes: AgentRuntimeOption[] = all.map((r) => ({
@@ -73,6 +74,8 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         capabilityDescriptor: describeRuntimeCapabilities(cfg.runtime),
         availableRuntimes,
         provider: resolveProvider(cfg.runtime, userId),
+        webSearchProvider: cfg.webSearchProvider,
+        webSearchProviders,
         providerByRuntime: cfg.providerByRuntime,
         model: resolveModel(cfg.runtime, userId),
         modelByRuntime: cfg.modelByRuntime,
@@ -81,7 +84,6 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         hasRequiredKey: true,
       };
       res.json(status);
-    const webSearchProviders = getWebSearchProviderStatuses(userId);
       return;
     }
 
@@ -104,8 +106,6 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         keyPresence: presence,
         resolveOperatorKey: (providerId) => getProviderApiKey(providerId, userId),
         hasAwsCredentials: hasBedrockCredentials(),
-        webSearchProvider: cfg.webSearchProvider,
-        webSearchProviders,
       });
       providers = readiness.providers;
       // hasRequiredKey gates the welcome modal. Provider selection can be
@@ -132,6 +132,8 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       availableRuntimes,
       provider: effectiveProvider,
       providers,
+      webSearchProvider: cfg.webSearchProvider,
+      webSearchProviders,
       providerByRuntime: getAgentConfig(userId).providerByRuntime,
       model,
       modelByRuntime: getAgentConfig(userId).modelByRuntime,
@@ -162,11 +164,17 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     if (req.body?.provider !== undefined) {
       if (typeof req.body.provider !== "string" || !req.body.provider.trim()) {
         res.status(400).json({ ok: false, error: "Invalid provider" });
-      webSearchProvider: cfg.webSearchProvider,
-      webSearchProviders,
         return;
       }
       patch.provider = req.body.provider.trim();
+    }
+    if (req.body?.webSearchProvider !== undefined) {
+      const value = req.body.webSearchProvider;
+      if (value !== null && !isWebSearchProviderId(value)) {
+        res.status(400).json({ ok: false, error: "Unknown web search provider" });
+        return;
+      }
+      patch.webSearchProvider = value;
     }
     if (req.body?.model !== undefined) {
       if (typeof req.body.model !== "string" || !req.body.model.trim()) {
@@ -198,14 +206,6 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
 
     // When the user explicitly selects a provider, record it per-runtime
     // so switching back to this runtime later restores their choice. Only
-    if (req.body?.webSearchProvider !== undefined) {
-      const value = req.body.webSearchProvider;
-      if (value !== null && !isWebSearchProviderId(value)) {
-        res.status(400).json({ ok: false, error: "Unknown web search provider" });
-        return;
-      }
-      patch.webSearchProvider = value;
-    }
     // provider runtimes (Pi) have this concept; recording the resolved
     // fallback for kiro/claude would just pollute the map.
     if (patch.provider && runtimeForModel?.capabilities.providerModels) {
@@ -227,6 +227,10 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       if (patch.provider !== undefined && modelToSet === undefined) {
         modelToSet = providerInfo.defaultModel;
       }
+    }
+    if (providerInfo && patch.provider !== undefined && modelToSet === undefined
+      && patch.provider !== resolveProvider(effectiveRuntime, userId)) {
+      modelToSet = providerInfo.defaultModel;
     }
     if (reasoningToSet !== undefined && runtimeForModel) {
       try {
@@ -258,14 +262,10 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     const runtime = runtimeId ? getRuntime(runtimeId) : null;
     if (!runtime) {
       res.json({ providers: [], models: [], capabilities: null });
-    if (providerInfo && patch.provider !== undefined && modelToSet === undefined
-      && patch.provider !== resolveProvider(effectiveRuntime, userId)) {
-      modelToSet = providerInfo.defaultModel;
-    }
       return;
     }
-    const effectiveProvider = active.capabilities.providerModels ? resolveProvider(cfg.runtime, userId) : undefined;
-    const provider = typeof req.query.provider === "string" ? req.query.provider : effectiveProvider;
+    const provider = typeof req.query.provider === "string" ? req.query.provider
+      : runtime.capabilities.providerModels ? resolveProvider(runtimeId, req.user?.id) : undefined;
 
     // Cache-first: return cached catalog immediately when available.
     const cached = catalogCache?.loadCatalog(runtimeId, provider);
@@ -301,8 +301,8 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       res.json({ models: [], sanitizedModel: null });
       return;
     }
-    const provider = typeof req.query.provider === "string" ? req.query.provider
-      : runtime.capabilities.providerModels ? resolveProvider(runtimeId, req.user?.id) : undefined;
+    const effectiveProvider = active.capabilities.providerModels ? resolveProvider(cfg.runtime, userId) : undefined;
+    const provider = typeof req.query.provider === "string" ? req.query.provider : effectiveProvider;
     const models = active.listModels ? await active.listModels({ provider }) : [];
 
     // Sanitize-and-persist: if the persisted model id is missing or not
@@ -361,36 +361,6 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     res.json({ ok: true });
   });
 
-  router.post("/agent/provider-key/verify", async (req: Request, res: Response) => {
-    const cfg = getAgentConfig();
-    const active = getRuntime(cfg.runtime);
-    if (!active || !hasProviders(active)) {
-      res.status(400).json({ ok: false, error: "Active runtime does not support key verification" });
-      return;
-    }
-    try {
-      // Cloud mode: if the request body omits a key, fall back to the
-      // user's stored encrypted key (legacy desktop verifyProviderKey
-      // already does the disk fallback). This keeps "verify the key I
-      // just saved" working without sending the plaintext back over the
-      // wire.
-      const userId = req.user?.id as string | undefined;
-      let body = req.body ?? {};
-      if (userId && !body.key && body.provider) {
-        const key = getUserProviderKey(userId, body.provider) ?? undefined;
-        if (key) body = { ...body, key };
-      }
-      const result = await active.verifyProviderKey(body);
-      res.json(result);
-    } catch (err) {
-      res.status(400).json({ ok: false, error: (err as Error).message });
-    }
-  });
-
-  // -----------------------------------------------------------------------
-  // Bedrock credential configuration
-  // -----------------------------------------------------------------------
-
   // Web-search credentials use their own namespace in the existing encrypted
   // key vault. They intentionally do not participate in Pi's model-provider
   // discovery or the model-key verification endpoint.
@@ -421,6 +391,36 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     clearWebSearchApiKey(req.params.provider, req.user?.id as string | undefined);
     res.json({ ok: true });
   });
+
+  router.post("/agent/provider-key/verify", async (req: Request, res: Response) => {
+    const cfg = getAgentConfig();
+    const active = getRuntime(cfg.runtime);
+    if (!active || !hasProviders(active)) {
+      res.status(400).json({ ok: false, error: "Active runtime does not support key verification" });
+      return;
+    }
+    try {
+      // Cloud mode: if the request body omits a key, fall back to the
+      // user's stored encrypted key (legacy desktop verifyProviderKey
+      // already does the disk fallback). This keeps "verify the key I
+      // just saved" working without sending the plaintext back over the
+      // wire.
+      const userId = req.user?.id as string | undefined;
+      let body = req.body ?? {};
+      if (userId && !body.key && body.provider) {
+        const key = getUserProviderKey(userId, body.provider) ?? undefined;
+        if (key) body = { ...body, key };
+      }
+      const result = await active.verifyProviderKey(body);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Bedrock credential configuration
+  // -----------------------------------------------------------------------
 
   /** Sanitized Bedrock config — never returns actual secret values. */
   router.get("/agent/bedrock-config", (_req: Request, res: Response) => {
