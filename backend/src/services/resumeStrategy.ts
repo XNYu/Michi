@@ -61,6 +61,7 @@ export function buildTargetResumeSignature(
   cfg: AgentConfig,
   runtime: AgentRuntime,
   modelOverride?: string | null,
+  userId?: string,
 ): ResumeSignature {
   const runtimeId = cfg.runtime;
   const modelId = normalizeSignaturePart(
@@ -70,7 +71,7 @@ export function buildTargetResumeSignature(
   );
   return {
     runtimeId,
-    providerId: runtime.capabilities.providerModels ? normalizeSignaturePart(resolveProvider(runtimeId)) : null,
+    providerId: runtime.capabilities.providerModels ? normalizeSignaturePart(resolveProvider(runtimeId, userId)) : null,
     modelId,
     reasoning: runtime.capabilities.reasoning
       ? normalizeReasoning(cfg.reasoningByRuntime[runtimeId] ?? getBuiltinDefaultReasoning(runtimeId))

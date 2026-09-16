@@ -26,6 +26,7 @@ import { executeWrite } from "../tools/write";
 import { executeEdit } from "../tools/edit";
 import { executeBash } from "../tools/bash";
 import { resolveShowImage } from "../claude/showImage";
+import { formatWebSearchForAgent, isWebSearchEnabled, searchWeb } from "../../services/webSearch";
 import type { NormalizedEvent } from "../../services/chatEvents";
 import type { RuntimeSessionOwner, RuntimeToolProfile } from "../types";
 import {
@@ -147,6 +148,9 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
     const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId, emitImage } = opts;
 
     const builtinTools = BUILTIN_TOOLS.map((t): any => {
+        // Search is opt-in. Omitting the tool entirely keeps an unconfigured
+        // provider from causing the model to attempt a network request.
+        if (t.name === "web_search" && !isWebSearchEnabled(ownerUserId ?? undefined)) return null;
         const parameters = withPurposeField(t.parameters, Type);
 
         switch (t.name) {
@@ -297,6 +301,33 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     },
                 };
             }
+
+            case "web_search":
+                return {
+                    name: t.name,
+                    label: "Search the web",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any) => {
+                        try {
+                            const result = await searchWeb(String(args?.query ?? ""), {
+                                maxResults: typeof args?.maxResults === "number" ? args.maxResults : undefined,
+                                userId: ownerUserId ?? undefined,
+                            });
+                            return {
+                                content: [{ type: "text", text: formatWebSearchForAgent(result) }],
+                                details: result,
+                            };
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : "Web search failed.";
+                            return {
+                                content: [{ type: "text", text: `Web search unavailable: ${message}` }],
+                                details: { error: message },
+                                isError: true,
+                            };
+                        }
+                    },
+                };
 
             case "read_node": {
                 const gc = getRuntimeDeps().globalContext;

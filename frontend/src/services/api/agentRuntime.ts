@@ -35,6 +35,15 @@ export interface AgentProviderInfo extends ModelReasoningCapabilities {
   modelLocked?: boolean;
 }
 
+export interface WebSearchProviderInfo {
+  id: string;
+  label: string;
+  keyLabel: string;
+  keyUrl: string;
+  description: string;
+  hasKey: boolean;
+}
+
 export interface AgentRuntimeOption {
   id: RuntimeId;
   label: string;
@@ -52,6 +61,8 @@ export interface AgentStatus {
   availableRuntimes: AgentRuntimeOption[];
   provider?: string;
   providers?: AgentProviderInfo[];
+  webSearchProvider?: string | null;
+  webSearchProviders?: WebSearchProviderInfo[];
   /** Per-runtime last-used provider (only meaningful for provider runtimes like Pi). */
   providerByRuntime?: Record<string, string>;
   /** Resolved model id for the active runtime. */
@@ -134,6 +145,8 @@ export interface AgentModelsResponse {
 }
 
 export async function listAgentModels(opts?: { provider?: string }): Promise<AgentModelsResponse> {
+  /** null disables web search. */
+  webSearchProvider?: string | null;
   const url = new URL(`${activeBackendApiBase()}/agent/models`, window.location.href);
   if (opts?.provider) url.searchParams.set('provider', opts.provider);
   const res = await fetch(url.toString());
@@ -239,6 +252,36 @@ export interface BedrockConfigInput {
   bearerToken?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
+export async function saveWebSearchKey(
+  provider: string,
+  key: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch(`${activeBackendApiBase()}/agent/search-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, key }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    return { ok: false, error: body.error ?? `status ${res.status}` };
+  }
+  return res.json();
+}
+
+export async function clearWebSearchKey(
+  provider: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await fetch(
+    `${activeBackendApiBase()}/agent/search-key/${encodeURIComponent(provider)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    return { ok: false, error: body.error ?? `status ${res.status}` };
+  }
+  return res.json();
+}
+
   profile?: string;
   authRefreshCommand?: string;
 }

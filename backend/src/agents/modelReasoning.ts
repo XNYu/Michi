@@ -7,9 +7,12 @@ export async function getModelReasoningOptions(
   providerId?: string | null,
   requested?: AgentReasoning | null,
 ) {
-  if (!runtime.capabilities.reasoning) return { ...resolveReasoningOptions(runtime.capabilities), modelId };
   const providers = hasProviders(runtime) ? await runtime.listProviders() : [];
   const provider = providers.find((entry) => entry.id === providerId);
+  // A locked provider ignores requested models at execution time. Persist and
+  // display that same model, including when healing an older mismatched binding.
+  if (provider?.modelLocked) modelId = provider.defaultModel;
+  if (!runtime.capabilities.reasoning) return { ...resolveReasoningOptions(runtime.capabilities), modelId };
   if (provider?.supportsReasoning === false) return { ...resolveReasoningOptions(runtime.capabilities, undefined, provider), modelId: modelId ?? provider.defaultModel };
   const models = runtime.listModels ? await runtime.listModels({ provider: providerId ?? undefined }) : [];
   const model = modelId ? models.find((entry) => entry.id === modelId)

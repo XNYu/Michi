@@ -1,5 +1,5 @@
 import type { ChatNodeState } from './chatTypes';
-import type { AgentReasoning, AgentStatus, RuntimeId } from '../services/api';
+import type { AgentProviderInfo, AgentReasoning, AgentStatus, RuntimeId } from '../services/api';
 
 /**
  * Resolved runtime/model/reasoning for a pane, with a `source` hint for UI
@@ -44,6 +44,7 @@ export function resolveNodeBinding(
   node: ChatNodeState | null | undefined,
   agentStatus: AgentStatus | null | undefined,
   pendingOverride?: PendingNodeBindingOverride | null,
+  providers?: readonly AgentProviderInfo[],
 ): ResolvedNodeBinding {
   const effectiveRuntime =
     pendingOverride?.runtime ??
@@ -86,12 +87,14 @@ export function resolveNodeBinding(
   const globalProviderMatches = !agentStatus?.provider || agentStatus.provider === effectiveProvider;
   const rememberedProviderMatches = !rememberedProvider || rememberedProvider === effectiveProvider;
 
-  const effectiveModel =
+  const selectedProvider = (providers ?? (runtimeMatchesGlobal ? agentStatus?.providers : undefined))
+    ?.find((provider) => provider.id === effectiveProvider);
+  const effectiveModel = selectedProvider?.modelLocked ? selectedProvider.defaultModel : (
     pendingOverride?.model ??
     (nodeMatchesRuntime && nodeProviderMatches ? node?.modelId : undefined) ??
     (runtimeMatchesGlobal && globalProviderMatches ? agentStatus?.model : undefined) ??
     (rememberedProviderMatches ? rememberedModel : undefined) ??
-    undefined;
+    undefined);
 
   const effectiveReasoning =
     pendingOverride?.reasoning ??

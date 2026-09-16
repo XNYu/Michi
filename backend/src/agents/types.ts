@@ -201,6 +201,17 @@ export interface AgentStatus {
   availableRuntimes: AgentRuntimeOption[];
   provider?: string;
   providers?: AgentProviderInfo[];
+  /** Selected server-side web search integration, or null when disabled. */
+  webSearchProvider?: string | null;
+  /** Credential presence only. API keys are never included in this payload. */
+  webSearchProviders?: Array<{
+    id: string;
+    label: string;
+    keyLabel: string;
+    keyUrl: string;
+    description: string;
+    hasKey: boolean;
+  }>;
   /** Per-runtime last-used provider (only meaningful for provider runtimes like Pi). */
   providerByRuntime?: Record<string, string>;
   /** Resolved model id for the active runtime (from modelByRuntime or builtin default). */

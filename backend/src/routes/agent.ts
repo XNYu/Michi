@@ -32,6 +32,12 @@ import {
   saveBedrockConfig,
   clearBedrockConfig,
 } from "../services/bedrockCredentials";
+import { isWebSearchProviderId } from "../services/searchProviders";
+import {
+  clearWebSearchApiKey,
+  getWebSearchProviderStatuses,
+  setWebSearchApiKey,
+} from "../services/webSearch";
 import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
@@ -75,6 +81,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         hasRequiredKey: true,
       };
       res.json(status);
+    const webSearchProviders = getWebSearchProviderStatuses(userId);
       return;
     }
 
@@ -97,6 +104,8 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
         keyPresence: presence,
         resolveOperatorKey: (providerId) => getProviderApiKey(providerId, userId),
         hasAwsCredentials: hasBedrockCredentials(),
+        webSearchProvider: cfg.webSearchProvider,
+        webSearchProviders,
       });
       providers = readiness.providers;
       // hasRequiredKey gates the welcome modal. Provider selection can be
@@ -153,6 +162,8 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     if (req.body?.provider !== undefined) {
       if (typeof req.body.provider !== "string" || !req.body.provider.trim()) {
         res.status(400).json({ ok: false, error: "Invalid provider" });
+      webSearchProvider: cfg.webSearchProvider,
+      webSearchProviders,
         return;
       }
       patch.provider = req.body.provider.trim();
@@ -187,6 +198,14 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
 
     // When the user explicitly selects a provider, record it per-runtime
     // so switching back to this runtime later restores their choice. Only
+    if (req.body?.webSearchProvider !== undefined) {
+      const value = req.body.webSearchProvider;
+      if (value !== null && !isWebSearchProviderId(value)) {
+        res.status(400).json({ ok: false, error: "Unknown web search provider" });
+        return;
+      }
+      patch.webSearchProvider = value;
+    }
     // provider runtimes (Pi) have this concept; recording the resolved
     // fallback for kiro/claude would just pollute the map.
     if (patch.provider && runtimeForModel?.capabilities.providerModels) {
@@ -239,9 +258,14 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     const runtime = runtimeId ? getRuntime(runtimeId) : null;
     if (!runtime) {
       res.json({ providers: [], models: [], capabilities: null });
+    if (providerInfo && patch.provider !== undefined && modelToSet === undefined
+      && patch.provider !== resolveProvider(effectiveRuntime, userId)) {
+      modelToSet = providerInfo.defaultModel;
+    }
       return;
     }
-    const provider = typeof req.query.provider === "string" ? req.query.provider : undefined;
+    const effectiveProvider = active.capabilities.providerModels ? resolveProvider(cfg.runtime, userId) : undefined;
+    const provider = typeof req.query.provider === "string" ? req.query.provider : effectiveProvider;
 
     // Cache-first: return cached catalog immediately when available.
     const cached = catalogCache?.loadCatalog(runtimeId, provider);
@@ -277,7 +301,8 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
       res.json({ models: [], sanitizedModel: null });
       return;
     }
-    const provider = typeof req.query.provider === "string" ? req.query.provider : undefined;
+    const provider = typeof req.query.provider === "string" ? req.query.provider
+      : runtime.capabilities.providerModels ? resolveProvider(runtimeId, req.user?.id) : undefined;
     const models = active.listModels ? await active.listModels({ provider }) : [];
 
     // Sanitize-and-persist: if the persisted model id is missing or not
@@ -287,7 +312,7 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
     const ids = models.map((m) => m.id);
     let sanitizedModel: string | null = null;
     const persisted = resolveModel(cfg.runtime, userId);
-    if (active.capabilities.models && ids.length > 0) {
+    if (active.capabilities.models && ids.length > 0 && provider === effectiveProvider) {
       if (!persisted || !ids.includes(persisted)) {
         sanitizedModel = models.find((m) => m.isDefault)?.id ?? ids[0];
         updateAgentModelForRuntime(cfg.runtime, sanitizedModel, userId);
@@ -365,6 +390,37 @@ export function setupAgentRoutes(opts?: { catalogCache?: RuntimeCatalogCache; cu
   // -----------------------------------------------------------------------
   // Bedrock credential configuration
   // -----------------------------------------------------------------------
+
+  // Web-search credentials use their own namespace in the existing encrypted
+  // key vault. They intentionally do not participate in Pi's model-provider
+  // discovery or the model-key verification endpoint.
+  router.post("/agent/search-key", (req: Request, res: Response) => {
+    const provider = req.body?.provider;
+    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+    if (!isWebSearchProviderId(provider)) {
+      res.status(400).json({ ok: false, error: "Unknown web search provider" });
+      return;
+    }
+    if (!key) {
+      res.status(400).json({ ok: false, error: "Empty API key" });
+      return;
+    }
+    try {
+      setWebSearchApiKey(provider, key, req.user?.id as string | undefined);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "Unable to save API key" });
+    }
+  });
+
+  router.delete("/agent/search-key/:provider", (req: Request<{ provider: string }>, res: Response) => {
+    if (!isWebSearchProviderId(req.params.provider)) {
+      res.status(400).json({ ok: false, error: "Unknown web search provider" });
+      return;
+    }
+    clearWebSearchApiKey(req.params.provider, req.user?.id as string | undefined);
+    res.json({ ok: true });
+  });
 
   /** Sanitized Bedrock config — never returns actual secret values. */
   router.get("/agent/bedrock-config", (_req: Request, res: Response) => {

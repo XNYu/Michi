@@ -336,6 +336,13 @@ Pi provider keys can be saved through Settings or supplied as environment
 variables such as `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, and
 `GEMINI_API_KEY`.
 
+Web search is optional and disabled by default. In **Settings → Model → Web
+Search**, choose Jina Search or Tavily and save its key. The backend keeps the
+key server-side and exposes a source-aware `web_search` tool to new Pi chats.
+For desktop deployments, `JINA_API_KEY` and `TAVILY_API_KEY` can also be set
+as environment variables; set `MICHI_DEFAULT_WEB_SEARCH_PROVIDER=jina` or
+`tavily` to select one at startup.
+
 Important frontend variables:
 
 ```env

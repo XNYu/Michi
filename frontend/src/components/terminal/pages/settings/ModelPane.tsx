@@ -5,11 +5,14 @@ import {
   clearProviderKey,
   saveAgentOptions,
   saveProviderKey,
+  saveWebSearchKey,
+  clearWebSearchKey,
   verifyProviderKey,
   type AgentProviderInfo,
   type AgentReasoning,
   type AgentStatus,
   type VerifyProviderKeyResult,
+  type WebSearchProviderInfo,
 } from '../../../../services/api';
 import { BorderBtn, Row as ClickableRow } from '../../primitives';
 import { Switch } from '../../../ui/controls';
@@ -110,6 +113,8 @@ export function ModelPane({
           />
         ) : null;
       })()}
+
+      {agentStatus && <WebSearchControls status={agentStatus} onChanged={refreshAgentStatus} />}
 
       <KiroSidecarTitleToggle />
       <FollowUpsToggle />
@@ -421,6 +426,202 @@ function ReasoningPicker({
       )}
     </div>
   );
+}
+
+function WebSearchControls({
+  status,
+  onChanged,
+}: {
+  status: AgentStatus;
+  onChanged: () => void;
+}) {
+  const providers = status.webSearchProviders ?? [];
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
+
+  // Old deployments do not return this field. Hiding the entire group makes
+  // the Settings page backwards-compatible with those remote backends.
+  if (providers.length === 0) return null;
+
+  const selectedId = status.webSearchProvider ?? '';
+  const selected = providers.find((provider) => provider.id === selectedId);
+
+  const updateProvider = async (value: string) => {
+    if (savingProvider) return;
+    setSavingProvider(true);
+    setProviderError(null);
+    try {
+      const result = await saveAgentOptions({ webSearchProvider: value || null });
+      if (!result.ok) setProviderError(result.error);
+      onChanged();
+    } catch (error: any) {
+      setProviderError(error?.message ?? 'Unable to update web search');
+    } finally {
+      setSavingProvider(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        fontFamily: 'var(--ui-font)',
+        fontSize: 13,
+        color: 'var(--term-fg)',
+        marginTop: 18,
+        paddingTop: 18,
+        borderTop: '1px solid var(--term-line)',
+      }}
+    >
+      <div style={{ fontSize: 10, color: 'var(--term-muted)', letterSpacing: '.14em', marginBottom: 10 }}>
+        ▸ WEB SEARCH
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>search provider</div>
+      <select
+        aria-label="Web search provider"
+        value={selectedId}
+        disabled={savingProvider}
+        onChange={(event) => void updateProvider(event.target.value)}
+        style={{
+          fontFamily: 'var(--ui-font)',
+          fontSize: 12,
+          padding: '6px 8px',
+          border: '1px solid var(--term-line)',
+          background: 'var(--term-surface-glass)',
+          color: 'var(--term-fg)',
+          minWidth: 320,
+        }}
+      >
+        <option value="">Disabled</option>
+        {providers.map((provider) => (
+          <option key={provider.id} value={provider.id}>
+            {provider.label}{provider.hasKey ? '' : ' (key required)'}
+          </option>
+        ))}
+      </select>
+      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6, maxWidth: 500, lineHeight: 1.5 }}>
+        Searches run from the backend. A new chat will expose the selected provider as a source-aware web-search tool.
+      </div>
+      {providerError && <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{providerError}</div>}
+      {selected && <WebSearchKeyControls key={selected.id} provider={selected} onChanged={onChanged} />}
+    </div>
+  );
+}
+
+function WebSearchKeyControls({
+  provider,
+  onChanged,
+}: {
+  provider: WebSearchProviderInfo;
+  onChanged: () => void;
+}) {
+  const [keyDraft, setKeyDraft] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const hasKey = provider.hasKey;
+
+  const saveKey = async () => {
+    const key = keyDraft.trim();
+    if (!key || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await saveWebSearchKey(provider.id, key);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setKeyDraft('');
+      onChanged();
+    } catch (saveError: any) {
+      setError(saveError?.message ?? 'Unable to save API key');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearKey = async () => {
+    if (!hasKey) return;
+    if (!(await confirmDialog({
+      title: 'Clear search API key',
+      message: `Clear the saved ${provider.label} API key?`,
+      confirmLabel: 'Clear',
+    }))) return;
+    const result = await clearWebSearchKey(provider.id);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    onChanged();
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>
+        {provider.label} {hasKey ? '(saved)' : '(missing)'}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          aria-label={`${provider.label} API key`}
+          type="password"
+          value={keyDraft}
+          onChange={(event) => {
+            setKeyDraft(event.target.value);
+            setError(null);
+          }}
+          placeholder={provider.keyLabel}
+          style={{
+            fontFamily: 'var(--ui-font)',
+            fontSize: 12,
+            padding: '6px 8px',
+            border: '1px solid var(--term-line)',
+            background: 'var(--term-surface-glass)',
+            color: 'var(--term-fg)',
+            minWidth: 320,
+            outline: 'none',
+          }}
+        />
+        <button
+          onClick={() => void saveKey()}
+          disabled={!keyDraft.trim() || saving}
+          style={keyButtonStyle(!keyDraft.trim() || saving)}
+        >
+          {saving ? 'Saving...' : 'Save key'}
+        </button>
+        <button
+          onClick={() => void clearKey()}
+          disabled={!hasKey}
+          style={{ ...keyButtonStyle(!hasKey), color: 'var(--term-mid)' }}
+        >
+          Clear
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 7, maxWidth: 500, lineHeight: 1.5 }}>
+        {provider.description}
+      </div>
+      <a
+        href={provider.keyUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ display: 'inline-block', fontSize: 11, color: 'var(--term-accent)', marginTop: 7 }}
+      >
+        Open {provider.label} key console
+      </a>
+      {error && <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>}
+    </div>
+  );
+}
+
+function keyButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    fontFamily: 'var(--ui-font)',
+    fontSize: 12,
+    padding: '6px 12px',
+    border: '1px solid var(--term-line)',
+    background: 'var(--term-surface-glass)',
+    color: 'var(--term-fg)',
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.55 : 1,
+  };
 }
 
 function ProviderKeyControls({

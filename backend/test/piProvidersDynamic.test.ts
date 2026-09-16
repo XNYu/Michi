@@ -80,3 +80,34 @@ test("returns a safe OpenRouter descriptor when the live catalog is unavailable"
   assert.equal(model.contextWindow, 128_000);
   assert.equal(model.maxTokens, 16_384);
 });
+
+test("Cerebras model catalog returns qwen-3.8-27b and gpt-oss-120b, excluding decommissioned gemma-4-31b", async () => {
+  const { listPiModels, resolvePiModel, resolveProviderModel, getModelAttemptIds } = require("../src/agents/pi/piProviders") as typeof import("../src/agents/pi/piProviders");
+
+  const models = await listPiModels("cerebras");
+  const modelIds = models.map((m) => m.model_id);
+
+  assert.ok(modelIds.includes("qwen-3.8-27b"), "Should include qwen-3.8-27b");
+  assert.ok(modelIds.includes("gpt-oss-120b"), "Should include gpt-oss-120b");
+  assert.ok(!modelIds.includes("gemma-4-31b"), "Should not include decommissioned gemma-4-31b");
+
+  // Resolving qwen-3.8-27b
+  const qwenModel = await resolvePiModel("cerebras", "qwen-3.8-27b");
+  assert.equal(qwenModel.id, "qwen-3.8-27b");
+  assert.equal(qwenModel.provider, "cerebras");
+  assert.equal(qwenModel.api, "openai-completions");
+
+  // Resolving decommissioned gemma-4-31b automatically aliases to defaultModel
+  const aliasedModel = await resolvePiModel("cerebras", "gemma-4-31b");
+  assert.equal(aliasedModel.id, "gpt-oss-120b");
+
+  // Model resolution and attempt IDs fallback for gemma-4-31b
+  const resolved = await resolveProviderModel("cerebras", "gemma-4-31b");
+  assert.equal(resolved, "gpt-oss-120b");
+
+  const resolvedQwen = await resolveProviderModel("cerebras", "qwen-3.8-27b");
+  assert.equal(resolvedQwen, "qwen-3.8-27b");
+
+  const attemptIds = getModelAttemptIds("cerebras", "gemma-4-31b");
+  assert.deepEqual(attemptIds, ["gpt-oss-120b"]);
+});

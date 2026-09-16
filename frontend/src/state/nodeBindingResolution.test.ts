@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveNodeBinding } from './nodeBindingResolution';
 import type { ChatNodeState } from './chatTypes';
-import type { AgentStatus } from '../services/api';
+import type { AgentProviderInfo, AgentStatus } from '../services/api';
 
 const status = {
   runtime: 'kiro',
@@ -22,6 +22,35 @@ function node(partial: Partial<ChatNodeState>): ChatNodeState {
 }
 
 describe('resolveNodeBinding', () => {
+  const freeProvider: AgentProviderInfo = {
+    id: 'openrouter-free', label: 'OpenRouter Free Trial', keyLabel: '', envVars: [],
+    defaultModel: 'free-model', supportsReasoning: false, modelLocked: true,
+  };
+
+  it('shows the locked execution model instead of a stale model bound to the free provider', () => {
+    const r = resolveNodeBinding(
+      node({ runtimeId: 'pi', providerId: 'openrouter-free', modelId: 'deepseek-v4-flash' }),
+      { ...piStatus, providers: [freeProvider] },
+    );
+    expect(r.provider).toBe('openrouter-free');
+    expect(r.model).toBe('free-model');
+  });
+
+  it('uses runtime-scoped catalog metadata when switching from a different runtime', () => {
+    const r = resolveNodeBinding(node({ runtimeId: 'kiro' }), status,
+      { runtime: 'pi', provider: 'openrouter-free', model: 'deepseek-v4-flash' }, [freeProvider]);
+    expect(r.model).toBe('free-model');
+  });
+
+  it('keeps an explicit DeepSeek selection when moving away from a locked provider', () => {
+    const r = resolveNodeBinding(
+      node({ runtimeId: 'pi', providerId: 'openrouter-free', modelId: 'free-model' }),
+      { ...piStatus, providers: [freeProvider] }, { provider: 'deepseek', model: 'deepseek-v4-flash' },
+    );
+    expect(r.provider).toBe('deepseek');
+    expect(r.model).toBe('deepseek-v4-flash');
+  });
+
   it('uses the node binding when no override is pending', () => {
     const r = resolveNodeBinding(
       node({ runtimeId: 'codex', modelId: 'gpt-5-codex', reasoning: 'high' }),

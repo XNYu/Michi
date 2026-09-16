@@ -432,11 +432,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   // Per-node binding: resolve runtime/model/effort from node → global fallback.
   const [pendingBindingOverride, setPendingBindingOverride] = useState<PendingNodeBindingOverride | null>(null);
-  const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride);
+  const requestedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride);
 
   // Load catalog for the *resolved* runtime (which may differ from the global active runtime).
   const shouldLoadModels = !!modelMenu && !!(
-    resolvedBinding.runtime
+    requestedBinding.runtime
   );
   const {
     models: providerModels,
@@ -448,9 +448,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     retry: retryModels,
   } = useRuntimeCatalog({
     enabled: shouldLoadModels,
-    runtime: resolvedBinding.runtime,
-    provider: resolvedBinding.provider,
+    runtime: requestedBinding.runtime,
+    provider: requestedBinding.provider,
   });
+  const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride,
+    catalogProviders.length > 0 ? catalogProviders : undefined);
   const composerEffort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, catalogProviders);
   // NB: do NOT call this `pending` — `onSubmit` already has a local
   // `const pending = n.pendingComments ?? []`.

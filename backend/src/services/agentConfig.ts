@@ -6,10 +6,14 @@ import type { RuntimeId, AgentReasoning } from "../agents/types";
 import { getUserAgentConfig, upsertUserAgentConfig } from "./dbRepository";
 import { DEFAULT_MODELS } from "../agents/agentConfig";
 import { resolveDefaultPiProvider } from "./resolveProvider";
+import { getProviderInfo } from "../agents/pi/piProviders";
+import { isWebSearchProviderId, type WebSearchProviderId } from "./searchProviders";
 
 export interface AgentConfig {
   runtime: RuntimeId;
   provider: string;
+  /** Globally selected web-search integration, or null when disabled. */
+  webSearchProvider: WebSearchProviderId | null;
   /**
    * Per-runtime provider memory. When the user explicitly switches providers
    * while on a specific runtime, the choice is recorded here so switching
@@ -53,9 +57,14 @@ const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
   kiro: "high",
 };
 
+const ENV_DEFAULT_WEB_SEARCH_PROVIDER = isWebSearchProviderId(process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER)
+  ? process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER
+  : null;
+
 const DEFAULTS: AgentConfig = {
   runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
   provider: "anthropic",
+  webSearchProvider: ENV_DEFAULT_WEB_SEARCH_PROVIDER,
   providerByRuntime: {},
   modelByRuntime: {},
   reasoningByRuntime: {},
@@ -145,6 +154,7 @@ export function loadAgentConfig(): AgentConfig {
         if (a.runtime === "gemini") migratedFromLegacy = true;
       }
       if (typeof a.provider === "string" && a.provider) next.provider = a.provider;
+      if (isWebSearchProviderId(a.webSearchProvider)) next.webSearchProvider = a.webSearchProvider;
       if (typeof a.claudeConfigDir === "string" && a.claudeConfigDir.trim()) {
         next.claudeConfigDir = a.claudeConfigDir.trim();
       }
@@ -232,7 +242,7 @@ export function getAgentConfig(userId?: string): AgentConfig {
     let providerByRuntime: Record<string, string> = {};
     let modelByRuntime: Record<string, string> = {};
     let reasoningByRuntime: Record<string, AgentReasoning> = {};
-    try { providerByRuntime = JSON.parse((row as any).provider_by_runtime ?? "{}"); } catch { /* keep {} */ }
+    try { providerByRuntime = JSON.parse(row.provider_by_runtime ?? "{}"); } catch { /* keep {} */ }
     try { modelByRuntime = JSON.parse(row.model_by_runtime); } catch { /* keep {} */ }
     try {
       const raw = JSON.parse(row.reasoning_by_runtime);
@@ -245,6 +255,7 @@ export function getAgentConfig(userId?: string): AgentConfig {
     return {
       runtime: normalizeLegacyRuntimeId(row.runtime),
       provider: row.provider,
+      webSearchProvider: isWebSearchProviderId(row.web_search_provider) ? row.web_search_provider : null,
       providerByRuntime,
       modelByRuntime,
       reasoningByRuntime,
@@ -258,6 +269,13 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
   // Cloud mode with a known user: write to DB.
   if (process.env.MICHI_CLOUD === '1' && userId) {
     const existing = getAgentConfig(userId);
+    // `null` is meaningful for webSearchProvider: it is how Settings turns
+    // the feature off. Nullish coalescing would accidentally retain the
+    // previously selected provider instead.
+    const hasWebSearchProviderPatch = Object.prototype.hasOwnProperty.call(patch, 'webSearchProvider');
+    const webSearchProvider = hasWebSearchProviderPatch
+      ? patch.webSearchProvider ?? null
+      : existing.webSearchProvider;
     const mergedProviderByRuntime = patch.providerByRuntime
       ? { ...existing.providerByRuntime, ...patch.providerByRuntime }
       : { ...existing.providerByRuntime };
@@ -270,12 +288,15 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
     upsertUserAgentConfig(userId, {
       runtime: (patch.runtime ?? existing.runtime) as string,
       provider: patch.provider ?? existing.provider,
+      web_search_provider: webSearchProvider ?? "",
+      provider_by_runtime: JSON.stringify(mergedProviderByRuntime),
       model_by_runtime: JSON.stringify(mergedModelByRuntime),
       reasoning_by_runtime: JSON.stringify(mergedReasoningByRuntime),
     });
     return {
       ...existing,
       ...patch,
+      webSearchProvider,
       providerByRuntime: mergedProviderByRuntime,
       modelByRuntime: mergedModelByRuntime,
       reasoningByRuntime: mergedReasoningByRuntime,
@@ -361,9 +382,11 @@ export function updateAgentReasoningForRuntime(
  */
 export function resolveModel(runtimeId: string, userId?: string): string {
   const cfg = getAgentConfig(userId);
+  const provider = runtimeId === 'pi' ? getProviderInfo(resolveProvider(runtimeId, userId)) : undefined;
+  if (provider?.modelLocked) return provider.defaultModel;
   const userOverride = cfg.modelByRuntime[runtimeId];
   if (userOverride) return userOverride;
-  return BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId] ?? "";
+  return provider?.defaultModel ?? BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId] ?? "";
 }
 
 /**
@@ -478,7 +501,7 @@ export function recordLastUsedProviderModel(
   return updateAgentConfig(
     {
       providerByRuntime: { [runtimeId]: providerId },
-      ...(modelId ? { modelByRuntime: { [runtimeId]: modelId } } : {}),
+      ...(modelId || providerChanged ? { modelByRuntime: { [runtimeId]: modelId || '' } } : {}),
     },
     userId,
   );

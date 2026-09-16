@@ -234,6 +234,9 @@ export function getModelAttemptIds(provider: string, requested?: string | null):
             ? [info.defaultModel, info.fallbackModel]
             : [info.defaultModel];
     }
+    if (provider === "cerebras" && requested === "gemma-4-31b") {
+        return [info.defaultModel];
+    }
     return [requested || info.defaultModel];
 }
 
@@ -285,6 +288,19 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
         }];
     }
 
+    // Cerebras: override stale pi-ai static catalog (removes decommissioned gemma-4-31b, adds qwen-3.8-27b)
+    if (provider === "cerebras") {
+        const piMod = await loadPiAi();
+        return Object.values(CEREBRAS_MODELS).map((m) => ({
+            model_id: String(m.id),
+            model_name: String(m.name || m.id),
+            description: typeof m.description === "string" ? m.description : undefined,
+            context_window_tokens:
+                typeof m.contextWindow === "number" ? m.contextWindow : undefined,
+            ...piModelReasoning(piMod, m, info.supportsReasoning),
+        }));
+    }
+
     // OpenRouter: prefer dynamic fetch from live API, fall back to static list
     if (provider === "openrouter") {
         const apiKey = getEnvProviderApiKey(provider);
@@ -333,6 +349,59 @@ export async function resolveProviderModel(provider: string, requested?: string)
     return models[0]?.model_id ?? info.defaultModel;
 }
 
+const CEREBRAS_MODELS: Record<string, Record<string, unknown>> = {
+    "gpt-oss-120b": {
+        id: "gpt-oss-120b",
+        name: "GPT OSS 120B",
+        api: "openai-completions",
+        provider: "cerebras",
+        baseUrl: "https://api.cerebras.ai/v1",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0.35, output: 0.75, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 131_072,
+        maxTokens: 40_960,
+        compat: {
+            supportsStore: false,
+            supportsDeveloperRole: false,
+        },
+        thinkingLevelMap: {
+            off: null,
+            minimal: null,
+            low: "low",
+            medium: "medium",
+            high: "high",
+            xhigh: null,
+            max: null,
+        },
+    },
+    "qwen-3.8-27b": {
+        id: "qwen-3.8-27b",
+        name: "Qwen 3.8 27B",
+        api: "openai-completions",
+        provider: "cerebras",
+        baseUrl: "https://api.cerebras.ai/v1",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0.20, output: 0.60, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 131_072,
+        maxTokens: 8_192,
+        compat: {
+            supportsStore: false,
+            supportsDeveloperRole: false,
+        },
+        thinkingLevelMap: {
+            off: null,
+            minimal: null,
+            low: "low",
+            medium: "medium",
+            high: "high",
+            xhigh: null,
+            max: null,
+        },
+    },
+};
+
 const OPENROUTER_MODEL_DEFAULTS = {
     api: "openai-completions",
     provider: "openrouter",
@@ -375,6 +444,13 @@ export async function resolvePiModel(provider: string, modelId: string): Promise
     if (!info) throw new Error(`Unsupported provider: ${provider}`);
 
     const upstreamProvider = getUpstreamProviderId(provider);
+
+    if (upstreamProvider === "cerebras") {
+        const targetModelId = modelId === "gemma-4-31b" ? info.defaultModel : modelId;
+        const overridden = CEREBRAS_MODELS[targetModelId];
+        if (overridden) return overridden;
+    }
+
     const piMod = await loadPiAi();
     const builtin = (piMod as any).getModel(upstreamProvider, modelId);
     if (builtin) return builtin;

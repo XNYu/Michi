@@ -1232,6 +1232,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     { ...cfg, runtime: runtimeId },
                     runtime,
                     normalizeSignaturePart(body.modelId) ?? (typeof modelRaw === "string" ? modelRaw : undefined),
+                    michiUserId,
                 );
             if (!primaryProfile) {
                 // An omitted selection means "continue this conversation", not
@@ -1418,6 +1419,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 previousNativeSessionId: persistedBinding,
                 resumeStrategy,
                 resumeReason,
+                providerId: targetSignature.providerId,
                 modelId: targetSignature.modelId,
             });
             startupMark("ensure_session_route_done", {
