@@ -30,10 +30,7 @@ import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
 import { pageBackground } from '../../lib/pageBackground';
 import { ArtifactsIcon, BranchesIcon, DigestIcon, MapIcon } from './icons';
-import {
-  selectArchivedGroupCountForPage,
-  selectTrashGroupCountForPage,
-} from '../../state/topbarSelectors';
+import { selectArchivedGroupCountForPage } from '../../state/topbarSelectors';
 
 const TOPBAR_HEIGHT = 44;
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
@@ -76,7 +73,6 @@ export default function TerminalTopbar({
 }) {
   const {
     activeProject,
-    projects,
     focusedNodeId,
     canNavBack,
     canNavForward,
@@ -303,7 +299,7 @@ export default function TerminalTopbar({
     : page === 'map' ? 'MAP'
     : page === 'digest' ? 'DIGEST'
     : page === 'workspaces' ? 'WORKSPACES'
-    : page === 'trash' ? 'TRASH'
+    : page === 'trash' ? 'HISTORY'
     : page === 'archived' ? 'ARCHIVED'
     : page === 'agents' ? 'AGENTS'
     : '';
@@ -311,16 +307,6 @@ export default function TerminalTopbar({
     ? manageAgentRoute.backendConnectionId
     : backendConnectionIdFromApiBase(activeBackendApiBase());
   const agentBackendName = getKnownBackendConnections().find((connection) => connection.id === agentBackendConnectionId)?.name ?? agentBackendConnectionId;
-  // Trash title mirrors the Workspaces pattern: a single counts line in the
-  // topbar so the page body can drop its in-page header. Combines deleted
-  // workspaces with deletion groups (matches Settings.tsx's tally).
-  const trashCountSelector = useCallback(
-    (nodesMap: Parameters<typeof selectTrashGroupCountForPage>[1]) =>
-      selectTrashGroupCountForPage(page, nodesMap),
-    [page],
-  );
-  const trashGroupCount = useNodesSelector(trashCountSelector);
-  const trashCount = trashGroupCount + (page === 'trash' ? projects.filter((p) => p.deletedAt).length : 0);
   const archivedCountSelector = useCallback(
     (nodesMap: Parameters<typeof selectArchivedGroupCountForPage>[1]) =>
       selectArchivedGroupCountForPage(page, nodesMap),
@@ -411,6 +397,7 @@ export default function TerminalTopbar({
   return (
     <div
       className="terminal-topbar"
+      data-page={page}
       style={{
         height: TOPBAR_HEIGHT,
         flexShrink: 0,
@@ -665,6 +652,7 @@ export default function TerminalTopbar({
         )}
         {showWorkspaceTitle && (
           <div
+            className="terminal-topbar-breadcrumb"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -733,7 +721,7 @@ export default function TerminalTopbar({
                   whiteSpace: 'nowrap',
                 }}
               >
-                {trashCount} deletion{trashCount === 1 ? '' : 's'}
+                Trash
               </span>
             ) : page === 'archived' ? (
               <span

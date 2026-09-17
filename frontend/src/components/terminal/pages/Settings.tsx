@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
 import type { PageId } from '../../../state/commands';
 import { isArchiveGroupId } from '../../../state/trashActions';
@@ -28,11 +28,12 @@ export default function TerminalSettings({
   const [localSection, setLocalSection] = useState<SettingsSection>('appearance');
   const contentId = useId();
   const { activeProject, projects } = useChatStore();
+  const liveProjectIds = useMemo(() => new Set(projects.filter(project => !project.deletedAt).map(project => project.id)), [projects]);
 
   const trashGroupCount = useStructuralSelector((nodesMap) => {
     const gids = new Set<string>();
     for (const n of Object.values(nodesMap)) {
-      if (n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId);
+      if (liveProjectIds.has(n.projectId) && n.deletionGroupId && !isArchiveGroupId(n.deletionGroupId)) gids.add(n.deletionGroupId);
     }
     return gids.size;
   });

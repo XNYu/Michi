@@ -13,9 +13,11 @@ export function pageBackground(page: PageId): string {
     // Canvas pages — cards float on the slightly warm bg layer.
     case 'home':
     case 'workspaces':
-    case 'trash':
     case 'archived':
       return 'var(--term-bg)';
+
+    case 'trash':
+      return 'color-mix(in srgb, var(--term-surface) 72%, var(--term-bg))';
 
     // Document / editor pages — use the semantic page-bg token.
     case 'digest':
