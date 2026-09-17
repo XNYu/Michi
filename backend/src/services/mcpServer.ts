@@ -6,7 +6,7 @@ import { z } from "zod";
 import { listThreads, searchMessages, readNode, readNodeOverview } from "./globalContext";
 import { getNodeSessionBinding } from "./dbRepository";
 import {
-    BUILTIN_TOOLS,
+    listEnabledBuiltinTools,
     type BuiltinTool,
     type ParamField,
     type ParamSpec,
@@ -312,7 +312,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     // registered separately below because they don't go through the slot
     // callback indirection.
     const SIDE_EFFECT_TOOL_NAMES = new Set(["spawn_branches", "save_artifact", "update_artifact", "show_image"]);
-    for (const tool of BUILTIN_TOOLS) {
+    for (const tool of listEnabledBuiltinTools()) {
         if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name) || !isToolExposed(slot, tool.name)) continue;
         server.registerTool(
             tool.name,

@@ -78,4 +78,34 @@ describe('AgentCapabilityCatalog', () => {
     });
     assert.equal(snapshot.entries[0].id, 'spawn_agent');
   });
+
+  test('web search capability is visible only on Railway deployments', () => {
+    const projectId = process.env.RAILWAY_PROJECT_ID;
+    const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
+    const serviceId = process.env.RAILWAY_SERVICE_ID;
+    const searchEnabled = process.env.MICHI_WEB_SEARCH_ENABLED;
+    delete process.env.RAILWAY_PROJECT_ID;
+    delete process.env.RAILWAY_ENVIRONMENT_ID;
+    delete process.env.RAILWAY_SERVICE_ID;
+    const source = new BuiltinAgentCapabilitySource();
+    try {
+      assert.equal(source.list({ ownerUserId: 'owner-a', workspaceId: null })
+        .some((item) => item.id === 'web_search'), false);
+      process.env.RAILWAY_PROJECT_ID = 'test-project';
+      assert.equal(source.list({ ownerUserId: 'owner-a', workspaceId: null })
+        .some((item) => item.id === 'web_search'), true);
+      process.env.MICHI_WEB_SEARCH_ENABLED = '0';
+      assert.equal(source.list({ ownerUserId: 'owner-a', workspaceId: null })
+        .some((item) => item.id === 'web_search'), false);
+    } finally {
+      if (searchEnabled !== undefined) process.env.MICHI_WEB_SEARCH_ENABLED = searchEnabled;
+      else delete process.env.MICHI_WEB_SEARCH_ENABLED;
+      if (projectId) process.env.RAILWAY_PROJECT_ID = projectId;
+      else delete process.env.RAILWAY_PROJECT_ID;
+      if (environmentId) process.env.RAILWAY_ENVIRONMENT_ID = environmentId;
+      else delete process.env.RAILWAY_ENVIRONMENT_ID;
+      if (serviceId) process.env.RAILWAY_SERVICE_ID = serviceId;
+      else delete process.env.RAILWAY_SERVICE_ID;
+    }
+  });
 });

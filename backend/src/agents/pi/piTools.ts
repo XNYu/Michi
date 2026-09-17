@@ -5,7 +5,7 @@ import {
     type AgentRunToolInvoker,
 } from "../runToolBridge";
 import {
-    BUILTIN_TOOLS,
+    listEnabledBuiltinTools,
     type ParamField,
     type ParamObjectShape,
     type ParamSpec,
@@ -147,7 +147,7 @@ function fieldToTypebox(field: ParamField, Type: any): any {
 export function buildPiTools(opts: BuildPiToolsOpts): any[] {
     const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId, emitImage } = opts;
 
-    const builtinTools = BUILTIN_TOOLS.map((t): any => {
+    const builtinTools = listEnabledBuiltinTools().map((t): any => {
         // Search is opt-in. Omitting the tool entirely keeps an unconfigured
         // provider from causing the model to attempt a network request.
         if (t.name === "web_search" && !isWebSearchEnabled(ownerUserId ?? undefined)) return null;

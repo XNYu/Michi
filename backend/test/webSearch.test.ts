@@ -21,6 +21,8 @@ beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-web-search-'));
   process.env.MICHI_DATA_DIR = directory;
   process.env.MICHI_CLOUD = '1';
+  process.env.RAILWAY_PROJECT_ID = 'test-project';
+  process.env.RAILWAY_ENVIRONMENT_ID = 'test-environment';
   process.env.MICHI_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
   closeDb();
   initDb();

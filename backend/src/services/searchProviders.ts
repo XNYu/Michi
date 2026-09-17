@@ -41,6 +41,25 @@ export function isWebSearchProviderId(value: unknown): value is WebSearchProvide
   return typeof value === "string" && (WEB_SEARCH_PROVIDER_IDS as readonly string[]).includes(value);
 }
 
+/**
+ * Web search is a Railway-only deployment feature. Railway injects these
+ * identifiers into every service, so local, Electron, and other hosted builds
+ * stay feature-off without needing a second frontend build flag.
+ *
+ * MICHI_WEB_SEARCH_ENABLED=0 is an emergency kill switch for Railway. Setting
+ * it to 1 outside Railway deliberately does not enable the feature.
+ */
+export function isWebSearchFeatureEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicitlyDisabled = ["0", "false", "off", "no"]
+    .includes(String(env.MICHI_WEB_SEARCH_ENABLED ?? "").trim().toLowerCase());
+  if (explicitlyDisabled) return false;
+  return Boolean(
+    env.RAILWAY_PROJECT_ID
+    || env.RAILWAY_ENVIRONMENT_ID
+    || env.RAILWAY_SERVICE_ID,
+  );
+}
+
 export function getWebSearchProvider(id: WebSearchProviderId): WebSearchProviderDefinition {
   const provider = WEB_SEARCH_PROVIDERS.find((candidate) => candidate.id === id);
   if (!provider) throw new Error(`Unknown web search provider: ${id}`);

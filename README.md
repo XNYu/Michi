@@ -336,12 +336,14 @@ Pi provider keys can be saved through Settings or supplied as environment
 variables such as `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, and
 `GEMINI_API_KEY`.
 
-Web search is optional and disabled by default. In **Settings → Model → Web
-Search**, choose Jina Search or Tavily and save its key. The backend keeps the
-key server-side and exposes a source-aware `web_search` tool to new Pi chats.
-For desktop deployments, `JINA_API_KEY` and `TAVILY_API_KEY` can also be set
-as environment variables; set `MICHI_DEFAULT_WEB_SEARCH_PROVIDER=jina` or
-`tavily` to select one at startup.
+Web search is deployment-gated and disabled by default. It is exposed only on
+Railway, detected from Railway's injected service identifiers. On Railway,
+**Settings → Model → Web Search** lets each user choose Jina Search or Tavily
+and save a server-side key. New Pi chats receive the source-aware `web_search`
+tool only after a provider and key are configured. Set
+`MICHI_WEB_SEARCH_ENABLED=0` to hide the configuration and tool on Railway.
+`MICHI_DEFAULT_WEB_SEARCH_PROVIDER=jina` or `tavily` can select the initial
+provider for operator-managed deployments.
 
 Important frontend variables:
 

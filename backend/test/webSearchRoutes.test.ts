@@ -17,6 +17,8 @@ beforeEach(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-web-search-routes-'));
   process.env.MICHI_DATA_DIR = directory;
   process.env.MICHI_CLOUD = '1';
+  process.env.RAILWAY_PROJECT_ID = 'test-project';
+  process.env.RAILWAY_ENVIRONMENT_ID = 'test-environment';
   process.env.MICHI_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString('base64');
   closeDb();
   initDb();
@@ -75,4 +77,36 @@ test('search provider selection and key presence are isolated to the signed-in u
   assert.equal(disable.status, 200);
   const disabled = await (await fetch(`${base}/agent/status`)).json() as { webSearchProvider: string | null };
   assert.equal(disabled.webSearchProvider, null);
+});
+
+test('non-Railway deployments hide search configuration and reject search mutations', async () => {
+  const projectId = process.env.RAILWAY_PROJECT_ID;
+  const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
+  const serviceId = process.env.RAILWAY_SERVICE_ID;
+  delete process.env.RAILWAY_PROJECT_ID;
+  delete process.env.RAILWAY_ENVIRONMENT_ID;
+  delete process.env.RAILWAY_SERVICE_ID;
+  try {
+    const status = await (await fetch(`${base}/agent/status`)).json() as Record<string, unknown>;
+    assert.equal('webSearchProvider' in status, false);
+    assert.equal('webSearchProviders' in status, false);
+
+    const options = await fetch(`${base}/agent/options`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ webSearchProvider: 'jina' }),
+    });
+    assert.equal(options.status, 404);
+
+    const save = await fetch(`${base}/agent/search-key`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'jina', key: 'hidden-key' }),
+    });
+    assert.equal(save.status, 404);
+  } finally {
+    if (projectId) process.env.RAILWAY_PROJECT_ID = projectId;
+    if (environmentId) process.env.RAILWAY_ENVIRONMENT_ID = environmentId;
+    if (serviceId) process.env.RAILWAY_SERVICE_ID = serviceId;
+  }
 });

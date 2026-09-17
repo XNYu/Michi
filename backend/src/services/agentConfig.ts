@@ -7,7 +7,7 @@ import { getUserAgentConfig, upsertUserAgentConfig } from "./dbRepository";
 import { DEFAULT_MODELS } from "../agents/agentConfig";
 import { resolveDefaultPiProvider } from "./resolveProvider";
 import { getProviderInfo } from "../agents/pi/piProviders";
-import { isWebSearchProviderId, type WebSearchProviderId } from "./searchProviders";
+import { isWebSearchFeatureEnabled, isWebSearchProviderId, type WebSearchProviderId } from "./searchProviders";
 
 export interface AgentConfig {
   runtime: RuntimeId;
@@ -57,7 +57,8 @@ const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
   kiro: "high",
 };
 
-const ENV_DEFAULT_WEB_SEARCH_PROVIDER = isWebSearchProviderId(process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER)
+const ENV_DEFAULT_WEB_SEARCH_PROVIDER = isWebSearchFeatureEnabled()
+  && isWebSearchProviderId(process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER)
   ? process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER
   : null;
 

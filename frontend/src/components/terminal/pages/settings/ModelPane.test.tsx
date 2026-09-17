@@ -87,4 +87,22 @@ describe('ModelPane Kiro sidecar title setting', () => {
     await waitFor(() => expect(saveWebSearchKey).toHaveBeenCalledWith('jina', 'jina-test-key'));
     expect(refreshAgentStatus).toHaveBeenCalled();
   });
+
+  it('does not render web-search settings when the backend does not advertise the Railway feature', () => {
+    agentStatus = {
+      runtime: 'pi',
+      label: 'Pi',
+      capabilities: {
+        modes: false, permissions: false, providerModels: false, reasoning: false,
+        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
+      },
+      availableRuntimes: [],
+      hasRequiredKey: true,
+    };
+
+    render(<ModelPane activeProjectId={null} />);
+
+    expect(screen.queryByRole('combobox', { name: 'Web search provider' })).toBeNull();
+    expect(screen.queryByText('▸ WEB SEARCH')).toBeNull();
+  });
 });

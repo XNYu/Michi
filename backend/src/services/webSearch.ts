@@ -3,6 +3,7 @@ import { getProviderApiKey, setProviderApiKey } from "./secrets";
 import { clearUserProviderKey, getUserProviderKey, setUserProviderKey } from "./userKeys";
 import {
   getWebSearchProvider,
+  isWebSearchFeatureEnabled,
   type WebSearchProviderId,
   WEB_SEARCH_PROVIDERS,
   webSearchKeySlot,
@@ -80,6 +81,7 @@ export function getWebSearchProviderStatuses(userId?: string): WebSearchProvider
 }
 
 export function isWebSearchEnabled(userId?: string): boolean {
+  if (!isWebSearchFeatureEnabled()) return false;
   const provider = getAgentConfig(userId).webSearchProvider;
   return provider !== null && Boolean(getWebSearchApiKey(provider, userId));
 }
@@ -88,6 +90,9 @@ export async function searchWeb(
   query: string,
   opts: { maxResults?: number; userId?: string } = {},
 ): Promise<WebSearchResponse> {
+  if (!isWebSearchFeatureEnabled()) {
+    throw new WebSearchUnavailableError("Web search is not enabled for this deployment.");
+  }
   const normalizedQuery = query.trim();
   if (!normalizedQuery) throw new Error("Search query cannot be empty");
   if (normalizedQuery.length > MAX_QUERY_LENGTH) {

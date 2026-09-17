@@ -32,7 +32,7 @@ import {
   saveBedrockConfig,
   clearBedrockConfig,
 } from "../services/bedrockCredentials";
-import { isWebSearchProviderId } from "../services/searchProviders";
+import { isWebSearchFeatureEnabled, isWebSearchProviderId } from "../services/searchProviders";
 import {
   clearWebSearchApiKey,
   getWebSearchProviderStatuses,
@@ -81,7 +81,13 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   router.get("/agent/status", async (_req: Request, res: Response) => {
     const userId = (_req as any).user?.id as string | undefined;
     const cfg = getAgentConfig(userId);
-    const webSearchProviders = getWebSearchProviderStatuses(userId);
+    const webSearchFeatureEnabled = isWebSearchFeatureEnabled();
+    const webSearchStatus = webSearchFeatureEnabled
+      ? {
+          webSearchProvider: cfg.webSearchProvider,
+          webSearchProviders: getWebSearchProviderStatuses(userId),
+        }
+      : {};
     const active = getRuntime(cfg.runtime);
     const all = listRuntimes();
     const availableRuntimes: AgentRuntimeOption[] = all.map((r) => ({
@@ -104,8 +110,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
         capabilityDescriptor: describeRuntimeCapabilities(cfg.runtime),
         availableRuntimes,
         provider: resolveProvider(cfg.runtime, userId),
-        webSearchProvider: cfg.webSearchProvider,
-        webSearchProviders,
+        ...webSearchStatus,
         providerByRuntime: cfg.providerByRuntime,
         model: resolveModel(cfg.runtime, userId),
         modelByRuntime: cfg.modelByRuntime,
@@ -162,8 +167,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       availableRuntimes,
       provider: effectiveProvider,
       providers,
-      webSearchProvider: cfg.webSearchProvider,
-      webSearchProviders,
+      ...webSearchStatus,
       providerByRuntime: getAgentConfig(userId).providerByRuntime,
       model,
       modelByRuntime: getAgentConfig(userId).modelByRuntime,
@@ -199,6 +203,10 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       patch.provider = req.body.provider.trim();
     }
     if (req.body?.webSearchProvider !== undefined) {
+      if (!isWebSearchFeatureEnabled()) {
+        res.status(404).json({ ok: false, error: "web_search_disabled" });
+        return;
+      }
       const value = req.body.webSearchProvider;
       if (value !== null && !isWebSearchProviderId(value)) {
         res.status(400).json({ ok: false, error: "Unknown web search provider" });
@@ -395,6 +403,10 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   // key vault. They intentionally do not participate in Pi's model-provider
   // discovery or the model-key verification endpoint.
   router.post("/agent/search-key", (req: Request, res: Response) => {
+    if (!isWebSearchFeatureEnabled()) {
+      res.status(404).json({ ok: false, error: "web_search_disabled" });
+      return;
+    }
     const provider = req.body?.provider;
     const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
     if (!isWebSearchProviderId(provider)) {
@@ -414,6 +426,10 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   });
 
   router.delete("/agent/search-key/:provider", (req: Request<{ provider: string }>, res: Response) => {
+    if (!isWebSearchFeatureEnabled()) {
+      res.status(404).json({ ok: false, error: "web_search_disabled" });
+      return;
+    }
     if (!isWebSearchProviderId(req.params.provider)) {
       res.status(400).json({ ok: false, error: "Unknown web search provider" });
       return;

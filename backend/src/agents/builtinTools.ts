@@ -1,3 +1,5 @@
+import { isWebSearchFeatureEnabled } from "../services/searchProviders";
+
 /**
  * Catalog of in-tree tools the Pi runtime exposes to the model. Each
  * runtime is responsible for rendering each tool's parameter shape into
@@ -387,3 +389,12 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
         },
     },
 ];
+
+/** Deployment-visible built-ins. Keep feature-gated tools out of every tool
+ * surface, including Pi sessions, MCP registration, and Agent capability
+ * discovery. */
+export function listEnabledBuiltinTools(): readonly BuiltinTool[] {
+    return isWebSearchFeatureEnabled()
+        ? BUILTIN_TOOLS
+        : BUILTIN_TOOLS.filter((tool) => tool.name !== "web_search");
+}
