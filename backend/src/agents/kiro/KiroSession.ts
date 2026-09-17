@@ -13,7 +13,7 @@ import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
-import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "./acpErrors";
+import { classifyAcpError, isRetryable, needsRespawn, retryReason, toErrorKind } from "./acpErrors";
 
 const KIRO_IMAGE_MEDIA_TYPES: Record<string, string> = {
     ".gif": "image/gif",
@@ -238,15 +238,30 @@ export class KiroSession implements AgentSession {
      */
     private async *streamUpdates(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
         let attempt = 0;
+        let retryActive = false;
         while (true) {
             let firstVisibleYielded = false;
             try {
                 for await (const ev of this.runPromptOnce(text, imageBlocks, signal)) {
+                    if (retryActive && ev.kind !== "heartbeat") {
+                        yield { kind: "retry_end" };
+                        retryActive = false;
+                    }
                     if (ev.kind !== "heartbeat") firstVisibleYielded = true;
                     yield ev;
                 }
+                if (retryActive) {
+                    yield { kind: "retry_end" };
+                    retryActive = false;
+                }
                 return;
             } catch (err) {
+                // The retry stays visible while the retried prompt is in flight.
+                // Close it before cancellation or a terminal error is surfaced.
+                if (retryActive) {
+                    yield { kind: "retry_end" };
+                    retryActive = false;
+                }
                 // A cancelled prompt can fail with a normal connection/transient
                 // error. Retrying it would restart work the user just stopped
                 // (and connection recovery kills other sessions on this cwd).
@@ -262,9 +277,26 @@ export class KiroSession implements AgentSession {
                     throw err;
                 }
                 attempt += 1;
+                // Make the hidden retry visible. Until now the UI showed a
+                // static "…" for the whole retry and only revealed anything on
+                // final failure, so a working auto-retry looked like a hang.
+                // Keep this activity open until the retried prompt produces its
+                // first non-heartbeat event, finishes without output, or fails.
+                yield { kind: "retry_start", detail: `${retryReason(cls)}. Retrying (attempt ${attempt})…` };
+                retryActive = true;
                 if (needsRespawn(cls)) {
-                    const recovered = await this.runtime.recoverSession(this.nativeSessionId, this.cwd);
+                    let recovered: boolean;
+                    try {
+                        recovered = await this.runtime.recoverSession(this.nativeSessionId, this.cwd);
+                    } catch {
+                        yield { kind: "retry_end" };
+                        retryActive = false;
+                        (err as { acpErrorKind?: string }).acpErrorKind = toErrorKind(cls);
+                        throw err;
+                    }
                     if (!recovered) {
+                        yield { kind: "retry_end" };
+                        retryActive = false;
                         (err as { acpErrorKind?: string }).acpErrorKind = toErrorKind(cls);
                         throw err;
                     }

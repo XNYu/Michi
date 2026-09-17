@@ -114,6 +114,18 @@ export function toErrorKind(cls: AcpErrorClass): AcpErrorKind {
   return "connection";
 }
 
+/**
+ * Human-facing reason for an in-flight auto-retry, shown in the streaming
+ * activity indicator while the hidden retry runs. Kept distinct from the
+ * terminal banner text: `transient` means the connection is fine and the model
+ * is briefly busy, so it must NOT read as "cannot reach Kiro" here even though
+ * toErrorKind collapses it into the `connection` banner on final failure.
+ */
+export function retryReason(cls: AcpErrorClass): string {
+  if (cls === "transient") return "The selected model is temporarily unavailable";
+  return "Connection to Kiro was interrupted"; // connection (auth/generic are never retried)
+}
+
 /** Match the actual session/load envelope, not unrelated MCP/file "not found" errors. */
 export function isNativeSessionUnavailable(error: unknown, nativeSessionId: string): boolean {
   if (!(error instanceof ACPError) || error.method !== 'session/load' || error.sessionId !== nativeSessionId) return false;

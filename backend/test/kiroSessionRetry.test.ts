@@ -291,3 +291,152 @@ describe('KiroSession agent_run owner retry behavior', () => {
     assert.equal(recoverCalls.length, 1, 'chat owner should retry with recovery');
   });
 });
+
+describe('KiroSession auto-retry is visible to the UI', () => {
+  it('emits retry_start (with reason + attempt) then retry_end around a connection retry', async () => {
+    const { runtime } = scriptedRuntime([
+      connErr(),
+      [{ sessionUpdate: 'turn_end', stopReason: 'end_turn' }],
+    ]);
+    const session = new KiroSession('vis-1', 'sid-vis-1', runtime, '/tmp');
+
+    const events = [];
+    for await (const ev of session.send('hi')) events.push(ev);
+
+    const retryStart = events.find((e) => e.kind === 'retry_start') as
+      | { kind: 'retry_start'; detail?: string }
+      | undefined;
+    assert.ok(retryStart, 'a retry_start must be emitted during recovery');
+    assert.equal(
+      retryStart.detail,
+      'Connection to Kiro was interrupted. Retrying (attempt 1)…',
+      'connection retry detail is a complete English sentence with its attempt count',
+    );
+    // Exactly one start/end pair, in order, for the single allowed retry.
+    assert.deepEqual(
+      events.filter((e) => e.kind === 'retry_start' || e.kind === 'retry_end').map((e) => e.kind),
+      ['retry_start', 'retry_end'],
+    );
+  });
+
+  it('transient retry reads as "model unavailable", not "cannot reach"', async () => {
+    const { runtime } = scriptedRuntime([
+      new ACPError('failed to generate a response'),
+      [{ sessionUpdate: 'turn_end', stopReason: 'end_turn' }],
+    ]);
+    const session = new KiroSession('vis-2', 'sid-vis-2', runtime, '/tmp');
+
+    const events = [];
+    for await (const ev of session.send('hi')) events.push(ev);
+
+    const retryStart = events.find((e) => e.kind === 'retry_start') as
+      | { kind: 'retry_start'; detail?: string }
+      | undefined;
+    assert.ok(retryStart, 'transient failure must also surface a retry_start');
+    assert.equal(
+      retryStart.detail,
+      'The selected model is temporarily unavailable. Retrying (attempt 1)…',
+      'transient retry detail describes model availability without claiming Kiro is unreachable',
+    );
+  });
+
+  it('keeps retry activity open while the retry attempt is awaiting a response', async () => {
+    let promptCalls = 0;
+    let markRetryStarted!: () => void;
+    const retryStarted = new Promise<void>((resolve) => { markRetryStarted = resolve; });
+    let releaseRetry!: () => void;
+    const retryResponse = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    const client = {
+      async *prompt() {
+        promptCalls += 1;
+        if (promptCalls === 1) throw new ACPError('failed to generate a response');
+        markRetryStarted();
+        await retryResponse;
+        yield { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Recovered.' } };
+        yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+      },
+    };
+    const runtime = {
+      ensureClient: async () => client,
+      getCurrentMode: () => null,
+      getCurrentModel: () => null,
+      recoverSession: async () => true,
+    } as unknown as KiroRuntime;
+    const session = new KiroSession('vis-active', 'sid-vis-active', runtime, '/tmp');
+    const stream = session.send('hi')[Symbol.asyncIterator]();
+
+    assert.equal((await stream.next()).value?.kind, 'retry_start');
+    const nextEvent = stream.next();
+    const firstOutcome = await Promise.race([
+      retryStarted.then(() => 'retry-started' as const),
+      nextEvent.then(() => 'retry-ended' as const),
+    ]);
+    assert.equal(
+      firstOutcome,
+      'retry-started',
+      'retry_end must not be emitted before the retry attempt is actually in flight',
+    );
+
+    releaseRetry();
+    assert.equal((await nextEvent).value?.kind, 'retry_end');
+    assert.equal((await stream.next()).value?.kind, 'chunk');
+    assert.equal((await stream.next()).value?.kind, 'turn_end');
+  });
+
+  it('emits retry_end before the terminal error when recovery itself fails', async () => {
+    const dying = {
+      async *prompt() {
+        throw connErr();
+      },
+    };
+    const runtime = {
+      ensureClient: async () => dying,
+      getCurrentMode: () => null,
+      getCurrentModel: () => null,
+      recoverSession: async () => false, // recovery fails
+    } as unknown as KiroRuntime;
+    const session = new KiroSession('vis-3', 'sid-vis-3', runtime, '/tmp');
+
+    const events = [];
+    let thrown: unknown;
+    try {
+      for await (const ev of session.send('hi')) events.push(ev);
+    } catch (e) {
+      thrown = e;
+    }
+
+    // The activity label must be cleared (retry_end) so it does not outlive
+    // the turn and get stuck behind the error banner.
+    assert.deepEqual(
+      events.filter((e) => e.kind === 'retry_start' || e.kind === 'retry_end').map((e) => e.kind),
+      ['retry_start', 'retry_end'],
+    );
+    assert.equal((thrown as { acpErrorKind?: string }).acpErrorKind, 'connection');
+  });
+
+  it('does not emit retry events when no retry happens (visible output already streamed)', async () => {
+    const partialThenDie = {
+      async *prompt() {
+        yield { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Half...' } };
+        throw connErr();
+      },
+    };
+    const runtime = {
+      ensureClient: async () => partialThenDie,
+      getCurrentMode: () => null,
+      getCurrentModel: () => null,
+      recoverSession: async () => true,
+    } as unknown as KiroRuntime;
+    const session = new KiroSession('vis-4', 'sid-vis-4', runtime, '/tmp');
+
+    const events = [];
+    try {
+      for await (const ev of session.send('hi')) events.push(ev);
+    } catch { /* expected */ }
+
+    assert.ok(
+      !events.some((e) => e.kind === 'retry_start' || e.kind === 'retry_end'),
+      'no retry events when the turn is not retried',
+    );
+  });
+});
