@@ -133,7 +133,18 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
           flexDirection: 'column',
         }}
       >
-        {preBlocks}
+        {preBlocks && (
+          <div
+            className="composer-pre-blocks-scroll hide-sb"
+            style={{
+              maxHeight: 'var(--composer-pre-blocks-max-h, 260px)',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+            }}
+          >
+            {preBlocks}
+          </div>
+        )}
         <div
           style={{
             padding: '10px 12px 4px 12px',

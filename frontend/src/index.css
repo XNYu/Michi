@@ -1946,6 +1946,13 @@ html[data-vibrancy="on"],
      - two-line body (comments — quoted snippet on top, reply below), or
      - a caption row + inline-chip row (attachments)
 */
+
+/* Scrollable container for pre-blocks above the editor caret row.
+   Default max-height shows ~5 items; override via --composer-pre-blocks-max-h. */
+.composer-pre-blocks-scroll {
+  position: relative;
+}
+
 .t-pre-block {
   --tone: var(--term-accent);
   display: flex;
