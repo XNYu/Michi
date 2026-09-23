@@ -14,6 +14,7 @@ import type { OwnerEvent, OwnerStateMap } from './paneOwnership';
 import { visibleMessageText } from './assistantBlocks';
 import * as perf from '../services/perf';
 import { startupMark, startupMarkOnce } from '../services/startupTrace';
+import { TreePrefetchContext } from './treePrefetch';
 import { buildFlushPayload } from './queueFlush';
 import { expandMentions } from '../components/mentions';
 import { appendAttachmentsSentinel } from '../lib/composerAttachments';
@@ -961,7 +962,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // Lazy-load: fetch the active tree's message bodies on demand when it's a
   // placeholder (hydration only eager-loads the initially-active tree).
   // Mounted after `dispatch` is defined so it can dispatch `messages-loaded`.
-  useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch, reconnectStreamingRef: reconnectStreamingNodeRef });
+  const prefetchTreeForNode = useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch, reconnectStreamingRef: reconnectStreamingNodeRef });
 
   const dispatchOwner = useCallback((ev: OwnerEvent) => {
     const next = ownerStateReducer(ownerStateRef.current, ev);
@@ -3448,7 +3449,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       <ChatProjectsContext.Provider value={projectsValue}>
         <ChatPaneContext.Provider value={paneValue}>
           <ChatActionsContext.Provider value={hotActions}>
-            <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
+            <TreePrefetchContext.Provider value={prefetchTreeForNode}>
+              <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
+            </TreePrefetchContext.Provider>
           </ChatActionsContext.Provider>
         </ChatPaneContext.Provider>
       </ChatProjectsContext.Provider>

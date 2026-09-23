@@ -1,12 +1,12 @@
 /**
  * Hydration gate: while the store is loading from the backend (hydrated===false),
- * TerminalShell must show a splash, NOT the shell chrome with an empty
- * "no workspace" state. This is the view-layer half of the hydration barrier —
+ * TerminalShell paints navigation but not empty-workspace content or commands.
+ * This is the view-layer half of the hydration barrier —
  * it prevents the cold-start flash where the backend isn't listening yet and
  * `projects` is momentarily empty.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
 import { PrefsProvider } from '../../state/prefs';
 
@@ -17,6 +17,9 @@ const renderShell = () => render(
 );
 
 const gate = vi.hoisted(() => ({ hydrated: false }));
+const mutations = vi.hoisted(() => ({ createProject: vi.fn(), createBlankChild: vi.fn(), restoreLastDeletion: vi.fn(), closePane: vi.fn() }));
+
+vi.mock('./pages/Settings', () => ({ default: ({ workspaceReady }: { workspaceReady: boolean }) => <div>Appearance settings: {String(workspaceReady)}</div> }));
 
 const projectsValue = () => ({
   activeProject: null,
@@ -42,10 +45,10 @@ vi.mock('../../state/chatStore', async () => {
     useChatProjects: () => projectsValue(),
     useChatPanes: () => ({ openPanes: [], focusedPane: null, focusNonce: 0, paneItems: {}, viewMode: 'single' as const }),
     useChatActions: () => ({
-      createProject: () => Promise.resolve('p1'),
+      createProject: mutations.createProject,
       enterChatsWorkspace: () => Promise.resolve('chats-default'),
-      focusPane: () => {}, closePane: () => {}, openPane: () => {},
-      createBlankChild: () => {}, restoreLastDeletion: () => null,
+      focusPane: () => {}, closePane: mutations.closePane, openPane: () => {},
+      createBlankChild: mutations.createBlankChild, restoreLastDeletion: mutations.restoreLastDeletion,
       clearSelection: () => {}, clearTreeSelection: () => {}, selectAllTrees: () => {},
     }),
     useStructuralSelector: (s: (n: Record<string, unknown>) => unknown) => s({}),
@@ -57,15 +60,41 @@ vi.mock('../../state/chatStore', async () => {
 });
 
 describe('TerminalShell hydration gate', () => {
-  beforeEach(() => { gate.hydrated = false; });
+  beforeEach(() => {
+    gate.hydrated = false;
+    vi.clearAllMocks();
+    localStorage.setItem('michi:v1:prefs', JSON.stringify({ onboardingCompletedAt: 1, sidebarCollapsed: false }));
+  });
 
-  it('shows a loading splash while not hydrated (no empty-workspace flash)', () => {
+  it('paints shell navigation while keeping unknown workspaces behind the barrier', () => {
     gate.hydrated = false;
     renderShell();
     expect(screen.getByText(/loading workspaces/i)).toBeTruthy();
-    // The shell chrome (e.g. the New Workspace dialog / sidebar) must NOT paint
-    // yet — that is exactly the empty-state flash the gate exists to prevent.
+    expect(document.querySelector('.terminal-topbar')).not.toBeNull();
+    expect(document.querySelector('.terminal-sidebar')).not.toBeNull();
+    expect(screen.getByText('Settings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Search' }).hasAttribute('disabled')).toBe(true);
     expect(screen.queryByText(/new workspace/i)).toBeNull();
+    expect(screen.queryByText('No project chats')).toBeNull();
+    fireEvent.click(screen.getByText('Workspaces'));
+    expect(screen.getByRole('status', { name: 'Loading workspaces' })).toBeTruthy();
+  });
+
+  it('allows settings to open before workspace hydration', async () => {
+    renderShell();
+    fireEvent.click(screen.getByText('Settings'));
+    expect(await screen.findByText('Appearance settings: false')).toBeTruthy();
+  });
+
+  it('blocks workspace commands and dialogs while hydration is pending', () => {
+    renderShell();
+    for (const key of ['z', 'w', 't']) {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: key === 't' });
+    }
+    fireEvent(window, new CustomEvent('michi:open-new-workspace'));
+    fireEvent(window, new CustomEvent('michi:toggle-artifacts'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    for (const mutation of Object.values(mutations)) expect(mutation).not.toHaveBeenCalled();
   });
   // The hydrated-path render (full shell chrome, no splash) is exercised by
   // TerminalShell.shortcut.test.tsx, which mounts the shell with hydrated:true.

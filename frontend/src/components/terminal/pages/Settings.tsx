@@ -19,11 +19,13 @@ export default function TerminalSettings({
   onClose,
   section: controlledSection,
   onSectionChange,
+  workspaceReady = true,
 }: {
   onNav?: (p: PageId) => void;
   onClose?: () => void;
   section?: SettingsSection;
   onSectionChange?: (section: SettingsSection) => void;
+  workspaceReady?: boolean;
 } = {}) {
   const [localSection, setLocalSection] = useState<SettingsSection>('appearance');
   const contentId = useId();
@@ -67,6 +69,7 @@ export default function TerminalSettings({
     ...(signedIn ? ([['account', 'Account']] as Array<[SettingsSection, string]>) : []),
   ];
   const sectionLabel = sections.find(([key]) => key === section)?.[1];
+  const waitingForWorkspace = !workspaceReady && ['model', 'custom-agents', 'connections'].includes(section);
 
   const openTrashPage = () => {
     onClose?.();
@@ -101,17 +104,18 @@ export default function TerminalSettings({
               <h2>History</h2>
               <button type="button" className="terminal-settings-history-command" onClick={openTrashPage}>
                 Trash
-                {trashCount > 0 && <span className="terminal-settings-count">{trashCount}</span>}
+                {workspaceReady && trashCount > 0 && <span className="terminal-settings-count">{trashCount}</span>}
               </button>
               <button type="button" className="terminal-settings-history-command" onClick={openArchivedPage}>
                 Archived
-                {archivedCount > 0 && <span className="terminal-settings-count">{archivedCount}</span>}
+                {workspaceReady && archivedCount > 0 && <span className="terminal-settings-count">{archivedCount}</span>}
               </button>
             </div>
           )}
         </aside>
 
         <section className="terminal-settings-content term-scrollbar" id={contentId} aria-label={sectionLabel} key={section}>
+          {waitingForWorkspace ? <div role="status">Loading workspaces…</div> : <>
           {section === 'account' && <h2 className="terminal-settings-heading">Account</h2>}
           {section === 'appearance' && <AppearancePane />}
           {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
@@ -120,6 +124,7 @@ export default function TerminalSettings({
           {section === 'notifications' && <NotificationsPane />}
           {section === 'shortcuts' && <ShortcutsPane />}
           {section === 'account' && signedIn && <AccountPane user={session!.user} />}
+          </>}
         </section>
       </div>
     </div>

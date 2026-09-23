@@ -40,6 +40,20 @@ afterEach(() => {
 });
 
 describe('Settings Custom Agents category', () => {
+  it('keeps local settings available but waits before mounting backend-dependent sections', () => {
+    const view = render(<TerminalSettings workspaceReady={false} />);
+    expect(screen.getByText('Appearance pane')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Model' }));
+    expect(screen.getByRole('status').textContent).toContain('Loading workspaces');
+    expect(screen.queryByText('Model pane')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Custom Agents' }));
+    expect(mocks.refreshAgentStatus).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Connections' }));
+    expect(screen.queryByText('Connections pane')).toBeNull();
+    view.rerender(<TerminalSettings workspaceReady />);
+    expect(screen.getByText('Connections pane')).toBeTruthy();
+  });
+
   it('renders Custom Agents as a peer settings category', () => {
     render(<TerminalSettings />);
 

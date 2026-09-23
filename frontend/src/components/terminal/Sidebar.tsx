@@ -37,6 +37,7 @@ const SIDEBAR_DENSITY: Record<
 
 export default function TerminalSidebar({
   activePage,
+  workspaceReady = true,
   customAgentsEnabled = false,
   onNav,
   onOpenPalette,
@@ -46,6 +47,7 @@ export default function TerminalSidebar({
   onCloseOverlay,
 }: {
   activePage: PageId;
+  workspaceReady?: boolean;
   customAgentsEnabled?: boolean;
   onNav: (p: PageId) => void;
   onOpenPalette: () => void;
@@ -58,8 +60,8 @@ export default function TerminalSidebar({
   const asideRef = useRef<HTMLElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const contents = useMemo(
-    () => <SidebarContents activePage={activePage} customAgentsEnabled={customAgentsEnabled} onNav={onNav} />,
-    [activePage, customAgentsEnabled, onNav],
+    () => <SidebarContents activePage={activePage} workspaceReady={workspaceReady} customAgentsEnabled={customAgentsEnabled} onNav={onNav} />,
+    [activePage, workspaceReady, customAgentsEnabled, onNav],
   );
 
   // Clamp persisted width to current MIN so legacy narrower values auto-correct.
@@ -235,8 +237,9 @@ export default function TerminalSidebar({
   return aside;
 }
 
-function SidebarContents({ activePage, customAgentsEnabled, onNav }: {
+function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNav }: {
   activePage: PageId;
+  workspaceReady: boolean;
   customAgentsEnabled: boolean;
   onNav: (p: PageId) => void;
 }) {
@@ -244,12 +247,20 @@ function SidebarContents({ activePage, customAgentsEnabled, onNav }: {
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const onActivate = React.useCallback(() => onNav('dashboard'), [onNav]);
   return <>
+    {!workspaceReady ? (
+      <div aria-hidden="true" style={{ flex: 1, padding: '18px 16px' }}>
+        {[72, 88, 60].map((width) => (
+          <div key={width} style={{ width: `${width}%`, height: 12, marginBottom: 18, borderRadius: 3, background: 'var(--term-line)' }} />
+        ))}
+      </div>
+    ) : <>
     <TreeSelectionBar />
     {prefs.sidebarView === 'activity' ? (
       <ActivityView onActivate={onActivate} />
     ) : (
       <WorkspaceTree onActivate={onActivate} chatViewActive={activePage === 'dashboard'} />
     )}
+    </>}
     <BottomNav activePage={activePage} customAgentsEnabled={customAgentsEnabled} onNav={onNav} geom={geom} />
   </>;
 }

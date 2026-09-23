@@ -62,6 +62,7 @@ export default function TerminalTopbar({
   onNewThread,
   onOpenPalette,
   artifactsOpen = false,
+  workspaceReady = true,
 }: {
   page: PageId;
   onNav: (p: PageId) => void;
@@ -70,6 +71,7 @@ export default function TerminalTopbar({
   onNewThread?: () => void;
   onOpenPalette?: () => void;
   artifactsOpen?: boolean;
+  workspaceReady?: boolean;
 }) {
   const {
     activeProject,
@@ -103,7 +105,7 @@ export default function TerminalTopbar({
   const unreadTotal = useStructuralSelector(
     (nodes) => selectUnreadTotal(nodes, focusedNodeId),
   );
-  const unreadDisplay = unreadTotal === 0 ? '' : unreadTotal >= 10 ? '9+' : String(unreadTotal);
+  const unreadDisplay = !workspaceReady || unreadTotal === 0 ? '' : unreadTotal >= 10 ? '9+' : String(unreadTotal);
 
   const onUnreadClick = useCallback(() => {
     const next = prefs.sidebarView === 'activity' ? 'structure' : 'activity';
@@ -157,7 +159,7 @@ export default function TerminalTopbar({
       : visualFocus,
   ]));
   retainedCaptionFocus.current = captionFocus;
-  const showPaneCells = page === 'dashboard' && openPanes.length > 0;
+  const showPaneCells = workspaceReady && page === 'dashboard' && openPanes.length > 0;
   const paneLayout = usePaneLayout(cellsStripRef, {
     paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth, enabled: showPaneCells,
@@ -478,7 +480,7 @@ export default function TerminalTopbar({
           </Zone1IconButton>
         )}
         {onOpenPalette && (
-          <Zone1IconButton onClick={onOpenPalette} tooltip="search" tooltipKbd={kbd('mod', 'K')} aria-label="Search" className="t-search-trigger">
+          <Zone1IconButton onClick={onOpenPalette} disabled={!workspaceReady} tooltip="search" tooltipKbd={kbd('mod', 'K')} aria-label="Search" className="t-search-trigger">
             <SearchGlyph />
           </Zone1IconButton>
         )}
@@ -499,7 +501,7 @@ export default function TerminalTopbar({
         )}
         <Zone1IconButton
           onClick={navBack}
-          disabled={!canNavBack}
+          disabled={!workspaceReady || !canNavBack}
           tooltip="Back"
           tooltipKbd={kbd('mod', '[')}
           aria-label="Navigate back"
@@ -508,7 +510,7 @@ export default function TerminalTopbar({
         </Zone1IconButton>
         <Zone1IconButton
           onClick={navForward}
-          disabled={!canNavForward}
+          disabled={!workspaceReady || !canNavForward}
           tooltip="Forward"
           tooltipKbd={kbd('mod', ']')}
           aria-label="Navigate forward"
@@ -650,7 +652,7 @@ export default function TerminalTopbar({
             })}
           </div>
         )}
-        {showWorkspaceTitle && (
+        {workspaceReady && showWorkspaceTitle && (
           <div
             className="terminal-topbar-breadcrumb"
             style={{
@@ -881,7 +883,7 @@ export default function TerminalTopbar({
               )}
             </span>
           )}
-          {!!activeProject && (
+          {workspaceReady && !!activeProject && (
             <>
               <PaneLauncher />
               <TopbarIconToggle
@@ -915,6 +917,7 @@ export default function TerminalTopbar({
           )}
           <TopbarIconToggle
             onClick={toggleArtifacts}
+            disabled={!workspaceReady}
             active={artifactsOpen}
             label="Artifacts"
             tooltip="Artifacts"
@@ -1058,6 +1061,7 @@ function TopbarIconToggle({
   tooltip,
   tooltipKbd,
   dot,
+  disabled,
   children,
 }: {
   onClick: () => void;
@@ -1066,6 +1070,7 @@ function TopbarIconToggle({
   tooltip: string;
   tooltipKbd?: string;
   dot?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   const [hover, setHover] = React.useState(false);
@@ -1076,6 +1081,7 @@ function TopbarIconToggle({
         ref={btnRef}
         type="button"
         onClick={onClick}
+        disabled={disabled}
         aria-label={label}
         className={`t-icon-btn${active ? ' is-on' : ''}`}
         onMouseEnter={() => setHover(true)}
@@ -1086,6 +1092,7 @@ function TopbarIconToggle({
           height: ZONE1_BUTTON_W,
           padding: '0 6px',
           color: active ? undefined : 'var(--term-faint)',
+          opacity: disabled ? 0.3 : undefined,
           flexShrink: 0,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}

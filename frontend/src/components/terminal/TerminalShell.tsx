@@ -179,6 +179,17 @@ export default function TerminalShell() {
     };
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
+      // Shell preferences are safe before hydration; workspace commands are not.
+      if (!hydrated) {
+        if (meta && !e.shiftKey && !e.altKey && e.key === ',') {
+          e.preventDefault();
+          setSettingsOpen((v) => !v);
+        } else if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+          e.preventDefault();
+          setPref('sidebarCollapsed', !prefs.sidebarCollapsed);
+        }
+        return;
+      }
       // Ctrl+Tab cycles panes even while typing.
       if (e.ctrlKey && e.key === 'Tab' && openPanes.length > 1) {
         e.preventDefault();
@@ -372,13 +383,13 @@ export default function TerminalShell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav, navBack, navForward, canNavBack, canNavForward]);
+  }, [hydrated, page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav, navBack, navForward, canNavBack, canNavForward]);
 
   useEffect(() => {
-    const onEvt = () => setNewWsOpen(true);
+    const onEvt = () => { if (hydrated) setNewWsOpen(true); };
     window.addEventListener('michi:open-new-workspace', onEvt as EventListener);
     return () => window.removeEventListener('michi:open-new-workspace', onEvt as EventListener);
-  }, []);
+  }, [hydrated]);
 
   useEffect(() => {
     const onEvt = () => setPage('home');
@@ -387,10 +398,10 @@ export default function TerminalShell() {
   }, []);
 
   useEffect(() => {
-    const onEvt = () => { setArtifactsOpen((v) => !v); };
+    const onEvt = () => { if (hydrated) setArtifactsOpen((v) => !v); };
     window.addEventListener('michi:toggle-artifacts', onEvt as EventListener);
     return () => window.removeEventListener('michi:toggle-artifacts', onEvt as EventListener);
-  }, []);
+  }, [hydrated]);
 
   useEffect(() => {
     const onEvt = (e: Event) => {
@@ -465,39 +476,8 @@ export default function TerminalShell() {
     if (narrowMode) setNarrowOverlayOpen(false);
   }, [handleNav, narrowMode]);
 
-  // Hydration gate. Until the store finishes loading from the backend,
-  // `projects` is empty — rendering the full shell here would paint a bogus
-  // "no workspace" empty state (and race the auto-open dialog) during the
-  // cold-start window where the backend isn't listening yet. Hold on a minimal
-  // splash that reuses the shell's own background so there is no flash when the
-  // real content lands. This is the view-layer half of the hydration barrier:
-  // `hydrated` stays false until the backend actually answered, so an
-  // unreachable backend keeps us here rather than flashing empty.
-  if (!hydrated) {
-    return (
-      <div
-        className="terminal-shell"
-        style={{
-          ...cssVars,
-          width: '100%',
-          height: '100%',
-          background: 'var(--term-shell-bg, var(--term-bg))',
-          color: 'var(--term-faint)',
-          fontFamily: 'var(--ui-font)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '12px',
-          letterSpacing: '.04em',
-        }}
-      >
-        <span className="term-hydrating">loading workspaces…</span>
-      </div>
-    );
-  }
-
   return (
-    <PanePresentationProvider ids={openPanes} items={paneItems} focusedPane={focusedPane} scope={`${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`} enabled={page === 'dashboard'}>
+    <PanePresentationProvider ids={openPanes} items={paneItems} focusedPane={focusedPane} scope={`${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`} enabled={hydrated && page === 'dashboard'}>
     <div
       className="terminal-shell"
       style={{
@@ -522,23 +502,25 @@ export default function TerminalShell() {
       }}
     >
       <TerminalTopbar
+        workspaceReady={hydrated}
         page={page}
         onNav={handleNav}
         sidebarCollapsed={sidebarCollapsedEffective}
         onToggleSidebar={handleToggleSidebarEffective}
         onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
-        onOpenPalette={() => setPaletteOpen(true)}
+        onOpenPalette={() => { if (hydrated) setPaletteOpen(true); }}
         artifactsOpen={artifactsOpen}
       />
-      <WarmFailedBanner />
-      <AskUserAlertBar onNav={handleNav} />
+      {hydrated && <WarmFailedBanner />}
+      {hydrated && <AskUserAlertBar onNav={handleNav} />}
       <div style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>
         {!profileFullscreen && (
           <TerminalSidebar
+            workspaceReady={hydrated}
             activePage={page}
             customAgentsEnabled={agentStatus?.customAgentsEnabled === true}
             onNav={narrowMode ? handleNavWithClose : handleNav}
-            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenPalette={() => { if (hydrated) setPaletteOpen(true); }}
             onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
             narrowMode={narrowMode}
             narrowOverlayOpen={narrowOverlayOpen}
@@ -546,6 +528,12 @@ export default function TerminalShell() {
           />
         )}
         <div className="terminal-content-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
+          {/* Keep the data barrier, not a root-level rendering barrier. */}
+          {!hydrated ? (
+            <div role="status" aria-label="Loading workspaces" style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--term-faint)', fontSize: 12 }}>
+              <span className="term-hydrating">loading workspaces…</span>
+            </div>
+          ) : <>
           {page === 'home' && <TerminalHome onSubmitted={() => setPage('dashboard')} />}
           {page === 'dashboard' && <TerminalDashboard />}
           {page === 'branches' && <LazyPage><TerminalBranches onNav={handleNav} /></LazyPage>}
@@ -562,9 +550,10 @@ export default function TerminalShell() {
           {page === 'profile' && PROFILE_PAGE_ENABLED && <LazyPage><TerminalProfile onNav={handleNav} /></LazyPage>}
           {page === 'agents' && <LazyPage><AgentManagementLibrary onNav={handleNav} /></LazyPage>}
           {page === 'agent-manage' && <LazyPage><AgentManagementEditor route={manageAgentRoute} onNav={handleNav} /></LazyPage>}
+          </>}
         </div>
       </div>
-      {paletteOpen && (
+      {hydrated && paletteOpen && (
         <React.Suspense fallback={null}>
           <CommandPalette
             onClose={() => setPaletteOpen(false)}
@@ -573,7 +562,7 @@ export default function TerminalShell() {
           />
         </React.Suspense>
       )}
-      <NewWorkspaceDialog
+      {hydrated && <NewWorkspaceDialog
         open={newWsOpen}
         onClose={() => setNewWsOpen(false)}
         onCreate={(name, cwd, folders, backendConnectionId) => {
@@ -586,15 +575,16 @@ export default function TerminalShell() {
           setNewWsOpen(false);
           setPage('home');
         }}
-      />
+      />}
       <SettingsDrawer
+        workspaceReady={hydrated}
         open={settingsOpen}
         motion={drawerMotion}
         onPresenceChange={setSettingsPresent}
         onClose={() => { setSettingsOpen(false); }}
         onNav={handleNav}
       />
-      {(artifactsOpen || artifactsPresent) && (
+      {hydrated && (artifactsOpen || artifactsPresent) && (
         <React.Suspense fallback={null}>
           <ArtifactsDrawer key={activeProject?.id ?? 'none'} open={artifactsOpen} motion={drawerMotion} onPresenceChange={setArtifactsPresent} onClose={() => { setArtifactsOpen(false); }} />
         </React.Suspense>
@@ -721,13 +711,13 @@ function AgentManagementEditor({ route, onNav }: { route: ReturnType<typeof useM
   return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 10 }}>CONTROL PLANE · {route.backendConnectionId}{route.workspaceId ? ` · WORKSPACE ${route.workspaceId}` : ' · GLOBAL'}</div><AgentEditorPage definition={definition} initialScope={route.scope} workspaceId={route.workspaceId} error={error} blockers={blockers} onCancel={() => onNav('agents')} onSaveDraft={(value) => execute(() => persist(value, false))} onEnable={(value) => execute(() => persist(value, true))} onDisable={identity ? () => execute(async () => { dispatch({ type: 'upsert-definitions', resources: [await disableAgentDefinition(identity)] }); }) : undefined} onDuplicate={identity ? () => execute(async () => { const copied = await duplicateAgentDefinition(identity); dispatch({ type: 'upsert-definitions', resources: [copied] }); setManageAgentRoute({ mode: 'edit', scope: copied.value.scope, workspaceId: copied.value.workspaceId, backendConnectionId: copied.backendConnectionId, definitionId: copied.value.id }); }) : undefined} onDelete={identity ? () => execute(async () => { await deleteAgentDefinition(identity); dispatch({ type: 'remove-definition', identity }); setManageAgentRoute(null); onNav('agents'); }) : undefined} /></div>;
 }
 
-function SettingsDrawer({ open, onClose, onNav, motion, onPresenceChange }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void; motion: 'standard' | 'instant'; onPresenceChange: (present: boolean) => void }) {
+function SettingsDrawer({ open, onClose, onNav, motion, onPresenceChange, workspaceReady }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void; motion: 'standard' | 'instant'; onPresenceChange: (present: boolean) => void; workspaceReady: boolean }) {
   const [section, setSection] = useState<SettingsSection>('appearance');
   return (
     <DrawerShell open={open} onClose={onClose} title="Settings" width={620} motion={motion} onPresenceChange={onPresenceChange}>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <LazyPage>
-          <TerminalSettings section={section} onSectionChange={setSection} onNav={onNav} onClose={onClose} />
+          <TerminalSettings workspaceReady={workspaceReady} section={section} onSectionChange={setSection} onNav={onNav} onClose={onClose} />
         </LazyPage>
       </div>
     </DrawerShell>

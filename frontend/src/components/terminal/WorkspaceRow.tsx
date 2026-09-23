@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTreePrefetchIntent } from '../../state/treePrefetch';
 import { Row } from './primitives';
 import { usePrefs } from '../../state/prefs';
 import WorkspaceIcon, { modeForPalette } from './WorkspaceIcon';
@@ -148,6 +149,7 @@ export default function WorkspaceRow({
   onRenameEnd,
 }: Props) {
   const { prefs } = usePrefs();
+  const prefetchIntent = useTreePrefetchIntent(project.trees.find((tree) => tree.id === project.activeTreeId)?.rootNodeId ?? null);
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const accent = workspaceAccent(project.id);
   // When chat view is hidden (Map/Digest/etc.), surface a subtle marker on the
@@ -346,6 +348,7 @@ export default function WorkspaceRow({
         />
       )}
       <Row
+        {...prefetchIntent}
         onClick={() => {
           if (renaming) return;
           actions.toggleWorkspaceExpand(project.id);

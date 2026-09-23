@@ -1,8 +1,8 @@
-import { useEffect, useRef, type MutableRefObject } from 'react';
-import { fetchTreeMessages } from '../services/api';
+import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import { buildMessagesByNode } from './chatHydration';
 import { findTreeIdForNode } from './tree';
 import type { ChatAction, ChatNodeState, Project } from './chatTypes';
+import { sameTreeMessageNode, TreeMessageRequests } from './treeMessageRequests';
 
 /**
  * Lazy-load the ACTIVE tree's message bodies on demand.
@@ -14,8 +14,8 @@ import type { ChatAction, ChatNodeState, Project } from './chatTypes';
  * `messages-loaded` to install them.
  *
  * Design notes:
- * - Keyed by `${projectId}::${treeId}`. Each key is fetched at most once per
- *   mount (tracked in `loadedKeysRef`); re-activating a loaded tree is a hit.
+ * - Loaded bodies stay in node state. Pending/short-lived speculative reads
+ *   share a provider-scoped request pool, isolated by backend/workspace/tree.
  * - The `messages-loaded` action is NOT in NODE_ACTIVITY_ACTIONS and installs
  *   backend-authored bodies, so it never dirties the node for write-back.
  * - Best-effort: a failed fetch clears the key so a later activation retries;
@@ -41,7 +41,22 @@ export function useLazyTreeMessages({
   // so the foreground-replay path can reattach its live SSE stream. Stable ref
   // so this hook's effect deps stay quiet.
   reconnectStreamingRef?: MutableRefObject<(nodeId: string) => void>;
-}): void {
+}): (nodeId: string) => void {
+  const requestsRef = useRef<TreeMessageRequests | null>(null);
+  if (!requestsRef.current) requestsRef.current = new TreeMessageRequests();
+  const requests = requestsRef.current;
+  const latest = useRef({ hydrated, projects });
+  latest.current = { hydrated, projects };
+  useEffect(() => () => requests.clear(), [requests]);
+  const prefetchNode = useCallback((nodeId: string) => {
+    if (!latest.current.hydrated) return;
+    const node = nodesRef.current[nodeId];
+    if (!node || node.deletedAt) return;
+    const project = latest.current.projects.find((candidate) => candidate.id === node.projectId);
+    if (!project) return;
+    const treeId = findTreeIdForNode(nodeId, project);
+    if (treeId) requests.prefetch(project, treeId, nodesRef.current);
+  }, [nodesRef, requests]);
   // Keys (project::tree) already loaded or in-flight this mount.
   const loadedKeysRef = useRef<Set<string>>(new Set());
 
@@ -96,33 +111,34 @@ export function useLazyTreeMessages({
         return !(n?.status === 'streaming' && n.messages.length > 0);
       });
       if (treeNodeIds.length === 0) return;
-      const startNodes = new Map(treeNodeIds.map((nid) => [nid, nodes[nid]] as const));
+      const request = requests.acquire(activeProject, activeTreeId, nodes, controller.signal);
+      if (!request) return;
+      const startNodes = request.nodes;
 
       loadedKeys.add(key);
       inFlight = true;
       (async () => {
         try {
-          const rows = await fetchTreeMessages(projectId, activeTreeId, undefined, controller.signal);
+          const rows = await request.promise;
           if (cancelled) return;
-          const byNode = buildMessagesByNode(rows);
+          const loaded = buildMessagesByNode(rows);
+          const byNode: typeof loaded = {};
           let skippedChangedNode = false;
           for (const nid of treeNodeIds) {
             const current = nodesRef.current[nid];
             if (
-              current !== startNodes.get(nid)
+              !sameTreeMessageNode(startNodes.get(nid), current)
               || current?.messagesLoaded !== false
               // A node that gained content while the fetch was in flight became
               // a live turn — drop the stale snapshot. A still-empty streaming
-              // node is our reconnect target; keep it. (Object identity above
-              // already catches the user-send transition, which mints a new
-              // node object; this guards the same-object edge case.)
+              // node is our reconnect target; keep it. The snapshot comparison
+              // catches user-send changes while ignoring only viewedAt.
               || (current.status === 'streaming' && current.messages.length > 0)
             ) {
-              delete byNode[nid];
               skippedChangedNode = true;
               continue;
             }
-            if (!byNode[nid]) byNode[nid] = [];
+            byNode[nid] = loaded[nid] ?? [];
           }
           const nodeIds = Object.keys(byNode);
           if (nodeIds.length > 0) {
@@ -172,5 +188,6 @@ export function useLazyTreeMessages({
       clearTimeout(retryTimer);
       loadedKeys.delete(key);
     };
-  }, [hydrated, activeProject, activeTreeId, nodesRef, dispatch, reconnectStreamingRef]);
+  }, [hydrated, activeProject, activeTreeId, nodesRef, dispatch, reconnectStreamingRef, requests]);
+  return prefetchNode;
 }

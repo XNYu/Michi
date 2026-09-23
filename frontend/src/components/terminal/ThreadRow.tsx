@@ -12,6 +12,7 @@ import type { OpenState } from '../../state/sidebarSelectors';
 import { treeHasUnread, buildBranchChildrenOf } from '../../state/sidebarSelectors';
 import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
 import { useNewPanePulse } from './useNewPanePulse';
+import { useTreePrefetchIntent } from '../../state/treePrefetch';
 
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 
@@ -124,6 +125,7 @@ export default function ThreadRow({
   const { prefs } = usePrefs();
   const selected = treeSelection.has(tree.id);
   const n = useChatNode(tree.rootNodeId);
+  const prefetchIntent = useTreePrefetchIntent(tree.rootNodeId);
   const projectEdges = projects.find((p) => p.id === projectId)?.edges ?? EMPTY_EDGES;
   const branchChildrenOf = useMemo(
     () => buildBranchChildrenOf(projectEdges),
@@ -219,6 +221,7 @@ export default function ThreadRow({
   return (
     <>
       <Row
+        {...prefetchIntent}
         data-sidebar-row={tree.rootNodeId}
         active={isActive || selected}
         onClick={(e) => {

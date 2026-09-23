@@ -12,6 +12,7 @@ import { navigateToNode } from '../../state/navigateToNode';
 import { ModalShell } from '../ui/ModalShell';
 import { MenuItem } from '../ui/Popover';
 import { kbd } from '../../lib/platform';
+import { TreePrefetchContext, TREE_PREFETCH_INTENT_MS } from '../../state/treePrefetch';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
   const [s, e] = range;
@@ -349,6 +350,16 @@ export default function CommandPalette({
 
   // Flat list of keyboard-navigable rows = commands + node search results.
   const totalRows = visible.length + (showRecents ? 0 : nodeResults.length);
+  const prefetchTree = React.useContext(TreePrefetchContext);
+  const activeCommand = visible[active];
+  const prefetchNodeId = activeCommand?.group === 'chat'
+    ? activeCommand.id.slice('chat.'.length)
+    : !showRecents && active >= visible.length ? nodeResults[active - visible.length]?.nodeId : undefined;
+  useEffect(() => {
+    if (!prefetchNodeId) return;
+    const timer = setTimeout(() => prefetchTree(prefetchNodeId), TREE_PREFETCH_INTENT_MS);
+    return () => clearTimeout(timer);
+  }, [prefetchNodeId, prefetchTree]);
 
   // Reset the active highlight whenever the query changes so the user can
   // type a filter term and immediately press Enter to run the top match.

@@ -38,6 +38,52 @@ function node(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
 describe('useLazyTreeMessages live-turn races', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('prefetches without dispatching or navigating, then reuses the read on activation', async () => {
+    const pending = deferred<unknown[]>();
+    apiMocks.fetchTreeMessages.mockReset().mockReturnValue(pending.promise);
+    const otherNode = node({ nodeId: 'n2' });
+    const nodesRef = { current: { n1: node({ messagesLoaded: true }), n2: otherNode } };
+    const initialProject: Project = {
+      ...project(1), chatIds: ['n1', 'n2'], trees: [
+        ...project(1).trees, { id: 'tree-2', rootNodeId: 'n2', createdAt: 1, lastActiveAt: 1 },
+      ],
+    };
+    const dispatch = vi.fn();
+    const { result, rerender } = renderHook(({ activeProject }) => useLazyTreeMessages({
+      hydrated: true, activeProjectId: 'ws-1', projects: [activeProject], nodesRef, dispatch,
+    }), { initialProps: { activeProject: initialProject } });
+    act(() => result.current('n2'));
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(initialProject.activeTreeId).toBe('tree-1');
+    nodesRef.current.n2 = { ...otherNode, viewedAt: 100 };
+    rerender({ activeProject: { ...initialProject, activeTreeId: 'tree-2' } });
+    await act(async () => pending.resolve([
+      { id: 'fresh', node_id: 'n2', role: 'user', content: 'prefetched', seq: 0, created_at: 1 },
+      { id: 'unexpected', node_id: 'n1', role: 'user', content: 'must not replace', seq: 0, created_at: 1 },
+    ]));
+    expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'messages-loaded', nodeIds: ['n2'] }));
+    expect(dispatch.mock.calls[0][0].messagesByNode.n1).toBeUndefined();
+  });
+
+  it('does not prefetch before hydration and disposes speculative reads on unmount', () => {
+    apiMocks.fetchTreeMessages.mockReset().mockReturnValue(new Promise(() => {}));
+    const nodesRef = { current: { n1: node() } };
+    const projects = [project(1)];
+    const dispatch = vi.fn();
+    const { result, rerender, unmount } = renderHook(({ hydrated }) => useLazyTreeMessages({
+      hydrated, activeProjectId: null, projects, nodesRef, dispatch,
+    }), { initialProps: { hydrated: false } });
+    result.current('n1');
+    expect(apiMocks.fetchTreeMessages).not.toHaveBeenCalled();
+    rerender({ hydrated: true });
+    result.current('n1');
+    expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(apiMocks.fetchTreeMessages.mock.calls[0][3].aborted).toBe(true);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('does not duplicate an in-flight read after the deferred retry and aborts it on unmount', async () => {
     vi.useFakeTimers();
     const pending = deferred<unknown[]>();

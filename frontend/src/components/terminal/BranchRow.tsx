@@ -8,6 +8,7 @@ import type { TreeNode } from '../../state/tree';
 import { isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
 import { relativeTime } from '../../lib/relativeTime';
 import { useNewPanePulse } from './useNewPanePulse';
+import { useTreePrefetchIntent } from '../../state/treePrefetch';
 
 interface Props {
   /** This branch node and its descendants. */
@@ -62,6 +63,7 @@ export default function BranchRow({
   onRenameEnd,
 }: Props) {
   const n = useChatNode(node.nodeId);
+  const prefetchIntent = useTreePrefetchIntent(node.nodeId);
   const { prefs } = usePrefs();
   const newPanePulse = useNewPanePulse(node.nodeId);
   const hasChildren = node.children.length > 0;
@@ -122,6 +124,7 @@ export default function BranchRow({
   return (
     <>
       <Row
+        {...prefetchIntent}
         data-sidebar-row={node.nodeId}
         active={focused || selected}
         onClick={(e) => {
