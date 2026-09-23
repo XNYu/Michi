@@ -10,6 +10,7 @@ import { relativeTime } from '../../lib/relativeTime';
 import { requestDigest } from '../../lib/digestPrompt';
 import { navigateToNode } from '../../state/navigateToNode';
 import { ModalShell } from '../ui/ModalShell';
+import { MenuItem } from '../ui/Popover';
 import { kbd } from '../../lib/platform';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
@@ -63,46 +64,6 @@ const PROMPT_INPUT: React.CSSProperties = {
   padding: 0,
 };
 
-const GROUP_LABEL: React.CSSProperties = {
-  padding: '10px 14px 4px',
-  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-  fontSize: 10,
-  letterSpacing: '.14em',
-  textTransform: 'uppercase',
-  color: 'var(--term-muted)',
-};
-
-const rowStyle = (active: boolean): React.CSSProperties => ({
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  padding: '8px 14px',
-  background: active ? 'var(--term-alt)' : 'transparent',
-  borderLeft: active ? '2px solid var(--term-accent)' : '2px solid transparent',
-  cursor: 'pointer',
-});
-
-const ROW_GLYPH = (active: boolean): React.CSSProperties => ({
-  width: 18,
-  textAlign: 'center',
-  color: active ? 'var(--term-accent)' : 'var(--term-muted)',
-  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-  fontSize: 12,
-  fontWeight: 600,
-  flexShrink: 0,
-});
-
-const ROW_LABEL = (active: boolean): React.CSSProperties => ({
-  fontFamily: 'var(--ui-font)',
-  fontSize: 13,
-  color: 'var(--term-fg)',
-  flex: 1,
-  fontWeight: active ? 600 : 400,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-});
-
 // ── Node-grouped search result styles ────────────────────────────────────
 
 /** Render a snippet containing `<mark>…</mark>` tags from the backend. */
@@ -134,16 +95,12 @@ function renderHtmlSnippet(html: string): React.ReactNode {
   return parts;
 }
 
-const nodeCardStyle = (active: boolean): React.CSSProperties => ({
-  padding: '8px 14px 10px 12px', // 12px + 2px border-left = 14px total (aligns with group label)
-  cursor: 'pointer',
-  borderLeft: active ? '2px solid var(--term-accent)' : '2px solid transparent',
-  background: active ? 'var(--term-alt)' : 'transparent',
-  transition: 'background 60ms cubic-bezier(.2,0,.6,1)',
-});
-
-const NODE_CARD_SEPARATOR: React.CSSProperties = {
-  borderTop: '1px solid color-mix(in srgb, var(--term-line) 50%, transparent)',
+// Multi-line menu row: breadcrumb line stacked over its snippets.
+const NODE_ROW_STYLE: React.CSSProperties = {
+  flexDirection: 'column',
+  alignItems: 'stretch',
+  gap: 5,
+  fontWeight: 400,
 };
 
 const BREADCRUMB_STYLE: React.CSSProperties = {
@@ -415,8 +372,9 @@ export default function CommandPalette({
     if (Date.now() - kbdNavAt.current < 200) return;
     setActive(i);
   }, []);
+  // Only the highlighted MenuItem carries data-active.
   useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-row-idx="${active}"]`);
+    const el = listRef.current?.querySelector<HTMLElement>('[data-active="true"]');
     el?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
@@ -425,7 +383,7 @@ export default function CommandPalette({
   // when the MESSAGES section appears and the previously-visible active row
   // may scroll out of view.
   useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-row-idx="${active}"]`);
+    const el = listRef.current?.querySelector<HTMLElement>('[data-active="true"]');
     el?.scrollIntoView({ block: 'nearest' });
   }, [totalRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -481,10 +439,10 @@ export default function CommandPalette({
   };
 
   const groups: Array<['nav' | 'action' | 'workspace' | 'chat' | 'search-result', string]> = [
-    ['nav', 'NAV'],
-    ['action', 'ACTION'],
-    ['workspace', 'WORKSPACE'],
-    ['chat', 'CHAT'],
+    ['nav', 'Navigate'],
+    ['action', 'Actions'],
+    ['workspace', 'Workspaces'],
+    ['chat', 'Chats'],
   ];
 
   return (
@@ -508,90 +466,61 @@ export default function CommandPalette({
           />
         </div>
 
+        {/* Rows are the shared menu rows (MenuItem + .michi-menu-scope), so the
+            palette's list reads exactly like the right-click / dropdown menus. */}
         <div
           ref={listRef}
           style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
-          className="hide-sb"
+          className="hide-sb michi-menu-scope"
+          data-menu="palette"
         >
           {groups.map(([g, label]) => {
             const rows = visible.filter((c) => c.group === g);
             if (rows.length === 0) return null;
             return (
-              <div key={g}>
-                <div style={GROUP_LABEL}>{label}</div>
+              <ul key={g} className="michi-menu-list" aria-label={label}>
+                <li aria-hidden="true" className="michi-menu-section">{label}</li>
                 {rows.map((c) => {
                   const idx = visible.indexOf(c);
-                  const isActive = idx === active;
                   const quickKey = !showRecents && idx < 9 ? kbd('mod', String(idx + 1)) : null;
+                  const keys = quickKey ?? c.keys;
                   return (
-                    <div
+                    <MenuItem
                       key={c.id}
-                      data-row-idx={idx}
+                      active={idx === active}
                       onMouseEnter={() => hoverSetActive(idx)}
                       onClick={() => { c.run(); onClose(); }}
-                      style={rowStyle(isActive)}
                     >
-                      <span style={ROW_GLYPH(isActive)}>{c.glyph}</span>
-                      <span style={ROW_LABEL(isActive)}>{c.label}</span>
-                      {quickKey ? (
-                        <kbd
-                          style={{
-                            fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-                            fontSize: 10.5,
-                            color: isActive ? 'var(--term-fg)' : 'var(--term-muted)',
-                            background: isActive ? 'var(--term-subtle)' : 'var(--term-alt)',
-                            border: '1px solid var(--term-line)',
-                            borderRadius: 3,
-                            padding: '1px 5px',
-                            letterSpacing: '.04em',
-                            flexShrink: 0,
-                          }}
-                        >
-                          {quickKey}
-                        </kbd>
-                      ) : c.keys ? (
-                        <span
-                          style={{
-                            fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-                            fontSize: 10.5,
-                            color: 'var(--term-muted)',
-                            letterSpacing: '.04em',
-                          }}
-                        >
-                          {c.keys}
-                        </span>
-                      ) : null}
-                    </div>
+                      <span className="michi-menu-glyph" aria-hidden="true">{c.glyph}</span>
+                      <span className="michi-menu-label">{c.label}</span>
+                      {keys ? <span className="michi-menu-keys">{keys}</span> : null}
+                    </MenuItem>
                   );
                 })}
-              </div>
+              </ul>
             );
           })}
           {visible.length === 0 && nodeResults.length === 0 && (
-            <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--term-mid)', fontStyle: 'italic' }}>
-              {showRecents ? 'no commands available' : 'no matches'}
+            <div className="michi-menu-caption" style={{ padding: 'var(--m-rowY) var(--m-rowX)' }}>
+              {showRecents ? 'No commands available' : 'No matches'}
             </div>
           )}
           {/* Node-grouped search results — deduped by node, time-sorted, with breadcrumbs */}
           {!showRecents && nodeResults.length > 0 && (
-            <div>
-              <div style={GROUP_LABEL}>
-                MESSAGES · {nodeResults.length} node{nodeResults.length !== 1 ? 's' : ''}
-              </div>
+            <ul className="michi-menu-list" aria-label="Messages">
+              <li aria-hidden="true" className="michi-menu-section">
+                Messages · {nodeResults.length} node{nodeResults.length !== 1 ? 's' : ''}
+              </li>
               {nodeResults.map((nr, ni) => {
                 const rowIdx = visible.length + ni;
-                const isActive = rowIdx === active;
                 const overflow = nr.totalMatches - nr.snippets.length;
                 return (
-                  <div
+                  <MenuItem
                     key={nr.nodeId}
-                    data-row-idx={rowIdx}
+                    active={rowIdx === active}
                     onMouseEnter={() => hoverSetActive(rowIdx)}
                     onClick={() => navigateToNodeResult(nr)}
-                    style={{
-                      ...nodeCardStyle(isActive),
-                      ...(ni > 0 ? NODE_CARD_SEPARATOR : {}),
-                    }}
+                    style={NODE_ROW_STYLE}
                   >
                     {/* Breadcrumb + timestamp row */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 20 }}>
@@ -619,7 +548,7 @@ export default function CommandPalette({
                       <span style={NODE_TIME_STYLE}>{relativeTime(nr.lastMessageAt)}</span>
                     </div>
                     {/* Snippets */}
-                    <div style={{ marginTop: 5 }}>
+                    <div>
                       {nr.snippets.map((s, si) => (
                         <div
                           key={si}
@@ -634,10 +563,10 @@ export default function CommandPalette({
                         <div style={OVERFLOW_HINT_STYLE}>+ {overflow} more match{overflow !== 1 ? 'es' : ''}</div>
                       )}
                     </div>
-                  </div>
+                  </MenuItem>
                 );
               })}
-            </div>
+            </ul>
           )}
         </div>
     </ModalShell>

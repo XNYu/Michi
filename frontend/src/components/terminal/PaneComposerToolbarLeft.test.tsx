@@ -70,6 +70,20 @@ describe('PaneComposerToolbarLeft', () => {
     expect(agentChip.compareDocumentPosition(runtimeChip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  test('agent chip is a menu button that reports its open state and passes itself as the trigger', () => {
+    const onOpenAgentMenu = vi.fn();
+    const { rerender } = renderToolbar({ currentMode: { id: 'agent', name: 'Agent' }, onOpenAgentMenu });
+    const agentChip = screen.getByTitle('Switch agent — Agent');
+    expect(agentChip.tagName).toBe('BUTTON');
+    expect(agentChip.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(agentChip);
+    expect(onOpenAgentMenu).toHaveBeenCalledWith(expect.objectContaining({ trigger: agentChip }));
+    rerender(<PaneComposerToolbarLeft canAttach toolbarTier={0} availableModesCount={0} agentStatus={STATUS}
+      currentMode={{ id: 'agent', name: 'Agent' }} onPickFile={vi.fn()} onInsertMentionTrigger={vi.fn()}
+      onOpenAgentMenu={onOpenAgentMenu} agentMenuOpen />);
+    expect(screen.getByTitle('Switch agent — Agent').getAttribute('aria-expanded')).toBe('true');
+  });
+
   test('shows Codex default effort in the composer', () => {
     renderToolbar({
       agentStatus: {

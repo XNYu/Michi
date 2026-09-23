@@ -95,7 +95,8 @@ export function PaneAgentMenus({
         {
           items: [{
             id: 'primary-default',
-            label: followsRuntimeDefault ? `✓ ${defaultAgentLabel}` : defaultAgentLabel,
+            label: defaultAgentLabel,
+            glyph: followsRuntimeDefault ? '✓' : undefined,
             sublabel: `${runtimeLabel} default agent · follows runtime and model controls`,
             run: onSelectDefaultAgent,
           }],
@@ -104,7 +105,8 @@ export function PaneAgentMenus({
           label: scope === 'workspace' ? 'Workspace Agents' : 'Global Agents',
           items: primaryAgents.filter((agent) => agent.scope === scope).map((agent) => ({
             id: `primary-${agent.id}`,
-            label: selectedPrimaryAgentId === agent.id ? `✓ ${agent.name}` : agent.name,
+            label: agent.name,
+            glyph: selectedPrimaryAgentId === agent.id ? '✓' : undefined,
             sublabel: agent.runtimeSummary,
             run: () => onSelectPrimaryAgent(agent.id),
           })),
@@ -129,6 +131,7 @@ export function PaneAgentMenus({
           x={agentMenu.x}
           y={agentMenu.y}
           anchorBottom={agentMenu.anchorBottom}
+          trigger={agentMenu.trigger}
           menuKind="agents"
           searchable
           sections={[
@@ -140,8 +143,9 @@ export function PaneAgentMenus({
                   ? [{ id: 'loading', label: 'Loading…', disabled: true, run: () => {} }]
                   : availableModes.map((m) => ({
                       id: m.id,
-                      label: currentModeId === m.id ? `✓ ${m.name}` : m.name,
-                      sublabel: m.description ? `— ${m.description}` : undefined,
+                      label: m.name,
+                      glyph: currentModeId === m.id ? '✓' : undefined,
+                      sublabel: m.description || undefined,
                       run: () => {
                         if (m.id !== currentModeId) onSwitchAgent(m.id);
                       },

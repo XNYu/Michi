@@ -24,6 +24,14 @@ export interface ModalShellProps {
   accent?: string;
   /** Panel width in px. Default 480. */
   width?: number;
+  /** Panel height cap. Default comes from .ui-modal-panel (min(70vh, 640px));
+   *  viewers (diff, table) pass a taller cap. */
+  maxHeight?: string;
+  /** Consume Escape in the capture phase so no other window listener sees it.
+   *  For viewers opened over pages whose shell also binds Escape (clear
+   *  selection, leave Map/Digest). Leave off when the modal hosts nested
+   *  overlays that handle Escape themselves. */
+  captureEscape?: boolean;
   /** center (default) or top-anchored (command/search palettes). */
   anchor?: 'center' | 'top';
   /** Click-scrim / Escape dismiss. Default true. */
@@ -43,6 +51,8 @@ export function ModalShell({
   titleGlyph,
   accent = 'var(--term-accent)',
   width = 480,
+  maxHeight,
+  captureEscape = false,
   anchor = 'center',
   dismissible = true,
   headerTrailing,
@@ -96,6 +106,9 @@ export function ModalShell({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissibleRef.current) {
         e.preventDefault();
+        // stopImmediatePropagation, not stopPropagation: the shell's listener
+        // is registered on the same window target.
+        if (captureEscape) e.stopImmediatePropagation();
         onCloseRef.current();
         return;
       }
@@ -116,9 +129,9 @@ export function ModalShell({
         first.focus();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+    window.addEventListener('keydown', onKey, { capture: captureEscape });
+    return () => window.removeEventListener('keydown', onKey, { capture: captureEscape });
+  }, [open, captureEscape]);
 
   if (!open) return null;
 
@@ -145,9 +158,11 @@ export function ModalShell({
           className="ui-modal-panel term-glass"
           role="dialog"
           aria-modal="true"
-          aria-labelledby={title ? titleId : undefined}
-          aria-label={title ? undefined : ariaLabel}
-          style={{ width, maxWidth: '92vw' }}
+          // An explicit aria-label wins over the visible (uppercased, terse)
+          // title, e.g. the diff viewer names itself by file path.
+          aria-labelledby={title && !ariaLabel ? titleId : undefined}
+          aria-label={ariaLabel}
+          style={{ width, maxWidth: '92vw', maxHeight }}
           onMouseDown={(e) => e.stopPropagation()}
         >
         {title && (

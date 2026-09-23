@@ -17,7 +17,7 @@ import './Menu.css';
  *   - 'tooltip'          : smaller pill used for icon hover labels.
  */
 export type PopoverVariant = 'menu' | 'tooltip';
-export type MenuKind = 'context' | 'workspace' | 'agents' | 'mentions' | 'slash' | 'composer' | 'usage';
+export type MenuKind = 'context' | 'workspace' | 'agents' | 'mentions' | 'slash' | 'composer' | 'usage' | 'detail';
 
 export interface PopoverSurfaceProps {
   /** Viewport-space coordinates. Callers handle measurement / flip.
@@ -92,6 +92,9 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
 
     const isTooltip = variant === 'tooltip';
     const defaultZ = isTooltip ? 1050 : 1000;
+    // Tuned menus share the frosted .term-glass with the Command Palette and
+    // drawers; the right-click menu is the deliberate solid exception.
+    const useGlass = glass || (menuKind !== undefined && menuKind !== 'context');
 
     const baseStyle: React.CSSProperties = {
       position: 'fixed',
@@ -106,10 +109,10 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       overflow: maxHeight !== undefined ? 'auto' : undefined,
       // When `glass`, hand bg + shadow to the .term-glass class (frosted material
       // shared with the sidebar / Settings drawer); keep border/radius here.
-      background: menuKind || glass ? undefined : `var(${isTooltip ? '--ui-tooltip-bg' : '--ui-popover-bg'})`,
+      background: menuKind || useGlass ? undefined : `var(${isTooltip ? '--ui-tooltip-bg' : '--ui-popover-bg'})`,
       border: menuKind ? undefined : `var(${isTooltip ? '--ui-tooltip-border' : '--ui-popover-border'})`,
       borderRadius: menuKind ? undefined : `var(${isTooltip ? '--ui-tooltip-radius' : '--ui-popover-radius'})`,
-      boxShadow: menuKind || glass ? undefined : `var(${isTooltip ? '--ui-tooltip-shadow' : '--ui-popover-shadow'})`,
+      boxShadow: menuKind || useGlass ? undefined : `var(${isTooltip ? '--ui-tooltip-shadow' : '--ui-popover-shadow'})`,
       fontFamily: menuKind ? undefined : 'var(--ui-font)',
       fontSize: menuKind ? undefined : isTooltip ? 11 : 11.5,
       color: 'var(--term-fg)',
@@ -123,7 +126,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
         ref={ref}
         role={role}
         aria-label={ariaLabel}
-        className={[menuKind && 'michi-menu', glass && 'term-glass', className].filter(Boolean).join(' ') || undefined}
+        className={[menuKind && 'michi-menu', useGlass && 'term-glass', className].filter(Boolean).join(' ') || undefined}
         data-menu={menuKind}
         data-menu-animate={menuKind && animate ? 'true' : undefined}
         style={baseStyle}

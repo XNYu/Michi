@@ -126,6 +126,10 @@ export interface Prefs {
   /** Glass depth in % (0–200, default 100). Scales the inner highlight + drop
    *  shadow together via --term-glass-depth (pref / 100). */
   glassDepth: number;
+  /** Corner radius in px (0–12, default 4) for floating surfaces (menus,
+   *  modals, popovers, toasts) and controls. Drives --ui-radius, plus
+   *  --ui-radius-sm (half, for rows/buttons/tooltips inside those surfaces). */
+  cornerRadius: number;
   /** Sidebar's native macOS vibrancy material (Electron+macOS only). Lightest →
    *  densest: under-window < sidebar < menu < hud. Applied via
    *  window.electron.setVibrancy; ignored on web / Windows / Linux. */
@@ -212,6 +216,7 @@ export const DEFAULT_PREFS: Prefs = {
   glassSaturate: 130,
   glassTint: 30,
   glassDepth: 30,
+  cornerRadius: 4,
   sidebarVibrancy: 'under-window',
   sidebarCollapsed: false,
   sidebarView: 'structure',
@@ -236,6 +241,20 @@ export const DEFAULT_PREFS: Prefs = {
 
 export function normalizeKiroSidecarTitlesPreference(value: unknown): boolean {
   return typeof value === 'boolean' ? value : DEFAULT_PREFS.enableKiroSidecarTitles;
+}
+
+export const CORNER_RADIUS_MAX = 12;
+
+export function normalizeCornerRadius(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_PREFS.cornerRadius;
+  return Math.min(CORNER_RADIUS_MAX, Math.max(0, Math.round(value)));
+}
+
+/** Pref → the two radius tokens. Inner shapes use half the outer radius so
+ *  rows and buttons stay visibly nested inside their surface at any setting. */
+export function cornerRadiusVars(radius: number): { '--ui-radius': string; '--ui-radius-sm': string } {
+  const r = normalizeCornerRadius(radius);
+  return { '--ui-radius': `${r}px`, '--ui-radius-sm': `${Math.round(r / 2)}px` };
 }
 
 const PREFS_KEY = 'michi:v1:prefs';
@@ -331,6 +350,7 @@ function readInitial(): Prefs {
     if (typeof merged.glassDepth !== 'number' || merged.glassDepth < 0 || merged.glassDepth > 200) {
       merged.glassDepth = DEFAULT_PREFS.glassDepth;
     }
+    merged.cornerRadius = normalizeCornerRadius(merged.cornerRadius);
     if (!['under-window', 'sidebar', 'menu', 'hud'].includes(merged.sidebarVibrancy)) {
       merged.sidebarVibrancy = DEFAULT_PREFS.sidebarVibrancy;
     }
@@ -488,6 +508,12 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const s = document.documentElement.style;
+    for (const [name, value] of Object.entries(cornerRadiusVars(prefs.cornerRadius))) s.setProperty(name, value);
+  }, [prefs.cornerRadius]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     document.documentElement.setAttribute('data-code-block', prefs.codeBlockStyle);
   }, [prefs.codeBlockStyle]);
 
@@ -581,6 +607,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       sidebarInset: DEFAULT_PREFS.sidebarInset,
       sidebarRowStyle: DEFAULT_PREFS.sidebarRowStyle,
       paneTopFadeHeight: DEFAULT_PREFS.paneTopFadeHeight,
+      cornerRadius: DEFAULT_PREFS.cornerRadius,
       reduceMotion: DEFAULT_PREFS.reduceMotion,
     }));
   }, []);

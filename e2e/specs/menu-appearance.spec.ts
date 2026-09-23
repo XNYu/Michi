@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
 
-async function bootMenus(page: Page, palette: 'bone' | 'monokai') {
+async function bootMenus(page: Page, palette: 'bone' | 'monokai', extraPrefs: Record<string, unknown> = {}) {
   await installMockApi(page, { streamEvents: [
     { event: 'chunk', data: { text: 'Menu checks complete.' } },
     { event: 'usage_summary', data: { contextUsagePercentage: 47, totalCredits: 0, turnDurationMs: 20,
@@ -17,7 +17,7 @@ async function bootMenus(page: Page, palette: 'bone' | 'monokai') {
       } });
       return true;
     }
-    if (path === '/modes') {
+    if (path.endsWith('/modes')) {
       await route.fulfill({ json: { availableModes: [
         { id: 'build', name: 'Build', description: 'Implement and validate changes' },
         { id: 'plan', name: 'Plan', description: 'Explore the next steps' },
@@ -30,7 +30,7 @@ async function bootMenus(page: Page, palette: 'bone' | 'monokai') {
     }
     return false;
   } });
-  await page.addInitScript((terminalPalette) => {
+  await page.addInitScript(({ terminalPalette, extraPrefs }) => {
     const ids = ['root', 'branch', 'branch2'];
     const extraWorkspaces = Array.from({ length: 9 }, (_, index) => ({
       id: `workspace-${index + 1}`, name: `Workspace ${index + 1}`,
@@ -62,22 +62,34 @@ async function bootMenus(page: Page, palette: 'bone' | 'monokai') {
     }));
     localStorage.setItem('michi:v1:prefs', JSON.stringify({ terminalPalette, sidebarView: 'structure', sidebarCollapsed: false,
       onboardingCompletedAt: 1, sidebarExpanded: { workspaces: { 'menu-ws': true }, threads: { tree: true }, branches: {} },
+      ...extraPrefs,
     }));
     sessionStorage.setItem('michi:panes:open', JSON.stringify({ 'menu-ws::tree': ['root'] }));
     sessionStorage.setItem('michi:panes:focus', JSON.stringify({ 'menu-ws::tree': null }));
-  }, palette);
+  }, { terminalPalette: palette, extraPrefs });
   await page.goto('/');
   await expect(page.locator('[contenteditable="true"]').first()).toBeVisible();
 }
 
-async function assertSurface(menu: Locator, width: number, viewportWidth: number) {
+type Material = Awaited<ReturnType<typeof materialOf>>;
+
+/** Every tuned menu shares the palette's glass except the solid right-click menu. */
+async function assertSurface(menu: Locator, width: number, viewportWidth: number, paletteMaterial?: Material) {
   await expect(menu).toBeVisible();
   await expect(menu).toHaveCSS('border-radius', '4px');
   await expect(menu).toHaveCSS('font-size', '13px');
   await expect(menu).toHaveCSS('font-weight', '500');
   const isContext = await menu.getAttribute('data-menu') === 'context';
-  if (isContext) await expect(menu).toHaveClass(/\bterm-glass\b/);
-  else await expect(menu).toHaveCSS('backdrop-filter', 'blur(26px) saturate(1.5)');
+  if (isContext) {
+    await expect(menu).not.toHaveClass(/\bterm-glass\b/);
+    await expect(menu).toHaveCSS('backdrop-filter', 'none');
+  } else {
+    // Same glass recipe as the palette (tint, highlight, cast shadow), at the
+    // denser menu setting: blur floored at 26px, surface at 78%.
+    await expect(menu).toHaveClass(/\bterm-glass\b/);
+    await expect(menu).toHaveCSS('backdrop-filter', /blur\(26px\)/);
+    if (paletteMaterial) expect((await materialOf(menu)).boxShadow).toEqual(paletteMaterial.boxShadow);
+  }
   await expect(menu).toHaveCSS('padding', '6px');
   await expect.poll(() => menu.evaluate((element) => element.getAnimations().filter((animation) => animation.playState === 'running').length)).toBe(0);
   const bounds = (await menu.boundingBox())!;
@@ -109,9 +121,26 @@ for (const palette of ['bone', 'monokai'] as const) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await bootMenus(page, palette);
     await expect(page.locator('html')).toHaveAttribute('data-terminal-palette', palette);
+
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    const paletteDialog = page.getByRole('dialog', { name: /Command palette/i });
+    await expect(paletteDialog).toBeVisible();
+    await expect(paletteDialog).toHaveCSS('border-radius', '4px');
+    await expectQuietSearch(paletteDialog.getByRole('textbox'));
+    const paletteMaterial = await materialOf(paletteDialog);
+    const paletteFont = await paletteDialog.evaluate((element) => getComputedStyle(element).fontFamily);
+    // The palette's list is built from the same menu rows as every dropdown.
+    const paletteRow = paletteDialog.locator('.michi-menu-scope .ui-menu-item').first();
+    await expect(paletteRow).toHaveCSS('border-radius', '2px');
+    await expect(paletteRow).toHaveCSS('font-size', '13px');
+    await expect(paletteRow).toHaveCSS('border-left-width', '0px');
+    await paletteDialog.screenshot({ path: info.outputPath('command-palette.png') });
+    await page.keyboard.press('Escape');
+
     await page.getByTitle('Switch workspace', { exact: true }).click();
     const workspace = page.getByRole('menu', { name: 'Workspaces', exact: true });
-    await assertSurface(workspace, 252, 1280);
+    await assertSurface(workspace, 252, 1280, paletteMaterial);
+    expect(await workspace.evaluate((element) => getComputedStyle(element).fontFamily)).toBe(paletteFont);
     await expect(workspace.locator('.ui-menu-item').first()).toHaveCSS('min-height', '35px');
     await expect(workspace.locator('.ui-menu-item').first()).toHaveCSS('padding', '9px 10px');
     const workspaceList = workspace.locator('.michi-menu-list:not(.michi-menu-pinned)');
@@ -142,9 +171,9 @@ for (const palette of ['bone', 'monokai'] as const) {
 
     await page.locator('[title^="Switch agent"]').click();
     const agents = page.getByRole('menu', { name: 'Agents', exact: true });
-    await assertSurface(agents, 288, 1280);
+    await assertSurface(agents, 480, 1280, paletteMaterial);
     await expectQuietSearch(agents.getByRole('textbox'));
-    await expect(agents.getByText('Build', { exact: true })).toBeVisible();
+    await expect(agents.getByRole('menuitem', { name: /Default Agent/ })).toBeVisible();
     await agents.screenshot({ path: info.outputPath('agents.png') });
     await page.keyboard.press('Escape');
 
@@ -153,7 +182,7 @@ for (const palette of ['bone', 'monokai'] as const) {
     const editor = page.locator('[contenteditable="true"]').first();
     await editor.fill('@');
     const mentions = page.getByRole('listbox', { name: 'Mentions', exact: true });
-    await assertSurface(mentions, 420, 1280);
+    await assertSurface(mentions, 420, 1280, paletteMaterial);
     await expect(mentions.locator('input')).toHaveCount(0);
     await mentions.screenshot({ path: info.outputPath('mentions.png') });
     await editor.press('ArrowUp');
@@ -167,7 +196,7 @@ for (const palette of ['bone', 'monokai'] as const) {
 
     await editor.fill('/');
     const slash = page.getByRole('listbox', { name: 'Slash commands', exact: true });
-    await assertSurface(slash, 480, 1280);
+    await assertSurface(slash, 480, 1280, paletteMaterial);
     await expect(slash.locator('input')).toHaveCount(0);
     const branch = slash.getByRole('option', { name: /^\/branch / });
     await expect(branch).toContainText('Open this message as a new child thread.');
@@ -180,20 +209,11 @@ for (const palette of ['bone', 'monokai'] as const) {
     await expect(editor).toHaveText('/branch');
     await expect(slash).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Search', exact: true }).click();
-    const paletteDialog = page.getByRole('dialog', { name: /Command palette/i });
-    await expect(paletteDialog).toBeVisible();
-    await expectQuietSearch(paletteDialog.getByRole('textbox'));
-    const paletteMaterial = await materialOf(paletteDialog);
-    await paletteDialog.screenshot({ path: info.outputPath('command-palette.png') });
-    await page.keyboard.press('Escape');
-
     await page.getByLabel('root conversation pane, focused', { exact: true }).click({ button: 'right' });
     const context = page.getByRole('menu', { name: 'Actions', exact: true });
     await assertSurface(context, 252, 1280);
     await expect(context.locator('.ui-menu-item').first()).toHaveCSS('min-height', '32px');
     await expect(context.locator('.ui-menu-item').first()).toHaveCSS('border-radius', '2px');
-    expect(await materialOf(context)).toEqual(paletteMaterial);
     await context.screenshot({ path: info.outputPath('pane-context.png') });
     await page.screenshot({ path: info.outputPath('pane-context-page.png'), fullPage: true });
     await page.keyboard.press('Escape');
@@ -201,7 +221,6 @@ for (const palette of ['bone', 'monokai'] as const) {
     for (const [label, screenshot] of [['Menu implementation', 'workspace-context'], ['root conversation', 'thread-context'], ['branch conversation', 'node-context']]) {
       await sidebar.getByText(label, { exact: true }).first().click({ button: 'right' });
       await assertSurface(context, 252, 1280);
-      expect(await materialOf(context)).toEqual(paletteMaterial);
       await context.screenshot({ path: info.outputPath(`${screenshot}.png`) });
       await page.keyboard.press('Escape');
     }
@@ -209,7 +228,6 @@ for (const palette of ['bone', 'monokai'] as const) {
     await sidebar.getByText('branch2 conversation', { exact: true }).click({ modifiers: ['ControlOrMeta'] });
     await sidebar.getByText('branch conversation', { exact: true }).click({ button: 'right' });
     await assertSurface(context, 252, 1280);
-    expect(await materialOf(context)).toEqual(paletteMaterial);
     await expect(context).toContainText('Weave 2 chats');
     await context.screenshot({ path: info.outputPath('multi-context.png') });
     await page.keyboard.press('Escape');
@@ -225,7 +243,6 @@ for (const palette of ['bone', 'monokai'] as const) {
     await drawer.screenshot({ path: info.outputPath('artifact-search.png') });
     await drawer.getByText('Design notes', { exact: true }).click({ button: 'right' });
     await assertSurface(context, 252, 1280);
-    expect(await materialOf(context)).toEqual(paletteMaterial);
     await context.screenshot({ path: info.outputPath('artifact-context.png') });
     await page.keyboard.press('Escape');
     await expect(context).toHaveCount(0);
@@ -236,14 +253,14 @@ for (const palette of ['bone', 'monokai'] as const) {
     await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
     await page.getByRole('meter').hover();
     const usage = page.locator('[data-menu="usage"]');
-    await assertSurface(usage, 288, 1280);
+    await assertSurface(usage, 288, 1280, paletteMaterial);
     await expect(usage).toContainText('79.5K tokens');
     await usage.screenshot({ path: info.outputPath('usage.png') });
 
     await page.getByRole('button', { name: 'Search', exact: true }).hover();
     const tooltip = page.getByRole('tooltip');
     await expect(tooltip).toBeVisible();
-    await expect(tooltip).toHaveCSS('border-radius', '3px');
+    await expect(tooltip).toHaveCSS('border-radius', '2px');
     await expect(tooltip).toHaveCSS('font-size', '11px');
     await expect(tooltip).toHaveCSS('backdrop-filter', 'none');
     expect(errors).toEqual([]);
@@ -275,7 +292,7 @@ test('autocomplete stays within a narrow viewport and reduced motion skips the b
   }
 });
 
-test('right-click menus follow glass preferences and reduced transparency', async ({ page }, info) => {
+test('glass menus follow glass preferences and reduced transparency; right-click stays solid', async ({ page }, info) => {
   await bootMenus(page, 'monokai');
   await page.evaluate(() => {
     const style = document.documentElement.style;
@@ -288,31 +305,66 @@ test('right-click menus follow glass preferences and reduced transparency', asyn
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const paletteMaterial = await materialOf(page.getByRole('dialog', { name: /Command palette/i }));
   await page.keyboard.press('Escape');
+  await page.getByTitle('Switch workspace', { exact: true }).click();
+  const workspace = page.getByRole('menu', { name: 'Workspaces', exact: true });
+  await expect(workspace).toHaveCSS('backdrop-filter', 'blur(36px) saturate(1.2)');
+  await expect.poll(() => workspace.evaluate((element) => element.getAnimations().filter((animation) => animation.playState === 'running').length)).toBe(0);
+  // A blur above the menu floor follows the pref; the shared cast/highlight too.
+  expect((await materialOf(workspace)).boxShadow).toEqual(paletteMaterial.boxShadow);
+  await workspace.screenshot({ path: info.outputPath('custom-glass.png') });
+  await page.keyboard.press('Escape');
+
   await page.locator('.terminal-sidebar').getByText('Menu implementation', { exact: true }).first().click({ button: 'right' });
   const context = page.getByRole('menu', { name: 'Actions', exact: true });
-  await expect(context).toHaveCSS('backdrop-filter', 'blur(36px) saturate(1.2)');
-  await expect.poll(() => context.evaluate((element) => element.getAnimations().filter((animation) => animation.playState === 'running').length)).toBe(0);
-  expect(await materialOf(context)).toEqual(paletteMaterial);
-  await context.screenshot({ path: info.outputPath('custom-glass.png') });
+  await expect(context).toHaveCSS('backdrop-filter', 'none');
+  const surface = await context.evaluate((element) => getComputedStyle(element).getPropertyValue('--term-surface').trim());
+  // Resolve the theme token through a CSS property, independent of color notation.
+  await context.evaluate((element, color) => { element.style.color = color; }, surface);
+  const solidColor = await context.evaluate((element) => getComputedStyle(element).color);
+  await context.evaluate((element) => { element.style.removeProperty('color'); });
+  await expect(context).toHaveCSS('background-color', solidColor);
+  await page.keyboard.press('Escape');
 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setEmulatedMedia', { features: [
     { name: 'prefers-reduced-transparency', value: 'reduce' },
   ] });
-  await expect(context).toHaveCSS('backdrop-filter', 'none');
-  await expect(context).toHaveCSS('background-image', 'none');
-  const surface = await context.evaluate((element) => getComputedStyle(element).getPropertyValue('--term-surface').trim());
-  // Resolve the theme token through a CSS property, independent of color notation.
-  await context.evaluate((element, color) => { element.style.color = color; }, surface);
-  const solidColor = await context.evaluate((element) => getComputedStyle(element).color);
-  await expect(context).toHaveCSS('background-color', solidColor);
-  await context.evaluate((element) => { element.style.removeProperty('color'); });
-  await context.screenshot({ path: info.outputPath('reduced-transparency.png') });
+  await page.getByTitle('Switch workspace', { exact: true }).click();
+  await expect(workspace).toHaveCSS('backdrop-filter', 'none');
+  await expect(workspace).toHaveCSS('background-image', 'none');
+  await expect(workspace).toHaveCSS('background-color', solidColor);
+  await workspace.screenshot({ path: info.outputPath('reduced-transparency.png') });
+});
+
+test('the corner radius preference reshapes menus, modals, rows and controls together', async ({ page }, info) => {
+  await bootMenus(page, 'bone', { cornerRadius: 10 });
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  const paletteDialog = page.getByRole('dialog', { name: /Command palette/i });
+  await expect(paletteDialog).toHaveCSS('border-radius', '10px');
+  await expect(paletteDialog.locator('.michi-menu-scope .ui-menu-item').first()).toHaveCSS('border-radius', '5px');
+  await paletteDialog.screenshot({ path: info.outputPath('palette-radius-10.png') });
   await page.keyboard.press('Escape');
+
   await page.getByTitle('Switch workspace', { exact: true }).click();
   const workspace = page.getByRole('menu', { name: 'Workspaces', exact: true });
-  await expect(workspace).toHaveCSS('backdrop-filter', 'none');
-  await expect(workspace).toHaveCSS('background-color', solidColor);
+  await expect(workspace).toHaveCSS('border-radius', '10px');
+  await expect(workspace.locator('.ui-menu-item').first()).toHaveCSS('border-radius', '5px');
+  await workspace.screenshot({ path: info.outputPath('workspace-radius-10.png') });
+  await page.keyboard.press('Escape');
+
+  await page.locator('.terminal-sidebar').getByText('root conversation', { exact: true }).first().click({ button: 'right' });
+  const context = page.getByRole('menu', { name: 'Actions', exact: true });
+  await expect(context).toHaveCSS('border-radius', '10px');
+  await page.keyboard.press('Escape');
+
+  // Square is a valid choice too: 0 flattens every surface and row.
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--ui-radius', '0px');
+    document.documentElement.style.setProperty('--ui-radius-sm', '0px');
+  });
+  await page.getByTitle('Switch workspace', { exact: true }).click();
+  await expect(workspace).toHaveCSS('border-radius', '0px');
+  await expect(workspace.locator('.ui-menu-item').first()).toHaveCSS('border-radius', '0px');
 });
 
 test('workspace list scrolls without losing search or New on small viewports', async ({ page }, info) => {
@@ -334,4 +386,49 @@ test('workspace list scrolls without losing search or New on small viewports', a
   await lastWorkspace.click();
   await expect(workspace).toHaveCount(0);
   await expect(page.getByTitle('Switch workspace', { exact: true })).toContainText('Workspace 9');
+});
+
+test('workspace, agent and model pickers share selection mark, pressed trigger, toggle and entrance', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await bootMenus(page, 'bone');
+  const hover = await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.background = 'var(--term-hover-bg, var(--term-alt))';
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  });
+  const selectedMark = async (row: Locator) => row.evaluate((element) => {
+    const glyph = element.querySelector('.michi-menu-glyph');
+    return glyph?.textContent === '✓' && element.lastElementChild === glyph;
+  });
+
+  const pickers = [
+    { name: 'workspace', trigger: page.getByTitle('Switch workspace', { exact: true }), surface: page.getByRole('menu', { name: 'Workspaces', exact: true }) },
+    { name: 'agent', trigger: page.locator('[title^="Switch agent"]').first(), surface: page.getByRole('menu', { name: 'Agents', exact: true }) },
+    { name: 'model', trigger: page.getByRole('button', { name: /^Model settings:/ }), surface: page.getByRole('dialog', { name: 'Model settings' }) },
+  ];
+  for (const { name, trigger, surface } of pickers) {
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await trigger.click();
+    await expect(surface).toBeVisible();
+    await expect(surface).toHaveAttribute('data-menu-animate', 'true');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await page.mouse.move(2, 890);
+    await expect(trigger).toHaveCSS('background-color', hover);
+    if (name === 'model') await surface.getByRole('button', { name: /Select runtime:/ }).click();
+    await page.mouse.move(2, 890);
+    const selected = name === 'workspace'
+      ? surface.getByRole('menuitem', { name: /Menu implementation/ })
+      : name === 'agent'
+        ? surface.getByRole('menuitem', { name: /Default Agent/ })
+        : surface.getByRole('menuitemradio', { checked: true });
+    expect(await selectedMark(selected), `${name} marks the selection with a trailing check`).toBe(true);
+    await expect(selected).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await surface.screenshot({ path: info.outputPath(`${name}-picker.png`) });
+    await trigger.click();
+    await expect(surface).toHaveCount(0);
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  }
 });

@@ -81,6 +81,13 @@ describe('PaneAgentMenus default agent display', () => {
     primaryAgents: [],
   };
 
+  // The selection mark is the trailing check glyph, not part of the label text.
+  const isChecked = (label: string) => {
+    const row = screen.getAllByRole('menuitem')
+      .find((item) => item.querySelector('.michi-menu-label > span')?.textContent === label);
+    return row?.querySelector('.michi-menu-glyph')?.textContent === '✓';
+  };
+
   it('shows the actual Kiro default agent and explains that it follows the runtime default', () => {
     render(
       <PaneAgentMenus
@@ -90,7 +97,7 @@ describe('PaneAgentMenus default agent display', () => {
       />,
     );
 
-    expect(screen.getByText('✓ Kiro Default Agent')).toBeTruthy();
+    expect(isChecked('Kiro Default Agent')).toBe(true);
     expect(screen.getByText('Kiro default agent · follows runtime and model controls')).toBeTruthy();
   });
 
@@ -102,7 +109,7 @@ describe('PaneAgentMenus default agent display', () => {
         runtimeId="kiro"
       />,
     );
-    expect(screen.getByText('✓ Kiro Default Agent')).toBeTruthy();
+    expect(isChecked('Kiro Default Agent')).toBe(true);
   });
 
   it('falls back to a runtime-specific default label when the id is absent from the catalog', () => {
@@ -113,7 +120,7 @@ describe('PaneAgentMenus default agent display', () => {
         runtimeId="kiro"
       />,
     );
-    expect(screen.getByText('✓ Kiro Default Agent')).toBeTruthy();
+    expect(isChecked('Kiro Default Agent')).toBe(true);
   });
 
   it('clears explicit selection through the default Agent action', async () => {
@@ -127,7 +134,8 @@ describe('PaneAgentMenus default agent display', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('✓ Kiro Default Agent'));
+    // The follow-default row comes first; the Kiro section lists the same agent by name.
+    fireEvent.click(screen.getAllByText('Kiro Default Agent')[0]);
     await waitFor(() => expect(onSelectDefaultAgent).toHaveBeenCalledTimes(1));
   });
 
@@ -141,8 +149,8 @@ describe('PaneAgentMenus default agent display', () => {
       />,
     );
 
-    expect(screen.queryByText('✓ Kiro Default Agent')).toBeFalsy();
-    expect(screen.getByText('✓ Planner')).toBeTruthy();
+    expect(isChecked('Kiro Default Agent')).toBe(false);
+    expect(isChecked('Planner')).toBe(true);
   });
 
   it('does not mark follow-default selected when a custom primary Agent is selected', () => {
@@ -155,7 +163,7 @@ describe('PaneAgentMenus default agent display', () => {
       />,
     );
 
-    expect(screen.queryByText('✓ Kiro Default Agent')).toBeFalsy();
+    expect(isChecked('Kiro Default Agent')).toBe(false);
     expect(screen.getAllByText('Kiro Default Agent').length).toBeGreaterThanOrEqual(1);
   });
 });

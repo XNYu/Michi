@@ -29,7 +29,9 @@ interface PaneComposerToolbarLeftProps {
   agentStatus: AgentStatus | null;
   onPickFile: () => void;
   onInsertMentionTrigger: () => void;
+  /** Called on every agent-chip press; the owner toggles the menu. */
   onOpenAgentMenu: (anchor: PaneMenuAnchor) => void;
+  agentMenuOpen?: boolean;
 }
 
 export function PaneComposerToolbarLeft({
@@ -43,6 +45,7 @@ export function PaneComposerToolbarLeft({
   onPickFile,
   onInsertMentionTrigger,
   onOpenAgentMenu,
+  agentMenuOpen = false,
 }: PaneComposerToolbarLeftProps) {
   const showAgentChip =
     enableAgentChip &&
@@ -80,19 +83,22 @@ export function PaneComposerToolbarLeft({
       </span>
 
       {showAgentChip && (
-        <span
+        <button
+          type="button"
           className="t-toolbar-chip"
           data-icononly={toolbarTier >= 1 ? 'true' : undefined}
           title={`Switch agent — ${currentMode?.name ?? currentModeId ?? 'agent'}`}
+          aria-haspopup="menu"
+          aria-expanded={agentMenuOpen}
           onClick={(e) => {
             e.stopPropagation();
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onOpenAgentMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 });
+            const r = e.currentTarget.getBoundingClientRect();
+            onOpenAgentMenu({ x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, trigger: e.currentTarget });
           }}
         >
           <span style={{ flexShrink: 0 }}>⎇</span>
           <span className="t-chip-label">{currentMode?.name ?? currentModeId ?? 'agent'}</span>
-        </span>
+        </button>
       )}
     </>
   );

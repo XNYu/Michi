@@ -75,4 +75,28 @@ describe('HomeWorkspaceChip', () => {
     flushBlink();
     expect(onNew).toHaveBeenCalled();
   });
+
+  it('toggles from the chip and shows it pressed while open', () => {
+    vi.useFakeTimers();
+    render(
+      <HomeWorkspaceChip
+        active={proj('a', 'Stocks')}
+        liveProjects={[proj('a', 'Stocks'), proj('b', 'Bonds')]}
+        onSelect={() => {}}
+        onNewWorkspace={() => {}}
+      />,
+    );
+    const chip = screen.getByRole('button', { name: 'Stocks' });
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(chip);
+    expect(chip.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('menu', { name: 'Workspaces' })).toBeTruthy();
+    // The outside-press listener arms a frame after opening; a real second
+    // click on the chip is mousedown then click, and must close, not reopen.
+    act(() => { vi.advanceTimersByTime(20); });
+    fireEvent.mouseDown(chip);
+    fireEvent.click(chip);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
+  });
 });

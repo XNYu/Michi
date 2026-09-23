@@ -36,6 +36,14 @@ describe('Appearance pane width modes', () => {
     expect(setPref).toHaveBeenCalledExactlyOnceWith('paneWidthMode', mode);
   });
 
+  it('exposes the corner radius outside Advanced and writes the pref', () => {
+    render(<AppearancePane />);
+    const slider = screen.getByRole('slider', { name: 'Corner radius' }) as HTMLInputElement;
+    expect(slider.value).toBe(String(DEFAULT_PREFS.cornerRadius));
+    fireEvent.change(slider, { target: { value: '9' } });
+    expect(setPref).toHaveBeenCalledExactlyOnceWith('cornerRadius', 9);
+  });
+
   it('retains the shared width slider', () => {
     render(<AppearancePane />);
     fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { ModalShell } from './ui/ModalShell';
 
 function tableRows(table: HTMLTableElement): string[][] {
   return Array.from(table.rows).map((row) => (
@@ -56,71 +56,32 @@ interface TableLightboxProps {
 }
 
 function TableLightbox({ sourceTable, onClose, onCopy, onDownload }: TableLightboxProps) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setVisible(true));
-    // Capture-phase Escape: consume exclusively so TerminalShell's
-    // bubble-phase handler doesn't fire (same pattern as DiffModal).
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      onClose();
-    };
-    window.addEventListener('keydown', onKey, { capture: true });
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('keydown', onKey, { capture: true });
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
+  // Escape is captured so TerminalShell's own Escape (clear selection / leave
+  // the Digest page) does not also fire in the same keypress.
+  return (
+    <ModalShell
+      open
+      onClose={onClose}
+      title="Table"
+      titleGlyph="▦"
       aria-label="Table fullscreen"
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        background: 'rgba(0,0,0,0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 32,
-        opacity: visible ? 1 : 0,
-        transition: 'opacity 140ms ease-out',
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="michi-table-lightbox"
-      >
-        {/* Controls bar */}
-        <div className="michi-table-lightbox-controls">
+      width={1200}
+      maxHeight="84vh"
+      captureEscape
+      headerTrailing={
+        <span className="michi-table-lightbox-controls">
           <button aria-label="Copy table" onClick={onCopy} type="button">copy</button>
           <button aria-label="Download table" onClick={onDownload} type="button">download</button>
-          <button
-            aria-label="Close fullscreen"
-            onClick={onClose}
-            type="button"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Scrollable table area */}
-        <div className="michi-table-lightbox-scroll term-scrollbar">
-          <table
-            className="michi-table-settled"
-            dangerouslySetInnerHTML={{ __html: sourceTable.innerHTML }}
-          />
-        </div>
+        </span>
+      }
+    >
+      <div className="michi-table-lightbox-scroll term-scrollbar">
+        <table
+          className="michi-table-settled"
+          dangerouslySetInnerHTML={{ __html: sourceTable.innerHTML }}
+        />
       </div>
-    </div>,
-    document.body,
+    </ModalShell>
   );
 }
 

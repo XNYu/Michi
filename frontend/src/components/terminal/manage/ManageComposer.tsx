@@ -387,6 +387,14 @@ function ScopedManageComposer({
     },
     [],
   );
+  // Same toggle contract as the model trigger: a second press closes.
+  const openAgentMenu = useCallback(
+    (anchor: PaneMenuAnchor) => {
+      setModelMenu(null);
+      setAgentMenu((current) => current ? null : anchor);
+    },
+    [],
+  );
 
   const handlePaste = useCallback(
     async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -724,7 +732,8 @@ function ScopedManageComposer({
             agentStatus={agentStatus}
             onPickFile={() => void onPickFile()}
             onInsertMentionTrigger={insertMentionTrigger}
-            onOpenAgentMenu={setAgentMenu}
+            onOpenAgentMenu={openAgentMenu}
+            agentMenuOpen={!!agentMenu}
           />
         </div>}
         toolbarRight={

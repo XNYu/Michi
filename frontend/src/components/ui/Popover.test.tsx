@@ -13,6 +13,17 @@ describe('menu surface isolation', () => {
     expect(menu.style.boxShadow).toBe('');
   });
 
+  it('frosts every tuned menu except the solid right-click menu', () => {
+    render(<>
+      <PopoverSurface menuKind="workspace" role="menu" aria-label="Workspaces">Workspace options</PopoverSurface>
+      <PopoverSurface menuKind="slash" role="listbox">Slash commands</PopoverSurface>
+      <PopoverSurface menuKind="context" role="menu" aria-label="Actions">Actions</PopoverSurface>
+    </>);
+    expect(screen.getByRole('menu', { name: 'Workspaces' }).classList.contains('term-glass')).toBe(true);
+    expect(screen.getByRole('listbox').classList.contains('term-glass')).toBe(true);
+    expect(screen.getByRole('menu', { name: 'Actions' }).classList.contains('term-glass')).toBe(false);
+  });
+
   it('only opts the requested surface into the exported menu tokens', () => {
     render(<>
       <PopoverSurface menuKind="workspace" role="menu">Workspace options</PopoverSurface>

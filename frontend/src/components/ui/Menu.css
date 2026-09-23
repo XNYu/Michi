@@ -1,8 +1,13 @@
-/* Numeric settings from michi-menu-tokens.css. Colors follow the active theme.
+/* Numeric settings from michi-menu-tokens.css. Colors follow the active theme;
+   radius and font follow the app-wide --ui-radius / --ui-font.
+   .michi-menu is a floating menu surface. .michi-menu-scope carries the same
+   tokens and row styling for a list that lives inside another surface (the
+   Command Palette's results) so its rows read as the same menu rows.
    Opt-in only: selection actions and icon tooltips keep their existing tokens. */
-.michi-menu {
-  --m-radius: 4px;
-  --m-itemRadius: 2px;
+.michi-menu,
+.michi-menu-scope {
+  --m-radius: var(--ui-radius);
+  --m-itemRadius: var(--ui-radius-sm);
   --m-width: 288px;
   --m-maxHeight: 240px;
   --m-borderWidth: 1px;
@@ -22,10 +27,10 @@
   --m-hoverMs: 100ms;
   --m-enterMs: 140ms;
   --m-clickDelay: 160ms;
-  --m-font: Geist, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --m-background: color-mix(in srgb, var(--term-surface) 78%, transparent);
+  --m-font: var(--ui-font);
   --m-shadow: 0 8px 24px 0 rgba(0, 0, 0, .14);
-  --m-backdrop: blur(26px) saturate(150%);
+}
+.michi-menu {
   box-sizing: border-box;
   -webkit-app-region: no-drag;
   border: var(--m-borderWidth) solid var(--term-line);
@@ -40,13 +45,32 @@
   scrollbar-width: thin;
   overscroll-behavior: contain;
 }
-/* Glass menus share Command Palette's material; these tokens only style the
-   other menus so stylesheet loading order cannot override the shared glass. */
+.michi-menu-scope {
+  font-family: var(--m-font);
+  font-size: var(--m-fontSize);
+  font-weight: var(--m-weight);
+  line-height: var(--m-lineHeight);
+  letter-spacing: 0;
+  color: var(--term-fg);
+  padding: var(--m-padding);
+}
+/* Material. Menus wear the shared .term-glass (PopoverSurface adds it), the same
+   frost as the Command Palette, drawers and sidebar. The right-click menu opts
+   out — frosted it felt heavy (0718e31e) — and stays a solid surface. Scoped by
+   :not(.term-glass) so stylesheet order cannot override the shared glass. */
 .michi-menu:not(.term-glass) {
-  background: var(--m-background);
+  background: var(--term-surface);
   box-shadow: var(--m-shadow);
-  backdrop-filter: var(--m-backdrop);
-  -webkit-backdrop-filter: var(--m-backdrop);
+}
+/* Menus take the shared glass at a denser setting than full panels. The palette
+   and drawers sit behind a scrim; menus float straight over reading text, and at
+   the thin panel setting that text ghosts through while they fade in. Same tint,
+   highlight and shadow — only the surface alpha and blur get a floor (the old
+   menu material's 78% / 26px). Reduced-transparency rules below still win. */
+.michi-menu.term-glass {
+  --term-glass-solid-alpha: max(var(--term-sidebar-solid-alpha), 0.78);
+  -webkit-backdrop-filter: blur(max(var(--term-glass-blur), 26px)) saturate(var(--term-glass-saturate));
+  backdrop-filter: blur(max(var(--term-glass-blur), 26px)) saturate(var(--term-glass-saturate));
 }
 .michi-menu[data-menu='workspace'] {
   --m-width: 252px;
@@ -61,8 +85,11 @@
   --m-width: 252px;
   --m-minHeight: 32px;
   --m-maxHeight: none;
-  --m-background: var(--term-surface);
-  --m-backdrop: none;
+}
+/* Rows inset by the list padding line up with the palette's prompt row (14px). */
+.michi-menu-scope[data-menu='palette'] {
+  --m-minHeight: 34px;
+  --m-rowX: 8px;
 }
 .michi-menu[data-menu='agents'] {
   --m-width: 480px;
@@ -74,16 +101,31 @@
   flex-direction: column;
   gap: var(--m-textGap);
 }
+/* Agent descriptions can run to a paragraph: two lines here, the full text in
+   the hover detail card (ContextMenu's MenuDetailCard). */
 .michi-menu[data-menu='agents'] .michi-menu-sublabel {
   margin-left: 0;
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.michi-menu[data-menu='detail'] { --m-width: 320px; --m-padding: 10px 12px; }
+.michi-menu-detail-title { margin-bottom: 4px; overflow-wrap: anywhere; }
+.michi-menu-detail-body {
+  color: var(--term-mid);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .michi-menu[data-menu='mentions'] { --m-width: 420px; }
 .michi-menu[data-menu='slash'] { --m-width: 480px; --m-maxHeight: 192px; }
 .michi-menu[data-menu-animate='true'] { animation: michi-menu-enter var(--m-enterMs) ease-out both; }
 @keyframes michi-menu-enter { from { opacity: 0; } to { opacity: 1; } }
 
-.michi-menu .ui-menu-item {
+:is(.michi-menu, .michi-menu-scope) .ui-menu-item {
   min-width: 0;
   min-height: var(--m-minHeight);
   gap: var(--m-gap);
@@ -92,8 +134,8 @@
   font: inherit;
   transition: background var(--m-hoverMs) ease, color var(--m-hoverMs) ease;
 }
-.michi-menu .ui-menu-item[data-active='true']:not([data-danger='true']) { color: var(--term-fg); }
-.michi-menu .ui-menu-blink { animation-duration: var(--m-clickDelay); }
+:is(.michi-menu, .michi-menu-scope) .ui-menu-item[data-active='true']:not([data-danger='true']) { color: var(--term-fg); }
+:is(.michi-menu, .michi-menu-scope) .ui-menu-blink { animation-duration: var(--m-clickDelay); }
 .michi-menu-list { list-style: none; padding: 0; margin: 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 .michi-menu-divider { height: 1px; margin: 4px var(--m-separatorInset); background: var(--term-line); list-style: none; }
 .michi-menu-section { padding: 6px var(--m-rowX) 4px; color: var(--term-muted); font-size: var(--m-captionSize); list-style: none; }
@@ -117,6 +159,7 @@
   font: inherit;
 }
 .michi-menu-search input::placeholder { color: var(--term-muted); }
+.michi-menu-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 .michi-menu-autocomplete { display: flex; flex-direction: column; overflow: hidden; }
 .michi-menu-autocomplete .michi-menu-list { max-height: var(--m-maxHeight); }
 .michi-menu-badge { flex-shrink: 0; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--term-muted); font-size: var(--m-captionSize); border: 1px solid var(--term-line); padding: 0 4px; border-radius: var(--m-itemRadius); }
@@ -128,6 +171,6 @@
 @supports not (backdrop-filter: blur(1px)) { .michi-menu:not(.term-glass), .michi-menu.term-glass { background: var(--term-surface); } }
 @media (prefers-reduced-transparency: reduce) { .michi-menu:not(.term-glass), .michi-menu.term-glass { background: var(--term-surface); backdrop-filter: none; -webkit-backdrop-filter: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .michi-menu[data-menu-animate='true'], .michi-menu .ui-menu-blink { animation: none; }
-  .michi-menu .ui-menu-item { transition: none; }
+  .michi-menu[data-menu-animate='true'], :is(.michi-menu, .michi-menu-scope) .ui-menu-blink { animation: none; }
+  :is(.michi-menu, .michi-menu-scope) .ui-menu-item { transition: none; }
 }

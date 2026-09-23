@@ -427,7 +427,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setDraftHasText(false);
     setComposerDraft(nodeId, null);
   }, [nodeId, setComposerDraft]);
-  const [agentMenu, setAgentMenu] = useState<{ x: number; y: number; anchorBottom?: number } | null>(null);
+  const [agentMenu, setAgentMenu] = useState<PaneMenuAnchor | null>(null);
   const [modelMenu, setModelMenu] = useState<PaneMenuAnchor | null>(null);
 
   // Per-node binding: resolve runtime/model/effort from node → global fallback.
@@ -1128,8 +1128,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     return () => el.removeEventListener('michi:internal-link', onInternalLink);
   }, [openArtifactPane]);
 
-  // Scroll a specific message into view + brief flash, dispatched by GlobalSearch
-  // and PaneFind navigation.
+  // Scroll a specific message into view + brief flash, dispatched by the
+  // Command Palette's message results and PaneFind navigation.
   useEffect(() => {
     let cancelFlash: (() => void) | null = null;
     let retryRaf = 0;
@@ -1621,6 +1621,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   ) => {
     setAgentMenu(null);
     setModelMenu((current) => current ? null : anchor);
+  }, []);
+  // Same toggle contract as the model trigger: a second press closes.
+  const openAgentMenu = useCallback((anchor: PaneMenuAnchor) => {
+    setModelMenu(null);
+    setAgentMenu((current) => current ? null : anchor);
   }, []);
 
   const handleOpenBranch = useCallback((childNodeId: string) => {
@@ -2259,7 +2264,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             agentStatus={agentStatus}
             onPickFile={() => void onPickFile()}
             onInsertMentionTrigger={insertMentionTrigger}
-            onOpenAgentMenu={setAgentMenu}
+            onOpenAgentMenu={openAgentMenu}
+            agentMenuOpen={!!agentMenu}
           />
         }
         toolbarRight={

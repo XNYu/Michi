@@ -3,7 +3,7 @@ import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentReasoni
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import { PopoverSurface } from '../ui/Popover';
 import { useMenuConfirm } from '../ui/useMenuConfirm';
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, RetryIcon } from './icons';
+import { ChevronLeftIcon, ChevronRightIcon, RetryIcon } from './icons';
 import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
@@ -48,7 +48,7 @@ export function ComposerModelPicker({
   const busyRef = useRef(false);
   const savingFocusRef = useRef<HTMLElement | null>(null);
   const mountedRef = useRef(true);
-  const [position, setPosition] = useState({ left: anchor.x, top: anchor.y, maxHeight: 240, above: true });
+  const [position, setPosition] = useState({ left: anchor.x, top: anchor.y, maxHeight: 240 });
   const caps = catalogCapabilities ?? (resolvedBinding.runtime === agentStatus?.runtime ? agentStatus.capabilities : null);
   const hasModels = !!(caps?.models || caps?.providerModels || resolvedBinding.model);
   const searchable = page === 'model' && providerModels.length > 7;
@@ -126,7 +126,6 @@ export function ComposerModelPicker({
         left: Math.max(viewportLeft + 8, Math.min(anchor.align === 'end' ? (trigger?.right ?? anchor.x) - rect.width : trigger?.left ?? anchor.x, viewportLeft + width - rect.width - 8)),
         top: Math.max(viewportTop + 8, Math.min(top, viewportTop + height - Math.min(rect.height, maxHeight) - 8)),
         maxHeight,
-        above,
       };
       setPosition((previous) => Object.keys(next).every((key) => previous[key as keyof typeof next] === next[key as keyof typeof next]) ? previous : next);
     };
@@ -249,26 +248,29 @@ export function ComposerModelPicker({
       className={`composer-picker-row${blinkingId === `${page}-${id}` ? ' ui-menu-blink' : ''}`}
       onClick={() => confirm(`${page}-${id}`, () => { if (checked) navigate('overview'); else void select(action, 'overview'); })}>
       <span className="composer-picker-copy"><span className="composer-picker-value">{label}</span>{description && <span className="composer-picker-caption">{description}</span>}</span>
-      <span className="composer-picker-check">{checked && <CheckIcon />}</span>
+      <span className="michi-menu-glyph" aria-hidden="true">{checked ? '✓' : ''}</span>
     </button>
   );
 
   return (
     <PopoverSurface ref={surfaceRef} menuKind="composer" left={position.left} top={position.top} width="var(--m-width)" maxWidth="calc(100vw - 16px)" maxHeight={position.maxHeight}
-      role="dialog" aria-label="Model settings" animate={false} className="composer-picker"
+      role="dialog" aria-label="Model settings" className="composer-picker"
       style={{
         overflow: 'hidden',
         // Reserve the search page height so filtering cannot move its navigation.
         height: searchable ? position.maxHeight : undefined,
-        transformOrigin: `${position.above ? 'bottom' : 'top'} ${anchor.align === 'end' ? 'right' : 'left'}`,
       }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-      <div ref={bodyRef} onKeyDown={onKeyDown} data-keyboard={anchor.keyboard || undefined} className="composer-picker-body" aria-busy={saving}>
+      <div ref={bodyRef} onKeyDown={onKeyDown} className="composer-picker-body" aria-busy={saving}>
         {page !== 'overview' && (
           <div className="composer-picker-header">
             <button type="button" className="composer-picker-icon" aria-label="Back to model settings" title="Back" onClick={() => navigate('overview')}><ChevronLeftIcon /></button>
           </div>
         )}
-        {searchable && <input ref={searchRef} type="search" className="composer-picker-search" aria-label="Search models" placeholder="Search models" value={query} onChange={(event) => { cancel(); setQuery(event.target.value); }} />}
+        {searchable && (
+          <div className="michi-menu-search">
+            <input ref={searchRef} type="search" aria-label="Search models" placeholder="Search models" value={query} onChange={(event) => { cancel(); setQuery(event.target.value); }} />
+          </div>
+        )}
         <div ref={contentRef} className="composer-picker-content">
           {page === 'overview' ? (
             <>

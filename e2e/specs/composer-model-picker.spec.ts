@@ -176,6 +176,10 @@ test('keeps search and Back reachable while scrolling and filtering Pi models', 
   await expect(search).toBeFocused();
   await expect(search).toHaveCSS('outline-style', 'none');
   await expect(search).toHaveCSS('box-shadow', 'none');
+  // Same quiet field as the workspace / agent menus: no box, divider below.
+  await expect(search).toHaveCSS('border-top-width', '0px');
+  await expect(search).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(search.locator('xpath=..')).toHaveClass(/\bmichi-menu-search\b/);
   const originalBack = await back.boundingBox();
   const originalSearch = await search.boundingBox();
   const originalPicker = await picker.boundingBox();

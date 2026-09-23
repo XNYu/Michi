@@ -35,7 +35,9 @@ export interface MenuSection {
 }
 
 export interface ContextMenuProps {
-  /** Screen-space anchor (usually the MouseEvent's clientX / clientY). */
+  /** Screen-space anchor (usually the MouseEvent's clientX / clientY). With
+   *  `anchorBottom`, `y` is where the menu's top goes when it flips BELOW its
+   *  trigger (the trigger's bottom edge + gap). */
   x: number;
   y: number;
   sections: MenuSection[];
@@ -52,10 +54,63 @@ export interface ContextMenuProps {
   /**
    * If set, place the menu so its bottom edge sits at this y coordinate
    * (i.e. anchor the menu ABOVE this y, useful for toolbar chips at the
-   * bottom of the pane). Overrides the default below-cursor placement.
+   * bottom of the pane). Overrides the default below-cursor placement. When
+   * there is clearly more room below, the menu flips to start at `y`; either
+   * way its height is capped to that side so it never covers the trigger.
    */
   anchorBottom?: number;
+  /** The element that opened the menu. Presses on it are not "outside" clicks,
+   *  so the trigger's own click can toggle the menu closed instead of the menu
+   *  closing on mousedown and reopening on click. */
+  trigger?: HTMLElement | null;
 }
+
+/**
+ * Full text of a row whose description is clamped (agent descriptions run to a
+ * paragraph). Sits beside the menu at the hovered row, flipping to the left when
+ * the right side has no room. Pointer-transparent so it never steals the hover.
+ */
+function MenuDetailCard({ menuRef, rowTop, title, text }: {
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  rowTop: number;
+  title: string;
+  text: string;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const menu = menuRef.current;
+    if (!card || !menu) return;
+    const m = menu.getBoundingClientRect();
+    const c = card.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = m.right + 6;
+    if (left + c.width > vw - 8) left = m.left - 6 - c.width;
+    left = Math.max(8, Math.min(left, vw - c.width - 8));
+    const top = Math.max(8, Math.min(rowTop, vh - c.height - 8));
+    setPlace((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }));
+  }, [menuRef, rowTop, title, text]);
+  return (
+    <PopoverSurface
+      ref={cardRef}
+      menuKind="detail"
+      role="tooltip"
+      left={place?.left ?? -9999}
+      top={place?.top ?? 0}
+      width="var(--m-width)"
+      maxWidth="calc(100vw - 16px)"
+      zIndex={1101}
+      style={{ pointerEvents: 'none', visibility: place ? 'visible' : 'hidden' }}
+    >
+      <div className="michi-menu-detail-title">{title}</div>
+      <div className="michi-menu-detail-body">{text}</div>
+    </PopoverSurface>
+  );
+}
+
+const DETAIL_DELAY_MS = 250;
 
 /**
  * Shell-neutral right-click menu. Positions itself at the cursor, flips
@@ -76,10 +131,17 @@ export default function ContextMenu({
   searchable,
   searchPlaceholder,
   anchorBottom,
+  trigger,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState({ x, y });
+  // cap: max height when anchored to a toolbar trigger (space on the chosen side).
+  const [pos, setPos] = useState<{ x: number; y: number; cap?: number }>({ x, y });
+  // Hovered (or arrow-selected) row whose clamped description is shown in full.
+  const [detail, setDetail] = useState<{ id: string; rowTop: number } | null>(null);
+  const detailTimer = useRef<number | undefined>(undefined);
+  const detailShownRef = useRef(false);
+  detailShownRef.current = detail !== null;
   const [filter, setFilter] = useState('');
   // Keyboard-navigable active index for searchable menus (-1 = nothing highlighted).
   const [activeIdx, setActiveIdx] = useState(-1);
@@ -95,6 +157,8 @@ export default function ContextMenu({
   // callback without re-cycling the effect.
   const onCloseRef = useRef(onClose);
   useLayoutEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  const triggerRef = useRef(trigger);
+  useLayoutEffect(() => { triggerRef.current = trigger; }, [trigger]);
   const sectionsRef = useRef(sections);
   useLayoutEffect(() => { sectionsRef.current = sections; }, [sections]);
   const dismiss = useCallback(() => {
@@ -126,12 +190,28 @@ export default function ContextMenu({
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       let nx = x;
-      let ny = anchorBottom !== undefined ? anchorBottom - rect.height : y;
       if (nx + rect.width > vw - 8) nx = Math.max(8, vw - rect.width - 8);
       nx = Math.max(8, nx);
-      if (ny + rect.height > vh - 8) ny = Math.max(8, vh - rect.height - 8);
-      if (ny < 8) ny = 8;
-      setPos((prev) => (prev.x !== nx || prev.y !== ny ? { x: nx, y: ny } : prev));
+      let ny = y;
+      let cap: number | undefined;
+      if (anchorBottom !== undefined) {
+        // Toolbar trigger: prefer above it, flip below (to `y`) when there is
+        // clearly more room there — same rule as ComposerModelPicker. The cap
+        // makes a long list scroll instead of sliding over the trigger.
+        const aboveSpace = Math.min(anchorBottom, vh) - 8;
+        const belowSpace = vh - 8 - y;
+        const above = aboveSpace >= Math.min(240, vh / 2) || aboveSpace >= belowSpace;
+        cap = Math.max(80, Math.min(above ? aboveSpace : belowSpace, vh - 16));
+        const height = Math.min(rect.height, cap);
+        ny = above ? anchorBottom - height : y;
+        // Anchors are captured at open; if the viewport shrinks while the menu
+        // is up they go stale, so still keep the whole menu on screen.
+        ny = Math.max(8, Math.min(ny, vh - 8 - height));
+      } else {
+        if (ny + rect.height > vh - 8) ny = Math.max(8, vh - rect.height - 8);
+        if (ny < 8) ny = 8;
+      }
+      setPos((prev) => (prev.x !== nx || prev.y !== ny || prev.cap !== cap ? { x: nx, y: ny, cap } : prev));
     };
     reposition();
     // Watch for content-driven height changes (e.g. async sections that
@@ -148,6 +228,7 @@ export default function ContextMenu({
     const onDocDown = (e: MouseEvent) => {
       if (!ref.current) return;
       if (e.target instanceof Node && ref.current.contains(e.target)) return;
+      if (e.target instanceof Node && triggerRef.current?.contains(e.target)) return;
       dismiss();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -191,6 +272,28 @@ export default function ContextMenu({
 
   const run = (item: MenuItem) => fireWithBlink(item);
 
+  const hideDetail = useCallback(() => {
+    window.clearTimeout(detailTimer.current);
+    setDetail(null);
+  }, []);
+
+  // Show the full description for a row whose sublabel is clamped. The first
+  // card waits a beat so crossing the list doesn't flash cards; once one is up,
+  // moving to another row swaps it immediately, like native tooltips.
+  const showDetailFor = useCallback((id: string, row: HTMLElement) => {
+    window.clearTimeout(detailTimer.current);
+    const sub = row.querySelector<HTMLElement>('.michi-menu-sublabel');
+    if (!sub || sub.scrollHeight <= sub.clientHeight + 1) {
+      setDetail(null);
+      return;
+    }
+    const next = { id, rowTop: row.getBoundingClientRect().top };
+    if (detailShownRef.current) setDetail(next);
+    else detailTimer.current = window.setTimeout(() => setDetail(next), DETAIL_DELAY_MS);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(detailTimer.current), []);
+
   useLayoutEffect(() => {
     ref.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: 'nearest' });
   }, [activeIdx]);
@@ -203,7 +306,8 @@ export default function ContextMenu({
   // top match. Start at 0 (first item highlighted) once the user types.
   useEffect(() => {
     setActiveIdx(filter ? 0 : -1);
-  }, [filter]);
+    hideDetail();
+  }, [filter, hideDetail]);
 
   const q = filter.toLowerCase();
   const filtered: MenuSection[] = q
@@ -236,16 +340,21 @@ export default function ContextMenu({
         dismiss();
         return;
       }
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         cancel();
-        setActiveIdx((i) => Math.min(flatItems.length - 1, i + 1));
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        cancel();
-        setActiveIdx((i) => Math.max(0, i - 1));
+        const next = e.key === 'ArrowDown'
+          ? Math.min(flatItems.length - 1, activeIdx + 1)
+          : Math.max(0, activeIdx - 1);
+        setActiveIdx(next);
+        // Keyboard selection previews the full description too, once the
+        // newly active row has rendered.
+        const item = flatItems[next];
+        requestAnimationFrame(() => {
+          const row = ref.current?.querySelector<HTMLElement>('[data-active="true"]');
+          if (item?.sublabel && row) showDetailFor(item.id, row);
+          else hideDetail();
+        });
         return;
       }
       if (e.key === 'Enter') {
@@ -255,10 +364,15 @@ export default function ContextMenu({
         return;
       }
     },
-    [flatItems, activeIdx, fireWithBlink, dismiss, cancel],
+    [flatItems, activeIdx, fireWithBlink, dismiss, cancel, showDetailFor, hideDetail],
   );
 
+  const detailItem = detail
+    ? filtered.flatMap((s) => s.items).find((it) => it.id === detail.id)
+    : undefined;
+
   return (
+    <>
     <PopoverSurface
       ref={ref}
       menuKind={menuKind}
@@ -268,7 +382,7 @@ export default function ContextMenu({
       top={pos.y}
       width={width ?? 'var(--m-width)'}
       maxWidth="calc(100vw - 16px)"
-      maxHeight="calc(100dvh - 16px)"
+      maxHeight={pos.cap ?? 'calc(100dvh - 16px)'}
       // Right-click menus historically sit above every other popover (eg
       // the Contexts popover hosts one internally). Preserve that.
       zIndex={1100}
@@ -290,6 +404,8 @@ export default function ContextMenu({
       <ul
         className="michi-menu-list"
         style={{ maxHeight: maxHeight ?? 'var(--m-maxHeight)' }}
+        onMouseLeave={hideDetail}
+        onScroll={hideDetail}
       >
         {(() => {
           let flatIdx = 0;
@@ -328,11 +444,11 @@ export default function ContextMenu({
                         disabled={item.disabled}
                         active={isActive}
                         className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
-                        onMouseEnter={
-                          searchable && myFlatIdx >= 0
-                            ? () => setActiveIdx(myFlatIdx)
-                            : undefined
-                        }
+                        onMouseEnter={(e) => {
+                          if (searchable && myFlatIdx >= 0) setActiveIdx(myFlatIdx);
+                          if (item.sublabel) showDetailFor(item.id, e.currentTarget);
+                          else hideDetail();
+                        }}
                       >
                         {!trailing && item.glyph && (
                           <span className="michi-menu-glyph" aria-hidden="true">
@@ -421,5 +537,14 @@ export default function ContextMenu({
         </ul>
       )}
     </PopoverSurface>
+    {detail && detailItem?.sublabel && (
+      <MenuDetailCard
+        menuRef={ref}
+        rowTop={detail.rowTop}
+        title={detailItem.label}
+        text={detailItem.sublabel}
+      />
+    )}
+    </>
   );
 }

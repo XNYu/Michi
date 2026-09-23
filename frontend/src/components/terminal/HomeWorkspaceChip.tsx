@@ -20,7 +20,7 @@ export function HomeWorkspaceChip({
   onSelect,
   onNewWorkspace,
 }: HomeWorkspaceChipProps) {
-  const [menu, setMenu] = useState<{ x: number; y: number; anchorBottom: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; anchorBottom: number; trigger: HTMLElement } | null>(null);
 
   const sections: MenuSection[] = [
     {
@@ -61,13 +61,17 @@ export function HomeWorkspaceChip({
         flexShrink: 0,
       }}
     >
-      <span
+      <button
+        type="button"
         className="t-toolbar-chip"
         title="Switch workspace"
+        aria-haspopup="menu"
+        aria-expanded={!!menu}
         onClick={(e) => {
           e.stopPropagation();
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          setMenu({ x: r.left, y: r.top, anchorBottom: r.top - 6 });
+          const trigger = e.currentTarget;
+          const r = trigger.getBoundingClientRect();
+          setMenu((open) => (open ? null : { x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, trigger }));
         }}
         style={{
           color: active ? 'var(--term-fg)' : 'var(--term-faint)',
@@ -78,12 +82,13 @@ export function HomeWorkspaceChip({
           <FolderIcon size={12} />
         </span>
         <span className="t-chip-label">{active?.name ?? 'no workspace'}</span>
-      </span>
+      </button>
       {menu && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
           anchorBottom={menu.anchorBottom}
+          trigger={menu.trigger}
           sections={sections}
           menuKind="workspace"
           searchable

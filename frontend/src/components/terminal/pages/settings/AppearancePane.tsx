@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { usePrefs, TerminalPalette } from '../../../../state/prefs';
+import { usePrefs, TerminalPalette, CORNER_RADIUS_MAX } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
 import { resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
@@ -8,6 +8,42 @@ import {
   SIDEBAR_ROW_STYLES,
   SIDEBAR_ROW_STYLE_LABELS,
 } from '../../sidebarRowStyle';
+
+/**
+ * Live sample of what the Corner radius slider drives, built from the real
+ * shared classes (menu surface + rows, button, tooltip pill) so it reads the
+ * same --ui-radius tokens as the app. Menus and modals can't be open while the
+ * Settings drawer is, so this is where the change is visible while dragging.
+ */
+function CornerRadiusPreview() {
+  return (
+    <div aria-hidden="true" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginTop: 10 }}>
+      <div className="michi-menu" data-menu="context" style={{ width: 150, pointerEvents: 'none' }}>
+        <ul className="michi-menu-list">
+          <li className="ui-menu-item" data-active="true"><span className="michi-menu-label">Rename</span><span className="michi-menu-keys">R</span></li>
+          <li className="ui-menu-item"><span className="michi-menu-label">Duplicate</span></li>
+          <li className="ui-menu-item" data-danger="true"><span className="michi-menu-label">Delete</span></li>
+        </ul>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+        <span className="ui-btn" style={{ pointerEvents: 'none' }}>Button</span>
+        <span
+          style={{
+            padding: '3px 7px',
+            fontSize: 11,
+            fontFamily: 'var(--ui-font)',
+            color: 'var(--term-mid)',
+            background: 'var(--ui-tooltip-bg)',
+            border: 'var(--ui-tooltip-border)',
+            borderRadius: 'var(--ui-tooltip-radius)',
+          }}
+        >
+          Tooltip
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function AppearancePane() {
   const { prefs, setPref } = usePrefs();
@@ -107,6 +143,25 @@ export function AppearancePane() {
           depth + native Sidebar material) are intentionally hidden — the defaults
           in prefs.tsx are the tuned look. The prefs + effects still drive the
           glass; re-add these Rows to expose them again. */}
+
+      <Row k="theme.cornerRadius" label="Corner radius">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input
+            aria-label="Corner radius"
+            type="range"
+            min={0}
+            max={CORNER_RADIUS_MAX}
+            step={1}
+            value={prefs.cornerRadius}
+            onChange={(e) => setPref('cornerRadius', Number(e.target.value))}
+            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+          />
+          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+            {prefs.cornerRadius}px
+          </span>
+        </div>
+        <CornerRadiusPreview />
+      </Row>
 
       {/* ── Threads per workspace (always visible) ─────────────────── */}
 

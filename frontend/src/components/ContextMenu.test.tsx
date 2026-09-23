@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ContextMenu from './ContextMenu';
 
@@ -30,10 +30,14 @@ describe('ContextMenu confirmation', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['workspace', 'agents'] as const)('keeps the %s picker on its own material', (menuKind) => {
+  it.each([
+    ['workspace', true],
+    ['agents', true],
+    ['context', false],
+  ] as const)('gives the %s menu the shared glass: %s', (menuKind, glass) => {
     render(<ContextMenu x={20} y={40} menuKind={menuKind} searchable onClose={() => {}}
       sections={[{ items: [{ id: 'item', label: 'Item', run: () => {} }] }]} />);
-    expect(screen.getByRole('menu').classList.contains('term-glass')).toBe(false);
+    expect(screen.getByRole('menu').classList.contains('term-glass')).toBe(glass);
   });
 
   it.each(['escape', 'outside', 'unmount', 'filter'])('cancels pending actions on %s', (dismiss) => {
@@ -82,5 +86,83 @@ describe('ContextMenu confirmation', () => {
     );
     const customList = screen.getByRole('menu').querySelector('.michi-menu-list') as HTMLElement;
     expect(customList.style.maxHeight).toBe('500px');
+  });
+});
+
+describe('ContextMenu toolbar anchoring', () => {
+  const rect = (height: number) => ({ x: 0, y: 0, top: 0, left: 0, right: 480, bottom: height, width: 480, height, toJSON: () => ({}) }) as DOMRect;
+  const openAnchored = (menuHeight: number, triggerTop: number, triggerBottom: number, viewport: number) => {
+    vi.stubGlobal('innerHeight', viewport);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(menuHeight));
+    render(<ContextMenu x={100} y={triggerBottom + 6} anchorBottom={triggerTop - 6} menuKind="agents" onClose={() => {}}
+      sections={[{ items: [{ id: 'a', label: 'Agent', run: () => {} }] }]} />);
+    const menu = screen.getByRole('menu');
+    return { top: parseFloat(menu.style.top), maxHeight: parseFloat(menu.style.maxHeight) };
+  };
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('sits above the trigger when it fits', () => {
+    const { top, maxHeight } = openAnchored(300, 606, 630, 900);
+    expect(top).toBe(300);
+    expect(top + 300).toBeLessThanOrEqual(600);
+    expect(maxHeight).toBe(592);
+  });
+
+  it('caps a tall list to the space above instead of sliding over the trigger', () => {
+    const { top, maxHeight } = openAnchored(900, 506, 530, 700);
+    expect(top).toBe(8);
+    expect(maxHeight).toBe(492);
+    expect(top + maxHeight).toBeLessThanOrEqual(506);
+  });
+
+  it('flips below the trigger when there is clearly more room there', () => {
+    const { top, maxHeight } = openAnchored(300, 106, 130, 900);
+    expect(top).toBe(136);
+    expect(maxHeight).toBe(900 - 8 - 136);
+  });
+});
+
+describe('ContextMenu description detail card', () => {
+  const longText = 'Migrates static configurations to Amazon Config Store and prepares a code review. This agent is managed by AIM.';
+  const renderAgents = (clamped: boolean) => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('michi-menu-sublabel') && clamped ? 80 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('michi-menu-sublabel') ? 36 : 0;
+    });
+    render(<ContextMenu x={20} y={40} menuKind="agents" searchable onClose={() => {}}
+      sections={[{ items: [
+        { id: 'acs', label: 'acs-migration', glyph: '✓', sublabel: longText, run: () => {} },
+        { id: 'plain', label: 'plain', run: () => {} },
+      ] }]} />);
+  };
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('shows the full description beside the menu after a short hover', () => {
+    vi.useFakeTimers();
+    renderAgents(true);
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /acs-migration/ }));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    act(() => { vi.advanceTimersByTime(250); });
+    const card = screen.getByRole('tooltip');
+    expect(card.textContent).toBe(`acs-migration${longText}`);
+    expect(card.dataset.menu).toBe('detail');
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: 'plain' }));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('hides when the pointer leaves the list and skips descriptions that already fit', () => {
+    vi.useFakeTimers();
+    renderAgents(true);
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /acs-migration/ }));
+    act(() => { vi.advanceTimersByTime(250); });
+    fireEvent.mouseLeave(screen.getByRole('menu').querySelector('.michi-menu-list')!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    cleanup();
+    renderAgents(false);
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /acs-migration/ }));
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

@@ -494,32 +494,17 @@
   background: var(--app-bg, var(--background));
 }
 
-/* --- Table lightbox (portal-based fullscreen viewer) --- */
-.michi-table-lightbox {
-  width: min(92vw, 1200px);
-  max-height: 84vh;
-  min-height: 160px;
-  display: flex;
-  flex-direction: column;
-  background: var(--term-bg, var(--app-bg));
-  border: 1px solid var(--term-line);
-  border-radius: 6px;
-  overflow: hidden;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.35);
-}
+/* --- Table lightbox (fullscreen viewer on ModalShell) --- */
 .michi-table-lightbox-controls {
-  display: flex;
-  justify-content: flex-end;
+  display: inline-flex;
   gap: 4px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--term-line);
   flex-shrink: 0;
 }
 .michi-table-lightbox-controls button {
-  min-height: 24px;
+  min-height: 22px;
   padding: 2px 7px;
   border: 1px solid var(--term-line, var(--line));
-  border-radius: 4px;
+  border-radius: var(--ui-radius-sm);
   background: var(--term-surface, var(--surface));
   color: var(--term-fg, var(--fg));
   font: inherit;
@@ -530,8 +515,9 @@
   background: var(--term-line, var(--line));
 }
 .michi-table-lightbox-scroll {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  max-height: calc(84vh - 56px);   /* 84vh lightbox cap minus controls bar */
   padding: 12px;
 }
 .michi-table-lightbox-scroll table {
@@ -2403,6 +2389,11 @@ html[data-vibrancy="on"],
   background: var(--term-hover-bg, var(--term-alt));
   color: var(--term-fg);
 }
+/* A chip whose menu is open (workspace, agent, model) stays pressed. */
+.t-toolbar-chip[aria-expanded="true"] {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
 .t-toolbar-chip[data-icononly="true"] {
   padding: 0;
   width: var(--composer-chip-height, 26px);
@@ -2778,14 +2769,22 @@ html[data-vibrancy="on"],
    which is why hover/click menus visibly differed across the app.
    ----------------------------------------------------------------------- */
 :root {
+  /* Corner radius for every floating surface (menus, modals, popovers, toasts)
+     and the controls inside them. Overwritten live from the Appearance
+     "Corner radius" pref (prefs.tsx); these are its defaults. -sm is half the
+     surface radius, for rows / buttons / tooltips nested inside a surface.
+     Edge-docked drawers stay square — they have no free corner to round. */
+  --ui-radius: 4px;
+  --ui-radius-sm: 2px;
+
   --ui-popover-bg: var(--term-surface);
   --ui-popover-border: 1px solid var(--term-line);
-  --ui-popover-radius: 0;
+  --ui-popover-radius: var(--ui-radius);
   --ui-popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 
   --ui-tooltip-bg: var(--term-surface);
   --ui-tooltip-border: 1px solid var(--term-line);
-  --ui-tooltip-radius: 3px;
+  --ui-tooltip-radius: var(--ui-radius-sm);
   --ui-tooltip-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
@@ -3409,7 +3408,7 @@ html[data-vibrancy="on"],
   line-height: 1.2;
   padding: 6px 12px;
   border: 1px solid var(--term-line);
-  border-radius: var(--ui-popover-radius, 4px);
+  border-radius: var(--ui-radius-sm);
   background: transparent;
   color: var(--term-fg);
   cursor: pointer;
@@ -3481,7 +3480,7 @@ html[data-vibrancy="on"],
   box-sizing: border-box;
   background: var(--term-alt);
   border: 1px solid var(--term-line);
-  border-radius: var(--ui-popover-radius, 4px);
+  border-radius: var(--ui-radius-sm);
   color: var(--term-fg);
   font-family: var(--ui-font);
   font-size: 12px;
@@ -3566,7 +3565,7 @@ html[data-vibrancy="on"],
   flex-direction: column;
   max-height: min(70vh, 640px);
   border: 1px solid var(--term-line-s);
-  border-radius: 0;
+  border-radius: var(--ui-radius);
   font-family: var(--ui-font);
   animation: scaleIn 180ms cubic-bezier(.2, .8, .2, 1) both;
   -webkit-app-region: no-drag;
@@ -3599,7 +3598,7 @@ html[data-vibrancy="on"],
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 0;
+  border-radius: var(--ui-radius-sm);
   background: transparent;
   color: var(--term-mid);
   cursor: pointer;
@@ -3614,6 +3613,36 @@ html[data-vibrancy="on"],
 }
 @media (prefers-reduced-motion: reduce) {
   .ui-scrim, .ui-drawer-panel, .ui-modal-panel { animation: none; }
+}
+
+/* ── Toasts (sonner) ──────────────────────────────────────────────────────────
+   Sonner ships its own palette, radius, system font and a z-index of 999999999.
+   Re-point its theme variables at Michi's tokens so toasts sit in the same
+   surface family: solid --term-surface (small transient chrome over arbitrary
+   content stays opaque, like the right-click menu), shared radius, UI font, and
+   the managed z ladder. Rich-colour variants tint toward the semantic tokens.
+   :root prefix outranks sonner's [data-sonner-toaster][data-theme] blocks. */
+:root [data-sonner-toaster][data-theme] {
+  --normal-bg: var(--term-surface);
+  --normal-bg-hover: var(--term-alt);
+  --normal-border: var(--term-line);
+  --normal-border-hover: var(--term-line-s);
+  --normal-text: var(--term-fg);
+  --success-bg: color-mix(in srgb, var(--term-digest) 8%, var(--term-surface));
+  --success-border: color-mix(in srgb, var(--term-digest) 35%, var(--term-line));
+  --success-text: var(--term-digest);
+  --info-bg: color-mix(in srgb, var(--term-accent) 8%, var(--term-surface));
+  --info-border: color-mix(in srgb, var(--term-accent) 35%, var(--term-line));
+  --info-text: var(--term-accent);
+  --warning-bg: color-mix(in srgb, var(--term-select) 8%, var(--term-surface));
+  --warning-border: color-mix(in srgb, var(--term-select) 35%, var(--term-line));
+  --warning-text: var(--term-select);
+  --error-bg: color-mix(in srgb, var(--term-danger) 8%, var(--term-surface));
+  --error-border: color-mix(in srgb, var(--term-danger) 35%, var(--term-line));
+  --error-text: var(--term-danger);
+  --border-radius: var(--ui-radius);
+  font-family: var(--ui-font);
+  z-index: var(--z-toast);
 }
 
 /* ── Performance gates ─────────────────────────────────────────────────────────

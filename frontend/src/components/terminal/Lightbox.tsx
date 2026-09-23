@@ -62,7 +62,9 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 1000,
+        // Media viewer, not a dialog card: keeps its near-black backdrop (the
+        // standard for judging images) but joins the managed z ladder.
+        zIndex: 'var(--z-lightbox)',
         background: 'rgba(0,0,0,0.88)',
         display: 'flex',
         flexDirection: 'column',
@@ -83,7 +85,7 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
           maxWidth: '92vw',
           maxHeight: '82vh',
           objectFit: 'contain',
-          borderRadius: 8,
+          borderRadius: 'var(--ui-radius)',
           boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
           cursor: 'default',
         }}

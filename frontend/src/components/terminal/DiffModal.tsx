@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { ModalShell } from '../ui/ModalShell';
 
 export interface DiffModalProps {
   /** Workspace whose cwd the diff is resolved against. */
@@ -25,32 +25,13 @@ function lineColor(line: string): string | undefined {
 }
 
 /**
- * Read-only unified-diff viewer. Centered modal over a dim backdrop;
- * fetches GET /api/workspaces/:id/diff?path=... on mount. Dismiss on
- * Escape or backdrop click. Portal to <body> — pane ancestors set
- * `filter`, which would otherwise trap `position: fixed` inside the pane
- * (same reason Lightbox portals).
+ * Read-only unified-diff viewer on the shared ModalShell; fetches
+ * GET /api/workspaces/:id/diff?path=... on mount. Escape is captured so
+ * TerminalShell's own Escape (clear selection / leave fullscreen pages)
+ * does not also fire in the same keypress.
  */
 export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
   const [state, setState] = useState<FetchState>({ phase: 'loading' });
-
-  useEffect(() => {
-    // Capture phase + preventDefault + stopPropagation: the modal must
-    // consume Escape exclusively. TerminalShell's global bubble-phase
-    // keydown handler also acts on Escape (clears selection / leaves
-    // fullscreen pages) and would otherwise fire in the same keypress.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      // stopImmediatePropagation, not stopPropagation: when the event target
-      // is window/document itself, plain stopPropagation would not suppress
-      // the shell's bubble-phase listener registered on the same node.
-      e.stopImmediatePropagation();
-      onClose();
-    };
-    window.addEventListener('keydown', onKey, { capture: true });
-    return () => window.removeEventListener('keydown', onKey, { capture: true });
-  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,68 +64,38 @@ export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
     };
   }, [workspaceId, filePath]);
 
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
+  return (
+    <ModalShell
+      open
+      onClose={onClose}
+      title="Diff"
+      titleGlyph="±"
       aria-label={`diff: ${filePath}`}
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        background: 'rgba(0,0,0,0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 32,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(880px, 92vw)',
-          maxHeight: '84vh',
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'var(--term-bg, var(--app-bg))',
-          border: '1px solid var(--term-line)',
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '8px 12px',
-            borderBottom: '1px solid var(--term-line)',
-            fontSize: 11.5,
-            color: 'var(--term-fg)',
-          }}
-        >
-          <span style={{ color: 'var(--term-muted)', flexShrink: 0 }}>diff</span>
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      width={880}
+      maxHeight="84vh"
+      captureEscape
+      headerTrailing={
+        <>
+          <span
+            title={filePath}
+            style={{
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontSize: 11.5,
+              color: 'var(--term-fg)',
+            }}
+          >
             {filePath}
           </span>
           {state.phase === 'loaded' && state.truncated && (
             <span style={{ color: 'var(--term-muted)', flexShrink: 0, fontSize: 10 }}>truncated at 100KB</span>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="t-icon-btn"
-            aria-label="close diff"
-            style={{
-              color: 'var(--term-muted)',
-              padding: '2px 4px',
-              fontSize: 12,
-            }}
-          >
-            ✕
-          </button>
-        </div>
-        <div className="term-scrollbar" style={{ overflowY: 'auto', padding: '8px 12px' }}>
+        </>
+      }
+    >
+        <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 12px' }}>
           {state.phase === 'loading' && (
             <div style={{ fontSize: 11, color: 'var(--term-muted)', padding: '12px 0' }}>loading diff…</div>
           )}
@@ -170,8 +121,6 @@ export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
             </pre>
           )}
         </div>
-      </div>
-    </div>,
-    document.body,
+    </ModalShell>
   );
 }
