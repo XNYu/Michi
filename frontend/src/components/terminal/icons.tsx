@@ -181,3 +181,55 @@ export function StopIcon({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+// ---- Mention glyphs: one per @-mentionable thing (chat node + artifact types).
+
+export function ChatIcon({ size = 14, className }: IconProps) {
+  // Speech bubble with a tail — a conversation node you can cite.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3.5 3h9A1.5 1.5 0 0 1 14 4.5v5.5a1.5 1.5 0 0 1-1.5 1.5H7.5L4.5 14v-2.5h-1A1.5 1.5 0 0 1 2 10V4.5A1.5 1.5 0 0 1 3.5 3z" />
+    </svg>
+  );
+}
+
+export function DocIcon({ size = 14, className }: IconProps) {
+  // Plain page with text lines. No dog-ear, so it stays distinct from DigestIcon.
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="3.5" y="2" width="9" height="12" rx="1.5" />
+      <path d="M6 5.5h4M6 8h4M6 10.5h2.5" />
+    </svg>
+  );
+}
+
+export function FileIcon({ size = 14, className }: IconProps) {
+  // Blank dog-eared sheet — DigestIcon's silhouette without the text: an opaque file.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M4 2.5h5.4l2.6 2.6v8.4H4z" />
+      <path d="M9.4 2.5v2.6h2.6" />
+    </svg>
+  );
+}
+
+export function ImageIcon({ size = 14, className }: IconProps) {
+  // Frame with a sun and a ridge line.
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <circle cx="5.8" cy="6.3" r="1.1" />
+      <path d="M2.5 12l3.8-3.6 2.7 2.4 1.8-1.6 2.7 2.4" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ size = 14, className }: IconProps) {
+  // Two interlocking chain links.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M6.7 8.7a3.3 3.3 0 0 0 5 .4l2-2a3.3 3.3 0 0 0-4.7-4.7L7.8 3.5" />
+      <path d="M9.3 7.3a3.3 3.3 0 0 0-5-.4l-2 2a3.3 3.3 0 0 0 4.7 4.7l1.1-1.1" />
+    </svg>
+  );
+}

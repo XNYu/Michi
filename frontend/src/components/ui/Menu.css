@@ -143,6 +143,7 @@
 .michi-menu-caption { color: var(--term-muted); font-size: var(--m-captionSize); }
 .michi-menu-sublabel { margin-left: 6px; }
 .michi-menu-glyph { flex: 0 0 var(--m-iconSize); width: var(--m-iconSize); font-size: var(--m-iconSize); text-align: center; color: var(--term-mid); }
+.michi-menu-glyph > svg { display: block; margin: 0 auto; }
 .michi-menu-keys { flex-shrink: 0; min-width: 12px; text-align: right; color: var(--term-faint); font-size: var(--m-captionSize); }
 .michi-menu-pinned { flex-shrink: 0; border-top: 1px solid var(--term-line); margin-top: 4px; padding-top: 4px; }
 .michi-menu-search { flex-shrink: 0; border-bottom: 1px solid var(--term-line); margin-bottom: 4px; }

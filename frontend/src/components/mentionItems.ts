@@ -9,6 +9,8 @@ export interface AtMentionItem {
   description?: string;
   /** What kind of mention this is. */
   kind: 'context' | 'node';
+  /** Artifact type for `context` items (drives the popup glyph). */
+  artifactType?: 'doc' | 'file' | 'image' | 'link';
   /** The token inserted into the input (without the leading @). */
   token: string;
 }
@@ -59,11 +61,14 @@ export function buildAtMentionItems(
   for (const ctx of artifacts) {
     const label = ctx.name;
     if (q && !label.toLowerCase().includes(q)) continue;
+    // Legacy rows have no `type`; infer it the way ArtifactEntry documents (url → link, else doc).
+    const artifactType = ctx.type ?? (ctx.url ? 'link' : 'doc');
     items.push({
       id: `ctx-${ctx.id}`,
       label,
-      description: `${ctx.type ?? 'doc'}${ctx.pinnedAt ? ' · pinned' : ''}`,
+      description: `${artifactType}${ctx.pinnedAt ? ' · pinned' : ''}`,
       kind: 'context',
+      artifactType,
       token: ctx.name,
     });
   }

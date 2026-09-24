@@ -62,6 +62,17 @@ describe('buildAtMentionItems', () => {
     const items = buildAtMentionItems('', contexts, nodes, 'other', cross);
     expect(items.map(i => i.id)).toEqual(['node-n1', 'node-n2', 'ctx-c1', 'ctx-c2', 'node-x1']);
   });
+
+  it('tags artifacts with their type, inferring legacy rows (url → link, else doc)', () => {
+    const typed: ArtifactEntry[] = [
+      { ...mkCtx('i1', 'shot'), type: 'image' },
+      { ...mkCtx('l1', 'legacy-link'), filePath: '', url: 'https://example.com' },
+      mkCtx('d1', 'legacy-doc'),
+    ];
+    const items = buildAtMentionItems('', typed, [], 'other');
+    expect(items.map(i => i.artifactType)).toEqual(['image', 'link', 'doc']);
+    expect(items.map(i => i.description)).toEqual(['image', 'link', 'doc']);
+  });
 });
 
 describe('buildAtMentionItems — cross-tree nodes', () => {

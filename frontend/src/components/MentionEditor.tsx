@@ -26,6 +26,18 @@ import {
 import { PopoverSurface, MenuItem } from './ui/Popover';
 import { useMenuConfirm } from './ui/useMenuConfirm';
 import { docToDraft, draftToDoc } from './mentionDoc';
+import { ChatIcon, DocIcon, FileIcon, ImageIcon, LinkIcon } from './terminal/icons';
+
+/** Line glyph for a mention row: chat bubble for nodes, per-type icon for artifacts. */
+function MentionGlyph({ item }: { item: AtMentionItem }) {
+  if (item.kind === 'node') return <ChatIcon />;
+  switch (item.artifactType) {
+    case 'file': return <FileIcon />;
+    case 'image': return <ImageIcon />;
+    case 'link': return <LinkIcon />;
+    default: return <DocIcon />;
+  }
+}
 
 /**
  * TipTap-backed replacement for MentionTextarea. Presents the SAME controlled
@@ -201,7 +213,7 @@ function SuggestionPopup({
               onPick(i);
             }}
           >
-            <span className="michi-menu-glyph" aria-hidden="true">{it.kind === 'context' ? '📄' : '💬'}</span>
+            <span className="michi-menu-glyph" aria-hidden="true"><MentionGlyph item={it} /></span>
             <span className="michi-menu-label">
               {it.label}
             </span>
