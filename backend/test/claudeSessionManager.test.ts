@@ -83,6 +83,40 @@ describe('ClaudeSessionManager Agent Run ownership', () => {
     });
   }
 
+  test('native forks bypass both available and inflight warm sessions', async (t) => {
+    const manager = new Manager({
+      bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any,
+      mcpRegistry: makeMcpRegistry() as any,
+      mcpPort: 9876,
+      concurrencyCap: 4,
+      currentModel: 'claude-sonnet-4-5',
+      poolDisabled: false,
+      waitForWarm: true,
+    });
+    const pool = (manager as any).pool;
+    t.mock.method(pool, 'take', () => assert.fail('native fork must not take a blank warm session'));
+    t.mock.method(pool, 'waitForInflight', () => assert.fail('native fork must not wait for a blank warm session'));
+    const binary = require('../src/agents/claude/claudeBinary');
+    const spawnFixture = binary.spawnClaude;
+    const spawns: import('../src/agents/claude/claudeBinary').SpawnClaudeArgs[] = [];
+    t.mock.method(binary, 'spawnClaude', (args: import('../src/agents/claude/claudeBinary').SpawnClaudeArgs) => {
+      spawns.push(args);
+      return spawnFixture(args);
+    });
+    try {
+      const session = await manager.createSession({
+        id: 'fork-child', cwd: process.cwd(), forkFromNativeSessionId: 'native-parent',
+      });
+      assert.equal(spawns.length, 1);
+      assert.equal(spawns[0].forkSession, true);
+      assert.equal(spawns[0].resumeSessionId, 'native-parent');
+      assert.equal(session.nativeSessionId, spawns[0].sessionId);
+      assert.notEqual(session.nativeSessionId, 'native-parent');
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
   test('Run attempts bind owner/profile without a node-backed MCP slot', async () => {
     const selfTurns: unknown[] = [];
     const manager = createManager((info) => selfTurns.push(info));

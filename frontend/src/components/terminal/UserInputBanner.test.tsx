@@ -38,6 +38,22 @@ afterEach(() => {
 });
 
 describe('UserInputBanner', () => {
+  it('preserves native question IDs when wording is duplicated', () => {
+    const onSubmit = vi.fn();
+    const userInput = req({ questions: ['first', 'second'].map((id) => ({
+      id, question: 'Same question?', options: [{ label: 'Yes' }, { label: 'No' }], multiSelect: false,
+    })) });
+    render(<UserInputBanner userInput={userInput} onSubmit={onSubmit} onSkip={() => {}} />);
+    fireEvent.click(screen.getByRole('radio', { name: /Yes/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next question' }));
+    fireEvent.click(screen.getByRole('radio', { name: /No/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit all/ }));
+    expect(onSubmit).toHaveBeenCalledWith([
+      { id: 'first', question: 'Same question?', answer: 'Yes' },
+      { id: 'second', question: 'Same question?', answer: 'No' },
+    ]);
+  });
+
   it('submits the selected option', () => {
     const onSubmit = vi.fn();
     render(<UserInputBanner userInput={req()} onSubmit={onSubmit} onSkip={() => {}} />);

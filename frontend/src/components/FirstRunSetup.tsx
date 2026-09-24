@@ -207,7 +207,7 @@ export default function FirstRunSetup() {
                     </span>
                     <span style={{ fontSize: 11.5, color: 'var(--term-muted)', marginTop: 2, display: 'block' }}>
                       {disabled
-                        ? 'Not available on this machine'
+                        ? (r.unavailableReason ?? 'Not available on this machine')
                         : rowNeedsKey
                           ? 'Bring your own provider (OpenAI, Anthropic…)'
                           : 'Ready to use — no key required'}

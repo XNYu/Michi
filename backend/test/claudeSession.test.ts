@@ -176,6 +176,38 @@ function makeSessionDeps(overrides: Partial<import('../src/agents/claude/ClaudeS
 // ---- Suite ------------------------------------------------------------------
 
 describe('ClaudeSession', () => {
+  test('fork uses resume plus a new pinned identity and persists only the child binding', async () => {
+    const { ClaudeSession } = freshClaudeSession();
+    const session = new ClaudeSession('node-001', makeSessionDeps({ parentChatId: 'parent-node' }));
+    try {
+      await session.spawnFresh('native-parent');
+      const args = capturedSpawnArgs[0] as any;
+      assert.equal(args.resumeSessionId, 'native-parent');
+      assert.equal(args.forkSession, true);
+      assert.match(args.sessionId, /^[0-9a-f-]{36}$/);
+      assert.notEqual(args.sessionId, 'native-parent');
+      assert.equal(session.nativeSessionId, args.sessionId);
+      assert.deepEqual(session.getHistory(), []);
+      createdChildren[0].emitInit(args.sessionId);
+      createdChildren[0].emitResult();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(require('../src/services/dbRepository')._setNodeCalls, [['node-001', args.sessionId]]);
+      assert.equal(session.getState(), 'idle');
+    } finally { await session.dispose(); }
+  });
+
+  test('fork refuses a CLI init that reuses the parent identity', async () => {
+    const { ClaudeSession } = freshClaudeSession();
+    const session = new ClaudeSession('node-001', makeSessionDeps());
+    try {
+      await session.spawnFresh('native-parent');
+      createdChildren[0].emitInit('native-parent');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(require('../src/services/dbRepository')._setNodeCalls, []);
+      assert.notEqual(session.nativeSessionId, 'native-parent');
+      assert.equal(session.getState(), 'crashed');
+    } finally { await session.dispose(); }
+  });
   beforeEach(() => {
     stubSpawnClaude();
     stubDbRepository();

@@ -279,6 +279,7 @@ export const userAgentConfigs = sqliteTable('user_agent_configs', {
   providerByRuntime:   text('provider_by_runtime').notNull().default('{}'),
   modelByRuntime:      text('model_by_runtime').notNull().default('{}'),
   reasoningByRuntime:  text('reasoning_by_runtime').notNull().default('{}'),
+  nativeResumeByRuntime: text('native_resume_by_runtime').notNull().default('{}'),
   updatedAt:           integer('updated_at').notNull(),
 });
 

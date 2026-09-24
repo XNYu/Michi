@@ -41,6 +41,7 @@ import { ensureDurableGraphNode } from "../services/graphCommands";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from '../services/nativeResume';
 import { tryForkChatSession } from '../services/nativeFork';
+import { isNativeResumeEnabled } from '../services/agentConfig';
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import {
     buildCompatibleResumeContext,
@@ -999,7 +1000,18 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 ownerUserId: req.user?.id ?? null,
                 ...primaryAgentSessionOptions(primaryAgent),
             };
-            const session = canReuse ? live : runtime.capabilities.nativeResume
+            const nativeResumeEnabled = isNativeResumeEnabled(runtimeId, req.user?.id);
+            const transcript = !nativeResumeEnabled ? listMessages(resolvedNodeId, req.user?.id)
+                .filter((message) => message.role === 'user' || message.role === 'assistant')
+                .map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content })) : [];
+            const session = canReuse ? live : runtime.capabilities.nativeResume && !nativeResumeEnabled
+                ? await runtime.newSession({
+                    ...loadOptions,
+                    parentChatId: row?.parent_node_id ?? undefined,
+                    mergeContexts: [buildCompatibleResumeContext(transcript, { nodeId: resolvedNodeId })]
+                        .filter((value): value is string => !!value),
+                })
+                : runtime.capabilities.nativeResume
                 ? await loadNativeSession(runtime, loadOptions, nativeResumeId(runtimeId, row))
                 : await runtime.loadSession(loadOptions);
             if (!session) return res.status(404).json({ error: 'Native session is unavailable' });
@@ -1283,6 +1295,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     && (!existingSignature || existingSignature.reasoning === targetSignature.reasoning)
                     && (!targetSignature.modelId || liveSession.currentModelId === targetSignature.modelId || !!liveSession.setModel),
                 nativeResumeAvailable,
+                nativeResumeEnabled: isNativeResumeEnabled(runtimeId, michiUserId),
                 nativeResumeSettings: runtime.capabilities.nativeResumeSettings,
                 existingSignature,
                 targetSignature,
@@ -1643,6 +1656,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
     });
 
+    // Compaction had no HTTP surface at all, so `chatHub.compact()` — and with
+    // it Codex's native `thread/compact/start` and Kiro's ACP compact command —
+    // was unreachable from the client. Mirrors the steer route's ownership
+    // checks; 409 means the active session's runtime cannot compact.
     router.post("/chats/:chatId/compact", requireChatOwner, async (req, res) => {
         const requestedIdentifier = req.params.chatId;
         const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
@@ -1653,6 +1670,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
                 return res.status(403).json({ error: "not the pane owner", started: false });
             }
+            // Compaction is normally requested while idle, when chatHub holds
+            // no active session — pass the registry-resolved one.
             const result = await chatHub.compact(nodeId, instructions, session ?? undefined);
             res.status(result.started ? 200 : 409).json(result);
         } catch (err) {

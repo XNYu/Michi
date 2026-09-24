@@ -52,6 +52,11 @@ describe('claudeProjectsPath', () => {
     assert.equal(result, expected);
   });
 
+  test('encodes underscores, spaces, and dots like the native CLI', () => {
+    assert.equal(getClaudeProjectsDir('/tmp/my_project.v1/work dir'),
+      path.join(os.homedir(), '.claude', 'projects', '-tmp-my-project-v1-work-dir'));
+  });
+
   // ── Case 2: getClaudeJsonlPath appends sessionId.jsonl ───────────────────
 
   test('getClaudeJsonlPath returns <HOME>/.claude/projects/-x-y/sid-1.jsonl', () => {
@@ -62,7 +67,7 @@ describe('claudeProjectsPath', () => {
 
   // ── Case 3: trailing slash behavior ──────────────────────────────────────
   //
-  // Implementation: replace(/\//g, '-') on the raw cwd string.
+  // Non-alphanumeric characters in the raw cwd string become dashes.
   // '/Users/foo/bar/' → '-Users-foo-bar-'  (trailing dash)
   // This is the actual behavior — document it as a known quirk.
 

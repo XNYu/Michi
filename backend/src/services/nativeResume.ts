@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { AgentRuntime, AgentSession, LoadAgentSessionOptions } from '../agents/types';
 import { dropSession, getSession } from '../agents/sessionRegistry';
+import { isNativeResumeEnabled } from './agentConfig';
 
 export function nativeResumeId(runtimeId: string, binding: { id?: string; acp_session_id?: string | null; external_session_id?: string | null } | null | undefined): string | null {
   const id = (runtimeId === 'claude' || runtimeId === 'codex'
@@ -53,7 +54,8 @@ export async function loadNativeSession(
   options: LoadAgentSessionOptions,
   expectedNativeId?: string | null,
 ): Promise<AgentSession | null> {
-  if (!runtime.capabilities.nativeResume || !runtime.loadSession) return null;
+  if (!runtime.capabilities.nativeResume || !runtime.loadSession
+    || !isNativeResumeEnabled(runtime.id, options.ownerUserId)) return null;
   for (let attempt = 0; ; attempt++) {
     try {
       const session = await runtime.loadSession(options);

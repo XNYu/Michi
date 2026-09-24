@@ -1,7 +1,6 @@
 import type { NormalizedEvent } from '../../services/chatEvents';
 
-// Wire notification method names — inlined to avoid importing codexProtocol
-// (parallel tasks may not have created it yet). Will be consolidated later.
+// Wire names are checked against the pinned official schema by codexContract.test.
 const N = {
   agentMessageDelta: 'item/agentMessage/delta',
   reasoningTextDelta: 'item/reasoning/textDelta',
@@ -16,13 +15,30 @@ const N = {
   tokenUsageUpdated: 'thread/tokenUsage/updated',
   turnStarted: 'turn/started',
   turnCompleted: 'turn/completed',
-  compactStarted: 'thread/compact/start',
-  compactCompleted: 'thread/compact/completed',
+  // `thread/compacted` is the only compaction *notification* in the
+  // app-server ServerNotification union, and it is documented as deprecated in
+  // favour of the `contextCompaction` thread item. `thread/compact/start` is a
+  // ClientRequest method and `thread/compact/completed` does not exist at all,
+  // so the previous names here could never match an inbound notification.
+  compacted: 'thread/compacted',
   error: 'error',
   mcpStartupStatus: 'mcpServer/startupStatus/updated',
 } as const;
 
 const TOOL_ITEM_TYPES = new Set(['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch']);
+
+/**
+ * ThreadItem's compaction variant is camelCase `contextCompaction`. The
+ * snake_case spellings live on ResponseItem (delivered via
+ * `rawResponseItem/completed`, which we do not subscribe to) and are kept here
+ * only so a daemon that echoes either spelling is still understood.
+ */
+const COMPACTION_ITEM_TYPES = new Set(['contextCompaction', 'compaction', 'context_compaction']);
+
+// Codex reserves an initial portion of the model context window for its
+// baseline prompt. Mirror the Codex TUI normalization so the indicator tracks
+// the effective context the conversation can consume.
+const CODEX_CONTEXT_BASELINE_TOKENS = 12_000;
 
 /**
  * Grapheme-safe 200-character cap on a detail string.
@@ -64,6 +80,13 @@ function tokenUsageSnapshot(value: unknown): CodexTokenUsageSnapshot | undefined
     reasoningOutputTokens: numberField(value, 'reasoningOutputTokens'),
   };
   return Object.values(snapshot).some((field) => field !== undefined) ? snapshot : undefined;
+}
+
+function contextUsagePercentage(activeTokens: number, modelContextWindow: number): number {
+  if (modelContextWindow <= CODEX_CONTEXT_BASELINE_TOKENS) return 100;
+  const effectiveWindow = modelContextWindow - CODEX_CONTEXT_BASELINE_TOKENS;
+  const usedTokens = Math.max(0, activeTokens - CODEX_CONTEXT_BASELINE_TOKENS);
+  return Math.min(100, Math.max(0, (usedTokens / effectiveWindow) * 100));
 }
 
 function safeJson(value: unknown): string {
@@ -313,7 +336,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
       case N.itemStarted: {
         const item = (p['item'] ?? p) as Record<string, unknown>;
         const itemType = typeof item['type'] === 'string' ? item['type'] : '';
-        if (itemType === 'compaction' || itemType === 'context_compaction') {
+        if (COMPACTION_ITEM_TYPES.has(itemType)) {
           emit({ kind: 'compaction_start', detail: itemType });
           break;
         }
@@ -339,13 +362,13 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
       case N.itemCompleted: {
         const item = (p['item'] ?? p) as Record<string, unknown>;
         const itemType = typeof item['type'] === 'string' ? item['type'] : '';
-        if (itemType === 'compaction' || itemType === 'context_compaction') {
+        if (COMPACTION_ITEM_TYPES.has(itemType)) {
           emit({ kind: 'compaction_end', detail: itemType });
           break;
         }
         if (!TOOL_ITEM_TYPES.has(itemType)) break;
         const id = typeof item['id'] === 'string' ? item['id'] : '';
-        const status = item['status'] === 'failed' ? 'failed' : 'completed';
+        const status = item['status'] === 'declined' ? 'declined' : item['status'] === 'failed' ? 'failed' : 'completed';
         const presentation = toolPresentation(item);
         if (id) toolPresentations.set(id, presentation);
         const rawOutput = item['aggregatedOutput'] ?? item['output'] ?? item['result'] ?? item['error'];
@@ -411,15 +434,19 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           : isRecord(p['last'])
             ? p['last']
             : undefined;
-        lastTurnTokenUsage = tokenUsageSnapshot(last ?? total);
+        // `total` is cumulative across the thread and keeps increasing after
+        // compaction. `last` is the latest active context size and is the value
+        // Codex itself uses for context-window reporting. Fall back to `total`
+        // only for older flat payloads that do not provide `last`.
+        const active = last ?? total;
+        lastTurnTokenUsage = tokenUsageSnapshot(active);
         const window = tokenUsage['modelContextWindow'] ?? p['modelContextWindow'];
         const modelContextWindow = typeof window === 'number' ? window : 0;
         if (modelContextWindow > 0) {
-          const totalTokens =
-            typeof total['totalTokens'] === 'number' ? total['totalTokens'] : 0;
-          const contextUsagePercentage = (totalTokens / modelContextWindow) * 100;
-          lastContextUsagePercentage = contextUsagePercentage;
-          emit({ kind: 'context_usage', contextUsagePercentage });
+          const activeTokens = numberField(active, 'totalTokens') ?? 0;
+          const percentage = contextUsagePercentage(activeTokens, modelContextWindow);
+          lastContextUsagePercentage = percentage;
+          emit({ kind: 'context_usage', contextUsagePercentage: percentage });
         }
         break;
       }
@@ -449,21 +476,21 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
             kind: 'runtime_error',
             error: errorMessage(turn['error']) ?? lastRuntimeError ?? 'Codex turn failed',
           });
+          emit({ kind: 'turn_end', stopReason: 'error' });
           lastRuntimeError = undefined;
           break;
         }
-        emit({ kind: 'turn_end', stopReason: stopReason === 'interrupted' ? 'interrupted' : stopReason });
+        emit({ kind: 'turn_end', stopReason: stopReason === 'interrupted' ? 'cancelled' : stopReason });
         lastRuntimeError = undefined;
         break;
       }
 
-      case N.compactStarted: {
-        emit({ kind: 'compaction_start', detail: 'thread/compact/start' });
-        break;
-      }
-
-      case N.compactCompleted: {
-        emit({ kind: 'compaction_end', detail: 'thread/compact/completed' });
+      // Legacy end-of-compaction signal. Newer daemons express the whole
+      // lifecycle through the `contextCompaction` item instead, which the
+      // item/started + item/completed cases above already handle; this only
+      // closes out a compaction whose item never completed.
+      case N.compacted: {
+        emit({ kind: 'compaction_end', detail: 'thread/compacted' });
         break;
       }
 

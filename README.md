@@ -560,9 +560,19 @@ state such as the active workspace. Durable workspace data is cleared from the
 mirror after a successful backend hydration. Preferences are also persisted
 through backend config storage.
 
-Native agent sessions are resumed when the runtime supports it. If an exact
-native resume is unavailable, Michi can reconstruct context from the persisted
-ancestor chain and transcript.
+Native agent sessions are resumed when the runtime supports it. Settings > Model
+has a Native Resume switch for each supported runtime, enabled by default.
+Disabling it reconstructs cold chat sessions from the persisted ancestor chain
+and transcript; already-live sessions are not interrupted. Preferences are
+stored independently per runtime and, in cloud mode, per user.
+
+New ordinary branches use Kiro native rewind/fork or Claude `--resume --fork-session`
+when the parent is idle, has native history, and belongs to the same runtime,
+workspace, tree, and owner. Each child has its own native identity. Unsupported
+or missing native history falls back to textual context; ambiguous runtime
+failures are surfaced rather than silently starting over. Pi, active
+parents, and custom-agent branches retain the existing context-based path.
+Native Fork is independent of the Native Resume preference.
 
 #### Kiro ACP Engines
 

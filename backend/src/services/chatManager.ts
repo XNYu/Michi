@@ -4,7 +4,7 @@ import type { AgentReasoning, AgentSession, ChatMessage, ExtraContext, NewAgentS
 import * as sessionRegistry from "../agents/sessionRegistry";
 import { normalizeWorkspaceCwd } from "../agents/tools/pathSandbox";
 import { getRuntime } from "../agents/registry";
-import { getAgentConfig } from "./agentConfig";
+import { getAgentConfig, isNativeResumeEnabled } from "./agentConfig";
 import {
     getNode,
     getWorkspace,
@@ -316,6 +316,7 @@ export class ChatManager {
             existingSignature,
             targetSignature,
             nativeResumeAvailable: !!runtime.loadSession && runtime.capabilities.nativeResume && !!nativeId,
+            nativeResumeEnabled: isNativeResumeEnabled(runtimeId, input.ownerUserId),
             nativeResumeSettings: runtime.capabilities.nativeResumeSettings,
             liveSessionMatches: !!live && live.runtimeId === runtimeId
                 && (live.nativeSessionId ?? live.id) === nativeId

@@ -1,6 +1,6 @@
 /**
  * Hand-curated wire surface of the codex app-server v2 protocol — the ONLY
- * protocol import for runtime code. Strings verified against codex-cli 0.144.2.
+ * protocol import for runtime code. Contract baseline: test/contracts/codex.
  */
 
 export const CODEX_SERVER_REQUESTS = {
@@ -9,6 +9,7 @@ export const CODEX_SERVER_REQUESTS = {
   permissionsApproval: 'item/permissions/requestApproval',
   requestUserInput: 'item/tool/requestUserInput',
   mcpElicitation: 'mcpServer/elicitation/request',
+  currentTime: 'currentTime/read',
 } as const;
 
 export type CodexRpcId = string | number;

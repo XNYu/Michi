@@ -53,6 +53,8 @@ export function ModelPane({
   const showProviderModels = !!caps?.models;
   const showReasoning = !!caps?.reasoning;
   const showApiKeys = !!caps?.apiKeys;
+  const showKiroSidecarTitles = agentStatus?.runtime === 'kiro'
+    && agentStatus.availableRuntimes.some((runtime) => runtime.id === 'kiro' && runtime.available);
 
   return (
     <div>
@@ -98,6 +100,10 @@ export function ModelPane({
         />
       )}
 
+      {agentStatus?.capabilities.nativeResume && agentStatus.nativeResumeByRuntime && (
+        <NativeResumeToggle key={agentStatus.runtime} status={agentStatus} onChanged={refreshAgentStatus} />
+      )}
+
       {showApiKeys && agentStatus && (() => {
         const active = (agentStatus.providers ?? []).find((p) => p.id === agentStatus.provider);
         if (!active) return null;
@@ -116,7 +122,7 @@ export function ModelPane({
 
       {agentStatus && <WebSearchControls status={agentStatus} onChanged={refreshAgentStatus} />}
 
-      <KiroSidecarTitleToggle />
+      {showKiroSidecarTitles && <KiroSidecarTitleToggle />}
       <FollowUpsToggle />
       <BypassPermissionsToggle />
 
@@ -125,6 +131,37 @@ export function ModelPane({
           <PermissionGrantsList projectId={activeProjectId} />
         </div>
       )}
+    </div>
+  );
+}
+
+function NativeResumeToggle({ status, onChanged }: { status: AgentStatus; onChanged: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(status.nativeResumeByRuntime?.[status.runtime] !== false);
+  useEffect(() => { setEnabled(status.nativeResumeByRuntime?.[status.runtime] !== false); }, [status.nativeResumeByRuntime, status.runtime]);
+
+  const save = async (value: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await saveAgentOptions({ nativeResumeByRuntime: { [status.runtime]: value } });
+      if (!result.ok) { setError(result.error); return; }
+      setEnabled(value);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save Native Resume');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 12.5, color: 'var(--term-fg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`Native Resume for ${status.label}`} />
+        <span>Native Resume <span style={{ color: 'var(--term-muted)' }}>({status.label})</span></span>
+      </div>
+      {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 11, marginTop: 6 }}>{error}</div>}
     </div>
   );
 }
@@ -165,7 +202,8 @@ function RuntimePicker({
           border: '1px solid var(--term-line)',
           background: 'var(--term-surface-glass)',
           color: 'var(--term-fg)',
-          minWidth: 320,
+          width: 'min(320px, 100%)',
+          minWidth: 0,
         }}
       >
         {selectedRuntime === '' && (

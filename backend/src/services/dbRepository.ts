@@ -1868,6 +1868,7 @@ export interface UserAgentConfigRow {
   provider_by_runtime: string;
   model_by_runtime: string;
   reasoning_by_runtime: string;
+  native_resume_by_runtime: string;
   updated_at: number;
 }
 
@@ -1877,12 +1878,12 @@ export function getUserAgentConfig(userId: string): UserAgentConfigRow | null {
 
 export function upsertUserAgentConfig(
   userId: string,
-  patch: Partial<Pick<UserAgentConfigRow, 'runtime' | 'provider' | 'web_search_provider' | 'provider_by_runtime' | 'model_by_runtime' | 'reasoning_by_runtime'>>,
+  patch: Partial<Pick<UserAgentConfigRow, 'runtime' | 'provider' | 'web_search_provider' | 'provider_by_runtime' | 'model_by_runtime' | 'reasoning_by_runtime' | 'native_resume_by_runtime'>>,
 ): void {
   const now = Date.now();
   getDb().prepare(`
-    INSERT INTO user_agent_configs (user_id, runtime, provider, web_search_provider, provider_by_runtime, model_by_runtime, reasoning_by_runtime, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO user_agent_configs (user_id, runtime, provider, web_search_provider, provider_by_runtime, model_by_runtime, reasoning_by_runtime, native_resume_by_runtime, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       runtime              = COALESCE(excluded.runtime, user_agent_configs.runtime),
       provider             = COALESCE(excluded.provider, user_agent_configs.provider),
@@ -1890,6 +1891,7 @@ export function upsertUserAgentConfig(
       provider_by_runtime  = COALESCE(?, user_agent_configs.provider_by_runtime),
       model_by_runtime     = COALESCE(excluded.model_by_runtime, user_agent_configs.model_by_runtime),
       reasoning_by_runtime = COALESCE(excluded.reasoning_by_runtime, user_agent_configs.reasoning_by_runtime),
+      native_resume_by_runtime = COALESCE(?, user_agent_configs.native_resume_by_runtime),
       updated_at           = excluded.updated_at
   `).run(
     userId,
@@ -1899,9 +1901,11 @@ export function upsertUserAgentConfig(
     patch.provider_by_runtime ?? '{}',
     patch.model_by_runtime ?? null,
     patch.reasoning_by_runtime ?? null,
+    patch.native_resume_by_runtime ?? '{}',
     now,
     patch.web_search_provider ?? null,
     patch.provider_by_runtime ?? null,
+    patch.native_resume_by_runtime ?? null,
   );
 }
 

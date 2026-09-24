@@ -48,6 +48,12 @@ export interface AgentRuntimeOption {
   id: RuntimeId;
   label: string;
   available: boolean;
+  /**
+   * Why the runtime is unavailable (missing CLI, missing credentials). Present
+   * only when `available` is false. Backed by a real local probe per runtime —
+   * before that probe existed the backend always sent `available: true`.
+   */
+  unavailableReason?: string;
   /** True iff this runtime needs a user-supplied API key before it can run. */
   requiresApiKey?: boolean;
 }
@@ -73,6 +79,7 @@ export interface AgentStatus {
   reasoning?: AgentReasoning;
   /** Per-runtime reasoning overrides set by the user. */
   reasoningByRuntime?: Record<string, AgentReasoning>;
+  nativeResumeByRuntime?: Record<string, boolean>;
   hasRequiredKey: boolean;
   capabilityDescriptor?: CapabilityDescriptor;
 }
@@ -143,6 +150,7 @@ export async function fetchReady(): Promise<ReadyResponse> {
 }
 
 export interface AgentOptionsPatch {
+  nativeResumeByRuntime?: Record<string, boolean>;
   runtime?: RuntimeId;
   provider?: string;
   /** null disables web search. */

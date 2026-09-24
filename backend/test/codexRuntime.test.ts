@@ -109,6 +109,61 @@ for (const scenario of ['success', 'missing', 'mcp-error', 'wrong-identity']) {
 
 // ---- Tests ------------------------------------------------------------------
 
+test('native fork binds the child thread, uses its MCP configuration, and does not replay ancestors', async () => {
+  const calls: Array<{ method: string; params: any }> = [];
+  const runtime = makeRuntime({ request: async (method: string, params: any) => {
+    calls.push({ method, params });
+    if (method === 'thread/fork') return { thread: { id: 'native-child' } };
+    return {};
+  } });
+  try {
+    const opts = { sessionId: 'fork-child', cwd: '/tmp', parentChatId: 'absent-parent',
+      model: 'child-model', reasoning: 'high' as const, sourceNativeSessionId: 'native-parent' };
+    const child = await runtime.forkSession(opts);
+    assert.equal(child.id, 'fork-child');
+    assert.equal(child.nativeSessionId, 'native-child');
+    assert.equal(child.parentChatId, 'absent-parent');
+    assert.deepEqual(child.getHistory(), []);
+    assert.doesNotMatch((child as any).firstTurnPrefix, /Previous conversation chain/);
+    const fork = calls.find((call) => call.method === 'thread/fork')!;
+    assert.equal(fork.params.threadId, 'native-parent');
+    assert.equal(fork.params.cwd, '/tmp');
+    assert.equal(fork.params.model, 'child-model');
+    assert.equal(fork.params.reasoningEffort, 'high');
+    assert.match(JSON.stringify(fork.params.config), /slot-/);
+    assert.equal(fork.params.approvalPolicy, 'on-request');
+    assert.equal(fork.params.sandbox, 'workspace-write');
+    assert.equal(calls.some((call) => call.method === 'thread/start'), false);
+    assert.equal(await runtime.forkSession(opts), child);
+    assert.equal(calls.filter((call) => call.method === 'thread/fork').length, 1);
+  } finally { await runtime.shutdown(); }
+});
+
+for (const scenario of ['missing', 'unsupported', 'auth', 'same-id', 'no-id']) {
+  test(`native fork cleans up failed child allocation: ${scenario}`, async () => {
+    const registry = makeStubMcpRegistry();
+    let disposed = 0;
+    registry.dispose = async () => { disposed++; };
+    const runtime = new CodexRuntime(makeStubBridge(), registry, 3001, { client: makeStubClient({
+      request: async (method: string) => {
+        if (method !== 'thread/fork') return {};
+        if (scenario === 'missing') throw new Error('no rollout found for thread id native-parent');
+        if (scenario === 'unsupported') throw new Error('Method not found');
+        if (scenario === 'auth') throw new Error('Authentication failed');
+        return { thread: { id: scenario === 'same-id' ? 'native-parent' : undefined } };
+      },
+    }) });
+    try {
+      await assert.rejects(runtime.forkSession({ sessionId: `child-${scenario}`, cwd: '/tmp', model: 'test-model',
+        sourceNativeSessionId: 'native-parent' }), (error: unknown) => {
+        assert.equal(error instanceof NativeResumeUnavailableError, ['missing', 'unsupported'].includes(scenario));
+        return true;
+      });
+      assert.equal(disposed, 1);
+    } finally { await runtime.shutdown(); }
+  });
+}
+
 test('listModels filters hidden models and marks isDefault', async () => {
   const modelListResult = {
     data: [

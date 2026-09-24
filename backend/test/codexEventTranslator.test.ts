@@ -330,7 +330,7 @@ describe('codexEventTranslator', () => {
     const { emitted, feed } = makeTranslator();
 
     feed('item/completed', {
-      item: { id: 'item-001', type: 'commandExecution', status: 'success' },
+      item: { id: 'item-001', type: 'commandExecution', status: 'completed' },
     });
 
     assert.equal(emitted.length, 1);
@@ -359,7 +359,7 @@ describe('codexEventTranslator', () => {
     const { emitted, feed } = makeTranslator();
 
     feed('item/completed', {
-      item: { id: 'item-007', type: 'agentMessage', status: 'success' },
+      item: { id: 'item-007', type: 'agentMessage', text: 'done' },
     });
 
     assert.equal(emitted.length, 0);
@@ -410,22 +410,56 @@ describe('codexEventTranslator', () => {
 
   // ── Token usage ─────────────────────────────────────────────────────────────
 
-  test('thread/tokenUsage/updated emits context_usage using modelContextWindow', () => {
+  test('thread/tokenUsage/updated normalizes legacy flat usage against the effective context window', () => {
     const { emitted, feed } = makeTranslator();
 
     feed('thread/tokenUsage/updated', {
-      total: { totalTokens: 50_000 },
+      total: { totalTokens: 59_000 },
       modelContextWindow: 200_000,
     });
 
     assert.equal(emitted.length, 1);
     const ev = emitted[0] as unknown as AnyEv;
     assert.equal(ev['kind'], 'context_usage');
-    // 50_000 / 200_000 * 100 = 25
+    // (59_000 - 12_000) / (200_000 - 12_000) * 100 = 25
     assert.ok(
       Math.abs((ev['contextUsagePercentage'] as number) - 25) < 1e-9,
       `contextUsagePercentage: expected 25, got ${ev['contextUsagePercentage']}`,
     );
+  });
+
+  test('thread/tokenUsage/updated uses active last usage instead of cumulative thread total', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: { totalTokens: 318_400 },
+        last: { totalTokens: 59_000 },
+        modelContextWindow: 200_000,
+      },
+    });
+
+    assert.equal(emitted.length, 1);
+    const ev = emitted[0] as unknown as AnyEv;
+    assert.equal(ev['kind'], 'context_usage');
+    assert.ok(
+      Math.abs((ev['contextUsagePercentage'] as number) - 25) < 1e-9,
+      `contextUsagePercentage: expected 25, got ${ev['contextUsagePercentage']}`,
+    );
+  });
+
+  test('thread/tokenUsage/updated clamps active usage to 100 percent', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: { totalTokens: 450_000 },
+        last: { totalTokens: 250_000 },
+        modelContextWindow: 200_000,
+      },
+    });
+
+    assert.deepEqual(emitted, [{ kind: 'context_usage', contextUsagePercentage: 100 }]);
   });
 
   test('turn/completed carries the last native Codex token breakdown into usage_summary', () => {
@@ -466,7 +500,7 @@ describe('codexEventTranslator', () => {
     }, {
       kind: 'usage_summary',
       source: 'native',
-      contextUsagePercentage: 25,
+      contextUsagePercentage: 0,
       totalTokens: 1534,
       inputTokens: 1234,
       cachedInputTokens: 800,
@@ -529,10 +563,11 @@ describe('codexEventTranslator', () => {
       turn: { status: 'failed' },
     });
 
-    assert.equal(emitted.length, 2);
+    assert.equal(emitted.length, 3);
     const runtimeError = emitted[1] as unknown as AnyEv;
     assert.equal(runtimeError['kind'], 'runtime_error');
     assert.equal(runtimeError['error'], 'Codex turn failed');
+    assert.deepEqual(emitted[2], { kind: 'turn_end', stopReason: 'error' });
   });
 
   test('turn/started resets turn timer without emitting', () => {
@@ -570,10 +605,11 @@ describe('codexEventTranslator', () => {
       },
     });
 
-    assert.equal(emitted.length, 2);
+    assert.equal(emitted.length, 3);
     const ev = emitted[1] as unknown as AnyEv;
     assert.equal(ev['kind'], 'runtime_error');
     assert.equal(ev['error'], 'Unable to decode local image: invalid PNG data');
+    assert.deepEqual(emitted[2], { kind: 'turn_end', stopReason: 'error' });
   });
 
   test('unknown method emits nothing (forward-compat)', () => {
@@ -649,7 +685,7 @@ describe('codexEventTranslator', () => {
     });
     feed('turn/completed', { turn: { status: 'failed' } });
 
-    assert.equal(emitted.length, 2);
+    assert.equal(emitted.length, 3);
     const ev = emitted[1] as unknown as AnyEv;
     assert.equal(ev['kind'], 'runtime_error');
     assert.equal(ev['error'], 'Codex runtime error');
@@ -693,6 +729,6 @@ describe('codexEventTranslator', () => {
     startTurn();
     feed('turn/completed', { turn: { status: 'interrupted' } });
     const turnEnd = emitted.find((e) => e.kind === 'turn_end');
-    assert.equal(turnEnd && 'stopReason' in turnEnd ? turnEnd.stopReason : '', 'interrupted');
+    assert.equal(turnEnd && 'stopReason' in turnEnd ? turnEnd.stopReason : '', 'cancelled');
   });
 });

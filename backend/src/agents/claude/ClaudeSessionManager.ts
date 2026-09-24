@@ -42,6 +42,7 @@ export interface ClaudeSessionManagerDeps {
 
 export interface CreateClaudeSessionOptions {
   id: string;
+  forkFromNativeSessionId?: string;
   owner?: RuntimeSessionOwner;
   cwd: string;
   parentChatId?: string;
@@ -161,14 +162,14 @@ export class ClaudeSessionManager {
     // Warm sessions are intentionally profile-neutral chat resources. A Run
     // attempt has immutable tools/permissions/profile state and must cold-spawn
     // unless a future pool explicitly keys those dimensions.
-    let session = owner.kind === 'chat_node' && !opts.profileHash
+    let session = owner.kind === 'chat_node' && !opts.profileHash && !opts.forkFromNativeSessionId
       ? this.pool.take(opts.cwd, model)
       : undefined;
     let releaseReservation: (() => void) | undefined;
     let releasePending: (() => void) | undefined;
 
     try {
-      if (!session && owner.kind === 'chat_node' && !opts.profileHash && !this.deps.poolDisabled && this.deps.waitForWarm) {
+      if (!session && owner.kind === 'chat_node' && !opts.profileHash && !opts.forkFromNativeSessionId && !this.deps.poolDisabled && this.deps.waitForWarm) {
         session = await this.pool.waitForInflight(opts.cwd, model);
       }
       if (session) {
@@ -204,7 +205,7 @@ export class ClaudeSessionManager {
           reasoning: opts.reasoning ?? null,
         });
         releasePending = this.trackPendingSession(session);
-        await session.spawnFresh();
+        await session.spawnFresh(opts.forkFromNativeSessionId);
       }
 
       if (opts.firstTurnPrefix) {

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentSession,
   AgentTurnInput,
+  CancelAck,
   ChatMessage,
   LoadAgentSessionOptions,
   NewAgentSessionOptions,
@@ -29,6 +30,7 @@ import { createTranslator } from './claudeEventTranslator';
 import { getClaudeJsonlPath } from './claudeProjectsPath';
 import { buildClaudeMcpConfig } from './claudeMcpConfig';
 import { resolveShowImage } from './showImage';
+import { imageMimeType, prepareAttachments, type ResolvedAttachment } from '../attachments';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission, setNodeExternalSessionId } from '../../services/dbRepository';
 import { resolveReasoning, resolveClaudeConfigDir } from '../../services/agentConfig';
@@ -358,7 +360,10 @@ export class ClaudeSession implements AgentSession {
         this.followUpsExperimentMode,
         this.enableFollowUps,
       );
-      const textForModel = reminder ? outgoingText + reminder : outgoingText;
+      // Non-image attachments have no stream-json block type, so name them by
+      // path rather than dropping them silently; the CLI can Read them itself.
+      const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
+      const textForModel = (reminder ? outgoingText + reminder : outgoingText) + promptNote;
 
       this.armFollowUpsHookPoc(userTurnCount);
 
@@ -368,7 +373,7 @@ export class ClaudeSession implements AgentSession {
       this.firstModelEnvelopeThisTurn = false;
       this.stdinWriteAt = perf.now();
       const tStdin = this.stdinWriteAt;
-      const imageBlocks = buildClaudeImageBlocks(input);
+      const imageBlocks = buildClaudeImageBlocks(imageAttachments);
       if (this.resumePending) {
         this.initTimer = setTimeout(() => this.failProcess(new Error('Claude native restore did not initialize within 20 seconds. Original session retained; please retry.')), 20_000);
       }
@@ -594,10 +599,31 @@ export class ClaudeSession implements AgentSession {
     }
   }
 
-  async cancel(): Promise<void> {
-    if (!this.turnAbort && this.state !== 'in_turn') return;
+  /**
+   * stream-json has no interrupt method, so the stop is a signalled process
+   * death. `retireProcess()` only resolves once exit was confirmed (it throws
+   * on an unconfirmed exit), which makes a resolved call a strong — but still
+   * indirect — signal that the turn stopped. Reported as `inferred` so the UI
+   * does not claim Claude itself acknowledged the cancel.
+   */
+  async cancel(): Promise<CancelAck> {
+    if (!this.turnAbort && this.state !== 'in_turn') {
+      return { acknowledged: false, source: 'inferred', confidence: 'unknown' };
+    }
     this.turnAbort?.abort();
-    await this.retireProcess();
+    try {
+      await this.retireProcess();
+    } catch {
+      // Unconfirmed exit: the process may still be running, so do not claim
+      // the turn stopped. The hub's force-finish timer terminalises the turn.
+      return { acknowledged: false, source: 'inferred', confidence: 'unknown' };
+    }
+    return {
+      acknowledged: true,
+      source: 'inferred',
+      confidence: 'unknown',
+      nativeMethod: 'SIGINT/SIGKILL',
+    };
   }
 
   private clearInteractions(): void {
@@ -879,7 +905,7 @@ export class ClaudeSession implements AgentSession {
 
   // ---- Spawn ------------------------------------------------------------------
 
-  async spawnFresh(): Promise<void> {
+  async spawnFresh(forkFrom?: string): Promise<void> {
     if (this.retirement) await this.retirement;
     if (this.child) await this.retireProcess();
     this.turnAbort?.signal.throwIfAborted();
@@ -939,7 +965,11 @@ export class ClaudeSession implements AgentSession {
     });
     // claude --session-id requires UUID format; michi nodeIds don't conform.
     // The placeholder is overwritten when system/init reports the real session_id.
-    await this.doSpawn({ sessionId: randomUUID(), mcpConfig });
+    const sessionId = randomUUID();
+    // Pin the CHILD identity before init, never the source token. Forking must
+    // not repair, append to, or publish the parent's JSONL as the child's state.
+    if (forkFrom) this.externalSessionId = sessionId;
+    await this.doSpawn({ sessionId, resumeSessionId: forkFrom, forkSession: !!forkFrom, mcpConfig });
     perf.measure('claude:spawn_fresh', tSpawnFresh, { sid: this.id });
   }
 
@@ -1016,7 +1046,7 @@ export class ClaudeSession implements AgentSession {
 
   // ---- Private helpers -------------------------------------------------------
 
-  private async doSpawn(opts: { sessionId?: string; resumeSessionId?: string; mcpConfig: string }): Promise<void> {
+  private async doSpawn(opts: { sessionId?: string; resumeSessionId?: string; forkSession?: boolean; mcpConfig: string }): Promise<void> {
     this.turnAbort?.signal.throwIfAborted();
     if (this.state === 'disposed') throw new Error('Claude session was disposed during startup');
     this.state = 'spawning';
@@ -1134,6 +1164,7 @@ export class ClaudeSession implements AgentSession {
         cwd: this.cwd,
         sessionId: opts.sessionId,
         resumeSessionId: opts.resumeSessionId,
+        forkSession: opts.forkSession,
         permissionMode: 'default',
         permissionPromptTool: 'mcp____michi_internal____approve',
         mcpConfigInline: opts.mcpConfig,
@@ -1718,28 +1749,16 @@ function userEnvelope(text: string, imageBlocks: ClaudeImageBlock[] = []): strin
   return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
 }
 
-const CLAUDE_IMAGE_MEDIA_TYPES: Record<string, string> = {
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-};
-
 /** Read local image attachments into base64 stream-json image blocks. Mirrors
- *  Codex's localImage forwarding; non-image or unreadable files are skipped. */
-function buildClaudeImageBlocks(input?: AgentTurnInput): ClaudeImageBlock[] {
+ *  Codex's localImage forwarding. Paths are pre-validated by
+ *  partitionAttachments; a file that vanished since then is skipped. */
+function buildClaudeImageBlocks(images: ResolvedAttachment[]): ClaudeImageBlock[] {
   const blocks: ClaudeImageBlock[] = [];
-  const seen = new Set<string>();
-  for (const attachment of input?.attachments ?? []) {
-    const absPath = attachment.absPath;
-    if (!path.isAbsolute(absPath) || seen.has(absPath)) continue;
-    const mediaType = CLAUDE_IMAGE_MEDIA_TYPES[path.extname(absPath).toLowerCase()];
+  for (const attachment of images) {
+    const mediaType = imageMimeType(attachment.absPath);
     if (!mediaType) continue;
     try {
-      if (!fs.statSync(absPath).isFile()) continue;
-      const data = fs.readFileSync(absPath).toString('base64');
-      seen.add(absPath);
+      const data = fs.readFileSync(attachment.absPath).toString('base64');
       blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
     } catch {
       // Unreadable attachment — skip rather than fail the turn.

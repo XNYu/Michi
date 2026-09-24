@@ -12,7 +12,7 @@ import type {
   RuntimeToolProfile,
   SteerResult,
 } from '../types';
-import type { NormalizedEvent, PermissionOption, UserInputQuestion } from '../../services/chatEvents';
+import type { NormalizedEvent, PermissionOption, UserInputAnswer, UserInputQuestion } from '../../services/chatEvents';
 import type { SubagentInfo } from 'michi-shared';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
@@ -21,6 +21,7 @@ import { EventQueue } from '../eventQueue';
 import { abortable } from '../runtimeLifecycle';
 import { createCodexTranslator } from './codexEventTranslator';
 import { resolveShowImage } from '../claude/showImage';
+import { prepareAttachments } from '../attachments';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
 import { grantPermission } from '../../services/dbRepository';
 import { log } from '../../services/logger';
@@ -34,27 +35,6 @@ import { fallbackCodexTitle, generateCodexTitle } from './codexTitleGenerator';
 import { buildRunMcpSlotCallbacks } from '../runs/runMcpSlot';
 
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
-
-const CODEX_LOCAL_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp']);
-
-function localImagePaths(input?: AgentTurnInput): string[] {
-  const seen = new Set<string>();
-  const paths: string[] = [];
-  for (const attachment of input?.attachments ?? []) {
-    const absPath = attachment.absPath;
-    if (!path.isAbsolute(absPath)) continue;
-    if (!CODEX_LOCAL_IMAGE_EXTENSIONS.has(path.extname(absPath).toLowerCase())) continue;
-    if (seen.has(absPath)) continue;
-    try {
-      if (!fs.statSync(absPath).isFile()) continue;
-    } catch {
-      continue;
-    }
-    seen.add(absPath);
-    paths.push(absPath);
-  }
-  return paths;
-}
 
 const INTERNAL_METADATA_TOOLS = new Set([
   'set_branch_overview',
@@ -214,7 +194,7 @@ export class CodexSession implements AgentSession {
   // User input state — same pattern as permissions
   private readonly pendingUserInputs = new Map<
     number,
-    { resolve: (answers: Array<{ question: string; answer: string }> | null) => void; timer: NodeJS.Timeout }
+    { resolve: (answers: UserInputAnswer[] | null) => void; timer: NodeJS.Timeout }
   >();
 
   /** Called when a tool is granted always-allow, with the canonical tool name. */
@@ -299,7 +279,11 @@ export class CodexSession implements AgentSession {
         this.followUpsExperimentMode,
         this.enableFollowUps,
       );
+      // `localImage` is the only attachment input variant Michi sends, so
+      // non-image attachments are named by path instead of dropped silently.
+      const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
       const textForModel = outgoingText
+        + promptNote
         + (reminder || '')
         + (this.followUpsHookPocEnabled
           ? buildCodexFollowUpsHookPocInstruction(this.followUpsExperimentMode)
@@ -355,7 +339,7 @@ export class CodexSession implements AgentSession {
 
       const turnInput: Array<Record<string, unknown>> = [
         { type: 'text', text: textForModel },
-        ...localImagePaths(input).map((imagePath) => ({ type: 'localImage', path: imagePath })),
+        ...imageAttachments.map((img) => ({ type: 'localImage', path: img.absPath })),
       ];
 
       // Start the real turn immediately. Title and response events share the
@@ -391,11 +375,11 @@ export class CodexSession implements AgentSession {
       if (this.cancelRequested) {
         turnEventGate.acceptTitle = false;
         if (mainStartResult.ok) {
-          for await (const ev of this.queue.drainUntilTurnEnd()) {
-            if (ev.kind === 'runtime_error') break;
-          }
+          // Consume the terminal marker even after an error, so it cannot end
+          // the next turn when this native completion races with turn/start.
+          for await (const _ev of this.queue.drainUntilTurnEnd()) { /* drain */ }
         }
-        yield { kind: 'turn_end', stopReason: 'interrupted' };
+        yield { kind: 'turn_end', stopReason: 'cancelled' };
         return;
       }
       if (!mainStartResult.ok) {
@@ -412,8 +396,11 @@ export class CodexSession implements AgentSession {
         void titlePromise.then((title) => {
           if (!turnEventGate.acceptTitle) return;
           if (!this.cancelRequested) {
-            void this.client.request('thread/setName', { threadId: this.threadId, name: title }).catch((err) => {
-              log.debug('chat', 'codex thread/setName failed after pre-turn title generation', {
+            // Method is `thread/name/set` (ThreadSetNameParams), not
+            // `thread/setName` — the latter does not exist in the app-server
+            // ClientRequest union and every call silently failed here.
+            void this.client.request('thread/name/set', { threadId: this.threadId, name: title }).catch((err) => {
+              log.debug('chat', 'codex thread/name/set failed after pre-turn title generation', {
                 nodeId: this.id,
                 threadId: this.threadId,
                 error: (err as Error).message,
@@ -431,6 +418,17 @@ export class CodexSession implements AgentSession {
       while (true) {
         const ev = await this.queue.pull();
         if (ev === null) break;
+        if (ev.kind === 'runtime_error') {
+          // Consumers such as ChatHub stop iterating as soon as they see the
+          // error. Consume its terminal marker first, so it cannot leak into
+          // the next turn, and do not wait for an unrelated title task.
+          turnEventGate.acceptTitle = false;
+          for await (const terminal of this.queue.drainUntilTurnEnd()) {
+            if (terminal.kind === 'turn_end') pendingTurnEnd = terminal;
+          }
+          yield ev;
+          break;
+        }
         if (ev.kind === 'turn_end') {
           pendingTurnEnd = ev;
           const stateAtTurnEnd = this.state as SessionState;
@@ -499,7 +497,13 @@ export class CodexSession implements AgentSession {
       ? [...this.activeTurnThreadIds]
       : [this.threadId];
     const results = await Promise.all(threadIds.map((threadId) => this.interruptThread(threadId)));
-    return { acknowledged: results.length > 0 && results.every(Boolean) };
+    // turn/interrupt is a real request with a response, so this ack is native.
+    return {
+      acknowledged: results.length > 0 && results.every(Boolean),
+      source: 'native',
+      confidence: 'native',
+      nativeMethod: 'turn/interrupt',
+    };
   }
 
   async steer(text: string): Promise<SteerResult> {
@@ -600,7 +604,7 @@ export class CodexSession implements AgentSession {
     entry.resolve(null);
   }
 
-  respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>): void {
+  respondToUserInput(requestId: number, answers: UserInputAnswer[]): void {
     const entry = this.pendingUserInputs.get(requestId);
     if (!entry) return;
     clearTimeout(entry.timer);
@@ -619,11 +623,21 @@ export class CodexSession implements AgentSession {
   async askUserInput(
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const isCurrent = this.controlIsCurrent(params);
-    if (!isCurrent()) { respond({ answers: null }); return; }
-    const questions = Array.isArray(params.questions) ? params.questions : [];
+    const currentTurn = this.controlIsCurrent(params);
+    const isCurrent = () => currentTurn() && !signal?.aborted;
+    if (!isCurrent()) { respond({ answers: {} }); return; }
+    const questions: Record<string, unknown>[] = Array.isArray(params.questions) ? params.questions : [];
+    // The generic question UI persists answers and is not a secret-input surface.
+    // Do not downgrade a secret prompt to a normal text field.
+    if (questions.some((q) => !q || typeof q.id !== 'string' || q.isSecret === true)
+      || new Set(questions.map((q) => q.id)).size !== questions.length) {
+      respond({ answers: {} });
+      return;
+    }
     const parsedQuestions: UserInputQuestion[] = questions.map((q: Record<string, unknown>) => ({
+      id: q.id as string,
       question: String(q.question ?? ''),
       header: typeof q.header === 'string' ? q.header : undefined,
       options: Array.isArray(q.options)
@@ -632,36 +646,48 @@ export class CodexSession implements AgentSession {
             description: typeof o.description === 'string' ? o.description : undefined,
           }))
         : [],
-      multiSelect: q.multiSelect === true,
+      multiSelect: false,
     }));
 
-    const answers = await this.requestUserInput(parsedQuestions);
+    const answers = await this.requestUserInput(parsedQuestions, signal);
 
     if (answers && isCurrent()) {
-      const responseObj: Record<string, string> = {};
+      const responseObj: Record<string, { answers: string[] }> = Object.create(null);
       for (const a of answers) {
-        responseObj[a.question] = a.answer;
+        if (!a || typeof a.answer !== 'string') continue;
+        const matches = parsedQuestions.filter((q) => a.id !== undefined ? q.id === a.id : q.question === a.question);
+        // Older renderers and Run brokers send labels. Only accept an unambiguous
+        // label; duplicate wording must never cross-answer two distinct questions.
+        if (matches.length === 1) responseObj[matches[0].id!] = { answers: [a.answer] };
       }
       respond({ answers: responseObj });
     } else {
-      respond({ answers: null });
+      respond({ answers: {} });
     }
   }
 
   private async requestUserInput(
     questions: UserInputQuestion[],
-  ): Promise<Array<{ question: string; answer: string }> | null> {
+    signal?: AbortSignal,
+  ): Promise<UserInputAnswer[] | null> {
     const isCurrent = this.controlIsCurrent();
     if (!isCurrent()) return null;
     const requestId = ++this.nextRequestId;
     this.queue.push({ kind: 'user_input_request', requestId, questions });
 
-    const answers = await new Promise<Array<{ question: string; answer: string }> | null>((resolve) => {
+    const answers = await new Promise<UserInputAnswer[] | null>((resolve) => {
+      const onAbort = () => this.skipUserInput(requestId);
+      const finish = (value: UserInputAnswer[] | null) => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve(value);
+      };
       const timer = setTimeout(() => {
         this.pendingUserInputs.delete(requestId);
-        resolve(null);
+        finish(null);
       }, APPROVE_TIMEOUT_MS);
-      this.pendingUserInputs.set(requestId, { resolve, timer });
+      this.pendingUserInputs.set(requestId, { resolve: finish, timer });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
 
     if (!isCurrent()) return null;
@@ -675,33 +701,8 @@ export class CodexSession implements AgentSession {
   ): Promise<void> {
     const isCurrent = this.controlIsCurrent(params);
     if (!isCurrent()) { respond({ action: 'cancel', content: null, _meta: null }); return; }
-    const requestId = ++this.nextRequestId;
-    const serverName = typeof params['serverName'] === 'string' ? params['serverName'] : 'MCP server';
-    const message = typeof params['message'] === 'string' ? params['message'] : 'Approve this MCP request?';
-
-    const options: PermissionOption[] = [
-      { optionId: 'allow_once', name: 'Allow', kind: 'allow_once' },
-      { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
-    ];
-    this.queue.push({
-      kind: 'permission_request',
-      requestId,
-      title: `Approve request from ${serverName}?`,
-      detail: message,
-      options,
-      source: 'codex_approval',
-    });
-
-    const result = await this.awaitPermission(requestId);
-    if (!isCurrent()) { respond({ action: 'cancel', content: null, _meta: null }); return; }
-    if (result !== null && result.startsWith('allow')) {
-      respond({ action: 'accept', content: null, _meta: null });
-      return;
-    }
-    if (result === null) {
-      respond({ action: 'cancel', content: null, _meta: null });
-      return;
-    }
+    // A binary approval cannot collect requestedSchema or complete URL verification.
+    // Fail closed until a mode-specific interaction surface is implemented.
     respond({ action: 'decline', content: null, _meta: null });
   }
 
@@ -717,8 +718,10 @@ export class CodexSession implements AgentSession {
     method: string,
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const isCurrent = this.controlIsCurrent(params);
+    const currentTurn = this.controlIsCurrent(params);
+    const isCurrent = () => currentTurn() && !signal?.aborted;
     if (!isCurrent()) { respond({ decision: 'decline' }); return; }
     const toolName = canonicalToolNameFromMethod(method);
 
@@ -733,7 +736,7 @@ export class CodexSession implements AgentSession {
           workspaceId: this.workspaceId,
           toolName: canonicalPermissionToolName(toolName),
           input: params,
-        }), this.interactionAbort.signal);
+        }), signal ? AbortSignal.any([this.interactionAbort.signal, signal]) : this.interactionAbort.signal);
       } catch {
         respond({ decision: 'decline' });
         return;
@@ -769,7 +772,7 @@ export class CodexSession implements AgentSession {
             options,
             source: 'codex_approval',
           });
-          const result = await this.awaitPermission(requestId);
+          const result = await this.awaitPermission(requestId, signal);
           if (!isCurrent()) { respond({ decision: 'decline' }); return; }
           if (result !== null && result.startsWith('allow')) {
             respond({ decision: 'accept' });
@@ -799,7 +802,7 @@ export class CodexSession implements AgentSession {
       source: 'codex_approval',
     });
 
-    const result = await this.awaitPermission(requestId);
+    const result = await this.awaitPermission(requestId, signal);
 
     if (!isCurrent()) { respond({ decision: 'decline' }); return; }
 
@@ -819,13 +822,20 @@ export class CodexSession implements AgentSession {
     respond({ decision: 'decline' });
   }
 
-  private awaitPermission(requestId: number): Promise<string | null> {
+  private awaitPermission(requestId: number, signal?: AbortSignal): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
+      const onAbort = () => this.cancelPermission(requestId);
+      const finish = (value: string | null) => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve(value);
+      };
       const timer = setTimeout(() => {
         this.pendingPermissions.delete(requestId);
-        resolve(null);
+        finish(null);
       }, APPROVE_TIMEOUT_MS);
-      this.pendingPermissions.set(requestId, { resolve, timer });
+      this.pendingPermissions.set(requestId, { resolve: finish, timer });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     });
   }
 

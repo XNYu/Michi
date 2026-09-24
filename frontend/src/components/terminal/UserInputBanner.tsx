@@ -179,6 +179,7 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
   const handleSubmit = () => {
     markAnswered(safeIdx);
     const answers: UserInputAnswer[] = questions.map((question, idx) => ({
+      ...(question.id !== undefined ? { id: question.id } : {}),
       question: question.question,
       answer: buildAnswer(idx),
     }));

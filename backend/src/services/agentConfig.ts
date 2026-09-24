@@ -22,6 +22,8 @@ export interface AgentConfig {
   providerByRuntime: Record<string, string>;
   modelByRuntime: Record<string, string>;
   reasoningByRuntime: Record<string, AgentReasoning>;
+  /** Omitted runtimes keep native resume enabled. Live sessions are unaffected. */
+  nativeResumeByRuntime?: Record<string, boolean>;
   /**
    * Claude config dir override (CLAUDE_CONFIG_DIR for spawned claude
    * processes). Unset = claude's own default (~/.claude). Desktop-only,
@@ -69,9 +71,19 @@ const DEFAULTS: AgentConfig = {
   providerByRuntime: {},
   modelByRuntime: {},
   reasoningByRuntime: {},
+  nativeResumeByRuntime: {},
 };
 
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+function booleanRuntimeMap(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([, enabled]) => typeof enabled === 'boolean'));
+}
+
+export function isNativeResumeEnabled(runtimeId: string, userId?: string | null): boolean {
+  return getAgentConfig(userId ?? undefined).nativeResumeByRuntime?.[runtimeId] !== false;
+}
 
 let current: AgentConfig = {
   ...DEFAULTS,
@@ -176,6 +188,7 @@ export function loadAgentConfig(): AgentConfig {
           }
         }
       }
+      next.nativeResumeByRuntime = booleanRuntimeMap(a.nativeResumeByRuntime);
       // Migrate legacy `agent.model` (single string) into modelByRuntime[<current runtime>]
       if (typeof a.model === "string" && a.model && !next.modelByRuntime[next.runtime]) {
         next.modelByRuntime[next.runtime] = a.model;
@@ -260,6 +273,9 @@ export function getAgentConfig(userId?: string): AgentConfig {
       providerByRuntime,
       modelByRuntime,
       reasoningByRuntime,
+      nativeResumeByRuntime: (() => {
+        try { return booleanRuntimeMap(JSON.parse(row.native_resume_by_runtime)); } catch { return {}; }
+      })(),
     };
   }
   // Desktop / no userId: return the in-memory singleton.
@@ -286,6 +302,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
     const mergedReasoningByRuntime = patch.reasoningByRuntime
       ? { ...existing.reasoningByRuntime, ...patch.reasoningByRuntime }
       : { ...existing.reasoningByRuntime };
+    const nativeResumeByRuntime = { ...existing.nativeResumeByRuntime, ...booleanRuntimeMap(patch.nativeResumeByRuntime) };
     upsertUserAgentConfig(userId, {
       runtime: (patch.runtime ?? existing.runtime) as string,
       provider: patch.provider ?? existing.provider,
@@ -293,6 +310,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       provider_by_runtime: JSON.stringify(mergedProviderByRuntime),
       model_by_runtime: JSON.stringify(mergedModelByRuntime),
       reasoning_by_runtime: JSON.stringify(mergedReasoningByRuntime),
+      native_resume_by_runtime: JSON.stringify(nativeResumeByRuntime),
     });
     return {
       ...existing,
@@ -301,6 +319,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       providerByRuntime: mergedProviderByRuntime,
       modelByRuntime: mergedModelByRuntime,
       reasoningByRuntime: mergedReasoningByRuntime,
+      nativeResumeByRuntime,
     };
   }
   // Desktop: mutate in-memory singleton + persist to disk.
@@ -316,6 +335,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
   merged.reasoningByRuntime = patch.reasoningByRuntime
     ? { ...current.reasoningByRuntime, ...patch.reasoningByRuntime }
     : { ...current.reasoningByRuntime };
+  merged.nativeResumeByRuntime = { ...current.nativeResumeByRuntime, ...booleanRuntimeMap(patch.nativeResumeByRuntime) };
   current = merged;
   persist();
   return current;

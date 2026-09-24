@@ -1,4 +1,10 @@
-import type { CapabilityDescriptor, JsonValue, ModelReasoningCapabilities } from "michi-shared";
+import type {
+  CapabilityDescriptor,
+  EventConfidence,
+  EventSource,
+  JsonValue,
+  ModelReasoningCapabilities,
+} from "michi-shared";
 import type { NormalizedEvent } from "../services/chatEvents";
 
 export type RuntimeId = string;
@@ -70,10 +76,28 @@ export interface AgentProviderInfo extends ModelReasoningCapabilities {
   modelLocked?: boolean;
 }
 
+/**
+ * Result of a runtime's local install/auth probe.
+ *
+ * `/agent/status` used to hardcode `available: true` for every registered
+ * runtime, which made the runtime picker's "unavailable" state dead code and
+ * meant a user with no kiro-cli / claude / codex installed was told all four
+ * were ready — the failure only surfaced on the first send. Probes must be
+ * cheap enough to run on a status request: filesystem and cached state only,
+ * never a process spawn or a network call.
+ */
+export interface RuntimeAvailability {
+  available: boolean;
+  /** Short human-readable reason when unavailable (never a credential value). */
+  detail?: string;
+}
+
 export interface AgentRuntimeOption {
   id: RuntimeId;
   label: string;
   available: boolean;
+  /** Why the runtime is unavailable, when it is. */
+  unavailableReason?: string;
   /**
    * True iff this runtime needs a user-supplied API key before it can run
    * (mirrors `capabilities.apiKeys`). Lets the first-run setup card label each
@@ -231,6 +255,7 @@ export interface AgentStatus {
   reasoning?: AgentReasoning;
   /** Per-runtime reasoning overrides set by the user. */
   reasoningByRuntime?: Record<string, AgentReasoning>;
+  nativeResumeByRuntime?: Record<string, boolean>;
   hasRequiredKey: boolean;
   capabilityDescriptor?: CapabilityDescriptor;
 }
@@ -280,6 +305,18 @@ export interface AgentSession {
 
 export interface CancelAck {
   acknowledged: boolean;
+  /**
+   * Provenance of the acknowledgement. Runtimes with a real protocol-level
+   * interrupt response (Codex `turn/interrupt`, Pi `agent.abort()`) report
+   * `native`. Runtimes that can only observe a proxy for the stop — an ACP
+   * notification accepted by the transport, or a confirmed process death —
+   * report `inferred` so the UI never claims the agent itself confirmed.
+   * Defaults to `native` for backward compatibility with older adapters.
+   */
+  source?: EventSource;
+  confidence?: EventConfidence;
+  /** Wire method or mechanism that produced the ack, for the activity line. */
+  nativeMethod?: string;
 }
 
 export interface SteerResult {
@@ -291,7 +328,15 @@ export interface SteerResult {
 
 export interface CompactResult {
   started: boolean;
+  /**
+   * True when this call also observed compaction *finish* (Kiro's ACP command
+   * is a request that resolves on completion). Runtimes whose compaction
+   * completes asynchronously through the event stream (Codex emits a
+   * `contextCompaction` item) leave this unset and let the translator close
+   * the lifecycle, so the hub does not emit a premature `compaction_end`.
+   */
   completed?: boolean;
+  /** Human-readable summary the runtime returned, when it returns one. */
   detail?: string;
 }
 
@@ -301,6 +346,15 @@ export interface AgentRuntime {
   label: string;
   capabilities: AgentCapabilities;
   capabilityDescriptor?: CapabilityDescriptor;
+
+  /**
+   * Cheap, synchronous local readiness probe: is the CLI installed and are
+   * credentials present? Runtimes that need no local binary (Pi) may omit it
+   * and are treated as available. Must not spawn processes or hit the network —
+   * `/agent/status` calls this on every poll. Runtimes that do run a one-time
+   * version/auth probe should cache it at construction and read the cache here.
+   */
+  checkAvailability?(): RuntimeAvailability;
 
   warm(cwd: string, opts?: { model?: string | null }): Promise<void>;
   newSession(opts: NewAgentSessionOptions): Promise<AgentSession>;

@@ -64,6 +64,31 @@ describe('agentConfig events', () => {
     });
 });
 
+describe('desktop native resume preferences', () => {
+    beforeEach(stubFsWrite);
+    afterEach(restoreFsWrite);
+    test('merges runtime flags and validates persisted boolean values on reload', () => {
+        const fsCjs = require('fs');
+        const originalRead = fsCjs.readFileSync;
+        const { loadAgentConfig, getAgentConfig, updateAgentConfig, isNativeResumeEnabled } = require('../src/services/agentConfig');
+        try {
+            fsCjs.readFileSync = () => JSON.stringify({ agent: { nativeResumeByRuntime: { codex: false, claude: 'false', kiro: null } } });
+            loadAgentConfig();
+            assert.deepEqual(getAgentConfig().nativeResumeByRuntime, { codex: false });
+            assert.equal(isNativeResumeEnabled('claude'), true);
+            updateAgentConfig({ nativeResumeByRuntime: { claude: false } });
+            updateAgentConfig({ runtime: 'kiro' });
+            assert.deepEqual(getAgentConfig().nativeResumeByRuntime, { codex: false, claude: false });
+            updateAgentConfig({ nativeResumeByRuntime: { codex: true } });
+            assert.deepEqual(getAgentConfig().nativeResumeByRuntime, { codex: true, claude: false });
+        } finally {
+            fsCjs.readFileSync = () => '{}';
+            loadAgentConfig();
+            fsCjs.readFileSync = originalRead;
+        }
+    });
+});
+
 describe('agentConfig runtime defaults', () => {
     test('Codex defaults to extra-high reasoning effort', () => {
         const { getBuiltinDefaultReasoning } = require('../src/services/agentConfig');

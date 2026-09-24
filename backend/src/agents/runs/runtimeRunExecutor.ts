@@ -16,7 +16,7 @@ import type {
   RuntimePermissionDecision,
   RuntimeSessionOwner,
 } from '../types';
-import type { NormalizedEvent } from '../../services/chatEvents';
+import type { NormalizedEvent, UserInputQuestion } from '../../services/chatEvents';
 import type {
   AgentRunExecutionEvent,
   AgentRunExecutionOutcome,
@@ -46,7 +46,7 @@ export interface RuntimeRunExecutorDeps {
 
 type PendingInteraction =
   | { kind: 'permission'; requestId: number }
-  | { kind: 'user_input'; requestId: number; questions: Array<{ question: string }> };
+  | { kind: 'user_input'; requestId: number; questions: UserInputQuestion[] };
 
 // ---------------------------------------------------------------------------
 // Supplemental input types
@@ -454,7 +454,11 @@ export class RuntimeRunExecutor implements AgentRunExecutor {
           return;
         }
         if (pending?.kind === 'user_input') {
-          const answers = pending.questions.map((question) => ({ question: question.question, answer: text }));
+          const answers = pending.questions.map((question) => ({
+            ...(question.id !== undefined ? { id: question.id } : {}),
+            question: question.question,
+            answer: text,
+          }));
           session.respondToUserInput?.(pending.requestId, answers);
           pending = null;
           return;

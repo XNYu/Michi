@@ -183,10 +183,20 @@ test('send includes existing image attachments as native localImage inputs', asy
     });
     await turnPromise;
 
-    assert.deepEqual(turnStartParams?.input, [
-      { type: 'text', text: 'What is in this image?' },
-      { type: 'localImage', path: imagePath },
-    ]);
+    const input = turnStartParams?.input as Array<Record<string, unknown>>;
+    // Images still go as native localImage blocks, de-duplicated by path.
+    assert.deepEqual(
+      input.filter((part) => part.type === 'localImage'),
+      [{ type: 'localImage', path: imagePath }],
+    );
+    // Non-image and unreadable attachments used to be dropped in total silence.
+    // They are now named in the prompt so the agent can read them itself.
+    const text = input.find((part) => part.type === 'text')?.text as string;
+    assert.ok(text.startsWith('What is in this image?'), 'user text is preserved verbatim first');
+    assert.match(text, /\[Attachments\]/);
+    assert.ok(text.includes(`notes.txt → ${textPath}`), 'readable non-image is referenced by path');
+    assert.match(text, /missing\.jpg \(could not be read/);
+    assert.ok(!text.includes(imagePath), 'inlined images are not also listed as attachments');
   } finally {
     await session.dispose();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -276,11 +286,19 @@ test('first Codex request streams reasoning immediately and delivers title whene
     required: ['title'],
     additionalProperties: false,
   });
+  // `thread/name/set` is the real app-server method; the previous
+  // `thread/setName` does not exist in the ClientRequest union, so every call
+  // rejected into a swallowed debug log and the codex-side thread stayed
+  // unnamed. This assertion is what pins the correct spelling.
   assert.ok(requests.some(
-    ({ method, params }) => method === 'thread/setName'
+    ({ method, params }) => method === 'thread/name/set'
       && params.threadId === 'thread-main'
       && params.name === '刷新令牌机制',
-  ));
+  ), 'title must be written back with thread/name/set');
+  assert.ok(
+    !requests.some(({ method }) => method === 'thread/setName'),
+    'thread/setName is not a real method and must not be sent',
+  );
   const kinds = events.map((event) => event.kind);
   assert.equal(kinds[0], 'thought');
   assert.ok(kinds.indexOf('chunk') < kinds.indexOf('title'), 'body must display without waiting for title');
@@ -411,7 +429,7 @@ test('cancelling parallel Codex title and reasoning turns interrupts both', asyn
 
   assert.equal(events.some((event) => event.kind === 'title'), false);
   assert.equal(events.at(-1)?.kind, 'turn_end');
-  assert.equal(events.at(-1)?.stopReason, 'interrupted');
+  assert.equal(events.at(-1)?.stopReason, 'cancelled');
   assert.deepEqual(
     requests
       .filter(({ method }) => method === 'turn/interrupt')

@@ -51,7 +51,14 @@ test('Codex normal cancellation acknowledges the correct native turn and reuses 
   try {
     const a = drain(session.send('A'));
     await tick();
-    assert.deepEqual(await session.cancel(), { acknowledged: true });
+    // Codex has a real interrupt response, so the ack carries native
+    // provenance; Kiro/Claude report the same shape tagged `inferred`.
+    assert.deepEqual(await session.cancel(), {
+      acknowledged: true,
+      source: 'native',
+      confidence: 'native',
+      nativeMethod: 'turn/interrupt',
+    });
     const interrupt = client.calls.find((c: any) => c.method === 'turn/interrupt');
     assert.deepEqual(interrupt.params, { threadId: 'native', turnId: 'turn-1' });
     client.emit('native', 'turn/completed', { turn: { id: 'turn-1', status: 'interrupted' } });
@@ -104,7 +111,12 @@ test('Codex cancellation before start response settles on failed native completi
   try {
     const a = drain(session.send('A'));
     await tick();
-    assert.deepEqual(await session.cancel(), { acknowledged: false });
+    assert.deepEqual(await session.cancel(), {
+      acknowledged: false,
+      source: 'native',
+      confidence: 'native',
+      nativeMethod: 'turn/interrupt',
+    });
     accept({ turn: { id: 'early' } });
     await tick();
     client.emit('native', 'turn/completed', { turn: { id: 'early', status: 'failed', error: { message: 'cancelled before startup' } } });
@@ -125,7 +137,12 @@ test('Codex never claims acknowledgement for rejected interrupts and quarantines
     await tick();
     client.emit('native', 'item/agentMessage/delta', { turnId: 'turn-1', delta: 'first' });
     await next;
-    assert.deepEqual(await session.cancel(), { acknowledged: false });
+    assert.deepEqual(await session.cancel(), {
+      acknowledged: false,
+      source: 'native',
+      confidence: 'native',
+      nativeMethod: 'turn/interrupt',
+    });
     await a.return!();
     assert.equal(session.needsRecovery(), true);
     await assert.rejects(drain(session.send('B')), /native recovery/);

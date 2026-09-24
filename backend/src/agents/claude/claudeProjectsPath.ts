@@ -28,7 +28,8 @@ function claudeConfigBase(): string {
  *   <configDir>/projects/<slug>/
  */
 export function getClaudeProjectsDir(cwd: string, userId?: string | null): string {
-  const slug = cwd.replace(/\//g, '-');
+  // Claude encodes punctuation too, including underscores in macOS temp paths.
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   if (process.env.MICHI_CLOUD === '1' && userId) {
     return path.join(claudeConfigBase(), 'projects', userId, slug);
   }

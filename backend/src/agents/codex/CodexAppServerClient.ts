@@ -28,10 +28,16 @@ const RPC_TIMEOUT_MS = parseInt(process.env.MICHI_CODEX_RPC_TIMEOUT_MS ?? '30000
 const INIT_TIMEOUT_MS = parseInt(process.env.MICHI_CODEX_INIT_TIMEOUT_MS ?? '30000', 10);
 
 export type NotificationHandler = (method: string, params: Record<string, unknown>) => void;
+export interface ServerRequestContext {
+  requestId: CodexRpcId;
+  signal: AbortSignal;
+  reject: (code: number, message: string) => void;
+}
 export type ServerRequestHandler = (
   method: string,
   params: Record<string, unknown>,
   respond: (result: unknown) => void,
+  context: ServerRequestContext,
 ) => void;
 
 export interface CodexAppServerClientDeps {
@@ -66,6 +72,7 @@ export class CodexAppServerClient {
   private readonly threadHandlers = new Map<string, Set<NotificationHandler>>();
   private readonly globalNotificationHandlers = new Set<NotificationHandler>();
   private serverRequestHandler: ServerRequestHandler | null = null;
+  private readonly serverRequests = new Map<CodexRpcId, { threadId?: string; cancel: () => void }>();
   private readonly exitHandlers = new Set<() => void>();
   private lineBuf = '';
   private readonly rpcTimeoutMs: number;
@@ -193,16 +200,35 @@ export class CodexAppServerClient {
     if (obj.id !== undefined && typeof obj.method === 'string') {
       const rpcId = obj.id as CodexRpcId;
       const child = this.child;
-      const respond = (result: unknown) => { if (this.child === child) this.writeLine({ jsonrpc: '2.0', id: rpcId, result }); };
+      if (this.serverRequests.has(rpcId)) return;
+      let settled = false;
+      const controller = new AbortController();
+      const cancel = () => {
+        settled = true;
+        this.serverRequests.delete(rpcId);
+        controller.abort();
+      };
+      const reply = (payload: { result: unknown } | { error: { code: number; message: string } }) => {
+        if (settled || this.child !== child) return;
+        cancel();
+        this.writeLine({ jsonrpc: '2.0', id: rpcId, ...payload });
+      };
+      const params = (obj.params as Record<string, unknown>) ?? {};
+      this.serverRequests.set(rpcId, { threadId: typeof params.threadId === 'string' ? params.threadId : undefined, cancel });
+      const respond = (result: unknown) => reply({ result });
+      const context: ServerRequestContext = {
+        requestId: rpcId,
+        signal: controller.signal,
+        reject: (code, message) => reply({ error: { code, message } }),
+      };
       if (this.serverRequestHandler) {
-        this.serverRequestHandler(
-          obj.method,
-          (obj.params as Record<string, unknown>) ?? {},
-          respond,
-        );
+        try {
+          this.serverRequestHandler(obj.method, params, respond, context);
+        } catch {
+          context.reject(-32603, 'Codex client request handler failed');
+        }
       } else {
-        // No handler registered — fail safe, decline whatever was asked.
-        respond({ decision: 'decline' });
+        context.reject(-32601, 'Server request is not supported by this client');
       }
       return;
     }
@@ -210,6 +236,13 @@ export class CodexAppServerClient {
     // Notification (has method, no id)
     if (typeof obj.method === 'string') {
       const params = (obj.params as Record<string, unknown>) ?? {};
+      if (obj.method === 'serverRequest/resolved') {
+        const id = params.requestId;
+        if (typeof id === 'string' || typeof id === 'number') {
+          const pending = this.serverRequests.get(id);
+          if (pending && pending.threadId === params.threadId) pending.cancel();
+        }
+      }
 
       // Global handlers receive every notification — used by CodexSession to
       // discover child subagent threads whose threadId is not yet registered.
@@ -329,6 +362,7 @@ export class CodexAppServerClient {
       p.reject(err);
     }
     this.pending.clear();
+    for (const request of this.serverRequests.values()) request.cancel();
     if (!this.shuttingDown) {
       for (const cb of this.exitHandlers) {
         try {

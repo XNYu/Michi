@@ -64,7 +64,11 @@ class Client {
     for (const handler of this.handlers.get(threadId) ?? []) handler(method, { threadId, ...params });
   }
   control(method: string, params: Record<string, unknown>): Promise<unknown> {
-    return new Promise((resolve) => { this.serverRequest!(method, params, resolve); });
+    return new Promise((resolve) => { this.serverRequest!(method, params, resolve, {
+      requestId: `control-${++this.sequence}`,
+      signal: new AbortController().signal,
+      reject: (code, message) => resolve({ error: { code, message } }),
+    }); });
   }
   get transport(): CodexAppServerClient { return this as unknown as CodexAppServerClient; }
 }
@@ -289,6 +293,28 @@ for (const decision of ['allow_once', 'allow_always', 'ask'] as const) {
   });
 }
 
+test('a consumer stopping at runtime_error does not leave a terminal marker in the next turn', async (t) => {
+  const client = new Client();
+  const session = new CodexSession({ nodeId: 'failure-boundary', threadId: 'failure-native', cwd: '/tmp', workspaceId: null,
+    client: client.transport, bridge, mcpRegistry: registry(), mcpPort: 1 });
+  session.wireNotifications();
+  t.after(() => session.dispose());
+  const first = (async () => {
+    for await (const event of session.send('A')) if (event.kind === 'runtime_error') return;
+    assert.fail('expected runtime_error');
+  })();
+  await tick();
+  client.emit(session.threadId, 'turn/completed', { turn: { id: currentTurn(session), status: 'failed' } });
+  await first;
+  const second = drain(session.send('B'));
+  await tick();
+  assert.ok(session.acceptsControl({ threadId: session.threadId, turnId: currentTurn(session) }));
+  client.emit(session.threadId, 'item/agentMessage/delta', { delta: 'second-turn' });
+  complete(client, session);
+  assert.ok((await second).some((event) => event.kind === 'chunk' && event.text === 'second-turn'));
+  assert.equal(session.needsRecovery(), false);
+});
+
 test('late permission and user-input continuations cannot persist grants or leak resolved events', async (t) => {
   const client = new Client();
   const session = new CodexSession({ nodeId: 'controls', threadId: 'controls-native', cwd: '/tmp', workspaceId: 'workspace',
@@ -303,7 +329,7 @@ test('late permission and user-input continuations cannot persist grants or leak
   const params = { threadId: session.threadId, turnId: currentTurn(session) };
   let permissionResponse: unknown, inputResponse: unknown;
   const permission = session.askPermission('item/fileChange/requestApproval', params, (response) => { permissionResponse = response; });
-  const input = session.askUserInput({ ...params, questions: [{ question: 'Continue?', options: [] }] }, (response) => { inputResponse = response; });
+  const input = session.askUserInput({ ...params, questions: [{ id: 'continue', question: 'Continue?', options: [] }] }, (response) => { inputResponse = response; });
   const requestId = [...session.pendingPermissions.keys()][0];
   session.respondToPermission(requestId, 'allow_always');
   // Native completion wins before the async allow/input continuations run.
@@ -311,7 +337,7 @@ test('late permission and user-input continuations cannot persist grants or leak
   await Promise.all([permission, input, first]);
   assert.equal(grants, 0);
   assert.deepEqual(permissionResponse, { decision: 'decline' });
-  assert.deepEqual(inputResponse, { answers: null });
+  assert.deepEqual(inputResponse, { answers: {} });
   const second = drain(session.send('B'));
   await tick();
   complete(client, session);

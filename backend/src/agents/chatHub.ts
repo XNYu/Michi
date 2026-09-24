@@ -724,9 +724,12 @@ export class ChatHub {
           event: CHAT_STREAM_EVENTS.cancelPhase,
           data: {
             phase: "acknowledged",
-            source: "native",
-            confidence: "native",
-            nativeMethod: "cancel",
+            // Provenance comes from the runtime, not from the fact that an ack
+            // arrived. Kiro's ACP notify and Claude's confirmed process death
+            // are `inferred`; only Codex/Pi have a real interrupt response.
+            source: ack.source ?? "native",
+            confidence: ack.confidence ?? "native",
+            nativeMethod: ack.nativeMethod ?? "cancel",
           },
         });
       }
@@ -854,7 +857,22 @@ export class ChatHub {
     return { cleared: true };
   }
 
-  async compact(chatId: string, instructions?: string, idleSession?: AgentSession): Promise<CompactResult> {
+  /**
+   * Compaction is normally requested *between* turns, so this must not require
+   * an active turn — it previously did, which made the whole path unreachable
+   * in the one state users actually invoke it from. Stream events are only
+   * appended when a turn is live to carry them; an idle compaction still runs
+   * and reports its result through the HTTP response.
+   */
+  async compact(
+    chatId: string,
+    instructions?: string,
+    idleSession?: AgentSession,
+  ): Promise<CompactResult> {
+    // activeSessions only holds a session for the duration of a turn, so an
+    // idle compaction has to be handed the live session by the caller (which
+    // resolves it from sessionRegistry). Prefer the in-turn session when both
+    // are present — they are the same object during a turn.
     const session = this.activeSessions.get(chatId) ?? idleSession;
     if (!session?.compact) return { started: false, detail: "unsupported" };
     const result = await session.compact(instructions);
@@ -870,6 +888,9 @@ export class ChatHub {
           nativeMethod: "compact",
         },
       });
+      // Runtimes whose compact call resolves on completion (Kiro) have no
+      // follow-up event to close the lifecycle, so emit the end here. Codex
+      // leaves `completed` unset and its translator emits compaction_end.
       if (result.completed) {
         this.append(chatId, live, {
           event: CHAT_STREAM_EVENTS.compactionEnd,

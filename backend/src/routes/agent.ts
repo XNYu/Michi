@@ -38,7 +38,7 @@ import {
   getWebSearchProviderStatuses,
   setWebSearchApiKey,
 } from "../services/webSearch";
-import type { AgentStatus, AgentRuntimeOption, AgentReasoning } from "../agents/types";
+import type { AgentStatus, AgentRuntimeOption, AgentReasoning, RuntimeAvailability } from "../agents/types";
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
 import type { CustomAgentsFeatureControl } from '../services/customAgentsFeatureGate';
@@ -90,12 +90,28 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       : {};
     const active = getRuntime(cfg.runtime);
     const all = listRuntimes();
-    const availableRuntimes: AgentRuntimeOption[] = all.map((r) => ({
-      id: r.id,
-      label: r.label,
-      available: true,
-      requiresApiKey: r.capabilities.apiKeys === true,
-    }));
+    // `available` used to be a hardcoded `true`, which made every "unavailable"
+    // branch in FirstRunSetup dead code and told users with no kiro-cli /
+    // claude / codex installed that all four runtimes were ready. Runtimes now
+    // report a real local probe; those without one (Pi needs no binary) stay
+    // available and surface readiness through the provider/key path instead.
+    const availableRuntimes: AgentRuntimeOption[] = all.map((r) => {
+      let availability: RuntimeAvailability = { available: true };
+      try {
+        availability = r.checkAvailability?.() ?? availability;
+      } catch (err) {
+        // A probe must never take down the status endpoint.
+        availability = { available: true };
+        console.warn(`[agent/status] ${r.id} availability probe failed:`, (err as Error).message);
+      }
+      return {
+        id: r.id,
+        label: r.label,
+        available: availability.available,
+        ...(availability.available ? {} : { unavailableReason: availability.detail }),
+        requiresApiKey: r.capabilities.apiKeys === true,
+      };
+    });
 
     if (!active) {
       // No runtime registered yet — frontend hides chips and waits.
@@ -116,6 +132,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
         modelByRuntime: cfg.modelByRuntime,
         reasoning: resolveReasoning(cfg.runtime, userId),
         reasoningByRuntime: cfg.reasoningByRuntime,
+        nativeResumeByRuntime: cfg.nativeResumeByRuntime ?? {},
         hasRequiredKey: true,
       };
       res.json(status);
@@ -173,6 +190,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       modelByRuntime: getAgentConfig(userId).modelByRuntime,
       reasoning: resolveReasoning(cfg.runtime, userId),
       reasoningByRuntime: cfg.reasoningByRuntime,
+      nativeResumeByRuntime: cfg.nativeResumeByRuntime ?? {},
       hasRequiredKey,
     };
     res.json(status);
@@ -183,6 +201,16 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
     const cfg = getAgentConfig(userId);
     const patch: Partial<typeof cfg> = {};
     let modelToSet: string | undefined;
+
+    if (req.body?.nativeResumeByRuntime !== undefined) {
+      const value = req.body.nativeResumeByRuntime;
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.entries(value).some(([id, enabled]) => !getRuntime(id) || typeof enabled !== 'boolean')) {
+        res.status(400).json({ ok: false, error: 'nativeResumeByRuntime must map registered runtimes to booleans' });
+        return;
+      }
+      patch.nativeResumeByRuntime = { ...value };
+    }
 
     if (req.body?.runtime !== undefined) {
       if (typeof req.body.runtime !== "string" || !req.body.runtime.trim()) {

@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { runMigrations } from '../src/services/migrate';
 import { getUserAgentConfig, upsertUserAgentConfig } from '../src/services/dbRepository';
-import { getAgentConfig, recordLastUsedProviderModel, resolveModel, resolveProvider, updateAgentConfig } from '../src/services/agentConfig';
+import { getAgentConfig, isNativeResumeEnabled, recordLastUsedProviderModel, resolveModel, resolveProvider, updateAgentConfig } from '../src/services/agentConfig';
 import { OPENROUTER_FREE_PRIMARY_MODEL } from '../src/agents/pi/piProviders';
 
 let directory: string;
@@ -40,6 +40,19 @@ test('cloud provider and model memory survives reopening the DB and stays user s
   assert.equal(resolveModel('pi', 'alice'), 'deepseek-v4-flash');
   assert.equal(resolveProvider('pi', 'bob'), 'openrouter-free');
   assert.deepEqual(getAgentConfig('bob').providerByRuntime, {});
+});
+
+test('native resume defaults on and persists independently per runtime and per user', () => {
+  assert.equal(isNativeResumeEnabled('codex', 'alice'), true);
+  updateAgentConfig({ nativeResumeByRuntime: { codex: false } }, 'alice');
+  updateAgentConfig({ nativeResumeByRuntime: { claude: false } }, 'alice');
+  updateAgentConfig({ nativeResumeByRuntime: { codex: true } }, 'alice');
+  closeDb(); initDb();
+  assert.deepEqual(getAgentConfig('alice').nativeResumeByRuntime, { codex: true, claude: false });
+  assert.equal(isNativeResumeEnabled('claude', 'alice'), false);
+  assert.equal(isNativeResumeEnabled('claude', 'bob'), true);
+  updateAgentConfig({ modelByRuntime: { claude: 'sonnet' } }, 'alice');
+  assert.equal(isNativeResumeEnabled('claude', 'alice'), false);
 });
 
 test('cloud config merges runtime memories and repository updates preserve an omitted provider map', () => {

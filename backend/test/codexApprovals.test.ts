@@ -4,7 +4,7 @@
  * These tests lock the contract described in spec §5.1:
  *
  *   - Only `CODEX_APPROVAL_ALIASES` methods may consult resolvePolicy.
- *   - Unknown methods ALWAYS ask — never consult resolvePolicy (which defaults
+ *   - Unsupported methods never consult resolvePolicy (which defaults
  *     to "allow" for any tool not in ASK_TOOLS, so feeding unknown methods
  *     directly would silently auto-approve them).
  *   - allow_once  → { decision: 'accept' }
@@ -153,14 +153,12 @@ async function makeRuntimeWithSession(t: TestContext, threadId = 'thread-approva
 
 // ---- Tests ------------------------------------------------------------------
 
-test('unknown approval method always asks — never auto-allows', async (t) => {
+test('permission profiles fail closed without using generic tool approval', async (t) => {
   // `item/permissions/requestApproval` is NOT in CODEX_APPROVAL_ALIASES.
   // resolvePolicy would return 'allow' for it (since it's not in ASK_TOOLS),
-  // so it MUST NOT be fed to resolvePolicy — it must always go to session.askPermission.
+  // so it MUST NOT be fed to resolvePolicy or the generic approval UI.
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
-  // Fire the unknown method but do NOT respond — we just want to verify it lands
-  // in pendingPermissions (i.e. was not auto-responded by the runtime).
   const responsePromise = client._fireServerRequest(
     CODEX_SERVER_REQUESTS.permissionsApproval, // 'item/permissions/requestApproval'
     { threadId: 'thread-approval-test' },
@@ -171,18 +169,15 @@ test('unknown approval method always asks — never auto-allows', async (t) => {
 
   assert.equal(
     session.pendingPermissions.size,
-    1,
-    'unknown method should land in pendingPermissions (i.e. asked, not auto-allowed)',
+    0,
+    'permission scopes cannot be approved as a generic tool',
   );
 
-  // Clean up — respond to avoid timer leak
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'reject_once');
-  await responsePromise;
+  assert.deepEqual(await responsePromise, { permissions: {}, scope: 'turn' });
   await runtime.shutdown();
 });
 
-test('MCP elicitation approval uses the Codex action response contract', async (t) => {
+test('unsupported MCP elicitation declines rather than accepting an unfilled form', async (t) => {
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const responsePromise = client._fireServerRequest(
@@ -199,12 +194,10 @@ test('MCP elicitation approval uses the Codex action response contract', async (
   );
   await new Promise((r) => setImmediate(r));
 
-  assert.equal(session.pendingPermissions.size, 1);
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'allow_once');
+  assert.equal(session.pendingPermissions.size, 0);
 
   assert.deepEqual(await responsePromise, {
-    action: 'accept',
+    action: 'decline',
     content: null,
     _meta: null,
   });
@@ -505,7 +498,7 @@ test('agent_run deny from broker produces decline', async (t) => {
   await runtime.shutdown();
 });
 
-test('agent_run unknown approval method delegates to broker (fails closed)', async (t) => {
+test('agent_run permission profiles fail closed without a generic broker decision', async (t) => {
   const brokerRequests: Array<{ toolName: string }> = [];
   const broker: any = {
     async requestPermission(req: any) {
@@ -532,8 +525,8 @@ test('agent_run unknown approval method delegates to broker (fails closed)', asy
     { threadId: 'thread-run-unknown' },
   );
 
-  assert.equal(brokerRequests.length, 1, 'unknown method still goes through broker for agent_run');
-  assert.deepEqual(result, { decision: 'decline' }, 'deny from broker → decline');
+  assert.equal(brokerRequests.length, 0, 'generic tool decisions cannot grant permission scopes');
+  assert.deepEqual(result, { permissions: {}, scope: 'turn' });
 
   await runtime.shutdown();
 });

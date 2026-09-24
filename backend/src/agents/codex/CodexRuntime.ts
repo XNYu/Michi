@@ -3,9 +3,11 @@ import type {
   AgentCapabilities,
   AgentRuntime,
   AgentSession,
+  ForkAgentSessionOptions,
   LoadAgentSessionOptions,
   ModelInfo,
   NewAgentSessionOptions,
+  RuntimeAvailability,
   RuntimeId,
   RuntimeSessionOwner,
 } from '../types';
@@ -24,7 +26,7 @@ import { buildFirstTurnPrefix, buildStableSystemPrompt } from '../preamble';
 import { getNode, grantPermission, getWorkspaceInstructions } from '../../services/dbRepository';
 import { resolveModel, resolveReasoning } from '../../services/agentConfig';
 import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
-import { preflightCodexAuth } from './codexBinary';
+import { findCodexBinary, preflightCodexAuth } from './codexBinary';
 import { NativeResumeUnavailableError, nativeResumeId } from '../../services/nativeResume';
 import type { RuntimeModelCache } from '../runtimeModelCache';
 import { titleModelConfig } from '../../services/titleGeneration';
@@ -75,7 +77,7 @@ const CODEX_CAPABILITIES: AgentCapabilities = {
 //
 // CRITICAL for security: only these methods are allowed to consult resolvePolicy
 // (which defaults to ALLOW for unknown tools). Any method NOT in this map must
-// always ask the user — never consult resolvePolicy.
+// use its own protocol handler or return an unsupported-method error.
 
 const CODEX_APPROVAL_ALIASES: Record<string, string> = {
   [CODEX_SERVER_REQUESTS.commandApproval]: 'bash',
@@ -117,6 +119,25 @@ export class CodexRuntime implements AgentRuntime {
   private readonly modelCacheStore?: RuntimeModelCache;
   private modelCache: ModelInfo[] | null;
   private modelRefreshLock: Promise<ModelInfo[]> | null = null;
+  /** Auth pre-flight failure from construction, surfaced by checkAvailability. */
+  private authError: string | undefined;
+
+  /**
+   * Codex already had the most complete probe of the four (binary lookup, an
+   * auth.json existence check, and the only `--version` semver check in the
+   * tree) — all of it discarded at the status layer. Reported here instead.
+   * findCodexBinary caches, and the version probe already ran at construction,
+   * so this is filesystem-only per call.
+   */
+  checkAvailability(): RuntimeAvailability {
+    try {
+      findCodexBinary();
+    } catch (err) {
+      return { available: false, detail: (err as Error).message };
+    }
+    if (this.authError) return { available: false, detail: this.authError };
+    return { available: true };
+  }
 
   constructor(
     bridge: AgentToolBridge,
@@ -140,10 +161,12 @@ export class CodexRuntime implements AgentRuntime {
       this.client = testSeams.client;
     } else {
       // Pre-flight auth check at construction — fail fast if credentials are absent.
+      // Retained (not just logged) so checkAvailability can report it.
       try {
         preflightCodexAuth();
       } catch (err) {
-        console.warn('[CodexRuntime] Auth pre-flight warning:', (err as Error).message);
+        this.authError = (err as Error).message;
+        console.warn('[CodexRuntime] Auth pre-flight warning:', this.authError);
       }
       let spawnEnv: NodeJS.ProcessEnv | undefined;
       if (followUpsHookPocEnabled) {
@@ -165,16 +188,30 @@ export class CodexRuntime implements AgentRuntime {
     this.followUpsHookPocEnabled = followUpsHookPocEnabled;
 
     // Wire server-request (approval) handler once, shared across all sessions.
-    this.client.onServerRequest((method, params, respond) => {
+    this.client.onServerRequest((method, params, respond, context) => {
       if (method === CODEX_SERVER_REQUESTS.requestUserInput) {
-        this.handleUserInputRequest(params, respond);
+        this.handleUserInputRequest(params, respond, context?.signal);
         return;
       }
       if (method === CODEX_SERVER_REQUESTS.mcpElicitation) {
         this.handleMcpElicitationRequest(params, respond);
         return;
       }
-      this.handleApprovalRequest(method, params, respond);
+      if (method === CODEX_SERVER_REQUESTS.permissionsApproval) {
+        // A tool approval is not a sandbox permission profile. Until the UI can
+        // present the requested scopes faithfully, grant no extra permissions.
+        respond({ permissions: {}, scope: 'turn' });
+        return;
+      }
+      if (method === CODEX_SERVER_REQUESTS.currentTime) {
+        respond({ currentTimeAt: Math.floor(Date.now() / 1000) });
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(CODEX_APPROVAL_ALIASES, method)) {
+        this.handleApprovalRequest(method, params, respond, context?.signal);
+        return;
+      }
+      context.reject(-32601, 'Server request is not supported by Michi');
     });
 
     // When daemon exits unexpectedly, crash all live sessions.
@@ -236,7 +273,11 @@ export class CodexRuntime implements AgentRuntime {
     try { return compatible(await work); } finally { this.pendingSessions.delete(id); }
   }
 
-  private async createSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
+  async forkSession(opts: ForkAgentSessionOptions): Promise<AgentSession> {
+    return this.acquireSession(opts, () => this.createSession(opts, opts.sourceNativeSessionId));
+  }
+
+  private async createSession(opts: NewAgentSessionOptions, forkFrom?: string): Promise<AgentSession> {
     const nodeId = opts.sessionId ?? (() => { throw new Error('sessionId is required for CodexRuntime'); })();
 
     // Resolve product owner. For agent_run owners, the public session id is
@@ -267,7 +308,7 @@ export class CodexRuntime implements AgentRuntime {
 
     // Ancestor chain for preamble (chat sessions only)
     const ancestorChain: AgentSession[] = [];
-    if (owner.kind === 'chat_node' && opts.parentChatId) {
+    if (!forkFrom && owner.kind === 'chat_node' && opts.parentChatId) {
       sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
@@ -329,7 +370,8 @@ export class CodexRuntime implements AgentRuntime {
     // Start the thread on codex app-server
     let threadStartResult: Record<string, unknown>;
     try {
-      threadStartResult = await this.client.request('thread/start', {
+      threadStartResult = await this.client.request(forkFrom ? 'thread/fork' : 'thread/start', {
+      ...(forkFrom ? { threadId: forkFrom } : {}),
       model: modelId || undefined,
       cwd: opts.cwd,
       developerInstructions: buildStableSystemPrompt(
@@ -347,14 +389,17 @@ export class CodexRuntime implements AgentRuntime {
       }) as Record<string, unknown>;
     } catch (error) {
       await session.dispose();
+      if (forkFrom && /no rollout found for thread id|method not found/i.test(error instanceof Error ? error.message : '')) {
+        throw new NativeResumeUnavailableError('Codex native fork is unavailable');
+      }
       throw error;
     }
 
     const thread = threadStartResult['thread'] as Record<string, unknown> | undefined;
     const threadId = (thread?.['id'] as string | undefined) ?? (threadStartResult['threadId'] as string | undefined);
-    if (!threadId) {
+    if (!threadId || threadId === forkFrom) {
       await session.dispose();
-      throw new Error('codex thread/start did not return a threadId');
+      throw new Error(`codex ${forkFrom ? 'thread/fork' : 'thread/start'} did not return an independent threadId`);
     }
 
     // Rebind session's threadId (the session was constructed with '' as placeholder)
@@ -664,14 +709,15 @@ export class CodexRuntime implements AgentRuntime {
   private handleUserInputRequest(
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
+    signal?: AbortSignal,
   ): void {
     const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
     const session = threadId ? this.threadToSession.get(threadId) : null;
     if (!session || !session.acceptsControl(params)) {
-      respond({ answers: null });
+      respond({ answers: {} });
       return;
     }
-    void session.askUserInput(params, respond);
+    void session.askUserInput(params, respond, signal);
   }
 
   private handleMcpElicitationRequest(
@@ -693,6 +739,7 @@ export class CodexRuntime implements AgentRuntime {
     method: string,
     params: Record<string, unknown>,
     respond: (result: unknown) => void,
+    signal?: AbortSignal,
   ): void {
     const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
     const session = threadId ? this.threadToSession.get(threadId) : null;
@@ -701,14 +748,14 @@ export class CodexRuntime implements AgentRuntime {
     // Agent Run owner: delegate directly to the session's permission broker.
     // MUST NOT call resolvePolicy() or grantPermission().
     if (session?.owner?.kind === 'agent_run') {
-      void session.askPermission(method, params, respond);
+      void session.askPermission(method, params, respond, signal);
       return;
     }
 
     // Chat session: existing workspace policy and grant behavior.
     // Look up the canonical tool name for policy checks.
     // CRITICAL: only methods in CODEX_APPROVAL_ALIASES may consult resolvePolicy.
-    // Unknown methods (not in the map) always ask the user — never trust the default.
+    // The dispatcher only routes command/file approvals here.
     const canonicalTool = CODEX_APPROVAL_ALIASES[method];
 
     if (canonicalTool !== undefined) {
@@ -725,7 +772,6 @@ export class CodexRuntime implements AgentRuntime {
       }
       // policy === 'ask': fall through to session.askPermission below
     }
-    // Unknown methods always ask (never consult resolvePolicy).
 
     if (!session) {
       // No session found — fail safe: decline
@@ -734,6 +780,6 @@ export class CodexRuntime implements AgentRuntime {
     }
 
     // Delegate to session for user-facing permission request
-    void session.askPermission(method, params, respond);
+    void session.askPermission(method, params, respond, signal);
   }
 }

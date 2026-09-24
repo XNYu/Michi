@@ -21,6 +21,7 @@ export interface ResumeDecisionInput {
   existingChatId?: string | null;
   liveSessionMatches: boolean;
   nativeResumeAvailable: boolean;
+  nativeResumeEnabled?: boolean;
   nativeResumeSettings?: readonly ('model' | 'reasoning')[];
   existingSignature: ResumeSignature | null;
   targetSignature: ResumeSignature;
@@ -136,6 +137,9 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
   // compatible resume — losing live sessions that were perfectly fine.
   if (input.liveSessionMatches) {
     return { strategy: "live", reason: "live_session_matches" };
+  }
+  if (input.nativeResumeEnabled === false) {
+    return { strategy: "compatible", reason: "native_resume_disabled" };
   }
   if (input.nativeResumeAvailable) {
     return { strategy: "exact", reason: "native_resume_available" };

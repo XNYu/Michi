@@ -52,6 +52,7 @@ export interface UserInputOption {
 }
 
 export interface UserInputQuestion {
+  id?: string;
   question: string;
   header?: string;
   options: UserInputOption[];
@@ -64,6 +65,7 @@ export interface UserInputRequestPayload {
 }
 
 export interface UserInputAnswer {
+  id?: string;
   question: string;
   answer: string;
 }
@@ -335,6 +337,7 @@ const parsers = {
               }))
             : [];
           return {
+            ...(typeof q.id === 'string' ? { id: q.id } : {}),
             question: stringOrEmpty(q.question),
             header: optionalString(q.header),
             options,
@@ -350,6 +353,7 @@ const parsers = {
   user_input_resolved: (data) => {
     const answers = Array.isArray(data.answers)
       ? (data.answers as Array<Record<string, unknown>>).map((a) => ({
+          ...(typeof a.id === 'string' ? { id: a.id } : {}),
           question: stringOrEmpty(a.question),
           answer: stringOrEmpty(a.answer),
         }))

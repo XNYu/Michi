@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
+import { getClaudeJsonlPath } from './claudeProjectsPath';
 import type {
   AgentCapabilities,
   AgentRuntime,
   AgentSession,
+  ForkAgentSessionOptions,
   GenerateTitleOptions,
   LoadAgentSessionOptions,
   ModelInfo,
   NewAgentSessionOptions,
+  RuntimeAvailability,
   RuntimeSessionOwner,
   RuntimeId,
   SessionMode,
@@ -19,7 +23,7 @@ import { titleModelConfig } from '../../services/titleGeneration';
 import { log } from '../../services/logger';
 import { getNode } from '../../services/dbRepository';
 import * as sessionRegistry from '../sessionRegistry';
-import { preflightClaudeAuth } from './claudeBinary';
+import { findClaudeBinary, preflightClaudeAuth } from './claudeBinary';
 import { buildFirstTurnPrefix } from '../preamble';
 import { getWorkspaceInstructions } from '../../services/dbRepository';
 import { agentConfigEvents, resolveModel, resolveClaudeConfigDir } from '../../services/agentConfig';
@@ -69,6 +73,24 @@ export class ClaudeRuntime implements AgentRuntime {
 
   private readonly manager: ClaudeSessionManager;
   private readonly modelChangedHandler: (evt: ModelChangedEvent) => void;
+  /** Auth pre-flight failure from construction, surfaced by checkAvailability. */
+  private authError: string | undefined;
+
+  /**
+   * Both halves of Claude's readiness were already computed and then discarded:
+   * the binary lookup throws ClaudeBinaryNotFoundError, and the auth pre-flight
+   * result went to console.warn. Report them instead of hardcoding available.
+   * findClaudeBinary caches internally, so this stays cheap per status poll.
+   */
+  checkAvailability(): RuntimeAvailability {
+    try {
+      findClaudeBinary();
+    } catch (err) {
+      return { available: false, detail: (err as Error).message };
+    }
+    if (this.authError) return { available: false, detail: this.authError };
+    return { available: true };
+  }
 
   constructor(
     bridge: AgentToolBridge,
@@ -80,11 +102,14 @@ export class ClaudeRuntime implements AgentRuntime {
     const waitForWarmFlag = (process.env.MICHI_CLAUDE_WAIT_FOR_WARM ?? '').trim().toLowerCase();
     const waitForWarm = !['0', 'false', 'off', 'no'].includes(waitForWarmFlag);
     // Pre-flight auth check at construction — fail fast if credentials are absent
-    // rather than letting the first spawn hang on a stdin auth prompt.
+    // rather than letting the first spawn hang on a stdin auth prompt. The
+    // result is also retained (it used to be discarded into console.warn) so
+    // checkAvailability can report it instead of claiming the runtime is ready.
     try {
       preflightClaudeAuth(resolveClaudeConfigDir());
     } catch (err) {
-      console.warn('[ClaudeRuntime] Auth pre-flight warning:', (err as Error).message);
+      this.authError = (err as Error).message;
+      console.warn('[ClaudeRuntime] Auth pre-flight warning:', this.authError);
     }
 
     this.manager = new ClaudeSessionManager({
@@ -132,6 +157,16 @@ export class ClaudeRuntime implements AgentRuntime {
   }
 
   async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
+    return this.createSession(opts);
+  }
+
+  async forkSession(opts: ForkAgentSessionOptions): Promise<AgentSession> {
+    const file = getClaudeJsonlPath(opts.cwd, opts.sourceNativeSessionId, opts.ownerUserId);
+    if (!fs.existsSync(file)) throw new NativeResumeUnavailableError('Claude parent session file is unavailable');
+    return this.createSession(opts, opts.sourceNativeSessionId);
+  }
+
+  private async createSession(opts: NewAgentSessionOptions, forkFrom?: string): Promise<AgentSession> {
     const owner = resolveSessionOwner(opts.owner, opts.sessionId);
     const id = owner.kind === 'agent_run' ? owner.attemptId : (opts.sessionId ?? owner.nodeId);
 
@@ -144,7 +179,7 @@ export class ClaudeRuntime implements AgentRuntime {
     // Ancestor chain is needed by the per-chat preamble regardless of warm
     // hit vs cold spawn.
     const ancestorChain: AgentSession[] = [];
-    if (owner.kind === 'chat_node' && opts.parentChatId) {
+    if (!forkFrom && owner.kind === 'chat_node' && opts.parentChatId) {
       sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
@@ -170,6 +205,7 @@ export class ClaudeRuntime implements AgentRuntime {
     const effectiveFirstTurnPrefix = [firstTurnPrefix, opts.bootstrapInstructions].filter(Boolean).join('\n\n');
 
     return this.manager.createSession({
+      forkFromNativeSessionId: forkFrom,
       id,
       owner,
       cwd,
