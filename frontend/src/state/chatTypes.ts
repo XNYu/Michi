@@ -1007,7 +1007,7 @@ export interface ChatContextValue {
   /** Delete a digest node (aborts in-flight generation, removes edges + state). */
   deleteDigest: (nodeId: string) => void;
   /** Compatibility entry point for artifact shelf/link callers. Returns a file PaneItem id. */
-  openArtifactPane: (filePath: string) => Promise<string>;
+  openArtifactPane: (filePath: string, options?: { parseSourceLocation?: boolean }) => Promise<string>;
   /** Open a blank multifunction pane whose content is selected in-place. */
   openLauncherPane: () => string;
   /** Transform a blank multifunction pane without changing its layout slot. */
@@ -1015,7 +1015,7 @@ export interface ChatContextValue {
   /** Move an existing detached terminal into a launcher slot. */
   adoptTerminalPane: (launcherPaneId: string, terminalPaneId: string) => void;
   /** Open a standalone file viewer without inserting it into the chat graph. */
-  openFilePane: (filePath: string) => string;
+  openFilePane: (filePath: string, options?: { parseSourceLocation?: boolean }) => string;
   /** Open a workspace-relative working-tree diff. */
   openDiffPane: (filePath: string) => string;
   /** Open a persistent PTY surface rooted at cwd (active workspace cwd by default). */

@@ -24,7 +24,7 @@ import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
 import { usePanePresenceIntegration } from './usePanePresenceIntegration';
-import { agentRunPaneId, normalizeBrowserUrl, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
+import { agentRunPaneId, normalizeBrowserUrl, parseSourceLocation, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
 import type { AgentResourceIdentity } from './agentIdentity';
 import { getElectron } from '../lib/electronBridge';
 import { useNavHistory, type NavEntry } from './navHistory';
@@ -2468,30 +2468,50 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return id;
   }, [openPaneInTree, registerPaneItem, selectProject]);
 
-  const openFilePane = useCallback((filePath: string): string => {
+  const openFilePane = useCallback((filePath: string, options?: { parseSourceLocation?: boolean }): string => {
     if (!activeProjectId) throw new Error('No active project');
-    const normalized = filePath.trim();
-    if (!normalized) throw new Error('No file path provided');
+    const raw = filePath.trim();
+    if (!raw) throw new Error('No file path provided');
+    const { filePath: cleanPath, line, column } = options?.parseSourceLocation
+      ? parseSourceLocation(raw)
+      : { filePath: raw, line: undefined, column: undefined };
+    const sourceLocation = line != null ? (column != null ? { line, column } : { line }) : undefined;
+    const sourceReferencePath = sourceLocation ? raw : undefined;
+    const isMarkdown = /\.(?:md|mdx|markdown)$/i.test(cleanPath);
     const activeTreeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? 'none';
-    const id = singletonPaneId('file', `${activeProjectId}:${activeTreeId}`, normalized);
-    const existing = paneItemsRef.current[id];
+    const paneTreeId = activeTreeId === 'none' ? null : activeTreeId;
+    const identityPath = sourceReferencePath ? `source\0${cleanPath}` : cleanPath;
+    const id = singletonPaneId('file', `${activeProjectId}:${activeTreeId}`, identityPath);
+    const exactPane = paneItemsRef.current[id];
+    const existing = exactPane?.kind === 'file' ? exactPane : undefined;
     if (existing) {
-      openPane(id);
+      const previousBasename = existing.filePath.split(/[\\/]/).filter(Boolean).pop() ?? existing.filePath;
+      const cleanTitle = cleanPath.split(/[\\/]/).filter(Boolean).pop() ?? cleanPath;
+      updatePaneItem(existing.id, {
+        filePath: cleanPath,
+        title: existing.title === previousBasename ? cleanTitle : existing.title,
+        sourceLocation,
+        sourceReferencePath,
+        ...(sourceLocation && isMarkdown ? { viewMode: 'source' as const } : {}),
+      });
+      openPane(existing.id);
       window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
-      return id;
+      return existing.id;
     }
-    const title = normalized.split('/').filter(Boolean).pop() ?? normalized;
+    const title = cleanPath.split(/[\\/]/).filter(Boolean).pop() ?? cleanPath;
     return revealPane({
       id,
       kind: 'file',
       projectId: activeProjectId,
-      treeId: activeTreeId === 'none' ? null : activeTreeId,
+      treeId: paneTreeId,
       title,
       createdAt: Date.now(),
-      filePath: normalized,
-      viewMode: /\.(?:md|mdx|markdown)$/i.test(normalized) ? 'rendered' : 'source',
+      filePath: cleanPath,
+      viewMode: sourceLocation ? 'source' : isMarkdown ? 'rendered' : 'source',
+      sourceLocation,
+      sourceReferencePath,
     });
-  }, [activeProjectId, openPane, revealPane]);
+  }, [activeProjectId, openPane, revealPane, updatePaneItem]);
 
   const openDiffPane = useCallback((filePath: string): string => {
     if (!activeProjectId) throw new Error('No active project');
@@ -2666,7 +2686,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // are layout-only PaneItems and no longer pollute the conversation graph;
   // persisted legacy artifact nodes remain renderable in Dashboard.
   const openArtifactPane = useCallback(
-    async (filePath: string): Promise<string> => openFilePane(filePath),
+    async (filePath: string, options?: { parseSourceLocation?: boolean }): Promise<string> => openFilePane(filePath, options),
     [openFilePane],
   );
 

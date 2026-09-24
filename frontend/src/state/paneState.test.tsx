@@ -144,6 +144,91 @@ describe('pane state', () => {
     harness.unmount();
   });
 
+  it('strips source locations and reuses the pane for the underlying file', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('WS'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    const path = '/workspace/sample-project/src/worker.ts';
+    let firstPaneId = '';
+    await act(async () => { firstPaneId = await harness.result.current.openArtifactPane(`${path}:414`, { parseSourceLocation: true }); });
+    expect(harness.result.current.paneItems[firstPaneId]).toMatchObject({
+      kind: 'file',
+      filePath: path,
+      title: 'worker.ts',
+      sourceLocation: { line: 414 },
+      sourceReferencePath: `${path}:414`,
+    });
+
+    let secondPaneId = '';
+    await act(async () => { secondPaneId = await harness.result.current.openArtifactPane(`${path}:275:9`, { parseSourceLocation: true }); });
+    expect(secondPaneId).toBe(firstPaneId);
+    expect(harness.result.current.paneItems[firstPaneId]).toMatchObject({
+      filePath: path,
+      sourceLocation: { line: 275, column: 9 },
+      sourceReferencePath: `${path}:275:9`,
+    });
+    harness.unmount();
+  });
+
+  it('opens a line-targeted Markdown file in source mode', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('WS'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    let paneId = '';
+    await act(async () => { paneId = await harness.result.current.openArtifactPane('docs/brief.md'); });
+    expect(harness.result.current.paneItems[paneId]).toMatchObject({ viewMode: 'rendered' });
+
+    let sourcePaneId = '';
+    await act(async () => { sourcePaneId = await harness.result.current.openArtifactPane('docs/brief.md:12', { parseSourceLocation: true }); });
+    expect(sourcePaneId).not.toBe(paneId);
+    expect(harness.result.current.paneItems[paneId]).toMatchObject({ viewMode: 'rendered' });
+    expect(harness.result.current.paneItems[sourcePaneId]).toMatchObject({
+      filePath: 'docs/brief.md',
+      viewMode: 'source',
+      sourceLocation: { line: 12 },
+      sourceReferencePath: 'docs/brief.md:12',
+    });
+    harness.unmount();
+  });
+
+  it('preserves numeric-colon filenames for ordinary artifact opens', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('WS'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    let paneId = '';
+    await act(async () => { paneId = await harness.result.current.openArtifactPane('/repo/report:2024'); });
+    expect(harness.result.current.paneItems[paneId]).toMatchObject({
+      kind: 'file',
+      filePath: '/repo/report:2024',
+    });
+    const item = harness.result.current.paneItems[paneId];
+    expect(item.kind).toBe('file');
+    if (item.kind !== 'file') throw new Error('Expected a file pane');
+    expect(item.sourceLocation).toBeUndefined();
+    harness.unmount();
+  });
+
+
+  it('keeps a literal numeric-colon pane separate from a base-file source link', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('WS'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    let literalPaneId = '';
+    await act(async () => { literalPaneId = await harness.result.current.openArtifactPane('/repo/report:2024'); });
+    let sourcePaneId = '';
+    await act(async () => {
+      sourcePaneId = await harness.result.current.openArtifactPane('/repo/report:12', { parseSourceLocation: true });
+    });
+
+    expect(sourcePaneId).not.toBe(literalPaneId);
+    expect(harness.result.current.paneItems[literalPaneId]).toMatchObject({ filePath: '/repo/report:2024' });
+    expect(harness.result.current.paneItems[sourcePaneId]).toMatchObject({
+      filePath: '/repo/report',
+      sourceLocation: { line: 12 },
+    });
+    harness.unmount();
+  });
+
   it('opens artifacts before the workspace has any conversation tree', async () => {
     const harness = renderHook(() => useChatStore());
     await act(async () => { await harness.result.current.createProject('Empty workspace'); });
@@ -169,6 +254,7 @@ describe('pane state', () => {
     expect(harness.result.current.focusedPane).toBe(paneId);
     harness.unmount();
   });
+
 
   it('persists independent workspace and tree slots through switches and remounts', () => {
     const project: Project = {

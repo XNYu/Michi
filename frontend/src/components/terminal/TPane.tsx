@@ -1122,7 +1122,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     const onInternalLink = (e: Event) => {
       const href = (e as CustomEvent).detail?.href;
       if (typeof href === 'string' && href.trim()) {
-        void openArtifactPane(href);
+        void openArtifactPane(href, { parseSourceLocation: true });
       }
     };
     el.addEventListener('michi:internal-link', onInternalLink);

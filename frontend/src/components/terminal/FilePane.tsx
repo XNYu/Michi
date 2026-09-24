@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import type { FilePaneItem } from '../../state/paneItems';
+import type { FilePaneItem, SourceLocation } from '../../state/paneItems';
 import { useChatActions, useChatProjects, useChatStore, ChatNodeStoreContext } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { fetchArtifactContent } from '../../services/api';
@@ -17,11 +17,34 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 type LoadState =
   | { phase: 'loading' }
-  | { phase: 'loaded'; content: string; size: number; modifiedAt: number; extension: string }
+  | {
+      phase: 'loaded';
+      content: string;
+      size: number;
+      modifiedAt: number;
+      extension: string;
+      resolvedFilePath: string;
+      sourceReferenceFallback?: boolean;
+    }
   | { phase: 'error'; message: string };
 
 function basename(filePath: string): string {
-  return filePath.split('/').filter(Boolean).pop() ?? filePath;
+  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
+}
+
+function isAbsoluteFilePath(filePath: string): boolean {
+  const isUncPath = filePath.length >= 2 && filePath[0] === '\\' && filePath[1] === '\\';
+  return filePath.startsWith('/') || isUncPath || /^[a-zA-Z]:[\\/]/.test(filePath);
+}
+
+function measuredLineHeight(element: HTMLElement): number | null {
+  const style = window.getComputedStyle(element);
+  const lineHeight = Number.parseFloat(style.lineHeight);
+  const fontSize = Number.parseFloat(style.fontSize);
+  if (Number.isFinite(lineHeight) && lineHeight > 0) {
+    return style.lineHeight.trim().endsWith('px') ? lineHeight : lineHeight * fontSize;
+  }
+  return Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 1.2 : null;
 }
 
 const fileProseVars: React.CSSProperties = {
@@ -50,6 +73,16 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   const diskStateRef = useRef(item.diskState);
   diskStateRef.current = item.diskState;
   const contentScrollRef = useRef<HTMLDivElement>(null);
+  const sourcePreRef = useRef<HTMLPreElement>(null);
+  /** Track the exact source-location request already handled. A reopened link
+   *  receives a new object even when it targets the same line. */
+  const scrolledToRef = useRef<SourceLocation | undefined>(undefined);
+  const resolvedFilePath = state.phase === 'loaded'
+    ? state.resolvedFilePath
+    : item.sourceReferencePath ?? item.filePath;
+  const sourceLocation = item.sourceReferencePath
+    ? state.phase === 'loaded' && state.sourceReferenceFallback ? item.sourceLocation : undefined
+    : item.sourceLocation;
 
   // Track the last focused chat pane so selection actions route there even
   // while the file pane itself is focused (for reading).
@@ -73,8 +106,8 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   }, [focusedNodeId, item.id, nodeStore]);
 
   const fileSource = useMemo((): QuoteSource | undefined => {
-    return { type: 'artifact', name: basename(item.filePath), filePath: item.filePath };
-  }, [item.filePath]);
+    return { type: 'artifact', name: basename(resolvedFilePath), filePath: resolvedFilePath };
+  }, [resolvedFilePath]);
 
   const handleQuote = useCallback(
     (text: string) => {
@@ -124,27 +157,50 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   useEffect(() => {
     let active = true;
     setState({ phase: 'loading' });
-    const key = `${item.projectId}\0${item.filePath}\0${reloadKey}`;
-    const load = async (): Promise<LoadState> => {
-      try {
-        const electron = getElectron();
-        if (item.filePath.startsWith('/') && electron?.readFile && !project?.backendConnectionId) {
-          const stat = await electron.statFile?.(item.filePath);
-          if (stat && stat.size > MAX_FILE_BYTES) throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
-          const result = await electron.readFile(item.filePath);
-          if (!result) throw new Error('File is not readable');
-          const name = basename(item.filePath);
-          const extension = name.includes('.') ? name.split('.').pop()?.toLowerCase() ?? '' : '';
-          return { phase: 'loaded', content: result.content, size: result.size, modifiedAt: result.modifiedAt, extension };
+    const key = `${item.projectId}\0${item.filePath}\0${item.sourceReferencePath ?? ''}\0${reloadKey}`;
+    const loadPath = async (targetPath: string): Promise<Extract<LoadState, { phase: 'loaded' }>> => {
+      const electron = getElectron();
+      if (isAbsoluteFilePath(targetPath) && electron?.readFile && !project?.backendConnectionId) {
+        const stat = await electron.statFile?.(targetPath);
+        if (stat && stat.size > MAX_FILE_BYTES) {
+          throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
         }
-        const result = await fetchArtifactContent(item.projectId, item.filePath);
+        const result = await electron.readFile(targetPath);
+        if (!result) throw new Error('File is not readable');
+        const name = basename(targetPath);
+        const extension = name.includes('.') ? name.split('.').pop()?.toLowerCase() ?? '' : '';
         return {
           phase: 'loaded',
           content: result.content,
           size: result.size,
           modifiedAt: result.modifiedAt,
-          extension: result.extension.toLowerCase(),
+          extension,
+          resolvedFilePath: targetPath,
         };
+      }
+      const result = await fetchArtifactContent(item.projectId, targetPath);
+      return {
+        phase: 'loaded',
+        content: result.content,
+        size: result.size,
+        modifiedAt: result.modifiedAt,
+        extension: result.extension.toLowerCase(),
+        resolvedFilePath: targetPath,
+      };
+    };
+    const load = async (): Promise<LoadState> => {
+      try {
+        if (item.sourceReferencePath) {
+          try {
+            return await loadPath(item.sourceReferencePath);
+          } catch {
+            return {
+              ...await loadPath(item.filePath),
+              sourceReferenceFallback: true,
+            };
+          }
+        }
+        return await loadPath(item.filePath);
       } catch (error) {
         return { phase: 'error', message: error instanceof Error ? error.message : 'Failed to read file' };
       }
@@ -156,7 +212,40 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
       if (next.phase === 'loaded' && diskStateRef.current) updatePaneItem(item.id, { diskState: undefined });
     });
     return () => { active = false; };
-  }, [item.filePath, item.id, item.projectId, project?.backendConnectionId, reloadKey, updatePaneItem]);
+  }, [item.filePath, item.id, item.projectId, item.sourceReferencePath, project?.backendConnectionId, reloadKey, updatePaneItem]);
+
+  // Scroll to the requested source line once per navigation request without
+  // creating one DOM element per line.
+  useEffect(() => {
+    if (state.phase !== 'loaded' || item.viewMode !== 'source') {
+      scrolledToRef.current = undefined;
+      return;
+    }
+    const loc = sourceLocation;
+    if (!loc) {
+      scrolledToRef.current = undefined;
+      return;
+    }
+    if (scrolledToRef.current === loc) return;
+
+    const container = contentScrollRef.current;
+    const pre = sourcePreRef.current;
+    if (!container || !pre) return;
+
+    let lineCount = 1;
+    for (let index = state.content.indexOf('\n'); index >= 0; index = state.content.indexOf('\n', index + 1)) {
+      lineCount += 1;
+    }
+    const targetLine = Math.min(loc.line, lineCount);
+    const lineHeight = measuredLineHeight(pre);
+    if (!lineHeight) return;
+    const preTop = pre.getBoundingClientRect().top
+      - container.getBoundingClientRect().top
+      + container.scrollTop;
+    const targetTop = preTop + (targetLine - 1) * lineHeight;
+    container.scrollTop = Math.max(0, targetTop - Math.max(0, (container.clientHeight - lineHeight) / 2));
+    scrolledToRef.current = loc;
+  }, [item.viewMode, sourceLocation, state]);
 
   const extension = state.phase === 'loaded'
     ? state.extension
@@ -164,9 +253,9 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   const isMarkdown = MARKDOWN_EXTS.has(extension);
   const absolutePath = useMemo(() => {
     if (project?.backendConnectionId) return null;
-    if (item.filePath.startsWith('/')) return item.filePath;
-    return project?.cwd ? `${project.cwd.replace(/\/$/, '')}/${item.filePath}` : null;
-  }, [item.filePath, project?.backendConnectionId, project?.cwd]);
+    if (isAbsoluteFilePath(resolvedFilePath)) return resolvedFilePath;
+    return project?.cwd ? `${project.cwd.replace(/\/$/, '')}/${resolvedFilePath}` : null;
+  }, [resolvedFilePath, project?.backendConnectionId, project?.cwd]);
 
   const openExternal = useCallback(() => {
     if (absolutePath) void getElectron()?.openPath?.(absolutePath);
@@ -182,9 +271,14 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
     >
       <div style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', flexShrink: 0 }}>
         <span aria-hidden style={{ color: 'var(--term-accent)' }}>◇</span>
-        <span title={item.filePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--term-mid)' }}>
-          {item.filePath}
+        <span title={resolvedFilePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--term-mid)' }}>
+          {resolvedFilePath}{sourceLocation ? `:${sourceLocation.line}${sourceLocation.column != null ? `:${sourceLocation.column}` : ''}` : ''}
         </span>
+        {state.phase === 'loaded' && state.sourceReferenceFallback ? (
+          <span title="The literal link path was unreadable; opened as a source reference" style={{ color: 'var(--term-muted)', fontSize: 9.5, whiteSpace: 'nowrap' }}>
+            source reference
+          </span>
+        ) : null}
         {item.diskState === 'changed' ? (
           <button type="button" onClick={() => setReloadKey((value) => value + 1)} style={{ border: '1px solid var(--term-accent)', background: 'transparent', color: 'var(--term-accent)', padding: '2px 7px', fontFamily: 'var(--ui-font)', fontSize: 9.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>● Changed on disk · refresh</button>
         ) : null}
@@ -214,14 +308,14 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
           <MarkdownContent text={state.content} className={`prose prose-sm max-w-none wrap-break-word${isDark ? ' prose-invert' : ''}`} style={fileProseVars} />
         ) : null}
         {state.phase === 'loaded' && (!isMarkdown || item.viewMode === 'source') ? (
-          <pre style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>
+          <pre ref={sourcePreRef} style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>
             {state.content}
           </pre>
         ) : null}
       </div>
       {state.phase === 'loaded' ? (
         <div style={{ height: 24, padding: '0 12px', borderTop: '1px solid var(--term-line)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, fontSize: 9.5, color: 'var(--term-muted)' }}>
-          <span>{basename(item.filePath)}</span>
+          <span>{basename(resolvedFilePath)}</span>
           <span>{state.size < 1024 ? `${state.size} B` : `${(state.size / 1024).toFixed(1)} KB`}</span>
           <span>{new Date(state.modifiedAt).toLocaleTimeString()}</span>
         </div>
