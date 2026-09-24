@@ -1,0 +1,18 @@
+{
+  "cliVersion": "0.156.1",
+  "experimental": true,
+  "initializeCapabilities": {
+    "experimentalApi": true
+  },
+  "source": "https://learn.chatgpt.com/docs/app-server",
+  "commands": [
+    "codex app-server generate-ts --experimental --out <ts>",
+    "codex app-server generate-json-schema --experimental --out <json>"
+  ],
+  "sha256": {
+    "protocol.schema.json": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
+    "ServerNotification.ts.txt": "711f5014883da724eefe4ab1151ca6a0425c8ff8d5de5480f773626ec7228f4b",
+    "ServerRequest.ts.txt": "1c5837adbfbdd005f387478ba87840808d1353b47b82dcf63739a78bb1c8d3be",
+    "ThreadItem.ts.txt": "047df9febb13b40263fb5b0abe244171c4dcb5e83229bbf9efba31abae840746"
+  }
+}
