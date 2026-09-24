@@ -563,39 +563,7 @@ export default function ActivityView({
         );
       })}
       {hiddenCount > 0 && (
-        <button
-          type="button"
-          className="sb-flush show-more-toggle"
-          aria-label={`Show ${hiddenCount} more threads`}
-          aria-expanded={visibleLimit > ACTIVITY_PREVIEW_LIMIT}
-          onClick={() => setVisibleLimit((v) => v + ACTIVITY_PAGE_SIZE)}
-          style={{
-            width: '100%',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            marginTop: 8,
-            // Sit on the same text spine as the thread titles. `.sb-flush`
-            // rides the container's --sb-inset, so classic only adds the
-            // borderLeft(2) + paddingLeft(8) + chevron(12) + gap(5) = 27px.
-            padding: geom.isCard
-              ? `5px ${spinePadding(geom, geom.rightGap)} 5px ${spinePadding(geom, geom.titleX)}`
-              : '5px 10px 5px 27px',
-            background: 'transparent',
-            border: 0,
-            textAlign: 'left',
-            color: 'var(--term-faint)',
-            fontFamily: 'var(--ui-font)',
-            fontSize: 11.5,
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            textDecorationStyle: 'dotted',
-            textUnderlineOffset: '3px',
-            textDecorationColor: 'var(--term-faint)',
-          }}
-        >
-          Show {hiddenCount} more
-        </button>
+        <ActivityLoadMoreSentinel onLoadMore={() => setVisibleLimit((v) => v + ACTIVITY_PAGE_SIZE)} />
       )}
       {activityItems.length === 0 && agentRuns.length === 0 && (
         <div
@@ -619,6 +587,30 @@ export default function ActivityView({
       )}
     </div>
   );
+}
+
+// ── Infinite-scroll sentinel ───────────────────────────────────────────────
+
+/** Invisible element that triggers `onLoadMore` when it enters the viewport. */
+function ActivityLoadMoreSentinel({ onLoadMore }: { onLoadMore: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onLoadMoreRef = useRef(onLoadMore);
+  onLoadMoreRef.current = onLoadMore;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMoreRef.current();
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return <div ref={ref} aria-hidden style={{ height: 1 }} />;
 }
 
 // ── Per-tree entry: ThreadRow + workspace label + BranchRow children ────────
