@@ -49,7 +49,7 @@ describe('buildStableSystemPrompt', () => {
         assert.match(s, /final answer only/);
         assert.match(s, /after all tool use and intermediate commentary is complete/);
         assert.match(s, /Do not emit \[TITLE:\], \[BRANCH-OVERVIEW:\], or \[FOLLOW-UP n\/3:\] sentinel lines in commentary/);
-        assert.match(s, /end your final answer with three lines/);
+        assert.match(s, /Near the end of the final answer, write three lines/);
     });
 
     test('contains no cwd, contextManifest, or ancestor content', () => {

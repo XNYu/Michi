@@ -16,7 +16,8 @@ export interface KiroTitleClient {
     newSession(mcpServers?: never[]): Promise<{ sessionId: string }>;
     setModel(sessionId: string, modelId: string, timeoutMs?: number): Promise<void>;
     prompt(sessionId: string, text: string, extraBlocks?: never[], signal?: AbortSignal): AsyncIterableIterator<Record<string, any>>;
-    cancel(sessionId: string): Promise<void>;
+    /** Resolves true when a cancel was dispatched; the title path ignores it. */
+    cancel(sessionId: string): Promise<boolean>;
     cancelPermission(requestId: number): void;
     destroySession(sessionId: string): void;
 }

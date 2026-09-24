@@ -23,7 +23,7 @@ export function resolveFollowUpsExperimentMode(
  * of Michi history, so branches and resume transcripts do not accumulate it. */
 export const FOLLOW_UPS_SENTINEL_TURN_REMINDER = `
 
-[Follow-up metadata reminder for this turn: do not call set_follow_ups. At the absolute end of the final answer, emit exactly these three standalone sentinel lines, numbered in order and each closed with "]":
+[Follow-up metadata reminder for this turn: do not call set_follow_ups. Near the end of the final answer, emit exactly these three standalone sentinel lines, numbered in order and each closed with "]":
 [FOLLOW-UP 1/3: a concise next question written in the user's voice and language]
 [FOLLOW-UP 2/3: a concise next question written in the user's voice and language]
 [FOLLOW-UP 3/3: a concise next question written in the user's voice and language]

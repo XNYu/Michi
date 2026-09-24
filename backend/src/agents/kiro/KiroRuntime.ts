@@ -10,6 +10,7 @@ import type {
     ModelInfo,
     NewAgentSessionOptions,
     ForkAgentSessionOptions,
+    RuntimeAvailability,
     RuntimeSessionOwner,
     RuntimeToolProfile,
     RuntimePermissionBroker,
@@ -26,7 +27,7 @@ import { getNode, getWorkspaceInstructions, listEdges } from "../../services/dbR
 import { buildRunMcpSlotCallbacks } from "../runs/runMcpSlot";
 import { NativeResumeFailedError, NativeResumeUnavailableError } from '../../services/nativeResume';
 import { classifyAcpError, isNativeSessionUnavailable } from './acpErrors';
-import { ACPNotRunningError, ACPProcessExitedError } from '../../services/acpClient';
+import { ACPNotRunningError, ACPProcessExitedError, probeKiroCli } from '../../services/acpClient';
 import { KiroTitleGenerator } from './kiroTitleGenerator';
 import { titleModelConfig } from '../../services/titleGeneration';
 import { log } from '../../services/logger';
@@ -165,6 +166,22 @@ export class KiroRuntime implements AgentRuntime {
         // idle timeout may still have a load running, so it stays fail-closed.
         return error instanceof ACPNotRunningError || error instanceof ACPProcessExitedError
             || classifyAcpError(error) === 'transient';
+    }
+
+    /**
+     * Kiro had no install probe of any kind: findKiroCli() returns a
+     * conventional path whether or not anything is there, so a machine without
+     * kiro-cli still advertised the runtime as ready and only failed on the
+     * first send. A live client for any cwd is proof enough on its own;
+     * otherwise re-test the resolved binary path.
+     */
+    checkAvailability(): RuntimeAvailability {
+        for (const client of this.pool.values()) {
+            if (client.isAlive()) return { available: true };
+        }
+        const { path, installed } = probeKiroCli();
+        if (installed) return { available: true };
+        return { available: false, detail: `kiro-cli not found (looked for ${path})` };
     }
 
     private pool = new Map<string, AcpClient>();

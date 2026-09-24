@@ -173,12 +173,27 @@ function findKiroCli(): string {
     if (onPath) return onPath;
 
     // Historical fallback: return the conventional toolbox path even if missing
-    // so callers can surface a concrete path in error messages.
+    // so callers can surface a concrete path in error messages. Callers that
+    // need to know whether kiro-cli is actually installed must use
+    // probeKiroCli() — this function's return value proves nothing.
     if (process.platform === "win32") {
         const localAppData = process.env.LOCALAPPDATA || join(home, "AppData", "Local");
         return join(localAppData, "Toolbox", "bin", exeName("kiro-cli"));
     }
     return join(home, ".toolbox", "bin", "kiro-cli");
+}
+
+/**
+ * Is kiro-cli actually present and runnable?
+ *
+ * findKiroCli() deliberately falls back to a conventional path that need not
+ * exist, so its result cannot be used as an install check. This re-tests the
+ * resolved path and is the only honest signal Michi has short of spawning the
+ * binary. Filesystem-only, so it is safe to call from a status request.
+ */
+export function probeKiroCli(): { path: string; installed: boolean } {
+    const path = findKiroCli();
+    return { path, installed: isRunnableFile(path) };
 }
 
 interface Pending {
@@ -1379,8 +1394,15 @@ export class AcpClient {
         );
     }
 
-    async cancel(sessionId: string): Promise<void> {
-        if (!this.sessionQueues.has(sessionId)) return;
+    /**
+     * Dispatch ACP `session/cancel`. Resolves `true` when this client owned the
+     * session and a cancel was actually dispatched, `false` when there was
+     * nothing to cancel. ACP has no cancel *response*, so `true` means "the
+     * request was handed to the transport", not "the agent stopped" — callers
+     * that surface this to the UI must label it `inferred`, never `native`.
+     */
+    async cancel(sessionId: string): Promise<boolean> {
+        if (!this.sessionQueues.has(sessionId)) return false;
         if (this.sessionInFlight.has(sessionId)) this.cancelledPrompts.add(sessionId);
         this.cancelPermissionsForSession(sessionId);
         const active = [...this.pending.entries()].find(([, p]) => p.method === 'session/prompt' && p.sessionId === sessionId);
@@ -1408,6 +1430,7 @@ export class AcpClient {
         }
         // A blocked stdin callback must not block the HTTP cancel response.
         void this.notify("session/cancel", { sessionId }).catch(() => {});
+        return true;
     }
 
     destroySession(sessionId: string): void {

@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { extractToolUsePurpose, KiroSteeringParser, type SteeringSegment } from "michi-shared";
 import type {
     AgentSession,
     AgentTurnInput,
+    CancelAck,
     ChatMessage,
     CompactResult,
     SteerResult,
@@ -15,31 +15,20 @@ import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
+import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../attachments";
 import { classifyAcpError, isRetryable, needsRespawn, retryReason, toErrorKind } from "./acpErrors";
 
-const KIRO_IMAGE_MEDIA_TYPES: Record<string, string> = {
-    ".gif": "image/gif",
-    ".jpeg": "image/jpeg",
-    ".jpg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-};
-
 /** Read local image attachments into ACP image prompt blocks. kiro-cli
- *  advertises promptCapabilities.image: true; non-image or unreadable files
- *  are skipped rather than failing the turn. */
-function buildKiroImageBlocks(input?: AgentTurnInput): AcpPromptBlock[] {
+ *  advertises promptCapabilities.image: true. Paths have already been
+ *  stat-checked by partitionAttachments; a file that vanished since then is
+ *  skipped rather than failing the turn. */
+function buildKiroImageBlocks(images: ResolvedAttachment[]): AcpPromptBlock[] {
     const blocks: AcpPromptBlock[] = [];
-    const seen = new Set<string>();
-    for (const attachment of input?.attachments ?? []) {
-        const absPath = attachment.absPath;
-        if (!path.isAbsolute(absPath) || seen.has(absPath)) continue;
-        const mimeType = KIRO_IMAGE_MEDIA_TYPES[path.extname(absPath).toLowerCase()];
+    for (const attachment of images) {
+        const mimeType = imageMimeType(attachment.absPath);
         if (!mimeType) continue;
         try {
-            if (!fs.statSync(absPath).isFile()) continue;
-            const data = fs.readFileSync(absPath).toString("base64");
-            seen.add(absPath);
+            const data = fs.readFileSync(attachment.absPath).toString("base64");
             blocks.push({ type: "image", mimeType, data });
         } catch {
             // Unreadable attachment — skip.
@@ -48,6 +37,10 @@ function buildKiroImageBlocks(input?: AgentTurnInput): AcpPromptBlock[] {
     return blocks;
 }
 
+/** Reply for a Kiro turn whose last step was set_branch_overview. An ACP
+ *  turn needs a non-empty model response after that tool result; the
+ *  convention is declared in BRANCH_OVERVIEW_TOOL_REMINDER (user message),
+ *  not in the tool result, and TrailingSentinelStripper removes it. */
 export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
 
 const KIRO_METADATA_DONE_TOOL_RESULT =
@@ -57,7 +50,16 @@ function stripMetadataCompletionInstruction(output: string): string {
     return output.split(KIRO_METADATA_DONE_TOOL_RESULT).join("Branch overview recorded.");
 }
 
-class StreamingSentinelStripper {
+const WHITESPACE = /\s/;
+
+/**
+ * Removes the sentinel only when it ends the assistant text. A trailing
+ * region (one or more sentinels plus whitespace) is held until later text
+ * shows it was ordinary prose, in which case it is released verbatim, or
+ * until the turn ends, in which case it is dropped. A sentinel quoted in the
+ * middle of an answer therefore stays visible.
+ */
+class TrailingSentinelStripper {
     private held = "";
 
     constructor(private readonly sentinel: string) {}
@@ -69,38 +71,68 @@ class StreamingSentinelStripper {
 
         while (remaining.length > 0) {
             const markerIndex = remaining.indexOf(this.sentinel);
-            if (markerIndex >= 0) {
-                text += remaining.slice(0, markerIndex);
-                remaining = remaining.slice(markerIndex + this.sentinel.length);
-                continue;
+            if (markerIndex < 0) {
+                const heldLength = this.partialPrefixLength(remaining);
+                text += remaining.slice(0, remaining.length - heldLength);
+                this.held = remaining.slice(remaining.length - heldLength);
+                break;
             }
 
-            let heldLength = 0;
-            const maxPrefixLength = Math.min(this.sentinel.length - 1, remaining.length);
-            for (let length = maxPrefixLength; length > 0; length -= 1) {
-                if (this.sentinel.startsWith(remaining.slice(-length))) {
-                    heldLength = length;
-                    break;
-                }
+            text += remaining.slice(0, markerIndex);
+            remaining = remaining.slice(markerIndex);
+            const regionEnd = this.sentinelRegionEnd(remaining);
+            const rest = remaining.slice(regionEnd);
+            if (rest.length === 0 || this.sentinel.startsWith(rest)) {
+                // Only whitespace or a possible sentinel prefix follows, so
+                // this may still be the end of the reply.
+                this.held = remaining;
+                break;
             }
-            text += remaining.slice(0, remaining.length - heldLength);
-            this.held = remaining.slice(remaining.length - heldLength);
-            break;
+            // Other text follows: the sentinel was prose, not the tail.
+            text += remaining.slice(0, regionEnd);
+            remaining = rest;
         }
 
         return text;
     }
 
+    /** End of turn: drop a held trailing sentinel region, release anything else. */
     flush(): string {
-        const text = this.held;
+        const held = this.held;
         this.held = "";
-        return text;
+        const isTrailingRegion = held.startsWith(this.sentinel)
+            && this.sentinelRegionEnd(held) === held.length;
+        return isTrailingRegion ? "" : held;
+    }
+
+    /** Length of the leading run of sentinels and whitespace in `input`. */
+    private sentinelRegionEnd(input: string): number {
+        let end = 0;
+        while (end < input.length) {
+            if (input.startsWith(this.sentinel, end)) {
+                end += this.sentinel.length;
+            } else if (WHITESPACE.test(input[end])) {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        return end;
+    }
+
+    /** Length of the longest suffix of `input` that is a proper sentinel prefix. */
+    private partialPrefixLength(input: string): number {
+        const maxPrefixLength = Math.min(this.sentinel.length - 1, input.length);
+        for (let length = maxPrefixLength; length > 0; length -= 1) {
+            if (this.sentinel.startsWith(input.slice(-length))) return length;
+        }
+        return 0;
     }
 }
 
 const BRANCH_OVERVIEW_TOOL_REMINDER = `
 
-[Before ending this turn, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered. It appends to the branch's journal; do not restate earlier turns. Match the user's language. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
+[After any other tool calls and before writing your final answer, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered. It appends to the branch's journal; do not restate earlier turns. Match the user's language. Then write your final answer after the tool result. If you call it after your final answer instead, reply with exactly ${KIRO_METADATA_DONE_SENTINEL} once the tool returns; Michi removes that marker when it ends the reply. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
 
 /**
  * KiroSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
@@ -194,13 +226,16 @@ export class KiroSession implements AgentSession {
         // Append follow-up reminder for the model only — history stays clean.
         const userTurnCount = this.history.filter(m => m.role === "user").length;
         const reminder = followUpReminder(userTurnCount, this.enableFollowUps);
-        const textForModel = text + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
+        // Non-image attachments have no ACP block type, so name them by path
+        // instead of dropping them silently; kiro-cli can read them itself.
+        const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
+        const textForModel = text + promptNote + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`
             : textForModel;
         this.firstMessagePreamble = null;
-        const imageBlocks = buildKiroImageBlocks(input);
+        const imageBlocks = buildKiroImageBlocks(imageAttachments);
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
         try {
@@ -342,7 +377,7 @@ export class KiroSession implements AgentSession {
             yield { kind: 'turn_end', stopReason: 'cancelled' };
             return;
         }
-        const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
+        const completionStripper = new TrailingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         const steeringParser = new KiroSteeringParser();
         const steeringEvents = (segments: SteeringSegment[]): NormalizedEvent[] => segments.map((segment) =>
             segment.kind === 'text' ? { kind: 'chunk', text: segment.text }
@@ -396,9 +431,9 @@ export class KiroSession implements AgentSession {
                     .flatMap((block: any) => block?.type === 'content' && block.content?.type === 'text'
                         ? [block.content.text] : block?.type === 'diff' ? [JSON.stringify(block)] : [])
                     .join('\n') : undefined;
-                const rawOutputStr = update.rawOutput != null
+                const rawOutputStr = (update.rawOutput != null
                     ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
-                    : contentOutput;
+                    : contentOutput) || undefined;
                 const outputStr = rawOutputStr
                     ? stripMetadataCompletionInstruction(rawOutputStr)
                     : undefined;
@@ -622,10 +657,24 @@ export class KiroSession implements AgentSession {
         if (held) yield { kind: "chunk", text: held };
     }
 
-    async cancel(): Promise<void> {
+    /**
+     * ACP `session/cancel` is a notification, so there is no protocol response
+     * to wait on. We report `acknowledged` once the cancel was actually
+     * dispatched for a session this client owns, tagged `inferred` because
+     * dispatch is a proxy for the agent stopping, not proof of it. The 5s
+     * cancel watchdog in AcpClient is what turns a non-stopping agent into a
+     * quarantined session, and the hub's force-finish timer bounds the UI.
+     */
+    async cancel(): Promise<CancelAck> {
         this.activeTurn?.abort();
         const c = this.runtime.getClient(this.cwd);
-        await c?.cancel(this.nativeSessionId);
+        const dispatched = (await c?.cancel(this.nativeSessionId)) === true;
+        return {
+            acknowledged: dispatched,
+            source: "inferred",
+            confidence: "unknown",
+            nativeMethod: "session/cancel",
+        };
     }
 
     async steer(text: string): Promise<SteerResult> {

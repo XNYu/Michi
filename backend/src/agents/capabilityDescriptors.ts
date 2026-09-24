@@ -82,8 +82,10 @@ export const CLAUDE_DESCRIPTOR: CapabilityDescriptor = {
 export const KIRO_DESCRIPTOR: CapabilityDescriptor = {
   steer: slot("native", "native", "_session/steer; queued for the next agent boundary"),
   followUp: invisibleSlot(),
-  interruptAck: slot("inferred", "unknown", "session/cancel notify"),
-  compact: slot("experimental", "unknown", "_kiro.dev/compaction/status when advertised"),
+  interruptAck: slot("inferred", "unknown", "session/cancel notify — dispatch, not an agent ack"),
+  // KiroSession.compact() now drives the ACP compact command, so this is a
+  // real, invocable capability rather than "you can watch compaction happen".
+  compact: slot("native", "native", "_kiro.dev/commands/execute compact"),
   retry: invisibleSlot(),
   sessionFork: slot("native", "native", "Kiro rewind for compatible idle conversation parents"),
   nativeResume: slot("native", "native", "loadSession"),

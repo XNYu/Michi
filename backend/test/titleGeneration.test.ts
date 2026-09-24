@@ -139,7 +139,7 @@ function fakeClient(opts: FakeClientOptions = {}) {
         yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
       })();
     },
-    async cancel() { calls.cancelled += 1; },
+    async cancel() { calls.cancelled += 1; return true; },
     cancelPermission(requestId) { calls.cancelledPermissions.push(requestId); },
     destroySession(sid) { calls.destroyed.push(sid); live.delete(sid); },
     kill() { alive = false; },

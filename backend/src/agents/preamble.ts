@@ -27,11 +27,11 @@ Required final answer metadata:
   write the first line before any prose as a single line of the form:
       [TITLE: 4-8 word summary]
   on its own line. The UI strips this line and renders it as the thread title.
+{{FOLLOW_UPS_INSTRUCTIONS}}
 {{BRANCH_OVERVIEW_INSTRUCTIONS}}
-{{METADATA_SCOPE_INSTRUCTIONS}}
-{{FOLLOW_UPS_INSTRUCTIONS}}`;
+{{METADATA_SCOPE_INSTRUCTIONS}}`;
 
-const BRANCH_OVERVIEW_SENTINEL_INSTRUCTION = `- Near the end of the final answer, immediately before any follow-up sentinels,
+const BRANCH_OVERVIEW_SENTINEL_INSTRUCTION = `- After the follow-up sentinels, as the very last line of the final answer,
   write one single-line journal entry for this turn in this form:
       [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]
   Entries accumulate into a chronological journal of the branch, so cover only
@@ -56,7 +56,7 @@ const STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION = `- Provide this turn's branch-jou
 const STRUCTURED_METADATA_SCOPE_INSTRUCTION = `- Do not emit title metadata in commentary, progress/status updates, tool plans,
   or any message before you are ready to deliver the final answer.`;
 
-const FOLLOW_UPS_INSTRUCTION = `- LAST, end your final answer with three lines of the form:
+const FOLLOW_UPS_INSTRUCTION = `- Near the end of the final answer, write three lines of the form:
       [FOLLOW-UP 1/3: question 1]
       [FOLLOW-UP 2/3: question 2]
       [FOLLOW-UP 3/3: question 3]
@@ -114,7 +114,7 @@ const FOLLOW_UPS_REMIND_AFTER_TURNS = 2;
 // Repeat the reminder every N turns after the initial trigger.
 const FOLLOW_UPS_REMIND_INTERVAL = 1;
 
-const FOLLOW_UPS_REMINDER = `\n\n[Reminder: before the three follow-ups, include one [BRANCH-OVERVIEW: ...] line — 1-3 sentences on what this turn did or concluded (it appends to the branch's journal; do not restate earlier turns). Then end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with "]".]`;
+const FOLLOW_UPS_REMINDER = `\n\n[Reminder: end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with "]". Then, as the very last line, include one [BRANCH-OVERVIEW: ...] line — 1-3 sentences on what this turn did or concluded (it appends to the branch's journal; do not restate earlier turns).]`;
 
 /**
  * Returns a short reminder suffix when the conversation is long enough that
@@ -144,7 +144,7 @@ export function buildFormatReminder(enableFollowUps: boolean): string {
     }
     return `(Format reminder, restated from system instructions — do not skip in this reply.)
 - FIRST line MUST be: [TITLE: 4-8 word summary]
-- LAST three lines MUST be these sentinels, each on its OWN line:
+- Near the end of your reply, emit these three sentinels, each on its OWN line:
     [FOLLOW-UP 1/3: question 1]
     [FOLLOW-UP 2/3: question 2]
     [FOLLOW-UP 3/3: question 3]
