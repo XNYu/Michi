@@ -304,7 +304,6 @@ function PaneMessageListInner({
       })}
 
       <StreamActivityIndicator node={node} />
-      <TailSpacer node={node} viewportHeight={viewportHeight} />
       <McpServerError node={node} />
       <FollowUpsSection
         node={node}
@@ -314,6 +313,9 @@ function PaneMessageListInner({
         disabled={followUpsDisabled}
         showFollowUps={showFollowUps}
       />
+      {/* Keep real content before the spacer so tail-follow never counts the
+          reserved reply space as part of an error or status banner's offset. */}
+      <TailSpacer node={node} viewportHeight={viewportHeight} />
     </div>
     </NodeUserInputContext.Provider>
   );
@@ -483,6 +485,7 @@ function McpServerError({ node }: { node: ChatNodeState }) {
 
   return (
     <div
+      role="alert"
       style={{
         margin: '8px 0',
         padding: '6px 10px',
@@ -496,7 +499,7 @@ function McpServerError({ node }: { node: ChatNodeState }) {
         gap: 8,
       }}
     >
-      <span style={{ flex: 1 }}>
+      <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
         ⚠ MCP server &quot;{node.mcpServerError.serverName}&quot; failed: {node.mcpServerError.error}
       </span>
       <button
