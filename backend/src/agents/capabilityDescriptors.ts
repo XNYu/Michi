@@ -27,18 +27,25 @@ export function describeRuntimeCapabilities(runtimeId: string): CapabilityDescri
 }
 
 function piDescriptor(): CapabilityDescriptor {
+  // NOTE: these slots deliberately no longer branch on MICHI_PI_SESSION_SDK.
+  // That flag only selects PiSdkSession, which additionally requires
+  // @earendil-works/pi-coding-agent — a package that is not a dependency and is
+  // not installed, so createPiSession always returns a plain PiSession. Keying
+  // the descriptor off the flag alone therefore advertised native steer/
+  // followUp/compact that no code path could deliver, and the composer switched
+  // to a Steer affordance that could only ever 409.
   const sdk = isPiSessionSdkEnabled();
   return {
-    steer: sdk
-      ? slot("native", "native", "Pi AgentSession.steer")
-      : slot("native_unwired", "unknown", "Available on createAgentSession; Michi still uses pi-agent-core"),
-    followUp: sdk
-      ? slot("native", "native", "Pi AgentSession.followUp — queue, not a new Michi pane")
-      : slot("native_unwired", "unknown"),
+    // Wired directly on PiSession against the pi-agent-core Agent instance
+    // Michi already owns; injected at the next assistant-turn boundary.
+    steer: slot("native", "native", "Agent.steer — injected after the current assistant turn"),
+    // Agent.followUp exists on the same instance but has no Michi caller and no
+    // HTTP route, so it stays unwired rather than claiming native.
+    followUp: slot("native_unwired", "unknown", "Agent.followUp exists; no Michi caller or route"),
     interruptAck: slot("native", "native", "Agent.abort()"),
-    compact: sdk
-      ? slot("native", "native")
-      : slot("native_unwired", "unknown"),
+    // pi-agent-core 0.85.1 exposes no compaction API at all — only
+    // transformContext/shouldStopAfterTurn hooks you could build one on.
+    compact: invisibleSlot("pi-agent-core exposes no compaction API"),
     retry: sdk
       ? slot("native", "native", "auto_retry_* events")
       : invisibleSlot("Retry events exist on the SDK session layer only"),

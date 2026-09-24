@@ -49,16 +49,28 @@ describe('capabilityDescriptor', () => {
     assert.equal(CODEX_DESCRIPTOR.subagents.confidence, 'projected');
   });
 
-  test('Pi without SDK flag stays native_unwired for steer', () => {
-    const prev = process.env.MICHI_PI_SESSION_SDK;
-    delete process.env.MICHI_PI_SESSION_SDK;
-    try {
-      const pi = describeRuntimeCapabilities('pi');
-      assert.equal(pi.steer.availability, 'native_unwired');
-      assert.equal(shouldSteerInsteadOfQueue(pi), false);
-    } finally {
-      if (prev === undefined) delete process.env.MICHI_PI_SESSION_SDK;
-      else process.env.MICHI_PI_SESSION_SDK = prev;
+  test('Pi advertises native steer regardless of the SDK flag', () => {
+    // PiSession.steer now calls pi-agent-core's Agent.steer directly, so steer
+    // no longer depends on PiSdkSession — which is never constructed in
+    // production anyway, because @earendil-works/pi-coding-agent is not a
+    // dependency. The descriptor must not swing on the flag alone: doing so
+    // advertised a Steer affordance that could only ever 409.
+    for (const flag of [undefined, '1']) {
+      const prev = process.env.MICHI_PI_SESSION_SDK;
+      if (flag === undefined) delete process.env.MICHI_PI_SESSION_SDK;
+      else process.env.MICHI_PI_SESSION_SDK = flag;
+      try {
+        const pi = describeRuntimeCapabilities('pi');
+        assert.equal(pi.steer.availability, 'native', `flag=${flag}`);
+        assert.equal(shouldSteerInsteadOfQueue(pi), true, `flag=${flag}`);
+        // followUp/compact stay honest: followUp has no Michi caller, and
+        // pi-agent-core exposes no compaction API at any layer.
+        assert.equal(pi.followUp.availability, 'native_unwired', `flag=${flag}`);
+        assert.equal(pi.compact.availability, 'invisible', `flag=${flag}`);
+      } finally {
+        if (prev === undefined) delete process.env.MICHI_PI_SESSION_SDK;
+        else process.env.MICHI_PI_SESSION_SDK = prev;
+      }
     }
   });
 

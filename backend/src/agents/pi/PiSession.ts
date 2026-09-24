@@ -5,12 +5,15 @@ import { abortable, withDeadline } from '../runtimeLifecycle';
 import type {
     AgentReasoning,
     AgentSession,
+    AgentTurnInput,
     CancelAck,
     ChatMessage,
     RuntimePermissionBroker,
     RuntimeSessionOwner,
     RuntimeToolProfile,
+    SteerResult,
 } from "../types";
+import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../attachments";
 import type { NormalizedEvent, PermissionOption } from "../../services/chatEvents";
 import type { AgentToolBridge } from "../toolBridge";
 import { resolveAgentRunToolsForSession } from "../toolBridge";
@@ -30,6 +33,28 @@ import { refreshBedrockCredentialsIfNeeded, refreshOnAuthFailure, isBedrockAuthE
 import { McpClientManager } from "../../services/mcpClientManager";
 import { readPiMcpServers } from "../../services/piMcpConfig";
 import { buildMcpToolsForPi } from "./mcpToolBridge";
+
+/**
+ * pi-agent-core accepts images as `prompt(text, ImageContent[])` with
+ * base64 payloads. Unreadable files are skipped rather than failing the turn;
+ * partitionAttachments has already stat-checked them, so this only guards
+ * against a file disappearing between the two calls.
+ */
+function buildPiImageBlocks(
+    images: ResolvedAttachment[],
+): Array<{ type: "image"; data: string; mimeType: string }> {
+    const blocks: Array<{ type: "image"; data: string; mimeType: string }> = [];
+    for (const img of images) {
+        const mimeType = imageMimeType(img.absPath);
+        if (!mimeType) continue;
+        try {
+            blocks.push({ type: "image", data: fs.readFileSync(img.absPath).toString("base64"), mimeType });
+        } catch {
+            /* unreadable at send time — skip rather than fail the turn */
+        }
+    }
+    return blocks;
+}
 
 export interface PiSessionDeps {
     bridge: AgentToolBridge;
@@ -244,7 +269,7 @@ export class PiSession implements AgentSession {
         };
     }
 
-    async *send(rawUserText: string): AsyncIterableIterator<NormalizedEvent> {
+    async *send(rawUserText: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
         if (this.destroyed) {
             yield { kind: "turn_end", stopReason: "error" };
             return;
@@ -263,7 +288,7 @@ export class PiSession implements AgentSession {
         this.pendingAssistantBuf = buf;
 
         try {
-            for await (const ev of this.runTurn(rawUserText, controller.signal)) {
+            for await (const ev of this.runTurn(rawUserText, controller.signal, input)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 yield ev;
                 if (ev.kind === "turn_end") break;
@@ -289,7 +314,7 @@ export class PiSession implements AgentSession {
         }
     }
 
-    private async *runTurn(rawText: string, signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
+    private async *runTurn(rawText: string, signal: AbortSignal, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
         // Runtime ownership is required for durable Agent Runs even on local
         // desktop installs (where the synthetic owner is "local-user"). Do
         // not confuse that audit identity with a cloud BYOK credential owner:
@@ -525,7 +550,15 @@ export class PiSession implements AgentSession {
         // Append follow-up reminder when conversation is long enough that the
         // model may have lost attention on system-prompt instructions.
         const userTurnCount = this.history.filter((m) => m.role === "user").length;
-        const textWithReminder = promptText + followUpReminder(userTurnCount, this.enableFollowUps);
+        // Attachments were previously dropped entirely: send() took no `input`
+        // parameter at all, so images never reached pi-agent-core (which accepts
+        // them natively) and non-image files were invisible. Images now go as
+        // native blocks; everything else is named by path so the agent can open
+        // it with Michi's read tool.
+        const { images, promptNote } = prepareAttachments(input?.attachments);
+        const imageBlocks = buildPiImageBlocks(images);
+        const textWithReminder =
+            promptText + promptNote + followUpReminder(userTurnCount, this.enableFollowUps);
 
         // Kick off the prompt; don't await it here — yield events as they arrive.
         signal.throwIfAborted();
@@ -533,7 +566,9 @@ export class PiSession implements AgentSession {
         signal.addEventListener('abort', onAbort, { once: true });
         const promptPromise = Promise.resolve().then(() => {
             signal.throwIfAborted();
-            return agent.prompt(textWithReminder);
+            return imageBlocks.length > 0
+                ? agent.prompt(textWithReminder, imageBlocks)
+                : agent.prompt(textWithReminder);
         }).catch((err: unknown) => {
             // If agent_end already finished the turn, drop late rejections.
             if (terminated) return;
@@ -696,6 +731,34 @@ export class PiSession implements AgentSession {
         return out;
     }
 
+    /**
+     * pi-agent-core's own steering primitive: the message is queued onto the
+     * running Agent and injected once the current assistant turn finishes,
+     * inside the *same* agent run. Michi held this Agent instance all along and
+     * simply never called it — steering fell through to the frontend's
+     * next-turn queue, which instead ends the run and starts a fresh Michi turn.
+     *
+     * `pending: true` because delivery happens at the next turn boundary rather
+     * than mid-token, which is what the composer needs in order to keep showing
+     * the text as queued until the agent picks it up.
+     */
+    async steer(text: string): Promise<SteerResult> {
+        const trimmed = text.trim();
+        if (!trimmed) return { accepted: false, reason: "empty" };
+        if (this.destroyed) return { accepted: false, reason: "destroyed" };
+        if (!this.agent || !this.turnAbort) return { accepted: false, reason: "not_in_turn" };
+        try {
+            this.agent.steer({
+                role: "user",
+                content: [{ type: "text", text: trimmed }],
+                timestamp: Date.now(),
+            });
+        } catch (error) {
+            return { accepted: false, reason: (error as Error).message || "steer_failed" };
+        }
+        return { accepted: true, pending: true };
+    }
+
     cancel(): CancelAck {
         const acknowledged = !!this.turnAbort || !!this.agent;
         this.turnAbort?.abort();
@@ -705,7 +768,13 @@ export class PiSession implements AgentSession {
         } catch {
             /* ignore */
         }
-        return { acknowledged };
+        // In-process abort on the Agent we own — native, not a proxy signal.
+        return {
+            acknowledged,
+            source: 'native',
+            confidence: 'native',
+            nativeMethod: 'Agent.abort',
+        };
     }
 
     destroy(): void {
