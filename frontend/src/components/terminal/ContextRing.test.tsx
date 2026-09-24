@@ -36,6 +36,24 @@ describe('ContextRing', () => {
     expect(tooltip.textContent).toContain('50.0%');
   });
 
+  it('clamps out-of-range percentages to the meter maximum', () => {
+    render(<ContextRing percentage={159.2} />);
+    const meter = screen.getByRole('meter');
+    expect(meter.getAttribute('aria-valuenow')).toBe('100');
+    expect(meter.getAttribute('aria-label')).toBe('Context usage: 100%');
+
+    fireEvent.mouseEnter(meter);
+    expect(screen.getByRole('tooltip').textContent).toContain('100.0%');
+  });
+
+  it('hides invalid or negative percentages', () => {
+    const { container, rerender } = render(<ContextRing percentage={Number.NaN} />);
+    expect(container.firstChild).toBeNull();
+
+    rerender(<ContextRing percentage={-10} />);
+    expect(container.firstChild).toBeNull();
+  });
+
   it('shows token details in tooltip when usageSummary is provided', () => {
     render(
       <ContextRing

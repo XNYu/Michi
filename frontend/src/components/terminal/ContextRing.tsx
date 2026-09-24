@@ -48,8 +48,9 @@ export const ContextRing = React.memo(function ContextRing({
   percentage,
   usageSummary,
 }: ContextRingProps) {
-  const pct = percentage ?? 0;
-  const visible = percentage != null && percentage > 0;
+  const rawPct = percentage ?? 0;
+  const pct = Number.isFinite(rawPct) ? Math.min(100, Math.max(0, rawPct)) : 0;
+  const visible = percentage != null && pct > 0;
   const anchorRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
 
