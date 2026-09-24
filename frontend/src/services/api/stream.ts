@@ -297,6 +297,35 @@ export async function steerChat(
   };
 }
 
+/**
+ * Ask the active session's runtime to compact its context. Runtime-agnostic:
+ * Codex drives `thread/compact/start`, Kiro its ACP compact command. Returns
+ * `started: false` (HTTP 409) when the active runtime cannot compact, which is
+ * how the caller decides whether to fall back to another path.
+ */
+export async function compactChat(
+  chatId: string,
+  instructions?: string,
+  ownerToken?: string,
+): Promise<{ started: boolean; detail?: string }> {
+  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/compact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(instructions ? { instructions } : {}),
+      ...(ownerToken ? { ownerToken } : {}),
+    }),
+  });
+  const body = await res.json().catch(() => ({ started: false }));
+  if (!res.ok && res.status !== 409) {
+    throw new Error(typeof body.error === 'string' ? body.error : `Compaction request failed: ${res.status}`);
+  }
+  return {
+    started: body.started === true,
+    detail: typeof body.detail === 'string' ? body.detail : undefined,
+  };
+}
+
 export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string, signal?: AbortSignal): Promise<void> {
   const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
     method: 'POST',

@@ -99,6 +99,7 @@ export interface NodeRow {
   follow_ups_source_message_id?: string | null;
   acp_session_id?: string | null;
   runtime_id?: string | null;
+  runtime_engine?: string | null;
   provider_id?: string | null;
   model_id?: string | null;
   reasoning?: string | null;
@@ -1814,6 +1815,7 @@ export function updateNodeResumeBinding(
   fields: {
     acp_session_id: string;
     runtime_id: string;
+    runtime_engine?: string | null;
     provider_id?: string | null;
     model_id?: string | null;
     reasoning?: string | null;
@@ -1833,6 +1835,7 @@ export function updateNodeResumeBinding(
        SET acp_session_id = ?,
            external_session_id = ?,
            runtime_id = ?,
+           runtime_engine = ?,
            provider_id = ?,
            model_id = ?,
            reasoning = ?,
@@ -1844,6 +1847,7 @@ export function updateNodeResumeBinding(
     (fields.runtime_id === 'codex' || fields.runtime_id === 'claude') && fields.acp_session_id !== nodeId
       ? fields.acp_session_id : null,
     fields.runtime_id,
+    fields.runtime_id === 'kiro' ? fields.runtime_engine ?? 'v2' : null,
     fields.provider_id ?? null,
     fields.model_id ?? null,
     fields.reasoning ?? null,

@@ -4,6 +4,11 @@ import {
   applyTurnEvent,
   extractTurnMetadata,
   finalizeTurnContent,
+  extractKiroSteering,
+  KiroSteeringParser,
+  mergeSteeringReports,
+  type SteeringReport,
+  type SteeringSegment,
   type ChatStreamEvent,
   type DurableAssistantBlock,
   type DurableToolCall,
@@ -86,7 +91,7 @@ export function assistantAnswerRawText(m: ChatMessage): string {
 }
 
 export function assistantAnswerVisibleText(m: ChatMessage): string {
-  return stripSentinelsStreamingSafe(assistantAnswerRawText(m)).visibleText;
+  return stripSentinelsStreamingSafe(extractKiroSteering(assistantAnswerRawText(m)).text).visibleText;
 }
 
 export function assistantPersistenceContent(m: ChatMessage): string {
@@ -137,6 +142,7 @@ export function projectAssistantStreamEvent(
       blocks: (message.blocks ?? []) as DurableAssistantBlock[],
       toolCalls: message.toolCalls as DurableToolCall[],
       plan: message.plan,
+      metadata: message.steeringReports?.length ? { steeringReports: message.steeringReports } : undefined,
       createdAt: startedAt,
     },
     nodeMetadata: {},
@@ -150,6 +156,8 @@ export function projectAssistantStreamEvent(
     blocks: projected.assistantMessage.blocks as AssistantBlock[],
     toolCalls: projected.assistantMessage.toolCalls as ToolCallState[],
     plan: projected.assistantMessage.plan,
+    ...(projected.assistantMessage.metadata?.steeringReports
+      ? { steeringReports: projected.assistantMessage.metadata.steeringReports } : {}),
     streaming: projected.status === 'active' ? message.streaming : false,
   };
 }
@@ -269,11 +277,41 @@ export function hasAssistantBlocks(m: ChatMessage): boolean {
   return m.role === 'assistant' && isValidAssistantBlocks(m.blocks);
 }
 
+/** One-time compatibility projection for pre-parser persisted replies. */
+function extractLegacySteering(message: ChatMessage): ChatMessage {
+  if (!assistantAnswerRawText(message).includes('[STEERING')) return message;
+  const parser = new KiroSteeringParser();
+  const reports: SteeringReport[] = [];
+  const visible = (segments: SteeringSegment[]) => segments.map((segment) => {
+    if (segment.kind === 'text') return segment.text;
+    reports.push(segment.report);
+    return '';
+  }).join('');
+  const blocks = (message.blocks ?? []).map((block) => block.kind === 'answer'
+    ? { ...block, rawText: visible(parser.push(block.rawText)) } : block);
+  const tail = visible(parser.finish());
+  let lastAnswer = blocks.length - 1;
+  while (lastAnswer >= 0 && blocks[lastAnswer].kind !== 'answer') lastAnswer--;
+  const last = blocks[lastAnswer];
+  if (last?.kind === 'answer') blocks[lastAnswer] = { ...last, rawText: last.rawText + tail };
+  if (!reports.length) return message;
+  let answerOffset = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.kind === 'answer') answerOffset += block.rawText.length;
+    else if (block.kind === 'thinking') answerOffset = 0;
+    else if ((block.kind === 'tool' || block.kind === 'user-input') && block.section === 'answer') {
+      blocks[i] = { ...block, rawOffset: answerOffset };
+    }
+  }
+  return { ...message, blocks, steeringReports: mergeSteeringReports(message.steeringReports, reports) };
+}
+
 export function migrateAssistantToBlocks(message: ChatMessage): ChatMessage {
   if (message.role !== 'assistant') return message;
   const existing = parseAssistantBlocks(message.blocks);
   if (existing) {
-    return { ...message, blocks: existing, text: '', thought: undefined };
+    return extractLegacySteering({ ...message, blocks: existing, text: '', thought: undefined });
   }
 
   const blocks: AssistantBlock[] = [];
@@ -331,13 +369,14 @@ export function migrateAssistantToBlocks(message: ChatMessage): ChatMessage {
     });
   }
 
-  return { ...message, blocks, text: '', thought: undefined, streaming: false };
+  return extractLegacySteering({ ...message, blocks, text: '', thought: undefined, streaming: false });
 }
 
 export function messageForPersistence(m: ChatMessage): {
   content: string;
   blocks: string | null;
   toolCalls: ToolCallState[];
+  steeringReports?: SteeringReport[];
 } {
   if (m.role !== 'assistant') {
     return { content: m.text, blocks: null, toolCalls: m.toolCalls ?? [] };
@@ -347,5 +386,6 @@ export function messageForPersistence(m: ChatMessage): {
     content: assistantPersistenceContent(migrated),
     blocks: migrated.blocks && migrated.blocks.length > 0 ? JSON.stringify(migrated.blocks) : null,
     toolCalls: migrated.toolCalls ?? [],
+    ...(migrated.steeringReports?.length ? { steeringReports: migrated.steeringReports } : {}),
   };
 }

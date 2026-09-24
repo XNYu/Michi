@@ -457,7 +457,7 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
         m.id === action.assistantId
-          ? { ...m, text: '', blocks: [], toolCalls: [], streaming: true }
+          ? { ...m, text: '', blocks: [], toolCalls: [], steeringReports: undefined, streaming: true }
           : m,
       );
       return {
@@ -480,6 +480,14 @@ export function reduceNodes(
           : m,
       );
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
+    }
+    case 'steering-report': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      const messages = n.messages.map((m) => m.id === action.assistantId
+        ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.steeringReport, data: { reports: action.reports } })
+        : m);
+      return { ...nodes, [action.nodeId]: { ...n, messages } };
     }
     case 'thought': {
       const n = nodes[action.nodeId];
@@ -1417,7 +1425,7 @@ export function reduceNodes(
       const n = nodes[action.nodeId];
       if (!n) return nodes;
       return { ...nodes, [action.nodeId]: { ...n,
-        contextUsagePercentage: action.contextUsagePercentage,
+        contextUsagePercentage: action.contextUsagePercentage ?? n.contextUsagePercentage,
         usageSummary: {
           totalCredits: action.totalCredits,
           turnDurationMs: action.turnDurationMs,

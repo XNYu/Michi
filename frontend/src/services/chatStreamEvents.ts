@@ -61,6 +61,7 @@ export interface StreamHandlers {
   onCancelPhase?: (data: ChatStreamPayloads['cancel_phase']) => void;
   onQueueUpdate?: (data: ChatStreamPayloads['queue_update']) => void;
   onSteerAccepted?: (data: ChatStreamPayloads['steer_accepted']) => void;
+  onSteeringReport?: (data: ChatStreamPayloads['steering_report'] & ChatStreamEnvelope) => void;
   onCompactionStart?: (data: ChatStreamPayloads['compaction_start']) => void;
   onCompactionEnd?: (data: ChatStreamPayloads['compaction_end']) => void;
   onRetryStart?: (data: ChatStreamPayloads['retry_start']) => void;
@@ -176,6 +177,9 @@ export function dispatchChatStreamEvent(
       return;
     case CHAT_STREAM_EVENTS.steerAccepted:
       handlers.onSteerAccepted?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.steeringReport:
+      handlers.onSteeringReport?.(streamEvent.data);
       return;
     case CHAT_STREAM_EVENTS.compactionStart:
       handlers.onCompactionStart?.(streamEvent.data);

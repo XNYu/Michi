@@ -146,6 +146,9 @@ test('excess streams receive 429 while control requests and existing streams sta
   const { socket, frames } = await f.connect();
   for (let i = 0; i < 257; i++) {
     socket.send(JSON.stringify({ type: 'open', id: String(i), path: `/api/chats/n${i}/stream`, method: 'GET' }));
+    // Keep 256 channels open, without overflowing the OS loopback accept
+    // backlog with a burst of 256 new TCP handshakes on constrained hosts.
+    if ((i + 1) % 32 === 0) await until(() => frames.filter((frame) => frame.type === 'headers').length === i + 1);
   }
   await until(() => frames.filter((frame) => frame.type === 'headers').length === 257);
   assert.equal(f.active.size, 256);

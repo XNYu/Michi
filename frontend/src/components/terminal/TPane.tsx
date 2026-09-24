@@ -332,6 +332,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     clearPendingComments,
     queueMessage,
     steerMessage,
+    compactContext,
     dequeueMessage,
     setComposerDraft,
     reorderPane,
@@ -1823,6 +1824,35 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // through to the normal queue path below, which sends them as prompt
     // text on the next idle turn. This matches kiro-cli's native behavior:
     // commands are deferred while streaming and executed once idle.
+    // `/compact` is runtime-agnostic: it goes through chatHub.compact(), which
+    // drives whatever native compaction the active runtime has (Codex
+    // thread/compact/start, Kiro's ACP compact command). Previously this whole
+    // block was gated on `runtime === 'kiro'`, so a Codex user typing /compact
+    // just sent the literal string to the model. A 409 means the active runtime
+    // cannot compact, in which case we fall through to the paths below.
+    if (raw && !streaming) {
+      const compactMatch = raw.match(/^\/compact(?:\s+(.*))?$/);
+      if (compactMatch) {
+        const instructions = compactMatch[1]?.trim();
+        try {
+          const result = await compactContext(nodeId, instructions || undefined);
+          if (result.started) return;
+          if (resolvedBinding.runtime !== 'kiro') {
+            toast.error('/compact is not supported by this runtime', { description: result.detail });
+            return;
+          }
+          if (result.detail !== 'unsupported' && result.detail !== 'No live session') {
+            toast.error('/compact failed', { description: result.detail });
+            return;
+          }
+          // Kiro with no live session yet — fall through to executeCommand.
+        } catch (err) {
+          toast.error('/compact failed', { description: (err as Error).message });
+          return;
+        }
+      }
+    }
+
     if (raw && !streaming && resolvedBinding.runtime === 'kiro') {
       const EXECUTE_ALLOWLIST = new Set(['compact', 'tools', 'context', 'effort', 'clear']);
       const cmdMatch = raw.match(/^\/(\S+)(?:\s+(.*))?$/);

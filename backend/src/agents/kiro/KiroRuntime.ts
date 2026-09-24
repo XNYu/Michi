@@ -5,9 +5,11 @@ import type {
     AgentCapabilities,
     AgentRuntime,
     AgentSession,
+    AgentTurnInput,
     LoadAgentSessionOptions,
     ModelInfo,
     NewAgentSessionOptions,
+    ForkAgentSessionOptions,
     RuntimeSessionOwner,
     RuntimeToolProfile,
     RuntimePermissionBroker,
@@ -20,7 +22,7 @@ import { buildPreamble } from "../preamble";
 import type { AgentToolBridge, BridgeContextResult, SpawnedBranch } from "../toolBridge";
 import { resolveAgentRunToolsForSession } from "../toolBridge";
 import type { RuntimeModelCache } from "../runtimeModelCache";
-import { getNode, getWorkspaceInstructions } from "../../services/dbRepository";
+import { getNode, getWorkspaceInstructions, listEdges } from "../../services/dbRepository";
 import { buildRunMcpSlotCallbacks } from "../runs/runMcpSlot";
 import { NativeResumeFailedError, NativeResumeUnavailableError } from '../../services/nativeResume';
 import { classifyAcpError, isNativeSessionUnavailable } from './acpErrors';
@@ -29,6 +31,10 @@ import { KiroTitleGenerator } from './kiroTitleGenerator';
 import { titleModelConfig } from '../../services/titleGeneration';
 import { log } from '../../services/logger';
 import type { GenerateTitleOptions } from '../types';
+import { michiMcpServer, resolveKiroEngine, rewindPoints, type AcpMcpServer, type KiroEngine } from './kiroProtocol';
+import { readKiroForkAnchor, saveKiroForkAnchor } from './kiroForkAnchors';
+import { KIRO_DESCRIPTOR } from '../capabilityDescriptors';
+import { slot, sanitizeReasoningLevels, isReasoningLevel } from 'michi-shared';
 
 // ---------------------------------------------------------------------------
 // Process lifecycle constants
@@ -78,6 +84,7 @@ export interface LoadSessionResult {
  * handled correctly.
  */
 export interface KiroSessionBinding {
+    engine?: KiroEngine;
     publicSessionId: string;
     nativeSessionId: string;
     owner: RuntimeSessionOwner;
@@ -105,10 +112,8 @@ export type McpSlotCallbacksFactory = (getSlotId: () => string | undefined) => M
  * the per-session current-mode cache, and the global availableModes
  * cache.
  *
- * INVARIANT (preserved from pre-refactor ChatManager): the pool is keyed
- * on cwd alone — two projects sharing a cwd silently share whichever
- * model spawned the first AcpClient. Do NOT change this here; it is
- * tracked separately.
+ * The pool is keyed by cwd within one engine. Model selection is applied to
+ * each session, including warm sessions claimed from the same process.
  */
 export class KiroConcurrencyError extends Error {
     constructor(message: string) {
@@ -132,19 +137,27 @@ export class KiroProcessCapError extends Error {
 export class KiroRuntime implements AgentRuntime {
     public readonly id = "kiro" as const;
     public readonly label = "Kiro";
+    public readonly engine: KiroEngine;
+    get nativeEngine(): KiroEngine { return this.engine; }
+    get capabilityDescriptor() {
+        return { ...KIRO_DESCRIPTOR,
+            compact: slot('native', 'native', this.engine === 'v3' ? '_kiro/session/compact' : '_kiro.dev/commands/execute compact'),
+            sessionFork: slot('native', 'native', this.engine === 'v3' ? 'session/fork' : '_kiro.dev/commands/execute rewind'),
+        };
+    }
     public readonly capabilities: AgentCapabilities = {
         modes: true,
         permissions: true,
         models: true,
         providerModels: false,
-        reasoning: false,
-        supportedReasoningLevels: [],
+        reasoning: true,
+        supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         apiKeys: false,
         warmSessions: true,
         saveContext: true,
         spawnBranches: true,
         nativeResume: true,
-        nativeResumeSettings: ['model'],
+        nativeResumeSettings: ['model', 'reasoning'],
     };
 
     isNativeResumeRetryable(error: unknown): boolean {
@@ -269,6 +282,10 @@ export class KiroRuntime implements AgentRuntime {
      * with a chat. `null` when disabled via MICHI_TITLE_MODEL_KIRO=off.
      */
     private readonly titleGenerator: KiroTitleGenerator | null;
+    private closing = false;
+    private readonly modelCacheKey: string;
+    private readonly isolatedSession: boolean;
+    private readonly sessionWorkers = new Map<string, KiroRuntime>();
 
     constructor(
         /** Bridge for spawn_branches/save_artifact/update_artifact business effects. */
@@ -278,11 +295,15 @@ export class KiroRuntime implements AgentRuntime {
         /** Default cwd used by `getAvailableModes` when no session-specific cwd applies. */
         defaultCwd: string = process.cwd(),
         modelCache?: RuntimeModelCache,
+        options: { engine?: KiroEngine; isolatedSession?: boolean } = {},
     ) {
+        this.engine = options.engine ?? resolveKiroEngine();
+        this.isolatedSession = options.isolatedSession === true;
+        this.modelCacheKey = this.engine === 'v2' ? this.id : `${this.id}-v3`;
         this.mcpBaseUrl = `http://127.0.0.1:${mcpPort}/api`;
         this.defaultCwd = defaultCwd;
         this.modelCacheStore = modelCache;
-        this.modelCache = modelCache?.load(this.id) ?? null;
+        this.modelCache = modelCache?.load(this.modelCacheKey) ?? null;
         this.concurrencyCap = parseInt(process.env.MICHI_KIRO_MAX_CONCURRENT ?? "100", 10);
         this.processCap = DEFAULT_PROCESS_CAP;
         this.idleTtlMs = DEFAULT_IDLE_TTL_MS;
@@ -294,6 +315,24 @@ export class KiroRuntime implements AgentRuntime {
                 timeoutMs: titleConfig.timeoutMs,
             })
             : null;
+    }
+
+    private get usesSessionWorkers(): boolean { return this.engine === 'v3' && !this.isolatedSession; }
+
+    private workerForNativeId(sid: string): KiroRuntime | undefined {
+        return [...this.sessionWorkers.values()].find((worker) => worker.getBindingByNativeSid(sid));
+    }
+
+    /** KAS replaces process-wide MCP connections on load. Never share it across chats. */
+    private async openIsolatedSession(id: string, cwd: string, open: (worker: KiroRuntime) => Promise<AgentSession>): Promise<AgentSession> {
+        if (this.closing) throw new Error('Kiro runtime is shutting down');
+        if (this.sessionWorkers.has(id)) throw new KiroConcurrencyError('Kiro session is already opening or bound');
+        if (this.sessionWorkers.size + this.pool.size >= this.processCap) throw new KiroProcessCapError('Kiro v3 process cap reached');
+        const worker = new KiroRuntime(this.bridge, this.mcpRegistry, Number(new URL(this.mcpBaseUrl).port), cwd,
+            this.modelCacheStore, { engine: this.engine, isolatedSession: true });
+        this.sessionWorkers.set(id, worker);
+        try { return await open(worker); }
+        catch (error) { this.sessionWorkers.delete(id); await worker.shutdown(); throw error; }
     }
 
     /**
@@ -440,17 +479,20 @@ export class KiroRuntime implements AgentRuntime {
      * primary `bindings` map and the `publicIdByNativeSid` reverse index.
      */
     private storeBinding(binding: KiroSessionBinding): void {
+        binding.engine ??= this.engine;
         this.bindings.set(binding.publicSessionId, binding);
         this.publicIdByNativeSid.set(binding.nativeSessionId, binding.publicSessionId);
     }
 
     /** Look up a binding by public session id (node id or Attempt id). */
     getBinding(publicSessionId: string): KiroSessionBinding | undefined {
+        if (this.usesSessionWorkers) return this.sessionWorkers.get(publicSessionId)?.getBinding(publicSessionId);
         return this.bindings.get(publicSessionId);
     }
 
     /** Look up a binding by native ACP session id (reverse lookup). */
     getBindingByNativeSid(nativeSid: string): KiroSessionBinding | undefined {
+        if (this.usesSessionWorkers) return this.workerForNativeId(nativeSid)?.getBindingByNativeSid(nativeSid);
         const pubId = this.publicIdByNativeSid.get(nativeSid);
         return pubId ? this.bindings.get(pubId) : undefined;
     }
@@ -668,6 +710,7 @@ export class KiroRuntime implements AgentRuntime {
     }
 
     ensureClient(cwd: string, model?: string): Promise<AcpClient> {
+        if (this.closing) return Promise.reject(new ACPNotRunningError('Kiro runtime is shutting down'));
         const recovery = this.cancelRecoveryLocks.get(cwd);
         if (recovery) return recovery;
         const alive = this.pool.get(cwd);
@@ -706,7 +749,7 @@ export class KiroRuntime implements AgentRuntime {
                     }
                 }
 
-                const c = new AcpClient(undefined, cwd, model);
+                const c = new AcpClient(undefined, cwd, model, this.engine);
                 c.onExit(() => {
                     // If this is still the current client for that cwd, purge.
                     if (this.pool.get(cwd) === c) {
@@ -771,7 +814,7 @@ export class KiroRuntime implements AgentRuntime {
                 this.pool.delete(cwd);
                 this.purgeSessionsForCwd(cwd);
                 remaining();
-                client = new AcpClient(undefined, cwd, model);
+                client = new AcpClient(undefined, cwd, model, this.engine);
                 const replacement = client;
                 client.onExit(() => {
                     if (this.pool.get(cwd) === replacement) {
@@ -893,6 +936,7 @@ export class KiroRuntime implements AgentRuntime {
      * @throws When the ACP `session/load` fails or the client cannot start.
      */
     async rebindRunSession(binding: KiroSessionBinding): Promise<KiroSession> {
+        if ((binding.engine ?? 'v2') !== this.engine) throw new NativeResumeUnavailableError('Kiro Run belongs to another engine');
         const { publicSessionId, nativeSessionId, owner, cwd, workspaceId, ownerUserId, runtimeProfileHash, toolProfile, permissionBroker, modelId } = binding;
 
         if (owner.kind !== "agent_run") {
@@ -914,7 +958,7 @@ export class KiroRuntime implements AgentRuntime {
             chatCallbacks,
         });
 
-        let mcpServers: Array<{ name: string; type: "http"; url: string; headers: [] }> = [];
+        let mcpServers: AcpMcpServer[] = [];
         if (this.mcpRegistry) {
             const slot = this.mcpRegistry.create(
                 nativeSessionId,
@@ -924,18 +968,14 @@ export class KiroRuntime implements AgentRuntime {
                 { nodeId: null, workspaceId },
             );
             slotId = slot.slotId;
-            mcpServers = [{
-                name: "michi",
-                type: "http",
-                url: `${this.mcpBaseUrl}/mcp/${slotId}`,
-                headers: [],
-            }];
+            mcpServers = [michiMcpServer(this.engine, this.mcpBaseUrl, slotId)];
         }
 
         // Ensure client and load session.
         const c = await this.ensureClient(cwd, modelId ?? undefined);
         try {
-            const result = await c.loadSession(nativeSessionId, cwd, mcpServers);
+            const result = await c.loadSession(nativeSessionId, cwd, mcpServers, undefined, { modelId: modelId ?? undefined });
+            if (modelId && result.models?.currentModelId !== modelId) await c.setModel(nativeSessionId, modelId);
             if (result.modes?.currentModeId) {
                 this.sessionCurrentMode.set(nativeSessionId, result.modes.currentModeId);
             }
@@ -1038,6 +1078,12 @@ export class KiroRuntime implements AgentRuntime {
                 id: String(m?.modelId ?? ""),
                 label: typeof m?.name === "string" ? m.name : undefined,
                 description: typeof m?.description === "string" ? m.description : undefined,
+                ...(this.engine === 'v3' ? {
+                    supportsReasoning: m?._meta?.kiro?.hasEffort === true,
+                    supportedReasoningLevels: sanitizeReasoningLevels(m?._meta?.kiro?.effortLevels),
+                    ...(isReasoningLevel(m?._meta?.kiro?.defaultEffortLevel)
+                        ? { defaultReasoning: m._meta.kiro.defaultEffortLevel } : {}),
+                } : {}),
             }))
             .filter((m) => m.id);
     }
@@ -1047,7 +1093,7 @@ export class KiroRuntime implements AgentRuntime {
         const normalized = this.normalizeModels(list);
         if (normalized.length > 0) {
             this.modelCache = normalized;
-            this.modelCacheStore?.save(this.id, normalized);
+            this.modelCacheStore?.save(this.modelCacheKey, normalized);
         }
     }
 
@@ -1067,7 +1113,7 @@ export class KiroRuntime implements AgentRuntime {
         makeCallbacks: McpSlotCallbacksFactory,
     ): Promise<OpenSessionResult> {
         let slotId: string | undefined;
-        let mcpServers: Array<{ name: string; type: "http"; url: string; headers: [] }> = [];
+        let mcpServers: AcpMcpServer[] = [];
         if (this.mcpRegistry) {
             const cbs = makeCallbacks(() => slotId);
             const slot = this.mcpRegistry.create(
@@ -1078,14 +1124,7 @@ export class KiroRuntime implements AgentRuntime {
                 { nodeId: null },
             );
             slotId = slot.slotId;
-            mcpServers = [
-                {
-                    name: "michi",
-                    type: "http",
-                    url: `${this.mcpBaseUrl}/mcp/${slotId}`,
-                    headers: [],
-                },
-            ];
+            mcpServers = [michiMcpServer(this.engine, this.mcpBaseUrl, slotId)];
         }
         let result: { sessionId: string; modes?: any; models?: any; configOptions?: any };
         try {
@@ -1140,7 +1179,7 @@ export class KiroRuntime implements AgentRuntime {
             this.makeSlotCallbacks(getSlotId);
 
         let slotId: string | undefined;
-        let mcpServers: Array<{ name: string; type: "http"; url: string; headers: [] }> = [];
+        let mcpServers: AcpMcpServer[] = [];
         if (this.mcpRegistry) {
             const cbs = makeCallbacks(() => slotId);
             const slot = this.mcpRegistry.create(sessionId, cwd, opts.ownerUserId ?? null, cbs, {
@@ -1148,19 +1187,12 @@ export class KiroRuntime implements AgentRuntime {
                 workspaceId: opts.workspaceId ?? null,
             });
             slotId = slot.slotId;
-            mcpServers = [
-                {
-                    name: "michi",
-                    type: "http",
-                    url: `${this.mcpBaseUrl}/mcp/${slotId}`,
-                    headers: [],
-                },
-            ];
+            mcpServers = [michiMcpServer(this.engine, this.mcpBaseUrl, slotId)];
         }
 
         let result: { modes?: any; models?: any };
         try {
-            result = await c.loadSession(sessionId, cwd, mcpServers, remaining());
+            result = await c.loadSession(sessionId, cwd, mcpServers, remaining(), { modelId: model });
             if (model && result.models?.currentModelId !== model) {
                 await c.setModel(sessionId, model, remaining());
                 result.models = { ...result.models, currentModelId: model };
@@ -1189,12 +1221,14 @@ export class KiroRuntime implements AgentRuntime {
      * need to close over a slotId getter and route to ChatManager state.
      */
     warmNextSession(cwd: string): void {
+        if (this.closing) return;
         const pool = this.warmedSessions.get(cwd);
         if (pool && pool.length >= WARM_POOL_SIZE) return;
         if (this.warmSessionLocks.has(cwd)) return;
         const makeCallbacks: McpSlotCallbacksFactory = (getSlotId) => this.makeSlotCallbacks(getSlotId);
         const p = (async () => {
             const t0 = perf.now();
+            let succeeded = false;
             try {
                 const c = await this.ensureClient(cwd);
                 const { sid, slotId, modes } = await this.openSession(c, cwd, makeCallbacks);
@@ -1211,13 +1245,14 @@ export class KiroRuntime implements AgentRuntime {
                     this.warmedSessions.set(cwd, [entry]);
                 }
                 perf.measure("warm:session_ready", t0, { cwd, sid, poolSize: (existing?.length ?? 1) });
+                succeeded = true;
             } catch (err) {
                 console.warn(`[kiroRuntime] warmNextSession(${cwd}) failed:`, err);
             } finally {
                 this.warmSessionLocks.delete(cwd);
                 // Continue filling the pool if still below target.
                 const currentPool = this.warmedSessions.get(cwd);
-                if (!currentPool || currentPool.length < WARM_POOL_SIZE) {
+                if (succeeded && !this.closing && (!currentPool || currentPool.length < WARM_POOL_SIZE)) {
                     this.warmNextSession(cwd);
                 }
             }
@@ -1263,7 +1298,10 @@ export class KiroRuntime implements AgentRuntime {
 
     /** currentModeId for a session (undefined if unknown). */
     getCurrentMode(sid: string): string | undefined {
-        return this.sessionCurrentMode.get(sid);
+        if (this.usesSessionWorkers) return this.workerForNativeId(sid)?.getCurrentMode(sid);
+        const cwd = this.sessionCwd.get(sid);
+        return (cwd ? this.pool.get(cwd)?.getSessionInfo?.(sid)?.modes?.currentModeId : undefined)
+            ?? this.sessionCurrentMode.get(sid);
     }
 
     /** The initial mode most recently reported by session/new for this cwd. */
@@ -1311,6 +1349,8 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Switch the active mode (kiro-cli uses this to switch agents). */
     async setMode(sid: string, modeId: string): Promise<void> {
+        const worker = this.workerForNativeId(sid);
+        if (worker) return worker.setMode(sid, modeId);
         const cwd = this.getCwdForSession(sid);
         if (!cwd) throw new Error("unknown chat");
         const c = this.pool.get(cwd);
@@ -1321,7 +1361,10 @@ export class KiroRuntime implements AgentRuntime {
 
     /** currentModelId for a session (undefined if unknown). */
     getCurrentModel(sid: string): string | undefined {
-        return this.sessionCurrentModel.get(sid);
+        if (this.usesSessionWorkers) return this.workerForNativeId(sid)?.getCurrentModel(sid);
+        const cwd = this.sessionCwd.get(sid);
+        return (cwd ? this.pool.get(cwd)?.getSessionInfo?.(sid)?.models?.currentModelId : undefined)
+            ?? this.sessionCurrentModel.get(sid);
     }
 
     /**
@@ -1337,6 +1380,8 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Switch the active model on a live ACP session. */
     async setModel(sid: string, modelId: string): Promise<void> {
+        const worker = this.workerForNativeId(sid);
+        if (worker) return worker.setModel(sid, modelId);
         const cwd = this.getCwdForSession(sid);
         if (!cwd) throw new Error("unknown chat");
         const c = this.pool.get(cwd);
@@ -1347,6 +1392,8 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Forward a user's permission approval to the ACP client. */
     respondToPermission(sid: string, requestId: number, optionId: string): void {
+        const worker = this.workerForNativeId(sid);
+        if (worker) return worker.respondToPermission(sid, requestId, optionId);
         const cwd = this.getCwdForSession(sid);
         if (!cwd) return;
         const client = this.pool.get(cwd);
@@ -1365,6 +1412,8 @@ export class KiroRuntime implements AgentRuntime {
         command: string,
         args?: Record<string, unknown>,
     ): Promise<{ success: boolean; message?: string; data?: unknown }> {
+        const worker = this.workerForNativeId(sid);
+        if (worker) return worker.executeCommand(sid, command, args);
         const cwd = this.getCwdForSession(sid);
         if (!cwd) throw new Error("unknown session");
         const c = this.pool.get(cwd);
@@ -1374,6 +1423,8 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Forward a user's permission denial/cancellation to the ACP client. */
     cancelPermission(sid: string, requestId: number): void {
+        const worker = this.workerForNativeId(sid);
+        if (worker) return worker.cancelPermission(sid, requestId);
         const cwd = this.getCwdForSession(sid);
         if (!cwd) return;
         const client = this.pool.get(cwd);
@@ -1388,6 +1439,7 @@ export class KiroRuntime implements AgentRuntime {
      * first /api/modes call doesn't pay another session/new.
      */
     async warm(cwd: string, opts?: { model?: string | null }): Promise<void> {
+        if (this.usesSessionWorkers) { await this.getAvailableModes(); return; }
         await this.ensureClient(cwd, opts?.model ?? undefined);
         this.warmNextSession(cwd);
         const warmLock = this.warmSessionLocks.get(cwd);
@@ -1410,6 +1462,11 @@ export class KiroRuntime implements AgentRuntime {
      * (including `submit_agent_result`) from the start.
      */
     async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
+        if (this.usesSessionWorkers) {
+            const id = opts.owner?.kind === 'agent_run' ? opts.owner.attemptId : opts.sessionId;
+            if (!id) throw new Error('Kiro v3 requires a public session id');
+            return this.openIsolatedSession(id, opts.cwd, (worker) => worker.newSession(opts));
+        }
         const owner: RuntimeSessionOwner = opts.owner ?? { kind: "chat_node", nodeId: opts.sessionId ?? "__unknown__" };
         const isAgentRun = owner.kind === "agent_run";
 
@@ -1448,7 +1505,7 @@ export class KiroRuntime implements AgentRuntime {
             });
 
             // Allocate the MCP slot and open the ACP session.
-            let mcpServers: Array<{ name: string; type: "http"; url: string; headers: [] }> = [];
+            let mcpServers: AcpMcpServer[] = [];
             if (this.mcpRegistry) {
                 const slot = this.mcpRegistry.create(
                     "__pending__",
@@ -1458,12 +1515,7 @@ export class KiroRuntime implements AgentRuntime {
                     { nodeId: null, workspaceId: opts.workspaceId ?? null },
                 );
                 slotId = slot.slotId;
-                mcpServers = [{
-                    name: "michi",
-                    type: "http",
-                    url: `${this.mcpBaseUrl}/mcp/${slotId}`,
-                    headers: [],
-                }];
+                mcpServers = [michiMcpServer(this.engine, this.mcpBaseUrl, slotId)];
             }
 
             let result: { sessionId: string; modes?: any; models?: any };
@@ -1548,6 +1600,23 @@ export class KiroRuntime implements AgentRuntime {
             ? (owner as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).attemptId
             : (opts.sessionId ?? sid);
 
+        try {
+            // A warm session or a shared cwd process may have another model.
+            // Apply settings to this session, never trust the process argv alone.
+            if (opts.model && this.sessionCurrentModel.get(sid) !== opts.model) {
+                await c.setModel(sid, opts.model);
+                this.sessionCurrentModel.set(sid, opts.model);
+            }
+            await this.applyReasoning(c, sid, opts.reasoning);
+        } catch (error) {
+            c.destroySession(sid);
+            if (slotId) await this.mcpRegistry?.dispose(slotId).catch(() => {});
+            this.slotByChatId.delete(sid);
+            this.sessionCurrentMode.delete(sid);
+            this.sessionCurrentModel.delete(sid);
+            throw error;
+        }
+
         this.sessionCwd.set(sid, opts.cwd);
         this.bindNodeSession(publicId, sid);
 
@@ -1611,6 +1680,73 @@ export class KiroRuntime implements AgentRuntime {
         return session;
     }
 
+    private async applyReasoning(client: AcpClient, sid: string, reasoning?: string | null): Promise<void> {
+        if (!reasoning) return;
+        if (this.engine === 'v2') {
+            const result = await client.executeCommand(sid, 'effort', { value: reasoning });
+            if (!result.success) throw new Error(result.message ?? 'Kiro rejected reasoning effort');
+            return;
+        }
+        const option = client.getSessionInfo(sid)?.configOptions?.find((c) => c.id === 'effortLevel' || c.category === 'thought_level');
+        if (!option) throw new Error('The selected Kiro model does not expose reasoning effort');
+        await client.setConfigOption(sid, option.id, reasoning);
+    }
+
+    async forkSession(opts: ForkAgentSessionOptions): Promise<AgentSession> {
+        if (this.usesSessionWorkers) {
+            if (!opts.sessionId) throw new Error('Kiro v3 fork requires a child node id');
+            return this.openIsolatedSession(opts.sessionId, opts.cwd, (worker) => worker.forkSession(opts));
+        }
+        if (!opts.sessionId || opts.owner?.kind === 'agent_run') throw new NativeResumeUnavailableError('Only chat nodes can inherit a native Kiro conversation');
+        const parent = opts.parentChatId ? getNode(opts.parentChatId) : null;
+        if (parent && (parent.runtime_engine ?? 'v2') !== this.engine) throw new NativeResumeUnavailableError('Kiro engines differ');
+        const edge = opts.workspaceId ? listEdges(opts.workspaceId).find((edge) => edge.kind === 'branch'
+            && edge.source_node_id === opts.parentChatId && edge.target_node_id === opts.sessionId) : undefined;
+        const point = edge?.anchor_message_id && opts.parentChatId
+            ? readKiroForkAnchor(opts.parentChatId, opts.sourceNativeSessionId, this.engine, edge.anchor_message_id) : undefined;
+        if (edge?.anchor_message_id && !point) throw new NativeResumeUnavailableError('No native Kiro anchor for the selected historical message');
+        const c = await this.ensureClient(opts.cwd);
+        const alreadyLoaded = c.hasSession(opts.sourceNativeSessionId);
+        let childId: string;
+        try {
+            if (!alreadyLoaded) await c.loadSession(opts.sourceNativeSessionId, opts.cwd, []);
+            childId = await c.forkSession(opts.sourceNativeSessionId, point ?? undefined);
+        } catch (error) {
+            if (isNativeSessionUnavailable(error, opts.sourceNativeSessionId)) throw new NativeResumeUnavailableError('Kiro parent session is unavailable');
+            throw error;
+        } finally {
+            if (!alreadyLoaded) c.destroySession(opts.sourceNativeSessionId);
+        }
+        // Rebind the copied native history to a NEW child-only MCP endpoint.
+        const loaded = await this.loadSession({ ...opts, sessionId: childId, nodeId: opts.sessionId, nativeEngine: this.engine });
+        loaded.parentChatId = opts.parentChatId;
+        (loaded as KiroSession).primeFirstMessage(buildPreamble({
+            enableFollowUps: opts.enableFollowUps !== false, cwd: opts.cwd,
+            contextManifest: opts.contextManifest, extraContexts: opts.extraContexts,
+            ancestors: [], mergeContexts: opts.mergeContexts,
+            workspaceInstructions: opts.workspaceId ? getWorkspaceInstructions(opts.workspaceId) : null,
+        }));
+        return loaded;
+    }
+
+    async recordForkAnchor(nodeId: string, sid: string, input: AgentTurnInput): Promise<void> {
+        const cwd = this.sessionCwd.get(sid);
+        const c = cwd ? this.pool.get(cwd) : undefined;
+        if (!c || !input.assistantMessageId || this.getBindingByNativeSid(sid)?.owner.kind !== 'chat_node') return;
+        try {
+            const anchor = this.engine === 'v3'
+                ? { messageId: c.getLastUserMessageId(sid) }
+                : { logIndex: rewindPoints(await c.executeCommand(sid, 'rewind', {}, 5_000))[0]?.logIndex };
+            if (anchor.messageId === undefined && anchor.logIndex === undefined) return;
+            saveKiroForkAnchor({ nodeId, nativeSessionId: sid, engine: this.engine,
+                assistantMessageId: input.assistantMessageId, userMessageId: input.userMessageId, anchor });
+        } catch (error) {
+            // A failed optional anchor lookup must not change a completed turn
+            // into a retry. Historical forks then use explicit text fallback.
+            log.warn('acp', 'could not retain Kiro fork anchor', { nodeId, engine: this.engine, error: String(error) });
+        }
+    }
+
     /**
      * AgentRuntime contract: restore an existing session by id with the
      * runtime's real MCP slot callbacks. The returned session has
@@ -1622,17 +1758,28 @@ export class KiroRuntime implements AgentRuntime {
      * query the nodes table — Runs have no backing node row.
      */
     async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
+        if (this.usesSessionWorkers) {
+            const id = opts.owner?.kind === 'agent_run' ? opts.owner.attemptId : opts.nodeId ?? opts.sessionId;
+            return this.openIsolatedSession(id, opts.cwd, (worker) => worker.loadSession(opts));
+        }
         const owner: RuntimeSessionOwner = opts.owner ?? { kind: "chat_node", nodeId: opts.nodeId ?? opts.sessionId };
         const isAgentRun = owner.kind === "agent_run";
+        const storedEngine = opts.nativeEngine ?? (!isAgentRun ? getNode(opts.nodeId ?? opts.sessionId)?.runtime_engine : undefined) ?? 'v2';
+        const tokenEngine = typeof opts.nativeResumeToken === 'object' && opts.nativeResumeToken !== null && !Array.isArray(opts.nativeResumeToken)
+            ? opts.nativeResumeToken.engine : undefined;
+        if ((tokenEngine ?? storedEngine) !== this.engine) throw new NativeResumeUnavailableError('Kiro native session belongs to another engine');
 
         let nativeSessionId: string;
 
         if (isAgentRun) {
             // Agent Run path: use nativeResumeToken directly — never query nodes.
-            if (!opts.nativeResumeToken || typeof opts.nativeResumeToken !== "string") {
+            const token = opts.nativeResumeToken;
+            const sid = typeof token === 'string' ? token
+                : token && typeof token === 'object' && !Array.isArray(token) ? token.sessionId : undefined;
+            if (typeof sid !== 'string' || !sid) {
                 throw new Error("Kiro agent_run loadSession requires a string nativeResumeToken (ACP session id)");
             }
-            nativeSessionId = opts.nativeResumeToken;
+            nativeSessionId = sid;
         } else {
             // Chat path: existing Node-based ACP sid lookup (unchanged).
             const nodeId = opts.nodeId ?? opts.sessionId;
@@ -1662,7 +1809,7 @@ export class KiroRuntime implements AgentRuntime {
                 chatCallbacks,
             });
 
-            let mcpServers: Array<{ name: string; type: "http"; url: string; headers: [] }> = [];
+            let mcpServers: AcpMcpServer[] = [];
             if (this.mcpRegistry) {
                 const slot = this.mcpRegistry.create(
                     nativeSessionId,
@@ -1672,17 +1819,12 @@ export class KiroRuntime implements AgentRuntime {
                     { nodeId: null, workspaceId: opts.workspaceId ?? null },
                 );
                 resumeSlotId = slot.slotId;
-                mcpServers = [{
-                    name: "michi",
-                    type: "http",
-                    url: `${this.mcpBaseUrl}/mcp/${resumeSlotId}`,
-                    headers: [],
-                }];
+                mcpServers = [michiMcpServer(this.engine, this.mcpBaseUrl, resumeSlotId)];
             }
 
             const c = await this.ensureClient(opts.cwd, opts.model ?? undefined);
             try {
-                const result = await c.loadSession(nativeSessionId, opts.cwd, mcpServers);
+                const result = await c.loadSession(nativeSessionId, opts.cwd, mcpServers, undefined, { modelId: opts.model ?? undefined });
                 if (opts.model && result.models?.currentModelId !== opts.model) {
                     await c.setModel(nativeSessionId, opts.model);
                     result.models = { ...result.models, currentModelId: opts.model };
@@ -1692,6 +1834,7 @@ export class KiroRuntime implements AgentRuntime {
                 }
                 this.absorbModes(result.modes);
                 this.absorbModels(nativeSessionId, result.models);
+                await this.applyReasoning(c, nativeSessionId, opts.reasoning);
             } catch (err) {
                 if (resumeSlotId) await this.mcpRegistry?.dispose(resumeSlotId).catch(() => {});
                 throw err;
@@ -1733,6 +1876,13 @@ export class KiroRuntime implements AgentRuntime {
             nodeId,
             ownerUserId: opts.ownerUserId ?? null,
         });
+        if (opts.reasoning) {
+            try { await this.applyReasoning(await this.ensureClient(opts.cwd), result.sid, opts.reasoning); }
+            catch (error) {
+                if (result.slotId) await this.mcpRegistry?.dispose(result.slotId).catch(() => {});
+                throw error;
+            }
+        }
         if (result.slotId) {
             const slot = this.mcpRegistry?.get(result.slotId);
             if (slot) {
@@ -1779,6 +1929,13 @@ export class KiroRuntime implements AgentRuntime {
      * owner.
      */
     async releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
+        const worker = this.sessionWorkers.get(sessionId);
+        if (worker) {
+            await worker.releaseSession(sessionId, expectedOwner);
+            this.sessionWorkers.delete(sessionId);
+            await worker.shutdown();
+            return;
+        }
         const sid = this.sidByNodeId.get(sessionId) ?? sessionId;
         const nodeId = this.nodeIdBySid.get(sid) ?? sessionId;
 
@@ -1861,7 +2018,7 @@ export class KiroRuntime implements AgentRuntime {
             // empty models payload during startup.
             if (normalized.length > 0) {
                 this.modelCache = normalized;
-                this.modelCacheStore?.save(this.id, normalized);
+                this.modelCacheStore?.save(this.modelCacheKey, normalized);
             }
             return this.modelCache ?? normalized;
         })().finally(() => {
@@ -1873,6 +2030,11 @@ export class KiroRuntime implements AgentRuntime {
 
     /** Shutdown: kill all clients in pool and reset internal maps. */
     async shutdown(): Promise<void> {
+        this.closing = true;
+        const workers = [...this.sessionWorkers.values()];
+        this.sessionWorkers.clear();
+        await Promise.all(workers.map((worker) => worker.shutdown()));
+        await Promise.allSettled([...this.startLocks.values(), ...this.warmSessionLocks.values()]);
         await Promise.allSettled(this.cancelRecoveryLocks.values());
         await this.titleGenerator?.shutdown().catch(() => {});
         // Clear pending user-input requests (avoid leaked timers + dangling promises).

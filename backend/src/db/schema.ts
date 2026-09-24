@@ -9,6 +9,16 @@ export const meta = sqliteTable('meta', {
   value: text('value').notNull(),
 });
 
+export const kiroForkAnchors = sqliteTable('kiro_fork_anchors', {
+  nodeId: text('node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),
+  nativeSessionId: text('native_session_id').notNull(),
+  engine: text('engine').notNull(),
+  assistantMessageId: text('assistant_message_id').notNull(),
+  userMessageId: text('user_message_id'),
+  logIndex: integer('log_index'),
+  nativeMessageId: text('native_message_id'),
+}, (t) => ({ pk: primaryKey({ columns: [t.nodeId, t.nativeSessionId, t.assistantMessageId] }) }));
+
 // ---------------------------------------------------------------------------
 // workspaces
 // ---------------------------------------------------------------------------
@@ -125,6 +135,7 @@ export const nodes = sqliteTable('nodes', {
   acpSessionId:       text('acp_session_id'),
   externalSessionId:  text('external_session_id'),
   runtimeId:          text('runtime_id'),
+  runtimeEngine:      text('runtime_engine'),
   providerId:         text('provider_id'),
   modelId:            text('model_id'),
   reasoning:          text('reasoning'),

@@ -94,11 +94,12 @@ test('Claude adapter declares allowlist tool mode and native steering', () => {
   assert.equal(adapter.supportsNativeResume, true);
 });
 
-test('Kiro adapter declares runtime_default tool mode and next_turn steering', () => {
+test('Kiro adapter declares runtime_default tool mode and native steering', () => {
   const adapter = new KiroRunAdapter();
   assert.equal(adapter.runtimeId, 'kiro');
   assert.equal(adapter.nativeToolMode, 'runtime_default');
-  assert.equal(adapter.steering, 'next_turn');
+  assert.equal(adapter.steering, 'native');
+  assert.equal(adapter.immediateSteering, 'next_turn');
   assert.equal(adapter.supportsNativeResume, true);
 });
 

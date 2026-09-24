@@ -1,4 +1,5 @@
 import type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo, UserInputAnswer, UserInputQuestion } from "michi-shared";
+import type { SteeringReport } from 'michi-shared';
 
 export type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo, UserInputAnswer, UserInputQuestion } from "michi-shared";
 
@@ -34,9 +35,9 @@ export type NormalizedEvent =
     | { kind: "context_usage"; contextUsagePercentage: number }
     | {
           kind: "usage_summary";
-          contextUsagePercentage: number;
-          totalCredits: number;
-          turnDurationMs: number;
+          contextUsagePercentage?: number;
+          totalCredits?: number;
+          turnDurationMs?: number;
           source?: string;
           totalTokens?: number;
           inputTokens?: number;
@@ -47,6 +48,7 @@ export type NormalizedEvent =
     | { kind: "cancel_phase"; phase: "requested" | "acknowledged" | "settled" }
     | { kind: "queue_update"; steering: string[]; followUp: string[] }
     | { kind: "steer_accepted"; text: string; pending?: boolean }
+    | { kind: "steering_report"; reports: SteeringReport[] }
     | { kind: "compaction_start"; detail?: string }
     | { kind: "compaction_end"; detail?: string }
     | { kind: "retry_start"; detail?: string }

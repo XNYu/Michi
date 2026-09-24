@@ -12,7 +12,7 @@ import type {
   TrimSnapshot,
 } from './chatTypes';
 import type { DigestState } from './digest';
-import { parseBranchOverviewEntries } from 'michi-shared';
+import { parseBranchOverviewEntries, parseSteeringReports } from 'michi-shared';
 
 export const STATE_SCHEMA_VERSION = 6;
 
@@ -417,6 +417,8 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
     plan: Array.isArray(metadata.plan)
       ? metadata.plan as ChatMessage['plan']
       : undefined,
+    ...(role === 'assistant' && Array.isArray(metadata.steeringReports)
+      ? { steeringReports: parseSteeringReports(metadata.steeringReports) } : {}),
   };
   return role === 'assistant' ? finalizeAssistantBlocks(migrateAssistantToBlocks(baseMsg)) : baseMsg;
 }

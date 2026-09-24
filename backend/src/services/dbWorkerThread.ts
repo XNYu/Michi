@@ -388,6 +388,7 @@ function persistResumeBinding(args: {
   nodeId: string;
   acp_session_id: string;
   runtime_id: string;
+  runtime_engine?: string | null;
   provider_id: string | null;
   model_id: string | null;
   reasoning: string | null;
@@ -401,6 +402,7 @@ function persistResumeBinding(args: {
        SET acp_session_id = ?,
            external_session_id = ?,
            runtime_id = ?,
+           runtime_engine = ?,
            provider_id = ?,
            model_id = ?,
            reasoning = ?,
@@ -412,6 +414,7 @@ function persistResumeBinding(args: {
     (args.runtime_id === 'codex' || args.runtime_id === 'claude') && args.acp_session_id !== args.nodeId
       ? args.acp_session_id : null,
     args.runtime_id,
+    args.runtime_id === 'kiro' ? args.runtime_engine ?? 'v2' : null,
     args.provider_id,
     args.model_id,
     args.reasoning,

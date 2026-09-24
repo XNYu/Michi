@@ -36,8 +36,11 @@ test(`${runtime} native recovery is visible before the first token and ${outcome
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(status).toBeVisible();
-    const bounds = await status.boundingBox();
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width + 1);
+    // ResizeObserver/React layout can settle after setViewportSize resolves.
+    await expect.poll(async () => {
+      const bounds = await status.boundingBox();
+      return bounds ? bounds.x + bounds.width : Infinity;
+    }).toBeLessThanOrEqual(width + 1);
     await page.screenshot({ path: `/tmp/michi-${runtime.toLowerCase()}-recovery-${outcome}-${width}.png`, animations: 'disabled' });
   }
   await page.evaluate((outcome) => outcome === 'success'

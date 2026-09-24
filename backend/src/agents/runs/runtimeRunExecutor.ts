@@ -326,7 +326,10 @@ export class RuntimeRunExecutor implements AgentRunExecutor {
           return { status: 'waiting', kind: 'user_input', request: json(event) };
         }
         if (event.kind === 'runtime_error') throw new Error(event.error);
-        if (event.kind === 'turn_end') break;
+        if (event.kind === 'turn_end') {
+          await iterator!.return?.();
+          break;
+        }
       }
       return 'turn_ended';
     };
@@ -347,7 +350,7 @@ export class RuntimeRunExecutor implements AgentRunExecutor {
           // Emit checkpoint before the first turn
           if (!iterator) {
             if (session.nativeSessionId != null) {
-              await emit({ type: AgentRunEventType.Checkpoint, payload: { version: 1, runtimeId: runtime.id }, nativeResumeToken: session.nativeSessionId });
+              await emit({ type: AgentRunEventType.Checkpoint, payload: { version: 1, runtimeId: runtime.id }, nativeResumeToken: session.getNativeResumeToken?.() ?? session.nativeSessionId });
             }
             iterator = session.send(spec.task);
           }
@@ -359,7 +362,7 @@ export class RuntimeRunExecutor implements AgentRunExecutor {
           if (turnResult !== 'turn_ended') return turnResult;
 
           // For native adapters, the single turn is done — finalize
-          if (!useNextTurnLoop) {
+          if (!useNextTurnLoop && adapter.immediateSteering !== 'next_turn') {
             if (cancelled) return { status: 'cancelled' };
             phase = 'finalizing';
             const resultBundle = collector.finalize(assistantText);
@@ -429,11 +432,11 @@ export class RuntimeRunExecutor implements AgentRunExecutor {
        * - **Pending interaction** (any adapter): resolves the pending
        *   permission or user_input interaction directly.
        *
-       * - **`native` steering** (Codex, Pi, Claude): delegates to the
+       * - **`native` steering** (Codex, Pi, Kiro): delegates to the
        *   session's `steer()` or `followUp()` method for same-turn delivery.
        *   Immediate mode cancels the current turn first.
        *
-       * - **`next_turn` steering** (Kiro): queued input is held until the
+       * - **`next_turn` steering**: queued input is held until the
        *   current turn ends, then sent as a new user turn. Immediate input
        *   cancels the current turn, then the queued input is sent as the
        *   next turn.
@@ -468,24 +471,25 @@ export class RuntimeRunExecutor implements AgentRunExecutor {
           throw new Error(`runtime ${runtime.id} does not support supplemental input`);
         }
 
-        if (useNextTurnLoop) {
+        if (useNextTurnLoop || (mode === 'immediate' && adapter.immediateSteering === 'next_turn')) {
           // next_turn steering: enqueue the input for delivery after the
           // current turn ends. Immediate mode cancels the running turn first.
+          // Publish before awaiting cancel: the prompt may settle immediately.
+          queuedInput = { text, mode };
           if (mode === 'immediate') {
-            await session.cancel();
             // Emit a turn-interrupted event so observers know the current
             // turn was cut short for supplemental input.
             await emit({
               type: AgentRunEventType.SteeringQueued,
               payload: { version: 1, text, mode: 'immediate', interrupted: true },
             });
+            await session.cancel();
           } else {
             await emit({
               type: AgentRunEventType.SteeringQueued,
               payload: { version: 1, text, mode: 'queued' },
             });
           }
-          queuedInput = { text, mode };
         } else {
           // native steering: delegate to the session's steer/followUp method
           if (mode === 'immediate') await session.cancel();

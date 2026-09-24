@@ -98,6 +98,10 @@ export function createBackgroundTurnBinding({
       onPlan: (entries) => {
         if (assistantId) dispatch({ type: 'plan', nodeId, assistantId, entries });
       },
+      onSteeringReport: (data) => {
+        rememberEnvelope(data.assistantId, data.turnId);
+        if (assistantId) dispatch({ type: 'steering-report', nodeId, assistantId, reports: data.reports });
+      },
       onToolCall: (tool) => {
         const env = tool as typeof tool & { assistantId?: string; turnId?: string; seq?: number };
         rememberEnvelope(env.assistantId, env.turnId);

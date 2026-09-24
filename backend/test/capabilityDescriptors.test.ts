@@ -15,6 +15,11 @@ import {
 const RUNTIMES = ['pi', 'codex', 'claude', 'kiro', 'cursor', 'grok', 'antigravity'] as const;
 
 describe('capabilityDescriptor', () => {
+  test('Kiro advertises wired native fork and steering', () => {
+    assert.equal(KIRO_DESCRIPTOR.sessionFork.availability, 'native');
+    assert.equal(KIRO_DESCRIPTOR.steer.availability, 'native');
+    assert.equal(shouldSteerInsteadOfQueue(KIRO_DESCRIPTOR), true);
+  });
   test('every advertised runtime has all capability slots', () => {
     for (const id of RUNTIMES) {
       const descriptor = describeRuntimeCapabilities(id);
@@ -64,7 +69,7 @@ describe('capabilityDescriptor', () => {
     assert.equal(absorbed.nativeResume.availability, 'native');
     assert.equal(absorbed.compact.availability, 'experimental');
     assert.equal(absorbed.subagents.availability, 'experimental');
-    assert.equal(absorbed.steer.availability, 'invisible');
+    assert.equal(absorbed.steer.availability, 'native');
     assert.equal(CURSOR_DESCRIPTOR.compact.availability, 'invisible');
     assert.equal(GROK_DESCRIPTOR.steer.availability, 'invisible');
   });

@@ -305,9 +305,10 @@ export class ChatManager {
         const bootstrap = primaryAgentSessionOptions(primaryAgent);
         const live = sessionRegistry.getSessionForOwner(input.nodeId, owner, input.ownerUserId);
         const nativeId = nativeResumeId(runtimeId, node);
-        const targetSignature = { runtimeId, modelId: model, providerId: provider, reasoning };
+        const targetSignature = { runtimeId, runtimeEngine: runtime.nativeEngine, modelId: model, providerId: provider, reasoning };
         const existingSignature = normalizeResumeSignature({
             runtimeId: node.runtime_id ?? (node.acp_session_id && node.acp_session_id !== node.id ? 'kiro' : null),
+            runtimeEngine: node.runtime_engine,
             modelId: node.model_id, providerId: node.provider_id, reasoning: node.reasoning,
         });
         const decision = chooseResumeStrategy({
@@ -369,6 +370,7 @@ export class ChatManager {
             updateNodeResumeBinding(input.nodeId, {
                 acp_session_id: session.nativeSessionId ?? session.id,
                 runtime_id: session.runtimeId,
+                runtime_engine: session.nativeEngine ?? null,
                 provider_id: provider,
                 model_id: session.currentModelId ?? model,
                 reasoning,

@@ -1,3 +1,5 @@
+import { extractKiroSteering } from 'michi-shared';
+
 const SENTINEL_PREFIXES = ["[TITLE:", "[BRANCH-OVERVIEW:", "[FOLLOW-UP"] as const;
 
 const BRANCH_OVERVIEW_RE = /\[BRANCH-OVERVIEW:\s*([^\]\n\r]+)\]/gi;
@@ -26,6 +28,7 @@ function isCompletedSentinel(buf: string): boolean {
 }
 
 export function stripSentinelsStreamingSafe(raw: string): string {
+    raw = extractKiroSteering(raw).text;
     type Cut = { start: number; end: number };
     const cuts: Cut[] = [];
     let i = 0;

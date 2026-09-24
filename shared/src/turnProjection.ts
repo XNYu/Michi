@@ -1,4 +1,5 @@
 import type { ChatStreamEvent, PlanEntry, ToolCallStreamPayload } from './chatStreamEvents';
+import { extractKiroSteering, mergeSteeringReports, type SteeringReport } from './kiroSteering';
 
 export interface DurableToolCall {
   id: string;
@@ -23,6 +24,7 @@ export type DurableAssistantBlock =
   | { id: string; kind: 'image'; workspaceId: string; path: string; caption?: string; mimeType: string; size: number };
 
 export interface DurableMessageMetadata {
+  steeringReports?: SteeringReport[];
   quotedText?: string;
   attachments?: Array<{ name: string; absPath: string }>;
   comments?: Array<Record<string, unknown>>;
@@ -159,6 +161,7 @@ export function extractTurnMetadata(raw: string): ExtractedTurnMetadata {
 
 /** Produce the terminal visible assistant content used by persistence/fingerprints. */
 export function finalizeTurnContent(raw: string): string {
+  raw = extractKiroSteering(raw).text;
   const title = titleMatch(raw);
   let withoutTitle = raw;
   if (title) {
@@ -424,6 +427,14 @@ export function applyTurnEvent(
     case 'thought': {
       const blocks = appendText(next, 'thinking', streamEvent.data.text);
       next = { ...next, assistantMessage: { ...next.assistantMessage, blocks } };
+      break;
+    }
+    case 'steering_report': {
+      const message = next.assistantMessage;
+      next = { ...next, assistantMessage: { ...message, metadata: {
+        ...message.metadata,
+        steeringReports: mergeSteeringReports(message.metadata?.steeringReports, streamEvent.data.reports),
+      } } };
       break;
     }
     case 'plan':

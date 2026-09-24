@@ -2,7 +2,7 @@ import { ExportRequestPayload } from '../services/api';
 import { getElectron } from './electronBridge';
 import { descendants } from '../state/tree';
 import { ChatNodeState, Project } from '../state/chatStore';
-import { visibleMessageText } from '../state/assistantBlocks';
+import { migrateAssistantToBlocks, visibleMessageText } from '../state/assistantBlocks';
 import type { ChatMessage } from '../state/chatTypes';
 
 /** Filter a node's messages down to user/assistant pairs suitable for export. */
@@ -49,7 +49,11 @@ function userMessageTextForExport(m: ChatMessage): string {
 }
 
 function messageTextForExport(m: ChatMessage): string {
-  return m.role === 'assistant' ? visibleMessageText(m) : userMessageTextForExport(m);
+  if (m.role !== 'assistant') return userMessageTextForExport(m);
+  const message = migrateAssistantToBlocks(m);
+  const notes = message.steeringReports?.map((report) =>
+    `_Steering note (model-reported${report.complete ? '' : ', incomplete'}):_\n\n${blockQuote(report.text)}`) ?? [];
+  return [visibleMessageText(message), ...notes].filter(Boolean).join('\n\n');
 }
 
 /** Compute node depth in the subtree starting from rootId. */

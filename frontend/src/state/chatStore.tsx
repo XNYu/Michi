@@ -10,6 +10,7 @@ import { createBackgroundTurnBinding } from './observeChatStream';
 import { createBackgroundTurnTransport } from './backgroundTurnTransport';
 import { subscribeAgentStatusChanged } from './agentStatusSync';
 import { mintOwnerToken, ownerStateReducer } from './paneOwnership';
+import { compactChat } from '../services/api/stream';
 import type { OwnerEvent, OwnerStateMap } from './paneOwnership';
 import { visibleMessageText } from './assistantBlocks';
 import * as perf from '../services/perf';
@@ -2264,6 +2265,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return result.accepted;
   }, []);
 
+  const compactContext = useCallback(async (nodeId: string, instructions?: string) => {
+    const node = nodesRef.current[nodeId];
+    if (!node?.chatId) return { started: false, detail: 'No live session' };
+    return compactChat(node.chatId, instructions, ownerTokenRef.current);
+  }, []);
+
   const queueMessage = useCallback(
     (nodeId: string, message: PendingQueuedMessage) => {
       dispatch({ type: 'queue-message', nodeId, message });
@@ -3131,6 +3138,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       removePendingComment,
       clearPendingComments,
       steerMessage,
+      compactContext,
       queueMessage,
       dequeueMessage,
       flushQueue,
@@ -3262,6 +3270,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       removePendingComment,
       clearPendingComments,
       steerMessage,
+      compactContext,
       queueMessage,
       dequeueMessage,
       flushQueue,
@@ -3337,6 +3346,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       removePendingComment,
       clearPendingComments,
       steerMessage,
+      compactContext,
       queueMessage,
       dequeueMessage,
       setComposerDraft,
@@ -3418,6 +3428,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       removePendingComment,
       clearPendingComments,
       steerMessage,
+      compactContext,
       queueMessage,
       dequeueMessage,
       setComposerDraft,

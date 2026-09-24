@@ -148,6 +148,7 @@ export const dbWorker = {
     nodeId: string;
     acp_session_id: string;
     runtime_id: string;
+    runtime_engine?: string | null;
     provider_id: string | null;
     model_id: string | null;
     reasoning: string | null;

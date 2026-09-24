@@ -11,6 +11,9 @@ export interface ChatMessage {
 }
 
 export interface AgentTurnInput {
+  /** Server-owned identities used to associate native fork points with this turn. */
+  assistantMessageId?: string;
+  userMessageId?: string;
   attachments?: ReadonlyArray<{
     name: string;
     absPath: string;
@@ -174,6 +177,7 @@ export interface NewAgentSessionOptions extends RuntimeSessionBootstrapOptions {
 }
 
 export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions {
+  nativeEngine?: string | null;
   sessionId: string;
   /** Michi node id for this runtime session, when distinct from sessionId. */
   nodeId?: string | null;
@@ -190,6 +194,11 @@ export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions 
   workspaceId?: string | null;
   /** See NewAgentSessionOptions.ownerUserId. */
   ownerUserId?: string | null;
+}
+
+export interface ForkAgentSessionOptions extends NewAgentSessionOptions {
+  /** Backend-validated parent token. The new session must have a different native identity. */
+  sourceNativeSessionId: string;
 }
 
 export interface AgentStatus {
@@ -227,6 +236,8 @@ export interface AgentStatus {
 }
 
 export interface AgentSession {
+  readonly nativeEngine?: string;
+  getNativeResumeToken?(): JsonValue;
   /** Stable Michi node id for chats, or Attempt id for Agent Runs. */
   id: string;
   /** Explicit product owner. Optional only for backward-compatible adapters. */
@@ -280,9 +291,12 @@ export interface SteerResult {
 
 export interface CompactResult {
   started: boolean;
+  completed?: boolean;
+  detail?: string;
 }
 
 export interface AgentRuntime {
+  readonly nativeEngine?: string;
   id: RuntimeId;
   label: string;
   capabilities: AgentCapabilities;
@@ -290,6 +304,7 @@ export interface AgentRuntime {
 
   warm(cwd: string, opts?: { model?: string | null }): Promise<void>;
   newSession(opts: NewAgentSessionOptions): Promise<AgentSession>;
+  forkSession?(opts: ForkAgentSessionOptions): Promise<AgentSession>;
   loadSession?(opts: LoadAgentSessionOptions): Promise<AgentSession>;
   /** Opt in only for failures where another native load is safe, never for ambiguous timeouts. */
   isNativeResumeRetryable?(error: unknown): boolean;

@@ -1,10 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { extractToolUsePurpose } from "michi-shared";
+import { extractToolUsePurpose, KiroSteeringParser, type SteeringSegment } from "michi-shared";
 import type {
     AgentSession,
     AgentTurnInput,
     ChatMessage,
+    CompactResult,
+    SteerResult,
     RuntimePermissionBroker,
     RuntimeSessionOwner,
     RuntimeToolProfile,
@@ -125,6 +127,12 @@ export class KiroSession implements AgentSession {
     private readonly toolProfile?: RuntimeToolProfile;
     private readonly permissionBroker?: RuntimePermissionBroker;
 
+    get nativeEngine() { return this.runtime.engine; }
+
+    getNativeResumeToken() {
+        return { engine: this.nativeEngine, sessionId: this.nativeSessionId };
+    }
+
     constructor(
         public readonly id: string,
         public readonly nativeSessionId: string,
@@ -198,6 +206,9 @@ export class KiroSession implements AgentSession {
         try {
             for await (const ev of this.streamUpdates(transportText, imageBlocks, turn.signal)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
+                if (ev.kind === 'turn_end' && ev.stopReason !== 'cancelled' && ev.stopReason !== 'error' && input?.assistantMessageId) {
+                    await this.runtime.recordForkAnchor?.(this.id, this.nativeSessionId, input);
+                }
                 yield ev;
                 if (ev.kind === "turn_end") break;
             }
@@ -332,6 +343,14 @@ export class KiroSession implements AgentSession {
             return;
         }
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
+        const steeringParser = new KiroSteeringParser();
+        const steeringEvents = (segments: SteeringSegment[]): NormalizedEvent[] => segments.map((segment) =>
+            segment.kind === 'text' ? { kind: 'chunk', text: segment.text }
+                : { kind: 'steering_report', reports: [segment.report] });
+        const flush = (): NormalizedEvent[] => [
+            ...steeringEvents(steeringParser.push(completionStripper.flush())),
+            ...steeringEvents(steeringParser.finish()),
+        ];
         try {
             for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks, signal)) {
                 const kind = update.sessionUpdate;
@@ -341,7 +360,7 @@ export class KiroSession implements AgentSession {
                     for (const b of blocks) {
                         if (b && b.type === "text" && b.text) {
                             const filtered = completionStripper.push(b.text);
-                            if (filtered) yield { kind: "chunk", text: filtered };
+                            if (filtered) yield* steeringEvents(steeringParser.push(filtered));
                         }
                     }
                 } else if (kind === "agent_thought_chunk") {
@@ -373,9 +392,13 @@ export class KiroSession implements AgentSession {
                 const inputStr = rawInput != null
                     ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
                     : undefined;
+                const contentOutput = Array.isArray(update.content) ? update.content
+                    .flatMap((block: any) => block?.type === 'content' && block.content?.type === 'text'
+                        ? [block.content.text] : block?.type === 'diff' ? [JSON.stringify(block)] : [])
+                    .join('\n') : undefined;
                 const rawOutputStr = update.rawOutput != null
                     ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
-                    : undefined;
+                    : contentOutput;
                 const outputStr = rawOutputStr
                     ? stripMetadataCompletionInstruction(rawOutputStr)
                     : undefined;
@@ -450,12 +473,15 @@ export class KiroSession implements AgentSession {
                     });
                     const rawOptions: any[] = Array.isArray(update.options) ? update.options : [];
                     if (decision === "allow_once" || decision === "allow_always") {
-                        // Find the "allow" option by optionId; fall back to first option.
+                        // Run grants are Attempt-scoped. Always select allow_once
+                        // on the wire, never persist a broader provider grant.
                         const allowOption = rawOptions.find(
-                            (o: any) => o.optionId === "allow" || o.optionId === "allowForSession" || o.optionId === "yes",
-                        ) ?? rawOptions[0];
+                            (o: any) => o.kind === 'allow_once',
+                        ) ?? rawOptions.find((o: any) => !o.kind && (o.optionId === 'allow' || o.optionId === 'yes'));
                         if (allowOption) {
                             this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allowOption.optionId);
+                        } else {
+                            this.runtime.cancelPermission(this.nativeSessionId, update.requestId);
                         }
                         // allow_always for Runs is Attempt-scoped only — do NOT
                         // write a normal chat Workspace grant.
@@ -522,6 +548,15 @@ export class KiroSession implements AgentSession {
                 yield { kind: "compaction_start" as const, detail: "clear" };
                 yield { kind: "compaction_end" as const, detail: "clear" };
             } else if (kind === "usage_summary") {
+                if (update.source === 'kiro-v3') {
+                    yield {
+                        kind: 'usage_summary', source: 'kiro-v3',
+                        contextUsagePercentage: update.contextUsagePercentage,
+                        totalCredits: update.totalCredits,
+                        turnDurationMs: update.turnDurationMs,
+                    };
+                    continue;
+                }
                 const pct = Number(update.contextUsagePercentage);
                 const credits = (update.meteringUsage ?? []).reduce(
                     (sum: number, m: any) => sum + (Number(m.value) || 0), 0
@@ -539,6 +574,8 @@ export class KiroSession implements AgentSession {
                     serverName: String(update.serverName ?? ""),
                     error: String(update.error ?? ""),
                 };
+            } else if (kind === 'runtime_error') {
+                yield { kind: 'runtime_error', error: String(update.error ?? 'Kiro reported an error') };
             } else if (kind === "user_input_request") {
                 yield {
                     kind: "user_input_request" as const,
@@ -571,17 +608,16 @@ export class KiroSession implements AgentSession {
                     .filter((c: { name: string }) => c.name.length > 0);
                 yield { kind: "commands", commands };
                 } else if (kind === "turn_end") {
-                    const held = completionStripper.flush();
-                    if (held) yield { kind: "chunk", text: held };
+                    yield* flush();
                     yield { kind: "turn_end", stopReason: update.stopReason };
                     break;
                 }
             }
         } catch (err) {
-            const held = completionStripper.flush();
-            if (held) yield { kind: "chunk", text: held };
+            yield* flush();
             throw err;
         }
+        yield* flush();
         const held = completionStripper.flush();
         if (held) yield { kind: "chunk", text: held };
     }
@@ -590,6 +626,24 @@ export class KiroSession implements AgentSession {
         this.activeTurn?.abort();
         const c = this.runtime.getClient(this.cwd);
         await c?.cancel(this.nativeSessionId);
+    }
+
+    async steer(text: string): Promise<SteerResult> {
+        const turn = this.activeTurn;
+        if (!turn || turn.signal.aborted || !text.trim()) return { accepted: false, reason: 'no_active_turn' };
+        const c = this.runtime.getClient(this.cwd);
+        if (!c) return { accepted: false, reason: 'client_not_running' };
+        const result = await c.steer(this.nativeSessionId, text);
+        if (!result.queued) return { accepted: false, reason: 'not_queued' };
+        this.history.push({ role: 'user', content: text });
+        return { accepted: true, pending: true };
+    }
+
+    async clearQueue(): Promise<void> {
+        const c = this.runtime.getClient(this.cwd);
+        if (!c) throw new Error('Kiro client is not running');
+        const result = await c.clearSteer(this.nativeSessionId);
+        if (!result.cleared) throw new Error('Kiro did not clear the steering queue');
     }
 
     /**
@@ -604,7 +658,21 @@ export class KiroSession implements AgentSession {
         args?: Record<string, unknown>,
     ): Promise<{ success: boolean; message?: string; data?: unknown }> {
         const c = await this.runtime.ensureClient(this.cwd);
+        if (command === 'compact') {
+            const instructions = args?.instructions ?? args?.value;
+            return c.compact(this.nativeSessionId, typeof instructions === 'string' ? instructions : undefined);
+        }
         return c.executeCommand(this.nativeSessionId, command, args);
+    }
+
+    /** Wait for native completion, including v2's asynchronous status event. */
+    async compact(instructions?: string): Promise<CompactResult> {
+        const client = await this.runtime.ensureClient(this.cwd);
+        const result = await client.compact(this.nativeSessionId, instructions);
+        if (!result.success) {
+            return { started: false, detail: result.message };
+        }
+        return { started: true, completed: true, detail: result.message };
     }
 
     async setMode(modeId: string): Promise<void> {
@@ -616,6 +684,11 @@ export class KiroSession implements AgentSession {
     }
 
     respondToPermission(requestId: number, optionId: string): void {
+        if (this.owner?.kind === 'agent_run') {
+            const c = this.runtime.getClient(this.cwd);
+            c?.respondToPermissionKind(requestId, optionId === 'allow_once' || optionId === 'allow_always' ? 'allow_once' : 'reject_once');
+            return;
+        }
         this.runtime.respondToPermission(this.nativeSessionId, requestId, optionId);
     }
 

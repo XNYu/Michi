@@ -412,7 +412,8 @@ export function serializeMessageRowsForNode(
     if (m.role === 'assistant' && m.streaming) return [];
     const persisted = messageForPersistence(m);
     const metadata = m.role === 'assistant'
-      ? (m.plan && m.plan.length > 0 ? { plan: m.plan } : null)
+      ? (m.plan?.length || persisted.steeringReports?.length
+          ? { plan: m.plan, steeringReports: persisted.steeringReports } : null)
       : (m.quotedText || m.attachments?.length || m.comments?.length
           ? {
               quotedText: m.quotedText,

@@ -136,6 +136,25 @@ describe('turn persistence repository', () => {
     assert.equal(fts.length, 1);
   });
 
+  test('steering reports survive checkpoint, cancellation, database reopen and retain plan metadata', () => {
+    let snapshot = createDurableTurn({ turnId: 'steering-turn', assistantId: 'steering-answer', nodeId: 'node-1', workspaceId: 'ws-1', displayUserText: 'q', startedAt: 100 });
+    const reports = [{ messageId: 'steer-c3999cf6ce9f462cb72019fcc3fb5368', text: 'Partial model explanation', complete: false }];
+    beginTurn(snapshot);
+    snapshot = applyTurnEvent(snapshot, event('chunk', { text: 'Clean answer', seq: 1 }));
+    snapshot = applyTurnEvent(snapshot, event('plan', { entries: [{ content: 'Check', status: 'pending', priority: 'low' }], seq: 2 }));
+    snapshot = applyTurnEvent(snapshot, event('steering_report', { reports, seq: 3 }));
+    checkpointTurn(snapshot);
+    assert.deepEqual(JSON.parse(listMessages('node-1')[1].metadata!).steeringReports, reports);
+    snapshot = applyTurnEvent(snapshot, event('done', { stopReason: 'cancelled', seq: 4 }));
+    finalizeTurn(snapshot);
+    closeDb();
+    initDb();
+    const message = listMessages('node-1')[1];
+    assert.equal(message.content, 'Clean answer');
+    assert.deepEqual(JSON.parse(message.metadata!), { steeringReports: reports, plan: snapshot.assistantMessage.plan });
+    assert.ok(!message.blocks!.includes('[STEERING'));
+  });
+
   test('beginTurn atomically consumes an agent spawn prompt outbox', () => {
     getDb().prepare('UPDATE nodes SET composer_draft = ? WHERE id = ?').run(
       JSON.stringify({ __michiPendingSpawnPrompt: 'Investigate the child' }),

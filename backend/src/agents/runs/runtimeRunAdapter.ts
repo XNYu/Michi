@@ -30,7 +30,7 @@ export type NativeToolMode = 'allowlist' | 'runtime_default';
  *
  * - `'next_turn'`: The runtime does not support reliable same-turn steering.
  *   Queued input is held until the current turn ends, then sent as a new user
- *   turn. Immediate input cancels the current turn first. Kiro uses this mode.
+ *   turn. Immediate input cancels the current turn first.
  *
  * - `'none'`: The runtime does not support any form of supplemental input.
  *   The Executor rejects input attempts with a structured error.
@@ -74,6 +74,9 @@ export interface RuntimeRunAdapter {
    * See `SteeringStrategy` for semantics.
    */
   readonly steering: SteeringStrategy;
+
+  /** Native steering that requires a live prompt uses a new turn after interruption. */
+  readonly immediateSteering?: 'next_turn';
 
   /**
    * Validates that a live `AgentRuntime` is compatible with this adapter's

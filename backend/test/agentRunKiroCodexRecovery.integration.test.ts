@@ -977,7 +977,7 @@ describe('T10 — Four-runtime adapter registry completeness', () => {
     assert.equal(adapter.runtimeId, 'kiro');
     assert.equal(adapter.supportsNativeResume, true);
     assert.equal(adapter.nativeToolMode, 'runtime_default');
-    assert.equal(adapter.steering, 'next_turn');
+    assert.equal(adapter.steering, 'native');
   });
 
   test('Codex adapter metadata is correct', () => {

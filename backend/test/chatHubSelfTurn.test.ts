@@ -68,9 +68,9 @@ describe('ChatHub.startTurn', () => {
     });
     await done;
 
-    assert.deepEqual(capturedInput, {
-      attachments: [{ name: 'screen.png', absPath: '/tmp/screen.png' }],
-    });
+    assert.deepEqual(capturedInput?.attachments, [{ name: 'screen.png', absPath: '/tmp/screen.png' }]);
+    assert.ok(capturedInput?.assistantMessageId?.startsWith('a-attachment-node-'));
+    assert.ok(capturedInput?.userMessageId);
   });
 
   it('routes foreground turns only to direct subscribers and self turns only to background subscribers', async () => {

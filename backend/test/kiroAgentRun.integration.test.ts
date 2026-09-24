@@ -334,9 +334,9 @@ describe('Kiro adapter metadata', () => {
     assert.equal(adapter.nativeToolMode, 'runtime_default');
   });
 
-  test('Kiro adapter declares next_turn steering', () => {
+  test('Kiro adapter declares native steering', () => {
     const adapter = new KiroRunAdapter();
-    assert.equal(adapter.steering, 'next_turn');
+    assert.equal(adapter.steering, 'native');
   });
 
   test('Kiro adapter declares native resume', () => {

@@ -80,12 +80,12 @@ export const CLAUDE_DESCRIPTOR: CapabilityDescriptor = {
 };
 
 export const KIRO_DESCRIPTOR: CapabilityDescriptor = {
-  steer: invisibleSlot("ACP has no same-turn steer"),
+  steer: slot("native", "native", "_session/steer; queued for the next agent boundary"),
   followUp: invisibleSlot(),
   interruptAck: slot("inferred", "unknown", "session/cancel notify"),
   compact: slot("experimental", "unknown", "_kiro.dev/compaction/status when advertised"),
   retry: invisibleSlot(),
-  sessionFork: slot("michi_simulated", "projected"),
+  sessionFork: slot("native", "native", "Kiro rewind for compatible idle conversation parents"),
   nativeResume: slot("native", "native", "loadSession"),
   permissions: slot("native", "native", "acp_permission"),
   sandbox: invisibleSlot(),
@@ -95,6 +95,8 @@ export const KIRO_DESCRIPTOR: CapabilityDescriptor = {
 
 export const CURSOR_DESCRIPTOR: CapabilityDescriptor = {
   ...KIRO_DESCRIPTOR,
+  steer: invisibleSlot("Kiro private steering extensions are not generic ACP"),
+  sessionFork: slot("michi_simulated", "projected"),
   compact: invisibleSlot("Cursor ACP does not advertise Kiro compaction extensions"),
   subagents: invisibleSlot(),
 };

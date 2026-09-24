@@ -19,8 +19,11 @@ import type { NormalizedEvent } from '../src/services/chatEvents';
 // ---------------------------------------------------------------------------
 
 function defaultRegistry(): RuntimeRunAdapterRegistry {
+  // Keep coverage of the generic fallback strategy independently of live Kiro.
+  const nextTurnAdapter = { ...new KiroRunAdapter(), steering: 'next_turn' as const,
+    assertCompatible: (runtime: AgentRuntime) => new KiroRunAdapter().assertCompatible(runtime) };
   return new RuntimeRunAdapterRegistry([
-    new PiRunAdapter(), new ClaudeRunAdapter(), new KiroRunAdapter(), new CodexRunAdapter(),
+    new PiRunAdapter(), new ClaudeRunAdapter(), nextTurnAdapter, new CodexRunAdapter(),
   ]);
 }
 

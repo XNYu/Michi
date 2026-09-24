@@ -71,8 +71,8 @@ describe('KiroSession permission brokering', () => {
                         requestId: 42,
                         toolCall: { toolCallId: 'tc-1', title: 'write' },
                         options: [
-                            { optionId: 'allow', name: 'Allow', kind: 'approve' },
-                            { optionId: 'deny', name: 'Deny', kind: 'reject' },
+                            { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+                            { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
                         ],
                     };
                     yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
@@ -169,8 +169,8 @@ describe('KiroSession permission brokering', () => {
                         requestId: 88,
                         toolCall: { toolCallId: 'tc-always', title: 'write' },
                         options: [
-                            { optionId: 'allow', name: 'Allow', kind: 'approve' },
-                            { optionId: 'allowForSession', name: 'Allow for session', kind: 'approve' },
+                            { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+                            { optionId: 'allowForSession', name: 'Allow for session', kind: 'allow_always' },
                         ],
                     };
                     yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
@@ -216,8 +216,8 @@ describe('KiroSession permission brokering', () => {
                         requestId: 77,
                         toolCall: { toolCallId: 'tc-ask', title: 'dangerous_op' },
                         options: [
-                            { optionId: 'allow', name: 'Allow', kind: 'approve' },
-                            { optionId: 'deny', name: 'Deny', kind: 'reject' },
+                            { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+                            { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
                         ],
                     };
                     yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };

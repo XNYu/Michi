@@ -115,7 +115,11 @@ export const NODE_SQL = {
 /** Serialize a message's role-specific metadata to JSON for storage. */
 export function durableMessageMetadata(message: DurableMessage): string | null {
   if (message.role === 'assistant') {
-    return message.plan && message.plan.length > 0 ? jsonOrNull({ plan: message.plan }) : null;
+    const metadata = {
+      ...message.metadata,
+      ...(message.plan?.length ? { plan: message.plan } : {}),
+    };
+    return Object.keys(metadata).length > 0 ? jsonOrNull(metadata) : null;
   }
   return message.metadata && Object.keys(message.metadata).length > 0
     ? jsonOrNull(message.metadata)

@@ -87,6 +87,7 @@ docs/
 docs/*
 !docs/harness-p0-p3-tasks.md
 !docs/remote-backend.md
+!docs/kiro-acp-validation.md
 
 # Local-only assets
 AGENTS.md

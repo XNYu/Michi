@@ -854,23 +854,33 @@ export class ChatHub {
     return { cleared: true };
   }
 
-  async compact(chatId: string, instructions?: string): Promise<CompactResult> {
-    const session = this.activeSessions.get(chatId);
-    const log = this.turns.get(chatId);
-    if (!session?.compact || !log || log.status !== "active") {
-      return { started: false };
-    }
+  async compact(chatId: string, instructions?: string, idleSession?: AgentSession): Promise<CompactResult> {
+    const session = this.activeSessions.get(chatId) ?? idleSession;
+    if (!session?.compact) return { started: false, detail: "unsupported" };
     const result = await session.compact(instructions);
-    if (result.started) {
-      this.append(chatId, log, {
+    const log = this.turns.get(chatId);
+    const live = log && log.status === "active" ? log : null;
+    if (result.started && live) {
+      this.append(chatId, live, {
         event: CHAT_STREAM_EVENTS.compactionStart,
         data: {
-          detail: instructions,
+          detail: instructions ?? result.detail,
           source: "native",
           confidence: "native",
           nativeMethod: "compact",
         },
       });
+      if (result.completed) {
+        this.append(chatId, live, {
+          event: CHAT_STREAM_EVENTS.compactionEnd,
+          data: {
+            detail: result.detail,
+            source: "native",
+            confidence: "native",
+            nativeMethod: "compact",
+          },
+        });
+      }
     }
     return result;
   }
@@ -1521,6 +1531,8 @@ export class ChatHub {
       let branchOverviewPublished = false;
       for await (const ev of session.send(log.wireText, {
         attachments: log.snapshot.userMessage?.metadata?.attachments,
+        assistantMessageId: log.assistantId,
+        userMessageId: log.snapshot.userMessage?.id,
       })) {
         if (log.status !== 'active' || this.turns.get(chatId) !== log) return;
         if (log.finalization) { await log.finalization; return; }

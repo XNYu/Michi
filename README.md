@@ -564,6 +564,44 @@ Native agent sessions are resumed when the runtime supports it. If an exact
 native resume is unavailable, Michi can reconstruct context from the persisted
 ancestor chain and transcript.
 
+#### Kiro ACP Engines
+
+Michi explicitly launches **v2 by default**, even if the CLI's own default changes.
+v3 is implemented but is not selected automatically and has no new UI switch.
+For an isolated v3 deployment, set `MICHI_KIRO_ENGINE=v3` before starting the
+backend; omitting it or setting `v2` keeps the existing engine. Both paths were
+verified with the installed `kiro-cli 2.24.0` (v3 KAS `0.66.8`).
+
+- v2 uses native `_session/steer` and `rewind` over the command RPC. Historical
+  branches use stored native `logIndex` anchors, not UI message offsets.
+- v3 uses `session/fork` with native message anchors, dynamic `configOptions`
+  for model/effort settings, CLI-mediated authentication, and v3 usage/MCP
+  notifications. Each chat/Run has an isolated ACP process so loading a child
+  cannot replace its parent's MCP connection.
+- Both engines support native load, permission decisions, cancellation/steer
+  queue cleanup, and compaction. The engine is part of durable session identity;
+  legacy bindings are v2. Cross-engine history is never claimed as native resume.
+- Native fork requires an idle, compatible parent. Historical messages created
+  before native anchors were recorded fall back to Michi's textual context.
+  Conversation rewind does not roll back workspace files.
+
+Real CLI tests are opt-in and consume the installed account's model quota:
+
+```bash
+cd backend
+MICHI_KIRO_SMOKE=v2,v3 node --require ts-node/register --test --test-timeout=420000 test/kiroDualEngineSmoke.test.ts
+```
+
+After `npm run build`, run `MICHI_KIRO_UI_SMOKE=v2 node backend/scripts/kiro-ui-smoke.mjs`
+from the repository root (repeat with `v3`). This starts a real disposable backend,
+drives the production UI in Chromium, waits for durable turn completion, asserts
+native fork, same-turn steering, completed compaction, and history recall after
+refresh, and captures desktop/mobile screenshots.
+It uses temporary database/config/workspace directories, not the user's Michi
+data. `MICHI_KIRO_SMOKE_OUTPUT` optionally selects an evidence directory.
+See [Kiro ACP validation](docs/kiro-acp-validation.md) for the verified scope,
+regression coverage, and remaining boundaries.
+
 ### Electron
 
 `electron/main.ts`:

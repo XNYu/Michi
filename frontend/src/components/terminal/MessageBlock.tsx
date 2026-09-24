@@ -24,6 +24,7 @@ import { hasAssistantBlocks } from '../../state/assistantBlocks';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { BranchAnchorRow } from './BranchAnchorRow';
 import { ImageBlockView } from './ImageBlockView';
+import { SteeringReports } from './SteeringReports';
 import { streamingMarkdownBlocksEnabled } from './streamingMarkdownBlocksFlag';
 import UserInputBanner, { ResolvedUserInput } from './UserInputBanner';
 import { useChatActions } from '../../state/chatStore';
@@ -79,8 +80,8 @@ function formatMessageTime(ms: number | undefined): string {
 }
 
 export interface TurnUsageInfo {
-  durationMs: number;
-  credits: number;
+  durationMs?: number;
+  credits?: number;
   unverifiable?: boolean;
   totalTokens?: number;
   inputTokens?: number;
@@ -103,20 +104,20 @@ function formatTokenCount(value: number): string {
 }
 
 function usageLabel(usage: TurnUsageInfo): string {
-  const duration = `${(usage.durationMs / 1000).toFixed(1)}s`;
-  if (usage.unverifiable) return `usage unverifiable · ${duration}`;
+  const duration = usage.durationMs === undefined ? '' : ` · ${(usage.durationMs / 1000).toFixed(1)}s`;
+  if (usage.unverifiable) return `usage unverifiable${duration}`;
   if (usage.totalTokens !== undefined) {
     const breakdown = usage.inputTokens !== undefined || usage.outputTokens !== undefined
       ? ` (${formatTokenCount(usage.inputTokens ?? 0)} in / ${formatTokenCount(usage.outputTokens ?? 0)} out)`
       : '';
-    return `usage ${formatTokenCount(usage.totalTokens)} tokens${breakdown} · ${duration}`;
+    return `usage ${formatTokenCount(usage.totalTokens)} tokens${breakdown}${duration}`;
   }
-  if (usage.credits > 0) return `usage ${usage.credits.toFixed(2)} credits · ${duration}`;
-  return `usage · ${duration}`;
+  if (usage.credits !== undefined) return `usage ${usage.credits.toFixed(2)} credits${duration}`;
+  return `usage${duration}`;
 }
 
 function usageTitle(usage: TurnUsageInfo): string {
-  const details = [`Duration ${(usage.durationMs / 1000).toFixed(1)} seconds`];
+  const details = usage.durationMs === undefined ? [] : [`Duration ${(usage.durationMs / 1000).toFixed(1)} seconds`];
   if (usage.totalTokens !== undefined) details.push(`${Math.round(usage.totalTokens).toLocaleString('en-US')} total tokens`);
   if (usage.inputTokens !== undefined) details.push(`${Math.round(usage.inputTokens).toLocaleString('en-US')} input tokens`);
   if (usage.cachedInputTokens !== undefined && usage.cachedInputTokens > 0) {
@@ -1759,6 +1760,7 @@ function MessageBlockInner({
           )}
         </div>
       )}
+      {!isUser && <SteeringReports reports={m.steeringReports} />}
       {!isUser && !m.streaming && isErrorTail && (
         <ErrorTail
           errorMessage={errorMessage}

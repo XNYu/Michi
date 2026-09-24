@@ -6,6 +6,7 @@ export type ResumeStrategy = "fresh" | "live" | "exact" | "compatible";
 
 export interface ResumeSignature {
   runtimeId: string;
+  runtimeEngine?: string | null;
   providerId: string | null;
   modelId: string | null;
   reasoning: AgentReasoning | null;
@@ -71,6 +72,7 @@ export function buildTargetResumeSignature(
   );
   return {
     runtimeId,
+    ...(runtime.nativeEngine ? { runtimeEngine: runtime.nativeEngine } : {}),
     providerId: runtime.capabilities.providerModels ? normalizeSignaturePart(resolveProvider(runtimeId, userId)) : null,
     modelId,
     reasoning: runtime.capabilities.reasoning
@@ -81,6 +83,7 @@ export function buildTargetResumeSignature(
 
 export function normalizeResumeSignature(input: {
   runtimeId?: unknown;
+  runtimeEngine?: unknown;
   providerId?: unknown;
   modelId?: unknown;
   reasoning?: unknown;
@@ -89,6 +92,7 @@ export function normalizeResumeSignature(input: {
   if (!runtimeId) return null;
   return {
     runtimeId,
+    ...(input.runtimeEngine ? { runtimeEngine: normalizeSignaturePart(input.runtimeEngine) } : {}),
     providerId: normalizeSignaturePart(input.providerId),
     modelId: normalizeSignaturePart(input.modelId),
     reasoning: normalizeReasoning(input.reasoning),
@@ -98,6 +102,7 @@ export function normalizeResumeSignature(input: {
 export function signaturesEqual(a: ResumeSignature, b: ResumeSignature): boolean {
   return (
     a.runtimeId === b.runtimeId &&
+    (a.runtimeId !== 'kiro' || (a.runtimeEngine ?? 'v2') === (b.runtimeEngine ?? 'v2')) &&
     a.providerId === b.providerId &&
     a.modelId === b.modelId &&
     a.reasoning === b.reasoning
@@ -113,6 +118,10 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
   }
   const existing = input.existingSignature;
   const target = input.targetSignature;
+  if (existing?.runtimeId === 'kiro' && target.runtimeId === 'kiro'
+    && (existing.runtimeEngine ?? 'v2') !== (target.runtimeEngine ?? 'v2')) {
+    return { strategy: 'compatible', reason: 'engine_changed' };
+  }
   if (existing && !signaturesEqual(existing, target)) {
     const supported = input.nativeResumeSettings ?? [];
     if (existing.runtimeId !== target.runtimeId || existing.providerId !== target.providerId

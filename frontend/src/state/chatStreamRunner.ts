@@ -218,6 +218,10 @@ export function runChatStream({
       trackSeq(seq, turnId);
       dispatch({ type: 'thought', nodeId, assistantId: currentAssistantId, text });
     },
+    onSteeringReport: (data) => {
+      trackSeq(data.seq, data.turnId);
+      dispatch({ type: 'steering-report', nodeId, assistantId: currentAssistantId, reports: data.reports });
+    },
     onPlan: (entries) => dispatch({ type: 'plan', nodeId, assistantId: currentAssistantId, entries }),
     onToolCall: (toolCall) => {
       const env = toolCall as typeof toolCall & { seq?: number; turnId?: string };

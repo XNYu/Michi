@@ -40,6 +40,7 @@ import type { WorkspaceRow } from "../services/dbRepository";
 import { ensureDurableGraphNode } from "../services/graphCommands";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from '../services/nativeResume';
+import { tryForkChatSession } from '../services/nativeFork';
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import {
     buildCompatibleResumeContext,
@@ -192,6 +193,7 @@ function readExistingSignature(
 ): ResumeSignature | null {
     return normalizeResumeSignature({
         runtimeId: row?.runtime_id ?? body.runtimeId ?? inferRuntimeId(row, nodeId),
+        runtimeEngine: row?.runtime_engine,
         providerId: row?.provider_id ?? body.providerId,
         modelId: row?.model_id ?? body.modelId,
         reasoning: row?.reasoning ?? body.reasoning,
@@ -247,6 +249,7 @@ async function persistResumeBinding(
         nodeId,
         acp_session_id: session.nativeSessionId ?? session.id,
         runtime_id: signature.runtimeId,
+        runtime_engine: session.nativeEngine ?? null,
         provider_id: signature.providerId ?? null,
         model_id: signature.modelId ?? null,
         reasoning: signature.reasoning ?? null,
@@ -264,6 +267,7 @@ async function persistResumeBinding(
         updateNodeResumeBinding(nodeId, {
             acp_session_id: fields.acp_session_id,
             runtime_id: fields.runtime_id,
+            runtime_engine: fields.runtime_engine,
             provider_id: fields.provider_id,
             model_id: fields.model_id,
             reasoning: fields.reasoning,
@@ -976,6 +980,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 nodeId: resolvedNodeId,
             }) : null;
             const canReuse = live?.runtimeId === runtimeId
+                && live.nativeEngine === runtime.nativeEngine
                 && (!requestedModel || live.currentModelId === requestedModel)
                 && (live.nativeSessionId ?? live.id) === nativeResumeId(runtimeId, row)
                 && (live.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null);
@@ -1200,6 +1205,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const boundSignature = row?.acp_session_id || row?.external_session_id
                 ? normalizeResumeSignature({
                     runtimeId: row.runtime_id ?? inferRuntimeId(row, nodeId),
+                    runtimeEngine: row.runtime_engine,
                     providerId: row.provider_id,
                     modelId: row.model_id,
                     reasoning: row.reasoning,
@@ -1234,6 +1240,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     normalizeSignaturePart(body.modelId) ?? (typeof modelRaw === "string" ? modelRaw : undefined),
                     michiUserId,
                 );
+            if (runtime.nativeEngine) targetSignature.runtimeEngine = runtime.nativeEngine;
             if (!primaryProfile) {
                 // An omitted selection means "continue this conversation", not
                 // "replace it with whichever global defaults were last saved".
@@ -1309,6 +1316,19 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 else {
                     resumeStrategy = "compatible";
                     resumeReason = "native_session_unavailable";
+                }
+            }
+
+            if (!session && !hasResumeBinding && transcript.length === 0) {
+                session = await tryForkChatSession(runtime, {
+                    cwd, parentChatId, mergeContexts, extraContexts, contextManifest, enableFollowUps,
+                    model: targetSignature.modelId, provider: targetSignature.providerId,
+                    reasoning: targetSignature.reasoning, sessionId: nodeId, workspaceId,
+                    ownerUserId: req.user?.id ?? null, ...primaryAgentSessionOptions(primaryAgent),
+                }) ?? undefined;
+                if (session) {
+                    sessionRegistry.registerSession(session, req.user?.id ?? null);
+                    resumeReason = 'native_fork';
                 }
             }
 
@@ -1620,6 +1640,23 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             res.status(result.accepted ? 200 : 409).json(result);
         } catch (err) {
             res.status(500).json({ error: (err as Error).message, accepted: false });
+        }
+    });
+
+    router.post("/chats/:chatId/compact", requireChatOwner, async (req, res) => {
+        const requestedIdentifier = req.params.chatId;
+        const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
+        const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
+        const ownerToken: string | undefined = req.body?.ownerToken;
+        const instructions = typeof req.body?.instructions === "string" ? req.body.instructions : undefined;
+        try {
+            if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
+                return res.status(403).json({ error: "not the pane owner", started: false });
+            }
+            const result = await chatHub.compact(nodeId, instructions, session ?? undefined);
+            res.status(result.started ? 200 : 409).json(result);
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message, started: false });
         }
     });
 

@@ -9,9 +9,8 @@ import type { NativeToolMode, RuntimeRunAdapter, SteeringStrategy } from './runt
  *   per-session MCP slot tools (including `submit_agent_result` for
  *   `agent_run` owners). Michi does not enumerate Kiro's native tools.
  *
- * - **steering `next_turn`**: Kiro (ACP) does not support reliable same-turn
- *   steering. Queued input is held until the current turn ends, then sent as
- *   a new user turn. Immediate input cancels the current turn first.
+ * - **steering `native`**: `_session/steer` queues input at the next agent
+ *   boundary without cancelling the current prompt.
  *
  * - **supportsNativeResume `true`**: Kiro can resume from a persisted ACP
  *   session id.
@@ -20,7 +19,8 @@ export class KiroRunAdapter implements RuntimeRunAdapter {
   readonly runtimeId = 'kiro';
   readonly supportsNativeResume = true;
   readonly nativeToolMode: NativeToolMode = 'runtime_default';
-  readonly steering: SteeringStrategy = 'next_turn';
+  readonly steering: SteeringStrategy = 'native';
+  readonly immediateSteering = 'next_turn' as const;
 
   assertCompatible(runtime: AgentRuntime): void {
     if (runtime.id !== this.runtimeId) {

@@ -4,7 +4,7 @@ import type { MentionRecord } from '../components/mentions';
 import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
-import type { BranchOverviewEntry } from 'michi-shared';
+import type { BranchOverviewEntry, SteeringReport } from 'michi-shared';
 import type { PaneItem, PaneLauncherChoice } from './paneItems';
 
 export type { AgentStatus } from '../services/api';
@@ -139,6 +139,7 @@ export interface ChatMessage {
   toolCalls: ToolCallState[];
   /** Block-first assistant content. Hydration migrates assistant messages into this shape. */
   blocks?: AssistantBlock[];
+  steeringReports?: SteeringReport[];
   streaming?: boolean;
   /** Legacy aggregate reasoning text for assistant messages created before blocks. */
   thought?: string;
@@ -206,8 +207,8 @@ export interface SubagentInfo {
 }
 
 export interface UsageSummary {
-  totalCredits: number;
-  turnDurationMs: number;
+  totalCredits?: number;
+  turnDurationMs?: number;
   source?: string;
   totalTokens?: number;
   inputTokens?: number;
@@ -681,6 +682,7 @@ export type ChatAction =
       mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
     }
   | { type: 'chunk'; nodeId: string; assistantId: string; text: string }
+  | { type: 'steering-report'; nodeId: string; assistantId: string; reports: SteeringReport[] }
   | { type: 'thought'; nodeId: string; assistantId: string; text: string }
   | { type: 'plan'; nodeId: string; assistantId: string; entries: PlanEntry[] }
   | { type: 'tool-call'; nodeId: string; assistantId: string; tool: ToolCallState }
@@ -778,9 +780,9 @@ export type ChatAction =
   | {
       type: 'usage-summary';
       nodeId: string;
-      contextUsagePercentage: number;
-      totalCredits: number;
-      turnDurationMs: number;
+      contextUsagePercentage?: number;
+      totalCredits?: number;
+      turnDurationMs?: number;
       source?: string;
       totalTokens?: number;
       inputTokens?: number;
@@ -1132,6 +1134,7 @@ export interface ChatContextValue {
   clearPendingComments: (nodeId: string) => void;
   /** Same-turn native steer. Returns accepted=false when the runtime is invisible. */
   steerMessage: (nodeId: string, text: string) => Promise<boolean>;
+  compactContext: (nodeId: string, instructions?: string) => Promise<{ started: boolean; detail?: string }>;
   /** Push a queued message onto the node (used while streaming). */
   queueMessage: (nodeId: string, message: PendingQueuedMessage) => void;
   /** Remove a queued message by id (used when the user × the pill). */
@@ -1259,6 +1262,7 @@ export type ChatActionsValue = Pick<
   | 'removePendingComment'
   | 'clearPendingComments'
   | 'steerMessage'
+  | 'compactContext'
   | 'queueMessage'
   | 'dequeueMessage'
   | 'setComposerDraft'

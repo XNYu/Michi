@@ -14,6 +14,11 @@ import { log } from "./logger";
 import { startupMark } from "./startupTrace";
 import { BACKEND_STREAM_PROBE_ENABLED, writeBackendStreamProbe } from "./streamProbe";
 import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
+import {
+    kiroArgs, kiroSessionMeta, normalizeSessionInfo, rewindPoints, v3InfoUpdates,
+    type KiroEngine, type AcpInitializeResult, type AcpMcpServer, type AcpSessionInfo,
+    type AcpSessionOptions, type AcpConfigOption,
+} from '../agents/kiro/kiroProtocol';
 
 /**
  * Compatibility surface for the shared ACP client.
@@ -232,7 +237,19 @@ export class AcpClient {
     private exitError: Error | null = null;
     private exitListeners: Array<(err: Error) => void> = [];
     /** Tracks pending permission requests from kiro-cli so we can respond later. */
-    private pendingPermissions = new Map<number, { sessionId: string }>();
+    private pendingPermissions = new Map<number, { sessionId: string; options?: any[]; meta?: any }>();
+    private initialization: AcpInitializeResult | null = null;
+    private readonly sessionInfo = new Map<string, AcpSessionInfo>();
+    private readonly lastUserMessageId = new Map<string, string>();
+    private readonly loadingSessions = new Set<string>();
+    private readonly mcpStatus = new Map<string, any[]>();
+    private readonly mcpErrors = new Map<string, Set<string>>();
+    private readonly steeredSessions = new Set<string>();
+    private readonly activePrompts = new Set<string>();
+    private readonly steerRequests = new Map<string, Set<Promise<unknown>>>();
+    private readonly cancelledPrompts = new Set<string>();
+    private readonly compactions = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+    private readonly compactingSessions = new Set<string>();
     /** Maps active agent tool_call ids → owning session ids.
      *  Used to infer which session owns incoming _kiro.dev/subagent/list_update
      *  events (which lack a sessionId field). When only one entry exists, routing
@@ -316,7 +333,26 @@ export class AcpClient {
         private readonly binaryPath: string = findKiroCli(),
         private readonly cwd: string = process.cwd(),
         private readonly model?: string,
+        public readonly engine: KiroEngine = 'v2',
     ) {}
+
+    get capabilities(): AcpInitializeResult['agentCapabilities'] {
+        return this.initialization?.agentCapabilities;
+    }
+
+    getSessionInfo(sessionId: string): AcpSessionInfo | undefined {
+        return this.sessionInfo.get(sessionId);
+    }
+
+    getLastUserMessageId(sessionId: string): string | undefined {
+        return this.lastUserMessageId.get(sessionId);
+    }
+
+    private rememberSessionInfo(sessionId: string, info: AcpSessionInfo): AcpSessionInfo {
+        const normalized = normalizeSessionInfo({ ...this.sessionInfo.get(sessionId), ...info });
+        this.sessionInfo.set(sessionId, normalized);
+        return normalized;
+    }
 
     private writeRawUpdateProbe(sessionId: string | undefined, method: string, update: unknown): void {
         if (!sessionId) return;
@@ -348,8 +384,7 @@ export class AcpClient {
         this.stopped = false;
         this.exitError = null;
 
-        const args = ["acp", "-a"];
-        if (this.model) args.push("--model", this.model);
+        const args = kiroArgs(this.engine, this.model);
 
         startupMark("kiro_spawn_start", { cwd: this.cwd, binaryPath: this.binaryPath });
         this.proc = spawnAgentProcess(this.binaryPath, args, {
@@ -445,8 +480,9 @@ export class AcpClient {
         // Currently only session/request_permission uses this pattern.
         if (msg && msg.id !== undefined && msg.id !== null && 'method' in msg) {
             if (msg.method === 'session/request_permission') {
-                const { sessionId, toolCall, options } = msg.params ?? {};
+                const { sessionId, toolCall, options, _meta } = msg.params ?? {};
                 const queue = sessionId ? this.sessionQueues.get(sessionId) : undefined;
+                this.pendingPermissions.set(msg.id, { sessionId, options, meta: _meta });
                 if (queue) {
                     queue.push({
                         update: {
@@ -454,12 +490,16 @@ export class AcpClient {
                             requestId: msg.id,
                             toolCall,
                             options,
+                            _meta,
                         },
                     });
+                } else {
+                    this.cancelPermission(msg.id);
                 }
-                if (sessionId) {
-                    this.pendingPermissions.set(msg.id, { sessionId });
-                }
+            } else {
+                this.proc?.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id,
+                    error: { code: -32601, message: `Unsupported client method: ${msg.method}` },
+                }) + '\n');
             }
             return;
         }
@@ -499,6 +539,34 @@ export class AcpClient {
 
         if (msg?.method === "session/update") {
             const sid: string | undefined = msg.params?.sessionId;
+            const update = msg.params?.update;
+            if (sid && update) {
+                if (update.sessionUpdate === 'config_option_update' && Array.isArray(update.configOptions)) {
+                    this.rememberSessionInfo(sid, { configOptions: update.configOptions });
+                }
+                if (update.sessionUpdate === 'current_mode_update' && typeof update.currentModeId === 'string') {
+                    this.rememberSessionInfo(sid, { modes: { ...this.sessionInfo.get(sid)?.modes, currentModeId: update.currentModeId } });
+                }
+                const nativeUserId = update._meta?.kiro?.userMessageId;
+                if (typeof nativeUserId === 'string') this.lastUserMessageId.set(sid, nativeUserId);
+                // load already rehydrates Michi's transcript from SQLite. Keep
+                // identity/config metadata, never append replay as live output.
+                if (this.loadingSessions.has(sid) || update._meta?.kiro?.replay === true) return;
+                if (this.engine === 'v3' && update.sessionUpdate === 'session_info_update') {
+                    for (const normalized of v3InfoUpdates(update)) {
+                        if (normalized.sessionUpdate === 'usage_summary') {
+                            const context = this.lastMetadata.get(sid)?.contextUsagePercentage;
+                            this.lastMetadata.set(sid, { ...normalized,
+                                ...(context !== undefined ? { contextUsagePercentage: context } : {}),
+                            });
+                        } else if (normalized.sessionUpdate === 'context_usage') {
+                            this.lastMetadata.set(sid, { ...this.lastMetadata.get(sid), ...normalized });
+                            this.injectUpdate(sid, normalized);
+                        } else this.injectUpdate(sid, normalized);
+                    }
+                    return;
+                }
+            }
             if (BACKEND_STREAM_PROBE_ENABLED) this.writeRawUpdateProbe(sid, "session/update", msg.params?.update);
             // Any progress on this session resets the idle timer for the
             // in-flight session/prompt RPC — kiro is visibly still working.
@@ -565,6 +633,23 @@ export class AcpClient {
                     }
                 }
             }
+        }
+
+        if (this.engine === 'v3' && msg?.method === '_kiro/mcp/status') {
+            const { sessionId, servers } = msg.params ?? {};
+            if (typeof sessionId !== 'string' || !Array.isArray(servers)) return;
+            this.mcpStatus.set(sessionId, servers);
+            const seen = this.mcpErrors.get(sessionId) ?? new Set<string>();
+            this.mcpErrors.set(sessionId, seen);
+            for (const server of servers) {
+                if (server.status !== 'failed' && server.status !== 'error') continue;
+                const error = typeof server.error === 'string' ? server.error : 'MCP server connection failed';
+                const key = `${server.name}:${error}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                this.injectUpdate(sessionId, { sessionUpdate: 'mcp_server_error', serverName: server.name, error });
+            }
+            return;
         }
 
         // _kiro.dev/* methods — route updates to the appropriate session queue.
@@ -653,6 +738,10 @@ export class AcpClient {
             const sid: string | undefined = typeof params.sessionId === "string" ? params.sessionId : undefined;
             const statusType = params.status?.type; // "started" | "completed"
             if (sid) {
+                if (statusType === 'completed') this.compactions.get(sid)?.resolve();
+                if (statusType === 'failed' || statusType === 'error') {
+                    this.compactions.get(sid)?.reject(new ACPError(params.status?.message ?? 'Kiro compaction failed'));
+                }
                 const q = this.sessionQueues.get(sid);
                 if (q) {
                     if (statusType === "started") {
@@ -747,6 +836,7 @@ export class AcpClient {
             p.reject(err);
         }
         this.pending.clear();
+        for (const compaction of this.compactions.values()) compaction.reject(err);
     }
 
     private notify(method: string, params?: any): Promise<void> {
@@ -815,32 +905,38 @@ export class AcpClient {
     async initialize(timeoutMs?: number): Promise<void> {
         const t0 = perf.now();
         startupMark("kiro_initialize_start", { cwd: this.cwd });
-        await this.send("initialize", {
-            protocolVersion: "2025-01-01",
+        const result = await this.send("initialize", {
+            protocolVersion: 1,
             clientInfo: { name: "michi", version: "1.0.0" },
             clientCapabilities: {},
         }, timeoutMs, undefined, timeoutMs !== undefined);
+        if (result?.protocolVersion !== 1) throw new ACPError('Unsupported ACP protocol version');
+        this.initialization = result;
         startupMark("kiro_initialize_done", { cwd: this.cwd });
         perf.measure("acp:initialize", t0, { cwd: this.cwd });
     }
 
-    async newSession(mcpServers: Array<{ name: string; type?: "http"; url?: string; command?: string; args?: string[]; headers?: [] }> = []): Promise<{ sessionId: string; modes?: any; models?: any; configOptions?: any }> {
+    async newSession(mcpServers: AcpMcpServer[] = [], options: AcpSessionOptions = {}): Promise<AcpSessionInfo & { sessionId: string }> {
         const t0 = perf.now();
         startupMark("kiro_session_new_start", { cwd: this.cwd, mcpServerCount: mcpServers.length });
-        const result = await this.send("session/new", { cwd: this.cwd, mcpServers });
+        const result = await this.send("session/new", { cwd: this.cwd, mcpServers,
+            ...kiroSessionMeta(this.engine, { modelId: this.model, ...options }),
+        });
         const sid = result.sessionId as string;
+        if (typeof sid !== 'string' || !sid) throw new ACPError('session/new returned no sessionId');
         this.sessionQueues.set(sid, new SessionQueue());
         startupMark("kiro_session_new_done", { cwd: this.cwd, sessionId: sid, mcpServerCount: mcpServers.length });
         perf.measure("acp:session_new", t0, { cwd: this.cwd, sessionId: sid });
-        return { sessionId: sid, modes: result.modes, models: result.models, configOptions: result.configOptions };
+        return { ...this.rememberSessionInfo(sid, result), sessionId: sid };
     }
 
     async loadSession(
         sessionId: string,
         cwd: string,
-        mcpServers: Array<{ name: string; type?: "http"; url?: string; command?: string; args?: string[]; headers?: [] }> = [],
+        mcpServers: AcpMcpServer[] = [],
         timeoutMs?: number,
-    ): Promise<{ modes?: any; models?: any }> {
+        options: AcpSessionOptions = {},
+    ): Promise<AcpSessionInfo> {
         const t0 = perf.now();
         this.assertSessionUsable(sessionId);
         const createdQueue = !this.sessionQueues.has(sessionId);
@@ -848,10 +944,11 @@ export class AcpClient {
             this.sessionQueues.set(sessionId, new SessionQueue());
         }
         let result;
+        this.loadingSessions.add(sessionId);
         try {
             result = await this.send(
                 "session/load",
-                { sessionId, cwd, mcpServers },
+                { sessionId, cwd, mcpServers, ...kiroSessionMeta(this.engine, options) },
                 timeoutMs ?? DEFAULT_TIMEOUT_MS,
                 sessionId,
                 timeoutMs !== undefined,
@@ -859,19 +956,146 @@ export class AcpClient {
         } catch (error) {
             if (createdQueue) this.sessionQueues.delete(sessionId);
             throw error;
+        } finally {
+            this.loadingSessions.delete(sessionId);
         }
         const q = this.sessionQueues.get(sessionId);
         if (q) q.drain();
         perf.measure("acp:session_load", t0, { cwd, sessionId });
-        return { modes: result?.modes, models: result?.models };
+        return this.rememberSessionInfo(sessionId, result ?? {});
     }
 
     async setMode(sessionId: string, modeId: string): Promise<void> {
-        await this.send("session/set_mode", { sessionId, modeId });
+        const result = await this.send("session/set_mode", { sessionId, modeId }, DEFAULT_TIMEOUT_MS, sessionId);
+        if (result?.configOptions || result?.modes) this.rememberSessionInfo(sessionId, result);
+        const applied = result?.modes?.currentModeId ?? result?.configOptions?.find((c: AcpConfigOption) => c.id === 'mode')?.currentValue;
+        if (applied && applied !== modeId) throw new ACPError(`Kiro did not select requested agent ${modeId}`);
+        const info = this.sessionInfo.get(sessionId);
+        if (info) this.sessionInfo.set(sessionId, { ...info, modes: { ...info.modes, currentModeId: modeId } });
     }
 
     async setModel(sessionId: string, modelId: string, timeoutMs?: number): Promise<void> {
-        await this.send("session/set_model", { sessionId, modelId }, timeoutMs, sessionId, timeoutMs !== undefined);
+        if (this.engine === 'v3') {
+            const option = this.sessionInfo.get(sessionId)?.configOptions?.find((c) => c.id === 'model' || c.category === 'model');
+            if (!option) throw new ACPError('This Kiro session does not expose a model config option');
+            await this.setConfigOption(sessionId, option.id, modelId, timeoutMs);
+        } else {
+            await this.send("session/set_model", { sessionId, modelId }, timeoutMs, sessionId, timeoutMs !== undefined);
+            const info = this.sessionInfo.get(sessionId);
+            if (info) this.sessionInfo.set(sessionId, { ...info, models: { ...info.models, currentModelId: modelId } });
+        }
+    }
+
+    async setConfigOption(sessionId: string, configId: string, value: string | boolean, timeoutMs?: number): Promise<AcpConfigOption[]> {
+        if (this.engine !== 'v3') throw new ACPError('Generic config options require Kiro v3');
+        const result = await this.send('session/set_config_option', { sessionId, configId, value }, timeoutMs, sessionId, timeoutMs !== undefined);
+        if (!Array.isArray(result?.configOptions)) throw new ACPError('Kiro returned no config options after configuration');
+        this.rememberSessionInfo(sessionId, result);
+        const applied = result.configOptions.find((c: AcpConfigOption) => c.id === configId);
+        if (applied && applied.currentValue !== value) throw new ACPError(`Kiro did not apply config option ${configId}`);
+        return result.configOptions;
+    }
+
+    async steer(sessionId: string, message: string): Promise<{ queued: boolean; messageId?: string }> {
+        if (!message.trim() || !this.activePrompts.has(sessionId)) return { queued: false };
+        if (this.cancelledPrompts.has(sessionId)) return { queued: false };
+        const requests = this.steerRequests.get(sessionId) ?? new Set<Promise<unknown>>();
+        this.steerRequests.set(sessionId, requests);
+        const request = this.send('_session/steer', { sessionId, message }, 10_000, sessionId, true);
+        requests.add(request);
+        try {
+            const result = await request;
+            if (result?.queued === true) this.steeredSessions.add(sessionId);
+            return { queued: result?.queued === true && !this.cancelledPrompts.has(sessionId),
+                ...(typeof result?.messageId === 'string' ? { messageId: result.messageId } : {}),
+            };
+        } finally {
+            requests.delete(request);
+            if (requests.size === 0) this.steerRequests.delete(sessionId);
+        }
+    }
+
+    async clearSteer(sessionId: string): Promise<{ cleared: boolean; messageIds?: string[] }> {
+        const result = await this.send('_session/steer/clear', { sessionId }, 10_000, sessionId, true);
+        if (result?.cleared === true) this.steeredSessions.delete(sessionId);
+        return { cleared: result?.cleared === true,
+            ...(Array.isArray(result?.messageIds) ? { messageIds: result.messageIds.filter((id: unknown) => typeof id === 'string') } : {}),
+        };
+    }
+
+    async forkSession(sessionId: string, point?: { logIndex?: number; messageId?: string }): Promise<string> {
+        if (this.sessionInFlight.has(sessionId)) throw new ACPError('Cannot fork an active Kiro session');
+        let release!: () => void;
+        const lock = new Promise<void>((resolve) => { release = resolve; });
+        this.sessionInFlight.set(sessionId, lock);
+        try {
+            let childId: unknown;
+            if (this.engine === 'v2') {
+                const catalog = await this.executeCommand(sessionId, 'rewind', {});
+                if (!catalog.success) throw new ACPError(catalog.message ?? 'Kiro rewind failed');
+                const points = rewindPoints(catalog);
+                const index = point?.logIndex ?? points[0]?.logIndex;
+                if (index === undefined || !points.some((row) => row.logIndex === index)) throw new ACPError('No matching Kiro rewind point');
+                const result = await this.executeCommand(sessionId, 'rewind', { value: String(index) });
+                if (!result.success) throw new ACPError(result.message ?? 'Kiro rewind failed');
+                childId = (result.data as any)?.sessionId;
+            } else {
+                if (!this.capabilities?.sessionCapabilities?.fork) throw new ACPError('Kiro did not advertise session/fork');
+                const result = await this.send('session/fork', { sessionId, cwd: this.cwd,
+                    ...(point?.messageId ? { _meta: { kiro: { messageId: point.messageId, createdReason: 'rewind' } } } : {}),
+                }, DEFAULT_TIMEOUT_MS, sessionId);
+                childId = result?.sessionId;
+            }
+            if (typeof childId !== 'string' || !childId || childId === sessionId) throw new ACPError('Kiro fork did not return an independent session');
+            // The runtime loads this child with its own MCP slot before use.
+            return childId;
+        } finally {
+            release();
+            if (this.sessionInFlight.get(sessionId) === lock) this.sessionInFlight.delete(sessionId);
+        }
+    }
+
+    /** Reserve the idle session until native compaction actually completes.
+     * v2's command response is only an acknowledgement; completion is a later
+     * notification. v3's dedicated request resolves after compaction. */
+    async compact(sessionId: string, instructions?: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<{ success: boolean; message?: string }> {
+        this.assertSessionUsable(sessionId);
+        const prompting = this.activePrompts.has(sessionId)
+            && [...this.pending.values()].some((request) => request.sessionId === sessionId && request.method === 'session/prompt');
+        if (prompting || this.compactingSessions.has(sessionId)) return { success: false, message: 'Cannot compact an active Kiro session' };
+        const previous = this.sessionInFlight.get(sessionId);
+        let release!: () => void;
+        const finished = new Promise<void>((resolve) => { release = resolve; });
+        const lock = previous ? previous.then(() => finished) : finished;
+        this.sessionInFlight.set(sessionId, lock);
+        this.compactingSessions.add(sessionId);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            // The prompt response can precede consumer/steering cleanup. Keep
+            // that boundary intact even when the UI already received done.
+            await previous;
+            this.assertSessionUsable(sessionId);
+            const completed = this.engine === 'v2' ? new Promise<void>((resolve, reject) => {
+                this.compactions.set(sessionId, { resolve, reject });
+                timer = setTimeout(() => reject(new ACPSessionRecoveryRequiredError('Kiro compaction completion timed out', { sessionId })), timeoutMs);
+            }) : undefined;
+            // A process exit may reject completion before the command responds.
+            void completed?.catch(() => {});
+            const result = await this.executeCommand(sessionId, 'compact', instructions?.trim() ? { instructions: instructions.trim() } : undefined, timeoutMs);
+            if (!result.success) return result;
+            await completed;
+            return { success: true, message: 'Compaction completed' };
+        } catch (error) {
+            // Do not reuse a session whose compaction may still be in flight.
+            this.quarantinedSessions.add(sessionId);
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            this.compactions.delete(sessionId);
+            this.compactingSessions.delete(sessionId);
+            release();
+            if (this.sessionInFlight.get(sessionId) === lock) this.sessionInFlight.delete(sessionId);
+        }
     }
 
     /** Inject an out-of-band synthetic session/update into the session queue.
@@ -915,6 +1139,7 @@ export class AcpClient {
         void prev?.then(() => { predecessorFinished = true; });
         let heartbeat: ReturnType<typeof setInterval> | undefined;
         let sendPromise: Promise<void> | undefined;
+        let started = false;
         try {
             if (prev) {
                 await new Promise<void>((resolve) => {
@@ -961,6 +1186,8 @@ export class AcpClient {
 
             let promptResult: any;
             let promptError: Error | null = null;
+            started = true;
+            this.activePrompts.add(sessionId);
             sendPromise = this.send(
                 "session/prompt",
                 { sessionId, prompt: [{ type: "text", text }, ...extraBlocks] },
@@ -968,11 +1195,13 @@ export class AcpClient {
                 sessionId,
             )
                 .then((r) => {
+                    this.activePrompts.delete(sessionId);
                     this.clearCancelTimer(sessionId);
                     promptResult = r;
                     q.push({ update: { sessionUpdate: "__send_complete__" } });
                 })
                 .catch((e) => {
+                    this.activePrompts.delete(sessionId);
                     this.clearCancelTimer(sessionId);
                     promptError = e as Error;
                     q.push({ update: { sessionUpdate: "__send_complete__" } });
@@ -1008,7 +1237,9 @@ export class AcpClient {
                     // Yield any buffered usage_summary that arrived via _kiro.dev/metadata
                     // BEFORE turn_end, because michi.ts breaks the loop on turn_end.
                     const buffered = this.lastMetadata.get(sessionId);
-                    if (buffered?.meteringUsage) {
+                    if (this.engine === 'v3' && buffered?.source === 'kiro-v3') {
+                        yield { ...buffered, sessionUpdate: 'usage_summary' };
+                    } else if (buffered?.meteringUsage) {
                         yield {
                             sessionUpdate: "usage_summary",
                             contextUsagePercentage: buffered.contextUsagePercentage,
@@ -1030,6 +1261,16 @@ export class AcpClient {
         } finally {
             clearInterval(heartbeat);
             await sendPromise;
+            if (started) {
+                this.activePrompts.delete(sessionId);
+                await Promise.allSettled(this.steerRequests.get(sessionId) ?? []);
+                if (this.steeredSessions.has(sessionId) && !this.needsSessionRecovery(sessionId)) {
+                    try {
+                        if (!(await this.clearSteer(sessionId)).cleared) this.quarantinedSessions.add(sessionId);
+                    } catch { this.quarantinedSessions.add(sessionId); }
+                }
+                this.cancelledPrompts.delete(sessionId);
+            }
             releaseTurn();
             if (predecessorFinished && this.sessionInFlight.get(sessionId) === turnFinished) {
                 this.sessionInFlight.delete(sessionId);
@@ -1044,14 +1285,36 @@ export class AcpClient {
     respondToPermission(requestId: number, optionId: string): void {
         const pending = this.pendingPermissions.get(requestId);
         if (!pending) return;
+        if (pending.options && !pending.options.some((option) => option.optionId === optionId)) {
+            throw new ACPError('Unknown permission option');
+        }
         this.pendingPermissions.delete(requestId);
         if (!this.proc?.stdin || this.proc.stdin.destroyed) return;
         const payload = JSON.stringify({
             jsonrpc: '2.0',
             id: requestId,
-            result: { outcome: { outcome: 'selected', optionId } },
+            result: { outcome: { outcome: 'selected', optionId },
+                ...this.permissionConsent(pending, optionId),
+            },
         });
         this.proc.stdin.write(payload + '\n');
+    }
+
+    respondToPermissionKind(requestId: number, kind: 'allow_once' | 'reject_once'): void {
+        const option = this.pendingPermissions.get(requestId)?.options?.find((option) => option.kind === kind);
+        if (option) this.respondToPermission(requestId, option.optionId);
+        else this.cancelPermission(requestId);
+    }
+
+    private permissionConsent(pending: { options?: any[]; meta?: any }, optionId: string): Record<string, unknown> {
+        const option = pending.options?.find((option) => option.optionId === optionId);
+        const consent = pending.meta?.kiro?.consent;
+        if (this.engine !== 'v3' || !consent || !['allow_always', 'reject_always'].includes(option?.kind)) return {};
+        // Limit provider persistence to this session and the exact triggering
+        // resource, never infer a wildcard grant from a tool's display title.
+        return { _meta: { kiro: { consent: { capability: consent.capability, scope: 'session',
+            resource: consent.triggeringResource ?? consent.resource, workspaceRoot: consent.workspaceRoot,
+        } } } };
     }
 
     /** Send a JSON-RPC response to a pending permission request, cancelling it. */
@@ -1092,21 +1355,33 @@ export class AcpClient {
         sessionId: string,
         command: string,
         args?: Record<string, unknown>,
+        timeoutMs = DEFAULT_TIMEOUT_MS,
     ): Promise<{ success: boolean; message?: string; data?: unknown }> {
+        if (this.engine === 'v3') {
+            const methods: Record<string, string> = { compact: '_kiro/session/compact', context: '_kiro/session/context',
+                history: '_kiro/session/history', export: '_kiro/session/export', code: '_kiro/codeIntelligence', usage: '_kiro/account/getUsage' };
+            if (command === 'mcp') return { success: true, data: this.mcpStatus.get(sessionId) ?? [] };
+            const method = methods[command];
+            if (!method) return { success: false, message: `/${command} has no Kiro v3 command RPC` };
+            const result = await this.send(method, { ...args, sessionId }, timeoutMs, sessionId, true);
+            return { success: result?.success !== false, message: result?.message, data: result };
+        }
         const payload: Record<string, unknown> = {
             sessionId,
-            command: { command, ...(args ? { args } : {}) },
+            command: { command, args: args ?? {} },
         };
         return this.send(
             "_kiro.dev/commands/execute",
             payload,
-            DEFAULT_TIMEOUT_MS,
+            timeoutMs,
             sessionId,
+            true,
         );
     }
 
     async cancel(sessionId: string): Promise<void> {
         if (!this.sessionQueues.has(sessionId)) return;
+        if (this.sessionInFlight.has(sessionId)) this.cancelledPrompts.add(sessionId);
         this.cancelPermissionsForSession(sessionId);
         const active = [...this.pending.entries()].find(([, p]) => p.method === 'session/prompt' && p.sessionId === sessionId);
         if (active && !this.cancelTimers.has(sessionId)) {
@@ -1136,7 +1411,16 @@ export class AcpClient {
     }
 
     destroySession(sessionId: string): void {
+        this.compactions.get(sessionId)?.reject(new ACPError('Kiro session released during compaction'));
+        this.cancelPermissionsForSession(sessionId);
         this.sessionQueues.delete(sessionId);
+        this.sessionInfo.delete(sessionId);
+        this.lastMetadata.delete(sessionId);
+        this.lastUserMessageId.delete(sessionId);
+        this.mcpStatus.delete(sessionId);
+        this.mcpErrors.delete(sessionId);
+        this.steeredSessions.delete(sessionId);
+        this.cancelledPrompts.delete(sessionId);
     }
 
     async shutdown(): Promise<void> {

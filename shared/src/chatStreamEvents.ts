@@ -1,3 +1,5 @@
+import { parseSteeringReports, type SteeringReport } from './kiroSteering';
+
 export interface PlanEntry {
   content: string;
   priority: "high" | "medium" | "low";
@@ -96,6 +98,7 @@ export const CHAT_STREAM_EVENTS = {
   cancelPhase: "cancel_phase",
   queueUpdate: "queue_update",
   steerAccepted: "steer_accepted",
+  steeringReport: "steering_report",
   compactionStart: "compaction_start",
   compactionEnd: "compaction_end",
   retryStart: "retry_start",
@@ -135,9 +138,9 @@ export interface ChatStreamPayloads {
   subagent_tool_activity: { subagentSessionId: string; title: string; status: string };
   context_usage: { contextUsagePercentage: number };
   usage_summary: {
-    contextUsagePercentage: number;
-    totalCredits: number;
-    turnDurationMs: number;
+    contextUsagePercentage?: number;
+    totalCredits?: number;
+    turnDurationMs?: number;
     source?: string;
     totalTokens?: number;
     inputTokens?: number;
@@ -148,6 +151,7 @@ export interface ChatStreamPayloads {
   cancel_phase: { phase: "requested" | "acknowledged" | "settled" };
   queue_update: { steering: string[]; followUp: string[] };
   steer_accepted: { text: string; pending?: boolean };
+  steering_report: { reports: SteeringReport[] };
   compaction_start: { detail?: string };
   compaction_end: { detail?: string };
   retry_start: { detail?: string };
@@ -368,9 +372,9 @@ const parsers = {
     contextUsagePercentage: optionalFiniteNumber(data.contextUsagePercentage) ?? 0,
   }),
   usage_summary: (data) => ({
-    contextUsagePercentage: optionalFiniteNumber(data.contextUsagePercentage) ?? 0,
-    totalCredits: optionalFiniteNumber(data.totalCredits) ?? 0,
-    turnDurationMs: optionalFiniteNumber(data.turnDurationMs) ?? 0,
+    contextUsagePercentage: optionalFiniteNumber(data.contextUsagePercentage),
+    totalCredits: optionalFiniteNumber(data.totalCredits),
+    turnDurationMs: optionalFiniteNumber(data.turnDurationMs),
     source: optionalString(data.source),
     totalTokens: optionalFiniteNumber(data.totalTokens),
     inputTokens: optionalFiniteNumber(data.inputTokens),
@@ -421,6 +425,7 @@ const parsers = {
     text: stringOrEmpty(data.text),
     ...(data.pending === true ? { pending: true } : {}),
   }),
+  steering_report: (data) => ({ reports: parseSteeringReports(data.reports) }),
   compaction_start: (data) => ({ detail: optionalString(data.detail) }),
   compaction_end: (data) => ({ detail: optionalString(data.detail) }),
   retry_start: (data) => ({ detail: optionalString(data.detail) }),

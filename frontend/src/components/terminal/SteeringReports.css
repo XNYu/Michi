@@ -1,0 +1,47 @@
+.t-steering-reports {
+  margin-top: 10px;
+  color: var(--term-muted);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-steering-reports > summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.t-steering-reports > summary:hover,
+.t-steering-reports > summary:focus-visible {
+  color: var(--term-fg);
+}
+
+.t-steering-source {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--term-faint);
+}
+
+.t-steering-report-body {
+  margin-top: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--term-line);
+}
+
+.t-steering-report + .t-steering-report {
+  margin-top: 10px;
+}
+
+.t-steering-report p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.t-steering-incomplete {
+  display: block;
+  font-size: 11px;
+  color: var(--term-faint);
+}

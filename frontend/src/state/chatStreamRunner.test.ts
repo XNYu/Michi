@@ -31,6 +31,19 @@ function makeNode(): ChatNodeState {
 }
 
 describe('chatStreamRunner — chunk/tool-call ordering', () => {
+  it('projects a model steering report through the foreground stream without appending it to the answer', () => {
+    mockStream.mockClear();
+    let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1',
+      dispatch: (action) => { nodes = reduceNodes(nodes, action); },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    const reports = [{ messageId: 'steer-c3999cf6ce9f462cb72019fcc3fb5368', text: 'Used cobalt.', complete: true }];
+    const handlers = mockStream.mock.calls[0][2];
+    dispatchChatStreamEvent({ event: 'steering_report', data: { reports } }, handlers);
+    expect(nodes.n1.messages[0].steeringReports).toEqual(reports);
+    expect(assistantAnswerRawText(nodes.n1.messages[0])).toBe('');
+  });
   it('projects recovery status from the existing retry events and clears it on failure', () => {
     mockStream.mockClear();
     let nodes: Record<string, ChatNodeState> = { n1: makeNode() };

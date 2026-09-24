@@ -35,6 +35,15 @@ const project: Project = {
 };
 
 describe('buildTranscriptMarkdown', () => {
+  it('exports legacy steering as a separate model note without the internal marker or ID', () => {
+    const raw = 'Answer.\n[STEERING steer-c3999cf6ce9f462cb72019fcc3fb5368: Used cobalt.]';
+    const markdown = buildTranscriptMarkdown(project, 'root', { root: node({ nodeId: 'root', messages: [message('assistant', raw)] }) });
+    expect(markdown).toContain('Answer.');
+    expect(markdown).toContain('Steering note (model-reported)');
+    expect(markdown).toContain('> Used cobalt.');
+    expect(markdown).not.toContain('[STEERING');
+    expect(markdown).not.toContain('steer-c3999');
+  });
   it('exports the original thread transcript without summarizing', () => {
     const nodes = {
       root: node({

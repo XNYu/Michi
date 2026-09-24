@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'node:crypto';
+import { tryForkChatSession } from './services/nativeFork';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import { log } from './services/logger';
 import { setupMichiRoutes } from './routes/michi';
@@ -233,7 +234,7 @@ for (const factory of getEnabledFactories()) {
             const provider = resolveProvider(runtime.id, userId);
             const reasoning = resolveReasoning(runtime.id, userId);
             try {
-                child = await runtime.newSession({
+                const sessionOptions = {
                     cwd: args.cwd,
                     parentChatId: args.parentChatId,
                     enableFollowUps: args.enableFollowUps,
@@ -241,10 +242,12 @@ for (const factory of getEnabledFactories()) {
                     workspaceId: parentNode.workspace_id,
                     ownerUserId: workspace.owner_user_id ?? null,
                     model, provider, reasoning,
-                });
+                };
+                child = await tryForkChatSession(runtime, sessionOptions) ?? await runtime.newSession(sessionOptions);
                 updateNodeResumeBinding(nodeId, {
                   acp_session_id: child.nativeSessionId ?? child.id,
                   runtime_id: child.runtimeId,
+                  runtime_engine: child.nativeEngine ?? null,
                   provider_id: provider,
                   model_id: child.currentModelId ?? model,
                   reasoning,

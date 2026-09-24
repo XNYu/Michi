@@ -61,6 +61,7 @@ function makeRegistry() {
 
 function fakeClient(cwd: string, opts?: { loadFail?: boolean }) {
     const sessions = new Map<string, boolean>();
+    const models = new Map<string, string>();
     let nextSid = 0;
     return {
         cwd,
@@ -76,9 +77,11 @@ function fakeClient(cwd: string, opts?: { loadFail?: boolean }) {
             return { modes: {}, models: {} };
         },
         cancel: async () => {},
+        setModel: async (sid: string, model: string) => { models.set(sid, model); },
         destroySession: (sid: string) => { sessions.delete(sid); },
         shutdown: async () => { sessions.clear(); },
         sessions,
+        models,
         injectUpdate: () => {},
         onExit: () => {},
     };
@@ -137,6 +140,7 @@ describe('KiroRuntime.rebindRunSession', () => {
         assert.equal(storedBinding.runtimeProfileHash, 'hash-abc');
         assert.equal(storedBinding.workspaceId, 'ws-1');
         assert.equal(storedBinding.modelId, 'claude-sonnet-4.6');
+        assert.equal(client.models.get('acp-original-sid'), 'claude-sonnet-4.6');
         assert.ok(storedBinding.toolProfile);
         assert.ok(storedBinding.permissionBroker);
 

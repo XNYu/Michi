@@ -119,6 +119,7 @@ const sampleEvents: ChatStreamEvent[] = [
   { event: CHAT_STREAM_EVENTS.cancelPhase, data: { phase: 'requested' } },
   { event: CHAT_STREAM_EVENTS.queueUpdate, data: { steering: ['inject'], followUp: [] } },
   { event: CHAT_STREAM_EVENTS.steerAccepted, data: { text: 'inject', pending: true } },
+  { event: CHAT_STREAM_EVENTS.steeringReport, data: { reports: [{ messageId: 'steer-c3999cf6ce9f462cb72019fcc3fb5368', text: 'Updated answer.', complete: true }] } },
   { event: CHAT_STREAM_EVENTS.compactionStart, data: { detail: 'compact' } },
   { event: CHAT_STREAM_EVENTS.compactionEnd, data: { detail: 'compact' } },
   { event: CHAT_STREAM_EVENTS.retryStart, data: { detail: 'retry' } },

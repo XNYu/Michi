@@ -120,6 +120,8 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
             return { event: CHAT_STREAM_EVENTS.queueUpdate, data: { steering: ev.steering, followUp: ev.followUp } };
         case "steer_accepted":
             return { event: CHAT_STREAM_EVENTS.steerAccepted, data: { text: ev.text, pending: ev.pending } };
+        case "steering_report":
+            return { event: CHAT_STREAM_EVENTS.steeringReport, data: { reports: ev.reports, source: 'model', confidence: 'unverified' } };
         case "compaction_start":
             return { event: CHAT_STREAM_EVENTS.compactionStart, data: { detail: ev.detail } };
         case "compaction_end":
