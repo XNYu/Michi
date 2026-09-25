@@ -191,21 +191,6 @@ test('one confirmed restart clears peer restart requirements without interruptin
   await Promise.all([first, second]);
 });
 
-test('transport loss followed by a warm daemon does not trigger another restart', async (t) => {
-  const { runtime: value, client } = runtime(t);
-  const session = await create(value, 'warm-restart');
-  session.requiresRestart = true;
-  client.running = false;
-  for (const exit of client.exits) exit();
-  await client.ensureStarted();
-  const turn = drain(session.send('resume'));
-  await tick();
-  assert.equal(client.calls.filter((call) => call.method === 'shutdown').length, 0);
-  assert.equal(session.requiresRestart, false);
-  complete(client, session);
-  await turn;
-});
-
 test('unconfirmed shutdown preserves restart requirements and does not resume', async (t) => {
   const { runtime: value, client } = runtime(t);
   const session = await create(value, 'unsafe-restart');

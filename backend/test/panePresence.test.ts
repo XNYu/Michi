@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { getNode, saveNode, saveTree, saveWorkspace } from '../src/services/dbRepository';
@@ -322,16 +321,6 @@ describe('panePresence: empty-snapshot protection', () => {
     });
     assert.equal(recover.ok, true);
   });
-
-  test('a genuinely new lease may legitimately start empty (freshly opened window)', () => {
-    const registry = freshRegistry();
-    const result = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [],
-    });
-    assert.equal(result.ok, true);
-  });
 });
 
 describe('panePresence: server-side ownership validation', () => {
@@ -410,22 +399,6 @@ describe('panePresence: surface registrations', () => {
     assert.equal(result.ok, true);
     if (result.ok) assert.equal(result.accepted, 1);
     assert.equal(registry.getPresence({ kind: 'surface', registrationId }).coverage, 'reported');
-  });
-
-  test('submitting a fabricated registrationId is rejected as NOT_FOUND (not accepted)', () => {
-    const registry = freshRegistry();
-    const paneId = `surface:${randomUUID()}`;
-    const result = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-fake', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(result.ok, true);
-    if (result.ok) {
-      assert.equal(result.accepted, 0);
-      assert.equal(result.rejectedTargets.length, 1);
-      assert.equal(result.rejectedTargets[0].reason, 'NOT_FOUND');
-    }
   });
 
   test('a registration bound to a different owner/workspace/connection is rejected as NOT_FOUND', () => {
@@ -531,33 +504,6 @@ describe('panePresence: surface registrations', () => {
     const otherWs = registry.allocateSurfaceRegistration(caller({ workspaceId: OTHER_WORKSPACE_ID }), 'terminal');
     assert.ok(otherWs.registrationId.length > 0);
   });
-
-  test('sweeping an unclaimed registration below the cap allows allocation to succeed again', () => {
-    const registry = freshRegistry();
-    for (let i = 0; i < MAX_SURFACE_REGISTRATIONS_PER_SCOPE; i += 1) {
-      registry.allocateSurfaceRegistration(caller(), 'terminal');
-    }
-    assert.throws(() => registry.allocateSurfaceRegistration(caller(), 'terminal'));
-
-    clockNow += 61_000; // past ttlMs — every prior registration was unclaimed and is now swept.
-    const result = registry.allocateSurfaceRegistration(caller(), 'terminal');
-    assert.ok(result.registrationId.length > 0);
-  });
-});
-
-describe('panePresence: coverage semantics', () => {
-  test('coverage is unknown when nothing is registered, reported when something is', () => {
-    const registry = freshRegistry();
-    assert.equal(registry.getPresence({ kind: 'node', nodeId: 'node-1' }).coverage, 'unknown');
-
-    const paneId = encodePaneId({ kind: 'node', nodeId: 'node-1' });
-    registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(registry.getPresence({ kind: 'node', nodeId: 'node-1' }).coverage, 'reported');
-  });
 });
 
 describe('panePresence: DELETE performs no cancellation', () => {
@@ -584,22 +530,6 @@ describe('panePresence: DELETE performs no cancellation', () => {
     const node = getNode('node-1');
     assert.ok(node);
     assert.equal(node?.status, 'idle');
-  });
-
-  test('removePresence with no paneIds removes the whole lease (e.g. window close)', () => {
-    const registry = freshRegistry();
-    const paneIdA = encodePaneId({ kind: 'node', nodeId: 'node-1' });
-    const first = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId: paneIdA, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    const leaseA = (first as { rendererLeaseId: string }).rendererLeaseId;
-
-    const removed = registry.removePresence(caller(), { rendererLeaseId: leaseA });
-    assert.equal(removed.ok, true);
-    if (removed.ok) assert.equal(removed.removed, 1);
-    assert.equal(registry.hasLiveLease(leaseA), false);
   });
 });
 

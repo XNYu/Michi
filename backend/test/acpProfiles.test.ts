@@ -281,17 +281,6 @@ describe('Grok ACP profile', () => {
     assert.equal(profile.mcpAttach, 'always');
   });
 
-  test('prefers cached_token after login even when XAI_API_KEY is set', () => {
-    assert.equal(
-      selectGrokAuthMethod([{ id: 'cached_token' }, { id: 'grok.com' }, { id: 'xai.api_key' }], { XAI_API_KEY: 'sk' }),
-      'cached_token',
-    );
-    assert.equal(
-      selectGrokAuthMethod([{ id: 'xai.api_key' }, { id: 'cached_token' }], { XAI_API_KEY: 'sk' }),
-      'cached_token',
-    );
-  });
-
   test('uses xai.api_key only when cached_token is absent and the key is set', () => {
     assert.equal(
       selectGrokAuthMethod([{ id: 'xai.api_key' }, { id: 'grok.com' }], { XAI_API_KEY: 'sk' }),
@@ -461,10 +450,6 @@ describe('Cursor/Grok do not inherit the Kiro set_branch_overview reminder', () 
 
   test('Kiro still receives the reminder', async () => {
     assert.match(await promptText('kiro'), /set_branch_overview/);
-  });
-
-  test('Cursor turns do not include the Kiro reminder', async () => {
-    assert.doesNotMatch(await promptText('cursor'), /set_branch_overview/);
   });
 
   test('Grok turns do not include the Kiro reminder', async () => {

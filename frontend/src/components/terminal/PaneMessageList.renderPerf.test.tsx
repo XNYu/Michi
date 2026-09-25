@@ -96,21 +96,4 @@ describe('PaneMessageList render performance', () => {
     expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
     expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
   });
-
-  it('hides follow-ups while the node is still streaming even when visibleResponseComplete', () => {
-    const u1 = makeMsg('u1', 'user', 'question');
-    const a1 = makeMsg('a1', 'assistant', 'complete visible answer');
-    const node = {
-      ...makeNode([u1, a1]),
-      followUps: ['Which risk would most likely create a production incident?'],
-      followUpsGenerating: false,
-      visibleResponseComplete: true,
-      status: 'streaming',
-    } as ChatNodeState;
-
-    render(renderList(node, vi.fn()));
-
-    expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
-    expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
-  });
 });

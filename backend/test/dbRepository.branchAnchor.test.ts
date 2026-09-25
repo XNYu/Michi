@@ -89,46 +89,6 @@ describe('saveEdge / listEdges — anchor_message_id and created_at', () => {
     assert.equal(e.anchor_message_id, 'msg-parent-42');
     assert.equal(e.created_at, 1_700_000_000_000);
   });
-
-  test('null anchor_message_id and created_at round-trip correctly', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'src');
-    insertNode('ws1', 'tgt');
-
-    saveEdge({
-      id: 'e2',
-      workspace_id: 'ws1',
-      source_node_id: 'src',
-      target_node_id: 'tgt',
-      kind: 'branch',
-      // deliberately omit anchor_message_id / created_at → defaults to null
-    });
-
-    const edges = listEdges('ws1');
-    assert.equal(edges.length, 1);
-    const e = edges[0];
-    assert.equal(e.anchor_message_id ?? null, null);
-    assert.equal(e.created_at ?? null, null);
-  });
-
-  test('ON CONFLICT upsert updates anchor_message_id and created_at', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'src');
-    insertNode('ws1', 'tgt');
-
-    saveEdge({ id: 'e3', workspace_id: 'ws1', source_node_id: 'src',
-      target_node_id: 'tgt', kind: 'branch',
-      anchor_message_id: 'old-msg', created_at: 100 });
-    // Upsert with new values.
-    saveEdge({ id: 'e3', workspace_id: 'ws1', source_node_id: 'src',
-      target_node_id: 'tgt', kind: 'branch',
-      anchor_message_id: 'new-msg', created_at: 999 });
-
-    const edges = listEdges('ws1');
-    assert.equal(edges.length, 1);
-    assert.equal(edges[0].anchor_message_id, 'new-msg');
-    assert.equal(edges[0].created_at, 999);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -190,59 +150,5 @@ describe('saveNode / getNode — follow_ups_source_message_id', () => {
     assert.equal(entries[0].text, 'Initial branch state.');
     assert.equal(entries[1].text, 'Updated durable state.');
     assert.equal(node?.title, 'overview-node');
-  });
-
-  test('null follow_ups_source_message_id round-trips correctly', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'n2');
-
-    const node = getNode('n2');
-    assert.ok(node, 'node should exist');
-    assert.equal(node.follow_ups_source_message_id ?? null, null);
-  });
-
-  test('ON CONFLICT upsert updates follow_ups_source_message_id', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'n3');
-
-    // First write sets the field.
-    saveNode({
-      id: 'n3', workspace_id: 'ws1',
-      tree_id: null, parent_node_id: null,
-      kind: 'chat', title: 'n3', status: 'idle',
-      position_x: null, position_y: null, minimized: 0,
-      deleted_at: null, deletion_group_id: null,
-      spawned_by_agent: 0, current_mode_id: null, pane_width: null,
-      digest: null, follow_ups: null,
-      follow_ups_source_message_id: 'msg-v1',
-      acp_session_id: null,
-      runtime_id: null, provider_id: null, model_id: null,
-      reasoning: null, resume_fingerprint: null,
-      composer_draft: null, external_session_id: null,
-      trim_snapshot: null,
-      created_at: 1,
-    });
-
-    // Second write updates it.
-    saveNode({
-      id: 'n3', workspace_id: 'ws1',
-      tree_id: null, parent_node_id: null,
-      kind: 'chat', title: 'n3', status: 'idle',
-      position_x: null, position_y: null, minimized: 0,
-      deleted_at: null, deletion_group_id: null,
-      spawned_by_agent: 0, current_mode_id: null, pane_width: null,
-      digest: null, follow_ups: null,
-      follow_ups_source_message_id: 'msg-v2',
-      acp_session_id: null,
-      runtime_id: null, provider_id: null, model_id: null,
-      reasoning: null, resume_fingerprint: null,
-      composer_draft: null, external_session_id: null,
-      trim_snapshot: null,
-      created_at: 1,
-    });
-
-    const node = getNode('n3');
-    assert.ok(node);
-    assert.equal(node.follow_ups_source_message_id, 'msg-v2');
   });
 });

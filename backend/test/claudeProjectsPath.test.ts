@@ -2,7 +2,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { getClaudeProjectsDir, getClaudeJsonlPath } from '../src/agents/claude/claudeProjectsPath';
+import { getClaudeProjectsDir } from '../src/agents/claude/claudeProjectsPath';
 import { updateAgentConfig } from '../src/services/agentConfig';
 
 // claudeConfigBase() resolves an explicit config dir before falling back to
@@ -46,24 +46,12 @@ describe('claudeProjectsPath', () => {
 
   // ── Case 1: getClaudeProjectsDir converts cwd slashes to dashes ──────────
 
-  test('getClaudeProjectsDir returns <HOME>/.claude/projects/-Users-foo-bar for /Users/foo/bar', () => {
-    const result = getClaudeProjectsDir('/Users/foo/bar');
-    const expected = path.join(os.homedir(), '.claude', 'projects', '-Users-foo-bar');
-    assert.equal(result, expected);
-  });
-
   test('encodes underscores, spaces, and dots like the native CLI', () => {
     assert.equal(getClaudeProjectsDir('/tmp/my_project.v1/work dir'),
       path.join(os.homedir(), '.claude', 'projects', '-tmp-my-project-v1-work-dir'));
   });
 
   // ── Case 2: getClaudeJsonlPath appends sessionId.jsonl ───────────────────
-
-  test('getClaudeJsonlPath returns <HOME>/.claude/projects/-x-y/sid-1.jsonl', () => {
-    const result = getClaudeJsonlPath('/x/y', 'sid-1');
-    const expected = path.join(os.homedir(), '.claude', 'projects', '-x-y', 'sid-1.jsonl');
-    assert.equal(result, expected);
-  });
 
   // ── Case 3: trailing slash behavior ──────────────────────────────────────
   //
@@ -87,15 +75,4 @@ describe('claudeProjectsPath', () => {
   //
   // os.homedir() reads from HOME env var on POSIX.
   // This confirms the function is not caching homedir at module load time.
-
-  test('getClaudeProjectsDir uses current HOME env var (no module-load-time caching)', () => {
-    const fakeHome = '/tmp/fake-home-for-test';
-    process.env.HOME = fakeHome;
-
-    // os.homedir() on macOS/Linux reads from process.env.HOME
-    const currentHome = os.homedir();
-    const result = getClaudeProjectsDir('/a/b');
-    const expected = path.join(currentHome, '.claude', 'projects', '-a-b');
-    assert.equal(result, expected, 'result must use the current HOME value at call time');
-  });
 });

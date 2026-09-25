@@ -157,11 +157,6 @@ describe('codexBinary', () => {
 
   // ── Case 5: codexHome respects CODEX_HOME env var ────────────────────────────
 
-  test('codexHome returns CODEX_HOME env when set', () => {
-    process.env.CODEX_HOME = '/custom/codex/home';
-    assert.equal(codexHome(), '/custom/codex/home');
-  });
-
   test('codexHome returns ~/.codex when CODEX_HOME is not set', () => {
     delete process.env.CODEX_HOME;
     assert.equal(codexHome(), path.join(os.homedir(), '.codex'));

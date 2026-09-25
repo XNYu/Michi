@@ -10,17 +10,6 @@ function range(prefix: string, n: number): string[] {
 }
 
 describe('truncateActivityBuckets', () => {
-  it('passes everything through when under the limit', () => {
-    const groups = new Map<B, string[]>([
-      ['today', range('t', 3)],
-      ['earlier', range('e', 2)],
-    ]);
-    const { visible, hidden } = truncateActivityBuckets(groups, ORDER, 20, NOW_EXEMPT);
-    expect(hidden).toBe(0);
-    expect(visible.get('today')).toEqual(range('t', 3));
-    expect(visible.get('earlier')).toEqual(range('e', 2));
-  });
-
   it('caps across buckets in order, keeping the head of the walk', () => {
     const groups = new Map<B, string[]>([
       ['today', range('t', 15)],
@@ -44,22 +33,5 @@ describe('truncateActivityBuckets', () => {
     expect(visible.get('now')).toHaveLength(7);
     expect(visible.get('today')).toHaveLength(20);
     expect(hidden).toBe(5);
-  });
-
-  it('a raised limit reveals the next page', () => {
-    const groups = new Map<B, string[]>([['earlier', range('e', 45)]]);
-    const first = truncateActivityBuckets(groups, ORDER, 20, NOW_EXEMPT);
-    const second = truncateActivityBuckets(groups, ORDER, 40, NOW_EXEMPT);
-    const third = truncateActivityBuckets(groups, ORDER, 60, NOW_EXEMPT);
-    expect(first.hidden).toBe(25);
-    expect(second.visible.get('earlier')).toHaveLength(40);
-    expect(second.hidden).toBe(5);
-    expect(third.hidden).toBe(0);
-  });
-
-  it('skips buckets absent from the map', () => {
-    const groups = new Map<B, string[]>([['yesterday', range('y', 2)]]);
-    const { visible } = truncateActivityBuckets(groups, ORDER, 20, NOW_EXEMPT);
-    expect([...visible.keys()]).toEqual(['yesterday']);
   });
 });

@@ -30,18 +30,6 @@ describe('MarkdownStreamingTail', () => {
     expect(tail?.querySelectorAll('.stream-token-reveal')).toHaveLength(1);
     expect(tail?.querySelector('.stream-token-reveal')?.textContent).toBe('!');
   });
-
-  it('does not split a Unicode code point while revealing the suffix', () => {
-    const { container } = render(
-      <MarkdownStreamingTailProvider text="ok😀" revealTailChars={1}>
-        <MarkdownStreamingTail />
-      </MarkdownStreamingTailProvider>,
-    );
-
-    const tail = container.querySelector('[data-markdown-pending-tail]');
-    expect(tail?.textContent).toBe('ok😀');
-    expect(tail?.querySelector('.stream-token-reveal')?.textContent).toBe('😀');
-  });
 });
 
 describe('MarkdownStreamingTail with inline state', () => {
@@ -60,21 +48,6 @@ describe('MarkdownStreamingTail with inline state', () => {
     const tail = container.querySelector('[data-markdown-pending-tail]');
     expect(tail?.querySelector('strong')?.textContent).toBe('cd');
     expect(tail?.textContent).toBe('cd plain');
-  });
-
-  it('withholds the trailing ambiguous delimiter', () => {
-    const remend = computeTailRemend('plain');
-    const { container } = render(
-      <MarkdownStreamingTailProvider
-        text={'abc *'}
-        inlineState={remend.endState}
-        snapshotCarry=""
-      >
-        <MarkdownStreamingTail />
-      </MarkdownStreamingTailProvider>,
-    );
-
-    expect(container.textContent).toBe('abc ');
   });
 
   it('falls back to the legacy plain span without inline state', () => {

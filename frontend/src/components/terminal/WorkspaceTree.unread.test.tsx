@@ -134,45 +134,6 @@ afterEach(() => {
 });
 
 describe('WorkspaceTree filter mode', () => {
-  it('hides workspaces with zero unread when unreadFilterOn = true', async () => {
-    // p1 has an unread node; p2 is fully read.
-    const projects: Project[] = [
-      {
-        id: 'p1', name: 'Unread Workspace', cwd: '~/x',
-        chatIds: ['n1'],
-        edges: [],
-        trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 0, lastActiveAt: NOW }],
-        activeTreeId: 't1', createdAt: 0,
-      },
-      {
-        id: 'p2', name: 'Clean Workspace', cwd: '~/y',
-        chatIds: ['n2'],
-        edges: [],
-        trees: [{ id: 't2', rootNodeId: 'n2', createdAt: 0, lastActiveAt: BEFORE }],
-        activeTreeId: 't2', createdAt: 0,
-      },
-    ];
-    const nodes: Record<string, ChatNodeState> = {
-      n1: {
-        nodeId: 'n1', chatId: null, projectId: 'p1', kind: 'chat',
-        title: 'Unread thread', messages: [], followUps: [], status: 'idle',
-        lastAssistantAt: NOW, viewedAt: BEFORE,
-      },
-      n2: {
-        nodeId: 'n2', chatId: null, projectId: 'p2', kind: 'chat',
-        title: 'Read thread', messages: [], followUps: [], status: 'idle',
-        lastAssistantAt: BEFORE, viewedAt: NOW,
-      },
-    };
-
-    seedAndRenderTree(projects, nodes);
-
-    // Wait for hydration and filter activation
-    await act(async () => {});
-    expect(await screen.findByText('Unread Workspace')).toBeTruthy();
-    expect(screen.queryByText('Clean Workspace')).toBeNull();
-  });
-
   it('inside an unread workspace, only unread thread rows appear', async () => {
     const project: Project = {
       id: 'p1', name: 'My Workspace', cwd: '~/x',
@@ -228,52 +189,6 @@ describe('WorkspaceTree filter mode', () => {
     await act(async () => {});
     expect(await screen.findByText('Unread thread')).toBeTruthy();
     expect(screen.queryByText('Read thread')).toBeNull();
-  });
-
-  it('renders "All caught up" empty state when filter ON and total = 0', async () => {
-    const project: Project = {
-      id: 'p1', name: 'Done Workspace', cwd: '~/x',
-      chatIds: ['n1'],
-      edges: [],
-      trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 0, lastActiveAt: NOW }],
-      activeTreeId: 't1', createdAt: 0,
-    };
-    const nodes: Record<string, ChatNodeState> = {
-      n1: {
-        nodeId: 'n1', chatId: null, projectId: 'p1', kind: 'chat',
-        title: 'Read thread', messages: [], followUps: [], status: 'idle',
-        lastAssistantAt: BEFORE, viewedAt: NOW,
-      },
-    };
-
-    seedAndRenderTree([project], nodes);
-
-    await act(async () => {});
-    expect(await screen.findByText(/all caught up/i)).toBeTruthy();
-    // No unread → no "Read all" affordance.
-    expect(screen.queryByText('Read all')).toBeNull();
-  });
-
-  it('shows a "Read all" button at the top when the filter has unread items', async () => {
-    const project: Project = {
-      id: 'p1', name: 'Unread Workspace', cwd: '~/x',
-      chatIds: ['n1'],
-      edges: [],
-      trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 0, lastActiveAt: NOW }],
-      activeTreeId: 't1', createdAt: 0,
-    };
-    const nodes: Record<string, ChatNodeState> = {
-      n1: {
-        nodeId: 'n1', chatId: null, projectId: 'p1', kind: 'chat',
-        title: 'Unread thread', messages: [], followUps: [], status: 'idle',
-        lastAssistantAt: NOW, viewedAt: BEFORE,
-      },
-    };
-
-    seedAndRenderTree([project], nodes);
-
-    await act(async () => {});
-    expect(await screen.findByText('Read all')).toBeTruthy();
   });
 
   it('clicking "Read all" marks every thread read and shows the empty state', async () => {

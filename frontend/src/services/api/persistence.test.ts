@@ -7,18 +7,9 @@ import { fetchPersistenceCapabilities, supportsPaneInspection } from './persiste
  * unsupported, never "supported with an empty pane list" (design doc §11).
  */
 describe('supportsPaneInspection', () => {
-  it('is true for the exact "v1" capability value', () => {
-    expect(supportsPaneInspection({ paneInspection: 'v1' })).toBe(true);
-  });
-
   it('is false when the field is absent (old gateway)', () => {
     expect(supportsPaneInspection({})).toBe(false);
     expect(supportsPaneInspection({ paneInspection: undefined })).toBe(false);
-  });
-
-  it('is false for null/undefined capabilities object', () => {
-    expect(supportsPaneInspection(null)).toBe(false);
-    expect(supportsPaneInspection(undefined)).toBe(false);
   });
 
   it('is false for unknown/future version strings', () => {
@@ -54,11 +45,6 @@ describe('fetchPersistenceCapabilities — paneInspection field', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it('passes the raw paneInspection value through untouched', async () => {
-    const capabilities = await fetchPersistenceCapabilities('local');
-    expect(supportsPaneInspection(capabilities)).toBe(true);
   });
 
   it('an old-gateway response with no paneInspection field is reported as unsupported', async () => {

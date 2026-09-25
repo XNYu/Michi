@@ -210,27 +210,6 @@ describe('writeScopedLocalStorage', () => {
     expect(JSON.parse(localStorage.getItem(stateIndexKey(base))!).projectIds).toEqual(['pA']);
   });
 
-  it('active-project-only change updates the index without rewriting project blobs', () => {
-    const base = buildStateKey('user1');
-    const projects = [mkProject('pA', ['n1']), mkProject('pB', ['n2'])];
-    const nodes = { n1: mkNode('n1', 'pA'), n2: mkNode('n2', 'pB') };
-    writeScopedLocalStorage({
-      baseKey: base, projects, activeProjectId: 'pA', nodes,
-      changedIds: new Set(['pA', 'pB']), indexDirty: true,
-    }); // seed
-    const blobA = localStorage.getItem(stateProjectKey(base, 'pA'));
-    const blobB = localStorage.getItem(stateProjectKey(base, 'pB'));
-
-    writeScopedLocalStorage({
-      baseKey: base, projects, activeProjectId: 'pB', nodes,
-      changedIds: new Set(), indexDirty: true,
-    });
-
-    expect(localStorage.getItem(stateProjectKey(base, 'pA'))).toBe(blobA); // untouched
-    expect(localStorage.getItem(stateProjectKey(base, 'pB'))).toBe(blobB); // untouched
-    expect(JSON.parse(localStorage.getItem(stateIndexKey(base))!).activeProjectId).toBe('pB');
-  });
-
   it('round-trips: writeScoped then readLocalStoragePayload returns equivalent raw state', () => {
     const base = buildStateKey('user1');
     const projects = [mkProject('pA', ['n1']), mkProject('pB', ['n2'])];

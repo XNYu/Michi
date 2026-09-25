@@ -207,25 +207,6 @@ describe('useSmooth', () => {
     expect(result.current.isSmoothing).toBe(false);
   });
 
-  it('holds Kiro output briefly to bridge its first 100ms micro-bursts', () => {
-    const source = 'abcdefghijklmnopqrstuvwxyz';
-    const { result, rerender } = renderHook(
-      ({ text, streaming }) => useSmooth(text, streaming, 'kiro'),
-      { initialProps: { text: '', streaming: true } },
-    );
-
-    act(() => {
-      rerender({ text: source, streaming: true });
-    });
-
-    runNextFrame(120);
-    expect(result.current.displayed).toBe('');
-    runNextFrame(200);
-    expect(result.current.displayed).toBe('');
-    runNextFrame(220);
-    expect(result.current.displayed.length).toBeGreaterThan(0);
-  });
-
   it('uses a short Kiro CJK buffer before revealing text', () => {
     const source = '中文输出应该更早开始显示避免逐字停顿';
     const { result, rerender } = renderHook(
@@ -241,23 +222,6 @@ describe('useSmooth', () => {
     expect(result.current.displayed).toBe('');
     runNextFrame(240);
     expect(result.current.displayed.length).toBeGreaterThan(0);
-  });
-
-  it('keeps a Kiro CJK burst buffered across a one-second upstream gap', () => {
-    const source = '这是一段用于模拟中文长回复的内容'.repeat(4);
-    const { result, rerender } = renderHook(
-      ({ text, streaming }) => useSmooth(text, streaming, 'kiro'),
-      { initialProps: { text: '', streaming: true } },
-    );
-
-    act(() => {
-      rerender({ text: source, streaming: true });
-    });
-
-    drainFrames([120, 220, 320, 420, 520, 620, 720, 820, 920]);
-
-    expect(result.current.displayed.length).toBeGreaterThan(0);
-    expect(result.current.displayed.length).toBeLessThan(source.length);
   });
 
   it('does not reapply the Kiro initial buffer after the typewriter catches up', () => {

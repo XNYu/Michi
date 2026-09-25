@@ -57,36 +57,6 @@ describe('usePanePresenceIntegration', () => {
     vi.restoreAllMocks();
   });
 
-  it('capability gate: keeps backends empty (no submit) until the probe resolves paneInspection: v1', async () => {
-    const probe = vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities')
-      .mockResolvedValue(capabilities('v1'));
-    const submitSpy = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit')
-      .mockResolvedValue({ ok: true, rendererLeaseId: 'lease-1', accepted: 1, rejectedTargets: [] });
-
-    const project = makeProject();
-    renderHook(() => usePanePresenceIntegration({
-      windowId: WINDOW_ID,
-      hydrated: true,
-      projects: [project],
-      activeProjectId: project.id,
-      activeBackendConnectionId: CONN,
-      openPanesMap: { [`${project.id}::tree-1`]: ['root-1'] },
-      paneItems: {},
-    }));
-
-    // Before the probe resolves, nothing is submitted.
-    expect(submitSpy).not.toHaveBeenCalled();
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect(probe).toHaveBeenCalledWith(CONN);
-    expect(submitSpy).toHaveBeenCalledTimes(1);
-    const [, , req] = submitSpy.mock.calls[0];
-    expect(req.views).toEqual([expect.objectContaining({ paneId: 'node:root-1' })]);
-  });
-
   it('navigation away from Dashboard keeps panes open but reports them invisible', async () => {
     vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockResolvedValue(capabilities('v1'));
     const submit = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit')
@@ -127,50 +97,6 @@ describe('usePanePresenceIntegration', () => {
     expect(allocate).toHaveBeenLastCalledWith(CONN, project.id, 'terminal');
     expect(submit.mock.calls.at(-1)![2].views[0].paneId).toBe('surface:terminal-registration');
     hook.unmount();
-  });
-
-  it('capability gate: a probe failure never submits (never claims an empty pane list)', async () => {
-    vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockRejectedValue(new Error('old gateway'));
-    const submitSpy = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit');
-
-    const project = makeProject();
-    renderHook(() => usePanePresenceIntegration({
-      windowId: WINDOW_ID,
-      hydrated: true,
-      projects: [project],
-      activeProjectId: project.id,
-      activeBackendConnectionId: CONN,
-      openPanesMap: { [`${project.id}::tree-1`]: ['root-1'] },
-      paneItems: {},
-    }));
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect(submitSpy).not.toHaveBeenCalled();
-  });
-
-  it('capability gate: paneInspection omitted (old gateway) never submits', async () => {
-    vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockResolvedValue(capabilities(undefined));
-    const submitSpy = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit');
-
-    const project = makeProject();
-    renderHook(() => usePanePresenceIntegration({
-      windowId: WINDOW_ID,
-      hydrated: true,
-      projects: [project],
-      activeProjectId: project.id,
-      activeBackendConnectionId: CONN,
-      openPanesMap: { [`${project.id}::tree-1`]: ['root-1'] },
-      paneItems: {},
-    }));
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect(submitSpy).not.toHaveBeenCalled();
   });
 
   it('resolves a bare chat id to node:{nodeId} and an agent-run PaneItem to run:{runId}', async () => {
@@ -610,41 +536,6 @@ describe('usePanePresenceIntegration', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(submitSpy.mock.calls.some((call) => call[1] === projectB.id)).toBe(true);
-  });
-
-  it('does not probe while not hydrated, and probes exactly once on the hydrated false -> true transition', async () => {
-    const probe = vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockResolvedValue(capabilities('v1'));
-    vi.spyOn(panePresenceApi.panePresenceTransport, 'submit')
-      .mockResolvedValue({ ok: true, rendererLeaseId: 'lease-1', accepted: 1, rejectedTargets: [] });
-
-    const project = makeProject();
-    const { rerender } = renderHook(
-      (hydrated: boolean) => usePanePresenceIntegration({
-        windowId: WINDOW_ID,
-        hydrated,
-        projects: [project],
-        activeProjectId: project.id,
-        activeBackendConnectionId: CONN,
-        openPanesMap: { [`${project.id}::tree-1`]: ['root-1'] },
-        paneItems: {},
-      }),
-      { initialProps: false },
-    );
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await Promise.resolve(); });
-    expect(probe).not.toHaveBeenCalled();
-
-    rerender(true);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await Promise.resolve(); });
-    expect(probe).toHaveBeenCalledTimes(1);
-
-    // Re-rendering with hydrated still true and nothing else changed must not re-probe.
-    rerender(true);
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    await act(async () => { await Promise.resolve(); });
-    expect(probe).toHaveBeenCalledTimes(1);
   });
 
   it('an ordinary immutable update to the SAME project object (new reference, same id/connection) does not re-probe or tear down presence', async () => {

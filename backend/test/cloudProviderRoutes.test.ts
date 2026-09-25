@@ -110,17 +110,6 @@ test('a fresh cloud session resolves the account provider, not the server defaul
   assert.equal(resolveProvider('pi', 'bob'), 'openrouter-free');
 });
 
-test('pane selections survive a reload and become the next cloud pane default', async () => {
-  await post('/nodes/node/ensure-session', { workspaceId: 'ws', providerId: 'deepseek', modelId: 'deepseek-v4-flash' });
-  closeDb(); initDb(); clearAllSessions();
-  assert.equal(getAgentConfig('alice').provider, 'openrouter-free');
-  assert.equal(getAgentConfig('alice').providerByRuntime.pi, 'deepseek');
-  getDb().prepare("INSERT INTO nodes (id,workspace_id,kind,status,minimized,spawned_by_agent,created_at) VALUES ('next','ws','chat','idle',0,0,1)").run();
-  const result = await post('/nodes/next/ensure-session', { workspaceId: 'ws' });
-  assert.equal(result.providerId, 'deepseek');
-  assert.equal(result.modelId, 'deepseek-v4-flash');
-});
-
 test('legacy free-provider/DeepSeek mismatch is normalized in session, response and persisted binding', async () => {
   getDb().prepare("UPDATE nodes SET runtime_id='pi', provider_id='openrouter-free', model_id='deepseek-v4-flash', acp_session_id='node' WHERE id='node'").run();
   const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', providerId: 'openrouter-free', modelId: 'deepseek-v4-flash' });

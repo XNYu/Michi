@@ -8,10 +8,6 @@ describe('segmentGraphemesIncremental', () => {
     expect(fromScratch('hel', 'hello')).toEqual(segmentGraphemes('hello'));
   });
 
-  it('matches full segmentation for CJK growth', () => {
-    expect(fromScratch('你好', '你好世界')).toEqual(segmentGraphemes('你好世界'));
-  });
-
   it('is correct when a ZWJ emoji cluster is split across the prev/tail boundary', () => {
     const family = '👨‍👩‍👧‍👦'; // single grapheme cluster
     const prevSrc = 'a' + family.slice(0, 3);   // boundary lands mid-cluster

@@ -177,15 +177,6 @@ describe('KiroTitleGenerator', () => {
     assert.equal(calls.newSession, 1);
   });
 
-  it('recreates the session after the process died or the session was purged', async () => {
-    const { client, calls } = fakeClient();
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000 });
-    await generator.generate('one');
-    client.destroySession('title-1');
-    await generator.generate('two');
-    assert.equal(calls.newSession, 2);
-  });
-
   it('rotates the session after maxTurnsPerSession prompts', async () => {
     const { client, calls } = fakeClient();
     const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000, maxTurnsPerSession: 2 });

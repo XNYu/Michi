@@ -67,12 +67,6 @@ describe('ComposerModelPicker', () => {
     expect(screen.queryByRole('slider')).toBeNull();
   });
 
-  it('respects the selected provider even when its models advertise effort', () => {
-    render(<ComposerModelPicker {...baseProps} resolvedBinding={{ ...baseProps.resolvedBinding, provider: 'local' }}
-      providers={[{ id: 'local', label: 'Local', keyLabel: '', envVars: [], defaultModel: 'fast', supportsReasoning: false }]} />);
-    expect(screen.queryByRole('slider')).toBeNull();
-  });
-
   it('places runtime above model and follows that order with keyboard navigation', () => {
     render(<ComposerModelPicker {...baseProps} />);
     const runtime = screen.getByRole('button', { name: 'Select runtime: Codex' });

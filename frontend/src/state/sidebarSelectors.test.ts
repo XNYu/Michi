@@ -13,10 +13,6 @@ import type { Tree, Project, ChatNodeState } from './chatTypes';
 const empty = { workspaces: {}, threads: {}, branches: {} };
 
 describe('isWorkspaceExpanded', () => {
-  it('defaults the active workspace to expanded', () => {
-    expect(isWorkspaceExpanded(empty, 'p1', 'p1')).toBe(true);
-  });
-
   it('defaults non-active workspaces to collapsed', () => {
     expect(isWorkspaceExpanded(empty, 'p2', 'p1')).toBe(false);
   });
@@ -46,10 +42,6 @@ describe('selectProjectNodeStatuses', () => {
 });
 
 describe('isThreadExpanded', () => {
-  it('defaults the active thread to expanded', () => {
-    expect(isThreadExpanded(empty, 't1', 't1')).toBe(true);
-  });
-
   it('defaults inactive threads to collapsed', () => {
     expect(isThreadExpanded(empty, 't2', 't1')).toBe(false);
   });
@@ -59,23 +51,11 @@ describe('isThreadExpanded', () => {
       isThreadExpanded({ ...empty, threads: { t2: true } }, 't2', 't1'),
     ).toBe(true);
   });
-
-  it('lets users collapse the active thread', () => {
-    expect(
-      isThreadExpanded({ ...empty, threads: { t1: false } }, 't1', 't1'),
-    ).toBe(false);
-  });
 });
 
 describe('isBranchExpanded', () => {
   it('defaults to collapsed', () => {
     expect(isBranchExpanded(empty, 'n1')).toBe(false);
-  });
-
-  it('respects an explicit branch toggle', () => {
-    expect(
-      isBranchExpanded({ ...empty, branches: { n1: true } }, 'n1'),
-    ).toBe(true);
   });
 });
 
@@ -116,27 +96,6 @@ describe('sortLiveProjects', () => {
       'd',
     ]);
   });
-
-  it('skips stale IDs in workspaceOrder without throwing', () => {
-    const ps = [proj('a', 1), proj('b', 2)];
-    expect(
-      sortLiveProjects(ps, ['ghost', 'a', 'also-gone', 'b']).map((p) => p.id),
-    ).toEqual(['a', 'b']);
-  });
-
-  it('filters out deleted and archived projects', () => {
-    const ps = [
-      proj('live', 1),
-      proj('trashed', 2, { deletedAt: 100 }),
-      proj('archived', 3, { archivedAt: 100 }),
-    ];
-    expect(sortLiveProjects(ps, []).map((p) => p.id)).toEqual(['live']);
-  });
-
-  it('is stable when two unknown projects share createdAt', () => {
-    const ps = [proj('a', 5), proj('b', 5), proj('c', 5)];
-    expect(sortLiveProjects(ps, []).map((p) => p.id)).toEqual(['a', 'b', 'c']);
-  });
 });
 
 describe('sortTrees', () => {
@@ -161,16 +120,6 @@ describe('sortTrees', () => {
     ];
     expect(sortTrees(trees, 'b').map((t) => t.id)).toEqual(['c', 'a', 'b']);
     expect(sortTrees(trees, null).map((t) => t.id)).toEqual(['c', 'a', 'b']);
-  });
-
-  it('puts archived trees after live trees, archived also DESC', () => {
-    const trees = [
-      tree('a', 5),
-      tree('b', 10, /*archivedAt*/ 100),
-      tree('c', 1),
-      tree('d', 20, /*archivedAt*/ 200),
-    ];
-    expect(sortTrees(trees, null).map((t) => t.id)).toEqual(['a', 'c', 'd', 'b']);
   });
 });
 

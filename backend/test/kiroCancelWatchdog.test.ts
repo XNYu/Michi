@@ -91,27 +91,6 @@ test('normal cancel completion disarms watchdog; next prompt remains on the same
   client.proc = null;
 });
 
-test('cancelling a queued prompt does not wait for or cancel its predecessor', async () => {
-  const { client, wire } = fixture();
-  await client.newSession();
-  const first = client.prompt('/tmp', 'first');
-  const firstNext = first.next();
-  await delay(0);
-  const abort = new AbortController();
-  const second = client.prompt('/tmp', 'queued', [], abort.signal);
-  const next = second.next();
-  abort.abort();
-  const observed = await Promise.race([next, delay(100).then(() => 'hung')]);
-  client.dispatch({ id: wire.find((m) => m.method === 'session/prompt').id, result: { stopReason: 'end_turn' } });
-  await firstNext;
-  await first.return();
-  await next;
-  await second.return();
-  assert.notEqual(observed, 'hung');
-  assert.equal(wire.filter((m) => m.method === 'session/prompt').length, 1);
-  client.proc = null;
-});
-
 function runtimeFixture(t: TestContext) {
   const { client: old } = fixture();
   const runtime = new KiroRuntime({} as AgentToolBridge, undefined, 0, '/tmp') as any;

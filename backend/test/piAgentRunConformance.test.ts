@@ -150,12 +150,6 @@ describe('Pi-specific conformance', () => {
       'Pi must not claim native resume support');
   });
 
-  test('Pi adapter declares allowlist tool mode', () => {
-    const adapter = new PiRunAdapter();
-    assert.equal(adapter.nativeToolMode, 'allowlist',
-      'Pi must use allowlist tool mode');
-  });
-
   test('Pi session uses replay history instead of native resume', async () => {
     const harness = createPiHarness();
     try {

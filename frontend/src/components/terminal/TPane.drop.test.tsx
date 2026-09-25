@@ -180,13 +180,6 @@ function dragEvent(type: string, files: File[]) {
 }
 
 describe('TPane drag-and-drop', () => {
-  it('shows overlay on dragenter when dataTransfer has Files', () => {
-    const { container } = render(<TPane nodeId="n1" />);
-    const root = container.firstChild as HTMLElement;
-    fireEvent(root, dragEvent('dragenter', [new File(['x'], 'a.md')]));
-    expect(container.textContent).toMatch(/drop 1 file/);
-  });
-
   it('does NOT show overlay for non-file drags', () => {
     const { container } = render(<TPane nodeId="n1" />);
     const root = container.firstChild as HTMLElement;

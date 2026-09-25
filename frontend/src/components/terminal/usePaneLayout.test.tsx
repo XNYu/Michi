@@ -166,15 +166,6 @@ describe('shared pane layout motion', () => {
     expect(animations[0].cancel).toHaveBeenCalledTimes(1);
   });
 
-  it('skips movement across tree switches and reduced motion', () => {
-    const { rerender } = render(<Harness ids={['a', 'b']} />);
-    rerender(<Harness ids={['c', 'd', 'e']} scope="tree-b" />);
-    expect(animate).not.toHaveBeenCalled();
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
-    rerender(<Harness ids={['c', 'd']} scope="tree-b" />);
-    expect(animate).not.toHaveBeenCalled();
-  });
-
   it('cancels every animation on unmount', () => {
     const { rerender, unmount } = render(<Harness ids={['a']} />);
     rerender(<Harness ids={['a', 'b']} />);

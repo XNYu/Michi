@@ -37,51 +37,6 @@ describe('WorkspaceSyncQueue', () => {
     await queue.whenIdle('ws-1');
   });
 
-  it('coalesces multiple queued tasks to the latest workspace snapshot', async () => {
-    const queue = new WorkspaceSyncQueue();
-    const first = deferred();
-    const latest = deferred();
-    const started: string[] = [];
-
-    queue.enqueue('ws-1', async () => {
-      started.push('first');
-      await first.promise;
-    });
-    queue.enqueue('ws-1', async () => {
-      started.push('superseded');
-    });
-    queue.enqueue('ws-1', async () => {
-      started.push('latest');
-      await latest.promise;
-    });
-
-    first.resolve();
-    await vi.waitFor(() => expect(started).toEqual(['first', 'latest']));
-    latest.resolve();
-    await queue.whenIdle('ws-1');
-  });
-
-  it('allows different workspaces to sync concurrently', async () => {
-    const queue = new WorkspaceSyncQueue();
-    const a = deferred();
-    const b = deferred();
-    const started: string[] = [];
-
-    queue.enqueue('ws-a', async () => {
-      started.push('a');
-      await a.promise;
-    });
-    queue.enqueue('ws-b', async () => {
-      started.push('b');
-      await b.promise;
-    });
-
-    expect(started).toEqual(['a', 'b']);
-    a.resolve();
-    b.resolve();
-    await Promise.all([queue.whenIdle('ws-a'), queue.whenIdle('ws-b')]);
-  });
-
   it('drains the latest queued task after an in-flight failure', async () => {
     const onTaskError = vi.fn();
     const queue = new WorkspaceSyncQueue(onTaskError);

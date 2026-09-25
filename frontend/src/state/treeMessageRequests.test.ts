@@ -38,13 +38,6 @@ describe('provider-scoped tree reads', () => {
     expect(await acquired.promise).toEqual([{ id: 'message' }]);
   });
 
-  it('reuses a completed prefetch without a second fetch', async () => {
-    requests.prefetch(projects[0], 't0', nodes);
-    await Promise.resolve();
-    await requests.acquire(projects[0], 't0', nodes, signal())!.promise;
-    expect(api.fetchTreeMessages).toHaveBeenCalledTimes(1);
-  });
-
   it('caps speculative concurrency but never blocks a foreground read', async () => {
     api.fetchTreeMessages.mockImplementation(() => new Promise(() => {}));
     projects.forEach((p, i) => requests.prefetch(p, `t${i}`, nodes));

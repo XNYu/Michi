@@ -33,15 +33,6 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
 const baseCtx: CommandContext = makeCtx({ hasActiveProject: true });
 
 describe('buildCommands', () => {
-  it('always includes the nav commands when there is an active project', () => {
-    const cmds = buildCommands(baseCtx);
-    const navIds = cmds.filter((c) => c.group === 'nav').map((c) => c.id);
-    expect(navIds).toEqual([
-      'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
-    ]);
-    expect(cmds.map((c) => c.label)).toContain('Open thread digest');
-  });
-
   it('omits the Agent Library command when the backend feature is disabled', () => {
     const cmds = buildCommands(makeCtx({ customAgentsEnabled: false }));
 

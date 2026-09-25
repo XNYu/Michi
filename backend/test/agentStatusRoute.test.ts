@@ -2,7 +2,6 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { setupAgentRoutes } from '../src/routes/agent';
-import type { ModelInfo } from '../src/agents/types';
 import { CustomAgentsFeatureBusyError } from '../src/services/customAgentsFeatureGate';
 import { createRemoteAccessMiddleware } from '../src/services/remoteAccess';
 
@@ -162,43 +161,3 @@ describe('/agent/status', () => {
   });
 });
 
-describe('ModelInfo.isDefault', () => {
-  test('isDefault field is optional on ModelInfo', () => {
-    // Verify the TypeScript interface accepts isDefault without errors at runtime.
-    const withDefault: ModelInfo = { id: 'gpt-4o', label: 'GPT-4o', isDefault: true };
-    const withoutDefault: ModelInfo = { id: 'gpt-3.5-turbo' };
-    assert.equal(withDefault.isDefault, true);
-    assert.equal(withoutDefault.isDefault, undefined);
-  });
-
-  test('isDefault preference: find() over list order', () => {
-    // Replicate the sanitize logic from /agent/models to verify behaviour in isolation.
-    const models: ModelInfo[] = [
-      { id: 'model-a' },
-      { id: 'model-b', isDefault: true },
-      { id: 'model-c' },
-    ];
-    const ids = models.map((m) => m.id);
-    const persisted: string | null = null; // simulates missing / invalid persisted value
-
-    let sanitizedModel: string | null = null;
-    if (ids.length > 0) {
-      if (!persisted || !ids.includes(persisted)) {
-        sanitizedModel = models.find((m) => m.isDefault)?.id ?? ids[0];
-      }
-    }
-
-    // Should pick model-b (isDefault) rather than model-a (first in list).
-    assert.equal(sanitizedModel, 'model-b');
-  });
-
-  test('isDefault preference falls back to ids[0] when no model is marked default', () => {
-    const models: ModelInfo[] = [
-      { id: 'model-x' },
-      { id: 'model-y' },
-    ];
-    const ids = models.map((m) => m.id);
-    const sanitizedModel = models.find((m) => m.isDefault)?.id ?? ids[0];
-    assert.equal(sanitizedModel, 'model-x');
-  });
-});

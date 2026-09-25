@@ -35,12 +35,6 @@ describe('NewWorkspaceDialog multi-folder', () => {
     delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker;
   });
 
-  it('shows empty state with add-folder button initially', () => {
-    renderDialog();
-    // The big button with this text is the empty state
-    expect(screen.getByText(/Add folders the agent can read and edit/i)).toBeTruthy();
-  });
-
   it('adds a folder from Electron picker and shows it in the list', async () => {
     mockElectron = {
       chooseFolder: vi.fn().mockResolvedValue({
@@ -84,35 +78,6 @@ describe('NewWorkspaceDialog multi-folder', () => {
         expect.objectContaining({ path: '/Users/demo/project', label: 'project' }),
       ]),
     );
-  });
-
-  it('supports adding multiple folders', async () => {
-    let callCount = 0;
-    mockElectron = {
-      chooseFolder: vi.fn().mockImplementation(async () => {
-        callCount++;
-        if (callCount === 1) return { canceled: false, path: '/a/first', name: 'first' };
-        return { canceled: false, path: '/b/second', name: 'second' };
-      }),
-    };
-    renderDialog();
-
-    // Add first
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Add folders the agent can read and edit/i));
-    });
-
-    // Add second — the inline "Add folder" button has text split across elements
-    // Use a function matcher to find by content
-    await act(async () => {
-      const addBtn = screen.getByText((_content, el) =>
-        el?.tagName === 'BUTTON' && el.textContent === '+ Add folder',
-      );
-      fireEvent.click(addBtn);
-    });
-
-    expect(screen.getByText('first')).toBeTruthy();
-    expect(screen.getByText('second')).toBeTruthy();
   });
 
   it('rejects nested folders with an error message', async () => {

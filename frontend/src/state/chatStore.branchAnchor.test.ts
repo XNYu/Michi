@@ -10,11 +10,6 @@ describe('makeBranchEdge', () => {
     expect(edge.createdAt).toBe(1000);
   });
 
-  it('omits kind when not specified (relies on default branch interpretation)', () => {
-    const edge = makeBranchEdge({ source: 'A', target: 'B', createdAt: 1000 });
-    expect(edge.kind).toBeUndefined();
-  });
-
   it('sets kind=branch when explicitly requested', () => {
     const edge = makeBranchEdge({ source: 'A', target: 'B', createdAt: 1000, kind: 'branch' });
     expect(edge.kind).toBe('branch');

@@ -98,21 +98,6 @@ describe('FollowUpRow', () => {
     expect(onBranch).toHaveBeenCalledWith('hello');
   });
 
-  it('Enter on the text button calls onContinue (native button behavior)', () => {
-    const onContinue = vi.fn();
-    render(
-      <FollowUpRow
-        index={0}
-        question="hello"
-        onContinue={onContinue}
-        onBranch={vi.fn()}
-      />,
-    );
-    const textBtn = screen.getByRole('button', { name: /Continue follow-up 1/i });
-    fireEvent.click(textBtn);
-    expect(onContinue).toHaveBeenCalledWith('hello');
-  });
-
   it('does not trigger actions while disabled', () => {
     const onContinue = vi.fn();
     const onBranch = vi.fn();

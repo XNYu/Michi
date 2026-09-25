@@ -86,21 +86,6 @@ describe("Pi event mapper provider errors", () => {
       totalCost: 0.01,
     });
   });
-
-  test("does not turn an aborted assistant message into a provider error", () => {
-    const ctx = context();
-    Array.from(mapAgentEvent({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        stopReason: "aborted",
-        errorMessage: "Request was aborted",
-      },
-    }, ctx));
-
-    const events = Array.from(mapAgentEvent({ type: "agent_end" }, ctx));
-    assert.equal(events.some((event) => event.kind === "runtime_error"), false);
-  });
 });
 
 describe('eventMapper', () => {

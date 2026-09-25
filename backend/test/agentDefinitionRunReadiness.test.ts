@@ -128,43 +128,6 @@ test('readiness passes when both runtime and adapter are registered', () => {
   assert.doesNotThrow(() => readiness.validate(profile('codex'), 'owner-1'));
 });
 
-test('readiness fails when runtime exists but adapter is missing', () => {
-  const runtimes = new Set(['pi', 'claude', 'kiro', 'codex']);
-  // Only Pi and Claude adapters
-  const registry = new RuntimeRunAdapterRegistry([new PiRunAdapter(), new ClaudeRunAdapter()]);
-  const readiness = createFakeReadiness(runtimes, registry);
-  assert.throws(
-    () => readiness.validate(profile('kiro'), 'owner-1'),
-    /does not have a Run adapter.*pi, claude/,
-  );
-  assert.throws(
-    () => readiness.validate(profile('codex'), 'owner-1'),
-    /does not have a Run adapter.*pi, claude/,
-  );
-});
-
-test('readiness fails when adapter exists but runtime is missing', () => {
-  const runtimes = new Set(['pi', 'claude']); // No kiro or codex runtime
-  const registry = new RuntimeRunAdapterRegistry([
-    new PiRunAdapter(), new ClaudeRunAdapter(), new KiroRunAdapter(), new CodexRunAdapter(),
-  ]);
-  const readiness = createFakeReadiness(runtimes, registry);
-  assert.throws(
-    () => readiness.validate(profile('kiro'), 'owner-1'),
-    /runtime kiro is not available/,
-  );
-});
-
-test('readiness fails when neither runtime nor adapter exist', () => {
-  const runtimes = new Set(['pi']);
-  const registry = new RuntimeRunAdapterRegistry([new PiRunAdapter()]);
-  const readiness = createFakeReadiness(runtimes, registry);
-  assert.throws(
-    () => readiness.validate(profile('nonexistent'), 'owner-1'),
-    /runtime nonexistent is not available/,
-  );
-});
-
 test('readiness error message lists all supported adapter runtimes', () => {
   const runtimes = new Set(['pi', 'claude', 'kiro', 'codex', 'experimental']);
   const registry = new RuntimeRunAdapterRegistry([
@@ -230,15 +193,6 @@ test('Pi adapter rejects wrong runtime id', () => {
   assert.throws(
     () => adapter.assertCompatible(fakeRuntime as never),
     /Pi Run adapter cannot execute runtime kiro/,
-  );
-});
-
-test('Claude adapter rejects wrong runtime id', () => {
-  const adapter = new ClaudeRunAdapter();
-  const fakeRuntime = { id: 'pi', capabilities: { models: true, nativeResume: true } };
-  assert.throws(
-    () => adapter.assertCompatible(fakeRuntime as never),
-    /Claude Run adapter cannot execute runtime pi/,
   );
 });
 

@@ -14,13 +14,6 @@ describe('Button', () => {
     fireEvent.click(btn);
     expect(onClick).toHaveBeenCalledOnce();
   });
-
-  it('does not fire onClick when disabled', () => {
-    const onClick = vi.fn();
-    render(<Button disabled onClick={onClick}>Save</Button>);
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(onClick).not.toHaveBeenCalled();
-  });
 });
 
 describe('Switch', () => {

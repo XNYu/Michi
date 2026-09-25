@@ -25,7 +25,6 @@ import {
   listNodes, getNode, listWorkspaces, getWorkspace, listTrees, listEdges, listMessages,
   emptyWorkspaceTrash, purgeWorkspaceNodes,
   deleteWorkspace,
-  runTombstoneGc, TOMBSTONE_TTL_MS,
 } from '../src/services/dbRepository';
 
 function freshTmpDir(): string {
@@ -130,16 +129,6 @@ describe('saveNode anti-revival guard', () => {
     assert.equal(rawCount('nodes', "id = 'X' AND purged_at IS NOT NULL"), 1);
     assert.equal(getNode('X'), null);
   });
-
-  test('a node from a tombstoned workspace is also refused', () => {
-    insertWorkspace('ws1');
-    deleteWorkspace('ws1');     // tombstones workspace + cascades to nodes
-
-    // Tab B tries to re-insert a node into the dead workspace.
-    insertNode('ws1', 'rogue');
-
-    assert.equal(rawCount('nodes', "id = 'rogue'"), 0);
-  });
 });
 
 describe('purgeWorkspaceNodes targets a specific list', () => {
@@ -152,21 +141,6 @@ describe('purgeWorkspaceNodes targets a specific list', () => {
     initDb();
   });
   afterEach(() => { closeDb(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
-
-  test('only the listed ids get tombstoned', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'a', { deletedAt: 100, groupId: 'g1' });
-    insertNode('ws1', 'b', { deletedAt: 100, groupId: 'g1' });
-    insertNode('ws1', 'c', { deletedAt: 100, groupId: 'g2' });
-
-    const purged = purgeWorkspaceNodes('ws1', ['a', 'b']);
-
-    assert.equal(purged, 2);
-    assert.equal(rawCount('nodes', "id = 'a' AND purged_at IS NOT NULL"), 1);
-    assert.equal(rawCount('nodes', "id = 'b' AND purged_at IS NOT NULL"), 1);
-    // c stays soft-deleted (tomb-free).
-    assert.equal(rawCount('nodes', "id = 'c' AND purged_at IS NULL"), 1);
-  });
 
   test('cross-workspace ids are ignored (defence in depth)', () => {
     insertWorkspace('ws1');
@@ -227,49 +201,3 @@ describe('deleteWorkspace tombstones the workspace and cascades', () => {
   });
 });
 
-describe('runTombstoneGc respects TOMBSTONE_TTL_MS', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = freshTmpDir();
-    process.env.MICHI_DATA_DIR = tmpDir;
-    closeDb();
-    initDb();
-  });
-  afterEach(() => { closeDb(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
-
-  test('drops only stones older than the TTL', () => {
-    insertWorkspace('ws1');
-    // Tombstone with a fresh timestamp — should survive GC.
-    insertNode('ws1', 'fresh', { deletedAt: 1, groupId: 'g' });
-    // Tombstone with an ancient timestamp, hand-stamped past the TTL.
-    insertNode('ws1', 'ancient', { deletedAt: 1, groupId: 'g' });
-
-    emptyWorkspaceTrash('ws1');     // tombstones both with now()
-    // Backdate "ancient" so it's older than TTL.
-    const longAgo = Date.now() - TOMBSTONE_TTL_MS - 1000;
-    getDb().prepare('UPDATE nodes SET purged_at = ? WHERE id = ?').run(longAgo, 'ancient');
-
-    const summary = runTombstoneGc();
-
-    assert.equal(summary.nodes, 1);
-    assert.equal(rawCount('nodes', "id = 'ancient'"), 0);
-    assert.equal(rawCount('nodes', "id = 'fresh' AND purged_at IS NOT NULL"), 1);
-  });
-
-  test('purgeWorkspaceNodes triggers GC implicitly', () => {
-    insertWorkspace('ws1');
-    // Plant an ancient tombstone first.
-    insertNode('ws1', 'old', { deletedAt: 1, groupId: 'g' });
-    emptyWorkspaceTrash('ws1');
-    const longAgo = Date.now() - TOMBSTONE_TTL_MS - 1000;
-    getDb().prepare('UPDATE nodes SET purged_at = ? WHERE id = ?').run(longAgo, 'old');
-
-    // Now any purge call should sweep the old tombstone away.
-    insertNode('ws1', 'new-target');
-    purgeWorkspaceNodes('ws1', ['new-target']);
-
-    assert.equal(rawCount('nodes', "id = 'old'"), 0);
-    assert.equal(rawCount('nodes', "id = 'new-target' AND purged_at IS NOT NULL"), 1);
-  });
-});

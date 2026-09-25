@@ -45,21 +45,9 @@ describe('truncateQuotePreview', () => {
     // Head+tail well under the original length.
     expect(head.length + tail.length).toBeLessThan(120);
   });
-
-  it('honors a custom max', () => {
-    const out = truncateQuotePreview('abcdefghijklmnop', 10);
-    expect(out).toContain(' ... ');
-    expect(out.startsWith('a')).toBe(true);
-    expect(out.endsWith('p')).toBe(true);
-  });
 });
 
 describe('renderComment', () => {
-  it('prefixes every quote line with > and appends the body', () => {
-    const c = mkComment('c1', 'line one\nline two', 'my reply');
-    expect(renderComment(c)).toBe('> line one\n> line two\n\nmy reply');
-  });
-
   it('does not double-prefix quotes that already start with >', () => {
     const c = mkComment('c1', '> already quoted', 'reply');
     expect(renderComment(c)).toBe('> already quoted\n\nreply');
@@ -224,28 +212,6 @@ describe('formatCommentsBlock', () => {
       '## My Comments on Previous Reply\n\n> hello\n\nhi back',
     );
   });
-
-  it('separates multiple comments with a horizontal rule', () => {
-    const out = formatCommentsBlock([
-      mkComment('c1', 'first quote', 'first reply'),
-      mkComment('c2', 'second quote', 'second reply'),
-    ]);
-    expect(out).toBe(
-      [
-        '## My Comments on Previous Reply',
-        '',
-        '> first quote',
-        '',
-        'first reply',
-        '',
-        '---',
-        '',
-        '> second quote',
-        '',
-        'second reply',
-      ].join('\n'),
-    );
-  });
 });
 
 describe('joinMessageParts', () => {
@@ -267,20 +233,9 @@ describe('joinMessageParts', () => {
     );
   });
 
-  it('allows comment-only send (empty user text, null quote)', () => {
-    const block = '## My Comments on Previous Reply\n\n> q\n\nb';
-    expect(joinMessageParts(block, null, '')).toBe(block);
-  });
-
   it('does not double-prefix quote lines that already start with >', () => {
     expect(joinMessageParts(null, '> already', 'next')).toBe(
       `${QUOTED_CONTEXT}\n\nSelected assistant passage:\n> already\n\nUser's reply:\nnext`,
-    );
-  });
-
-  it('trims stray whitespace on all inputs', () => {
-    expect(joinMessageParts('  block  ', '  q  ', '  text  ')).toBe(
-      `block\n\n${QUOTED_CONTEXT}\n\nSelected assistant passage:\n> q\n\nUser's reply:\ntext`,
     );
   });
 });

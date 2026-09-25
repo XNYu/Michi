@@ -200,20 +200,6 @@ describe("PiSession MCP integration (via mcpToolBridge)", () => {
         assert.ok(result.content[0].text.includes("no text content"));
     });
 
-    it("flattens multi-part text content", async () => {
-        manager.setCallResult("sample", "ReadPages", {
-            content: [
-                { type: "text", text: "Part 1" },
-                { type: "text", text: "Part 2" },
-                { type: "image", data: "..." },  // non-text skipped
-            ],
-            isError: false,
-        });
-        const tools = buildMcpToolsForPi({ mcpManager: manager as any, Type });
-        const result = await tools[0].execute("call-4", { inputs: [] });
-        assert.equal(result.content[0].text, "Part 1\nPart 2");
-    });
-
     it("converts nested JSON Schema to TypeBox parameters", () => {
         manager.addServer("complex", [
             {

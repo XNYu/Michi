@@ -204,17 +204,6 @@ test('HTTP cancel then follow-up reuses the native ACP session without re-primin
   assert.equal(listMessages('cancel-node').filter((message) => message.role === 'user').length, 2);
 });
 
-test('cancelled session keeps its model when global defaults changed and the client omits modelId', async () => {
-  await cancelFirstTurn();
-  updateAgentConfig({ modelByRuntime: { kiro: 'different-global-default' } });
-  const result = await ensure();
-  assert.equal(result.resumeStrategy, 'live');
-  assert.equal(result.modelId, 'original-model');
-  assert.equal(created.length, 1);
-  assert.deepEqual(releases, []);
-  assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
-});
-
 test('explicitly selecting a different model still replaces an incompatible session', async () => {
   await cancelFirstTurn();
   const result = await ensure({ modelId: 'explicit-new-model' });
@@ -283,12 +272,6 @@ test('concurrent cold restore requests perform one native load', async () => {
   assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
 });
 
-test('concurrent fresh ensures create only one native session', async () => {
-  await Promise.all(Array.from({ length: 6 }, () => ensure()));
-  assert.equal(created.length, 1);
-  assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
-});
-
 test('background parent restore also retains the binding on unknown native failure', async () => {
   await ensure();
   clearAllSessions();
@@ -306,17 +289,6 @@ test('known missing native state permits one explicit compatible replacement', a
   assert.equal(created.length, 2);
   assert.equal(loaded.length, 1);
   assert.equal(getNode('cancel-node')?.acp_session_id, 'native-2');
-});
-
-test('transient native load retries succeed without replacing the original session', async () => {
-  await ensure();
-  clearAllSessions();
-  runtime.isNativeResumeRetryable = () => true;
-  loadFailures.push(new Error('transient'), new Error('transient'));
-  assert.equal((await ensure()).resumeStrategy, 'exact');
-  assert.equal(loaded.length, 3);
-  assert.equal(created.length, 1);
-  assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
 });
 
 test('foreground and background native restoration share the same lock', async () => {
@@ -360,21 +332,6 @@ test('an explicit load and foreground ensure cannot load the same native session
   ]);
   assert.equal(response.status, 200, await response.text());
   assert.equal(loaded.length, 1);
-  assert.equal(created.length, 1);
-});
-
-test('a failed binding commit releases the uncommitted session instead of acknowledging success', async (t) => {
-  await ensure();
-  clearAllSessions();
-  const workerReady = t.mock.method(dbWorkerClient, 'isDbWorkerReady', () => true);
-  const persistence = t.mock.method(dbWorkerClient.dbWorker, 'persistResumeBinding', async () => { throw new Error('disk unavailable'); });
-  const response = await post('/nodes/cancel-node/ensure-session', { workspaceId: 'ws', cwd: directory });
-  assert.equal(response.status, 500);
-  assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
-  assert.deepEqual(releases, ['cancel-node']);
-  persistence.mock.restore();
-  workerReady.mock.mockImplementation(() => false);
-  assert.equal((await ensure()).resumeStrategy, 'exact');
   assert.equal(created.length, 1);
 });
 

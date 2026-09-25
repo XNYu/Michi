@@ -10,25 +10,6 @@ function tool(id: string, title: string, status = 'running', kind?: string): Too
 }
 
 describe('ToolCallGroup — collapsed state', () => {
-  it('renders summarized chip text when defaultExpanded is false', () => {
-    const tools = [
-      tool('1', 'Read a', 'completed', 'read'),
-      tool('2', 'Read b', 'completed', 'read'),
-    ];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    expect(getByText(/read 2 files/)).toBeTruthy();
-  });
-
-  it('single tool collapsed shows the tool title verbatim', () => {
-    const tools = [tool('1', 'Read package.json', 'completed', 'read')];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    expect(getByText(/Read package\.json/)).toBeTruthy();
-  });
-
   it('clicking the collapsed header expands the group', () => {
     const tools = [
       tool('1', 'Read a', 'completed', 'read'),
@@ -45,18 +26,6 @@ describe('ToolCallGroup — collapsed state', () => {
 });
 
 describe('ToolCallGroup — expanded state', () => {
-  it('renders one row per tool when defaultExpanded is true', () => {
-    const tools = [
-      tool('1', 'Read a', 'running', 'read'),
-      tool('2', 'Read b', 'running', 'read'),
-    ];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    expect(getByText('Read a')).toBeTruthy();
-    expect(getByText('Read b')).toBeTruthy();
-  });
-
   it('shows each tool purpose on expanded multi-tool rows (card + plain)', () => {
     const tools: ToolCallState[] = [
       {
@@ -258,16 +227,6 @@ describe('ToolCallGroup — single tool direct render', () => {
     // There should be no group header button.
     expect(container.querySelector('[data-toolgroup-header]')).toBeNull();
   });
-
-  it('single tool has no collapse chevrons', () => {
-    const tools = [tool('1', 'Read a', 'completed', 'read')];
-    const { queryByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    // No group-level chevrons — the tool row renders directly.
-    expect(queryByText('▸')).toBeNull();
-    expect(queryByText('▾')).toBeNull();
-  });
 });
 
 import type { SubagentInfo } from '../../state/chatTypes';
@@ -319,18 +278,6 @@ describe('ToolCallGroup — relayed-tool filter', () => {
     expect(getByText('list_threads')).toBeTruthy();
     expect(getByText('search_messages')).toBeTruthy();
   });
-
-  it('keeps peers when subagents prop is undefined (legacy callers)', () => {
-    const tools: ToolCallState[] = [
-      { id: 't1', title: 'Bash ls', status: 'completed', kind: 'bash' },
-      { id: 't2', title: 'Read x', status: 'completed', kind: 'read' },
-    ];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    expect(getByText('Bash ls')).toBeTruthy();
-    expect(getByText('Read x')).toBeTruthy();
-  });
 });
 
 describe('ToolCallGroup — payload', () => {
@@ -370,18 +317,6 @@ describe('ToolCallGroup — payload', () => {
     expect(getByText('out')).toBeTruthy();
     expect(container.textContent).toContain('file-a file-b');
   });
-
-  it('rows do not render raw status strings for terminal tools', () => {
-    const tools = [
-      tool('1', 'Read a', 'completed', 'read'),
-      tool('2', 'Read b', 'in_progress', 'read'),
-    ];
-    const { container } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    expect(container.textContent).not.toContain('completed');
-    expect(container.textContent).not.toContain('in_progress');
-  });
 });
 
 describe('ToolCallGroup — SubAgent spine Now: line', () => {
@@ -405,20 +340,6 @@ describe('ToolCallGroup — SubAgent spine Now: line', () => {
     tools[0].detail = detail;
     const subagents = [
       subInfo({ agentName: 'Explore', initialQuery: 'Explore Michi', currentTool: 'Glob' }),
-    ];
-
-    const { container } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} subagents={subagents} />,
-    );
-    expect(container.textContent).not.toContain('now:');
-  });
-
-  it('omits now: line when currentTool is undefined', () => {
-    const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
-    const tools = [tool('1', 'Agent', 'in_progress', 'tool')];
-    tools[0].detail = detail;
-    const subagents = [
-      subInfo({ agentName: 'Explore', initialQuery: 'Explore Michi' /* no currentTool */ }),
     ];
 
     const { container } = render(

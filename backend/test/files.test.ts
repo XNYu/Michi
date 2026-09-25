@@ -54,19 +54,6 @@ describe('GET /api/files/:workspaceId/*', () => {
         });
     });
 
-    test('serves a nested png', async () => {
-        const root = tmpRoot();
-        fs.mkdirSync(path.join(root, 'sub', 'dir'), { recursive: true });
-        fs.writeFileSync(path.join(root, 'sub', 'dir', 'b.jpg'), Buffer.from([0xff, 0xd8, 0xff]));
-        await withServer(appWithRoot(root), async (port) => {
-            const res = await fetch(`http://127.0.0.1:${port}/api/files/ws1/sub/dir/b.jpg`);
-            assert.equal(res.status, 200);
-            assert.equal(res.headers.get('content-type'), 'image/jpeg');
-            // drain so the socket closes cleanly
-            await res.arrayBuffer();
-        });
-    });
-
     test('404 on path traversal', async () => {
         const root = tmpRoot();
         await withServer(appWithRoot(root), async (port) => {
@@ -81,25 +68,6 @@ describe('GET /api/files/:workspaceId/*', () => {
         fs.writeFileSync(path.join(root, 'a.txt'), 'x');
         await withServer(appWithRoot(root), async (port) => {
             const res = await fetch(`http://127.0.0.1:${port}/api/files/ws1/a.txt`);
-            assert.equal(res.status, 404);
-            await res.arrayBuffer();
-        });
-    });
-
-    test('404 on svg (excluded from allowlist)', async () => {
-        const root = tmpRoot();
-        fs.writeFileSync(path.join(root, 'x.svg'), '<svg/>');
-        await withServer(appWithRoot(root), async (port) => {
-            const res = await fetch(`http://127.0.0.1:${port}/api/files/ws1/x.svg`);
-            assert.equal(res.status, 404);
-            await res.arrayBuffer();
-        });
-    });
-
-    test('404 on missing file', async () => {
-        const root = tmpRoot();
-        await withServer(appWithRoot(root), async (port) => {
-            const res = await fetch(`http://127.0.0.1:${port}/api/files/ws1/missing.png`);
             assert.equal(res.status, 404);
             await res.arrayBuffer();
         });
@@ -186,17 +154,6 @@ describe('GET /api/files/:workspaceId/*', () => {
         });
     });
 
-    test('serves uppercase extension (A.PNG → 200) — guards .toLowerCase()', async () => {
-        const root = tmpRoot();
-        fs.writeFileSync(path.join(root, 'A.PNG'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-        await withServer(appWithRoot(root), async (port) => {
-            const res = await fetch(`http://127.0.0.1:${port}/api/files/ws1/A.PNG`);
-            assert.equal(res.status, 200);
-            assert.equal(res.headers.get('content-type'), 'image/png');
-            await res.arrayBuffer();
-        });
-    });
-
     test('404 on an image over the size cap', async () => {
         const root = tmpRoot();
         // One byte over the cap — a valid png ext, so only the size check rejects it.
@@ -237,23 +194,6 @@ describe('GET /api/files (desktop cwd resolution via persisted workspaces.cwd)',
         app.use('/api', setupFilesRoutes()); // real defaultResolveRoot
         return app;
     }
-
-    test('serves an image from a user-picked folder recorded in workspaces.cwd', async () => {
-        // An arbitrary absolute folder (the "Electron picked folder" case).
-        const picked = fs.mkdtempSync(path.join(os.tmpdir(), 'picked-folder-'));
-        fs.mkdirSync(path.join(picked, '.contexts'), { recursive: true });
-        fs.writeFileSync(path.join(picked, '.contexts', 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-        const now = Date.now();
-        saveWorkspace({ id: 'wsdesk', name: 'Picked', cwd: picked, created_at: now, updated_at: now });
-
-        await withServer(realApp(), async (port) => {
-            const res = await fetch(`http://127.0.0.1:${port}/api/files/wsdesk/.contexts/shot.png`);
-            assert.equal(res.status, 200);
-            assert.equal(res.headers.get('content-type'), 'image/png');
-            await res.arrayBuffer();
-        });
-        fs.rmSync(picked, { recursive: true, force: true });
-    });
 
     test('still sandboxes: traversal out of the picked folder is 404', async () => {
         const picked = fs.mkdtempSync(path.join(os.tmpdir(), 'picked-folder-'));

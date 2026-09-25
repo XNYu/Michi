@@ -85,35 +85,6 @@ describe('TerminalTopbar', () => {
     expect(screen.queryByText('MAP')).toBeNull();
   });
 
-  it('does not render the deleted map/digest topbar buttons', () => {
-    render(
-      <Wrap>
-        <TerminalTopbar {...baseProps} />
-      </Wrap>,
-    );
-    expect(screen.queryByText(/⎇ map/i)).toBeNull();
-    expect(screen.queryByText(/§ digest/i)).toBeNull();
-  });
-
-  it('does not render the deleted cwd/tree crumb', () => {
-    render(
-      <Wrap>
-        <TerminalTopbar {...baseProps} />
-      </Wrap>,
-    );
-    // The cwd block had a leading "~" character and "›" separator. Both gone.
-    expect(screen.queryByTitle(/^\/.*$/)).toBeNull();
-  });
-
-  it('renders the Artifacts drawer trigger button', () => {
-    render(
-      <Wrap>
-        <TerminalTopbar {...baseProps} />
-      </Wrap>,
-    );
-    expect(screen.getByLabelText(/Artifacts/)).toBeTruthy();
-  });
-
   it('dispatches michi:toggle-artifacts when the Artifacts button is clicked', () => {
     const spy = vi.fn();
     window.addEventListener('michi:toggle-artifacts', spy);

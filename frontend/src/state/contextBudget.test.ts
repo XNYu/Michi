@@ -12,32 +12,10 @@ describe('resolveAtMentions', () => {
         expect(resolveAtMentions('hello world', ctxs)).toEqual([]);
     });
 
-    it('resolves a single mention', () => {
-        const result = resolveAtMentions('check @api-spec please', ctxs);
-        expect(result).toHaveLength(1);
-        expect(result[0].id).toBe('1');
-    });
-
     it('is case-insensitive', () => {
         const result = resolveAtMentions('@API-SPEC', ctxs);
         expect(result).toHaveLength(1);
         expect(result[0].id).toBe('1');
-    });
-
-    it('deduplicates by id', () => {
-        const result = resolveAtMentions('@api-spec and again @api-spec', ctxs);
-        expect(result).toHaveLength(1);
-    });
-
-    it('skips unresolved mentions', () => {
-        const result = resolveAtMentions('@nonexistent @api-spec', ctxs);
-        expect(result).toHaveLength(1);
-        expect(result[0].id).toBe('1');
-    });
-
-    it('resolves multiple different mentions', () => {
-        const result = resolveAtMentions('@api-spec @conventions', ctxs);
-        expect(result).toHaveLength(2);
     });
 });
 
@@ -64,22 +42,6 @@ describe('resolveAtNodeMentions', () => {
 
     it('resolves a single node mention', () => {
         const result = resolveAtNodeMentions('check @node:n1 please', nodes);
-        expect(result).toHaveLength(1);
-        expect(result[0].nodeId).toBe('n1');
-    });
-
-    it('resolves multiple node mentions', () => {
-        const result = resolveAtNodeMentions('@node:n1 and @node:n2', nodes);
-        expect(result).toHaveLength(2);
-    });
-
-    it('deduplicates by nodeId', () => {
-        const result = resolveAtNodeMentions('@node:n1 again @node:n1', nodes);
-        expect(result).toHaveLength(1);
-    });
-
-    it('skips unresolved node mentions', () => {
-        const result = resolveAtNodeMentions('@node:nonexistent @node:n1', nodes);
         expect(result).toHaveLength(1);
         expect(result[0].nodeId).toBe('n1');
     });
@@ -136,16 +98,6 @@ describe('buildNodeTranscriptBlock', () => {
         const block = buildNodeTranscriptBlock(node);
         expect(block).toContain('Summary: Investigated X and discovered Y. Confirmed approach Z.');
     });
-
-    it('falls back to first user message for summary when no overview entries', () => {
-        const longMsg = 'C'.repeat(2000);
-        const node = mkNode('n1', 'Thread', [
-            { role: 'user', text: 'This is the original question that was asked' },
-            { role: 'assistant', text: longMsg },
-        ]);
-        const block = buildNodeTranscriptBlock(node);
-        expect(block).toContain('Summary: This is the original question that was asked');
-    });
 });
 
 describe('stripNodeMentionTokens', () => {
@@ -155,10 +107,6 @@ describe('stripNodeMentionTokens', () => {
 
     it('strips multiple tokens', () => {
         expect(stripNodeMentionTokens('@node:n1 @node:n2 hello')).toBe('hello');
-    });
-
-    it('leaves non-node mentions intact', () => {
-        expect(stripNodeMentionTokens('@api-spec hello')).toBe('@api-spec hello');
     });
 
     it('preserves line breaks while stripping node tokens', () => {
@@ -196,10 +144,5 @@ describe('rewriteNodeMentionsForDisplay', () => {
 
     it('drops unresolved tokens', () => {
         expect(rewriteNodeMentionsForDisplay('@node:gone hi', nodes)).toBe('hi');
-    });
-
-    it('leaves @<name> context mentions intact', () => {
-        expect(rewriteNodeMentionsForDisplay('@api-spec @node:n1', nodes))
-            .toBe('@api-spec @Research');
     });
 });

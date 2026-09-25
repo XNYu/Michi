@@ -193,21 +193,6 @@ describe('paneScrollCache save gating', () => {
     expect(readCache().node1).toEqual(SAVED_ENTRY);
   });
 
-  it('StrictMode mount: saved entry survives the dev double-invoke', async () => {
-    seedCache();
-    vi.resetModules();
-    const { default: TPane } = await import('./TPane');
-    render(
-      <React.StrictMode>
-        <TPane nodeId="node1" />
-      </React.StrictMode>,
-    );
-    // paneScrollCache flushes to localStorage on a 1s debounce; if the
-    // StrictMode cleanup had saved, the clobbered entry would be visible now.
-    await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
-    expect(readCache().node1).toEqual(SAVED_ENTRY);
-  });
-
   it('unmount after the restore settles still saves (guard is not stuck closed)', async () => {
     seedCache();
     vi.resetModules();

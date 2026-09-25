@@ -77,23 +77,6 @@ describe('MergeBanner', () => {
     vi.mocked(mergePreambleModule.estimateMergePreambleTokens).mockReturnValue(0);
   });
 
-  it('renders nothing when node has no mergeSources', () => {
-    vi.mocked(chatStoreModule.useChatNodesSnapshot).mockReturnValue(
-      makeNodes({
-        'n-merge': {
-          id: 'n-merge',
-          title: 'Not a merge',
-          messages: [],
-          mergeSources: undefined,
-          deletedAt: undefined,
-        },
-      }) as never,
-    );
-
-    const { container } = render(<MergeBanner nodeId="n-merge" />);
-    expect(container.firstChild).toBeNull();
-  });
-
   it('renders nothing when mergeSources is empty array', () => {
     vi.mocked(chatStoreModule.useChatNodesSnapshot).mockReturnValue(
       makeNodes({

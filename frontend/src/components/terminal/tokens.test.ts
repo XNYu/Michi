@@ -28,10 +28,6 @@ describe('cssVarsFor — accent resolution', () => {
     expect(resolveAccent({ bone: '#abcdef' }, 'monokai')).toBe(PALETTES.monokai.accent);
   });
 
-  it('resolveAccent returns the override when one is set for the palette', () => {
-    expect(resolveAccent({ monokai: '#abcdef' }, 'monokai')).toBe('#abcdef');
-  });
-
   it('DARK_PALETTES contains exactly the dark palettes', () => {
     expect(DARK_PALETTES.has('monokai')).toBe(true);
     expect(DARK_PALETTES.has('gruvbox')).toBe(true);

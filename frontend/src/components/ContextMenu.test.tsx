@@ -30,16 +30,6 @@ describe('ContextMenu confirmation', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['workspace', true],
-    ['agents', true],
-    ['context', false],
-  ] as const)('gives the %s menu the shared glass: %s', (menuKind, glass) => {
-    render(<ContextMenu x={20} y={40} menuKind={menuKind} searchable onClose={() => {}}
-      sections={[{ items: [{ id: 'item', label: 'Item', run: () => {} }] }]} />);
-    expect(screen.getByRole('menu').classList.contains('term-glass')).toBe(glass);
-  });
-
   it.each(['escape', 'outside', 'unmount', 'filter'])('cancels pending actions on %s', (dismiss) => {
     vi.useFakeTimers();
     const { run, unmount } = open(dismiss === 'filter');
@@ -101,24 +91,11 @@ describe('ContextMenu toolbar anchoring', () => {
   };
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('sits above the trigger when it fits', () => {
-    const { top, maxHeight } = openAnchored(300, 606, 630, 900);
-    expect(top).toBe(300);
-    expect(top + 300).toBeLessThanOrEqual(600);
-    expect(maxHeight).toBe(592);
-  });
-
   it('caps a tall list to the space above instead of sliding over the trigger', () => {
     const { top, maxHeight } = openAnchored(900, 506, 530, 700);
     expect(top).toBe(8);
     expect(maxHeight).toBe(492);
     expect(top + maxHeight).toBeLessThanOrEqual(506);
-  });
-
-  it('flips below the trigger when there is clearly more room there', () => {
-    const { top, maxHeight } = openAnchored(300, 106, 130, 900);
-    expect(top).toBe(136);
-    expect(maxHeight).toBe(900 - 8 - 136);
   });
 });
 

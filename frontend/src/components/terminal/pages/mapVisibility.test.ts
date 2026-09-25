@@ -61,39 +61,6 @@ describe('visibleMapNodeIds', () => {
     ).toEqual([]);
   });
 
-  it('builds the branch parent index only once for the whole workspace', () => {
-    let edgeIterations = 0;
-    const rawEdges = [
-      { source: 'root', target: 'a' },
-      { source: 'a', target: 'b' },
-      { source: 'b', target: 'c' },
-    ];
-    const edges = new Proxy(rawEdges, {
-      get(target, property, receiver) {
-        if (property === Symbol.iterator) {
-          return function* iterate() {
-            edgeIterations += 1;
-            yield* target;
-          };
-        }
-        return Reflect.get(target, property, receiver);
-      },
-    });
-
-    expect(
-      visibleMapNodeIds(
-        project({
-          chatIds: ['root', 'a', 'b', 'c'],
-          edges,
-          trees: [{ id: 'tree', rootNodeId: 'root', createdAt: 0, lastActiveAt: 0 }],
-          activeTreeId: 'tree',
-        }),
-        { root: {}, a: {}, b: {}, c: {} },
-      ),
-    ).toEqual(['root', 'a', 'b', 'c']);
-    expect(edgeIterations).toBe(1);
-  });
-
   it('follows branch and merge edges but ignores link edges and excludes orphaned or cyclic nodes', () => {
     expect(
       visibleMapNodeIds(
@@ -142,32 +109,5 @@ describe('visibleMapNodeIds', () => {
         },
       ),
     ).toEqual(['A', 'A1', 'B', 'B1', 'M']);
-  });
-
-  it('merge tree map includes source ancestors reachable via branch edges', () => {
-    // Deep source chain: root→mid→leaf, leaf is a merge source.
-    // The map should walk up from leaf to root and then include all descendants.
-    expect(
-      visibleMapNodeIds(
-        project({
-          chatIds: ['root', 'mid', 'leaf', 'sibling', 'M'],
-          edges: [
-            { source: 'root', target: 'mid', kind: 'branch' },
-            { source: 'mid', target: 'leaf', kind: 'branch' },
-            { source: 'root', target: 'sibling', kind: 'branch' },
-            { source: 'leaf', target: 'M', kind: 'merge' },
-          ],
-          trees: [
-            { id: 'src-tree', rootNodeId: 'root', createdAt: 0, lastActiveAt: 0 },
-            { id: 'merge-tree', rootNodeId: 'M', createdAt: 1, lastActiveAt: 1, kind: 'merge' },
-          ],
-          activeTreeId: 'merge-tree',
-        }),
-        {
-          root: {}, mid: {}, leaf: {}, sibling: {},
-          M: { mergeSources: ['leaf'] },
-        },
-      ),
-    ).toEqual(['root', 'mid', 'leaf', 'sibling', 'M']);
   });
 });

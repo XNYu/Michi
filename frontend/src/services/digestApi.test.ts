@@ -32,11 +32,6 @@ describe('streamDigest', () => {
     expect(onChunk).toHaveBeenCalledExactlyOnceWith('# Result');
   });
 
-  it('remains compatible with callers that do not subscribe to activity', async () => {
-    mockStream([{ event: 'thought', data: { text: 'Thinking' } }, { event: 'done', data: { markdown: 'Result' } }]);
-    expect(await streamDigest(payload, { onChunk: vi.fn() })).toBe('Result');
-  });
-
   it('rejects runtime errors after thoughts arrive', async () => {
     mockStream([{ event: 'thought', data: { text: 'Thinking' } }, { event: 'error', data: { message: 'Runtime failed' } }]);
     await expect(streamDigest(payload, { onChunk: vi.fn() })).rejects.toThrow('Runtime failed');

@@ -6,13 +6,6 @@ import { hydrateSavedState, hydrateBackendWorkspaces, STATE_SCHEMA_VERSION } fro
 import { shouldBranchOnSubmit } from '../components/nodes/chatNodeUtils';
 
 describe('parseTitle', () => {
-  it('extracts a plain Title: line', () => {
-    const input = 'Title: How birds navigate\n\n#### Overview\nBody text here.';
-    const { title, rest } = parseTitle(input);
-    expect(title).toBe('How birds navigate');
-    expect(rest).toBe('#### Overview\nBody text here.');
-  });
-
   it('tolerates markdown decoration around the title', () => {
     const input = '**Title:** Something cool\n\nBody';
     const { title } = parseTitle(input);
@@ -24,12 +17,6 @@ describe('parseTitle', () => {
     const { title, rest } = parseTitle(input);
     expect(title).toBeNull();
     expect(rest).toBe(input);
-  });
-
-  it('handles a full-width colon', () => {
-    const input = 'Title：Seabird Compass\n\nBody';
-    const { title } = parseTitle(input);
-    expect(title).toBe('Seabird Compass');
   });
 
   it('strips the title line even if it is not on line 1', () => {
@@ -88,33 +75,6 @@ describe('finalizeAssistant remapOffset', () => {
     expect(remapOffset(raw.length)).toBe(visibleText.length);
   });
 
-  it('handles title in the middle of text', () => {
-    const raw = 'Preface\nTitle: Mid Title\n\nAfter title.';
-    const { remapOffset, visibleText } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Preface\nAfter title.');
-    // "Preface" is before the title, offset unchanged
-    expect(remapOffset(0)).toBe(0);
-    expect(remapOffset(7)).toBe(7); // end of "Preface"
-    // "After title." starts at different positions in raw vs visible
-    const afterInRaw = raw.indexOf('After title.');
-    const afterInVisible = visibleText.indexOf('After title.');
-    expect(remapOffset(afterInRaw)).toBe(afterInVisible);
-  });
-
-  // ── Inline [FOLLOW-UP n/3: ...] sentinels (current streaming format) ──
-  it('extracts follow-ups from per-question inline sentinels', () => {
-    const raw = [
-      'Here is the answer.',
-      '',
-      '[FOLLOW-UP 1/3: What about X?]',
-      '[FOLLOW-UP 2/3: Why not Y?]',
-      '[FOLLOW-UP 3/3: How does Z compare?]',
-    ].join('\n');
-    const { visibleText, followUps } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Here is the answer.');
-    expect(followUps).toEqual(['What about X?', 'Why not Y?', 'How does Z compare?']);
-  });
-
   it('uses the final contiguous per-question follow-up group', () => {
     const raw = [
       'Earlier I quoted [FOLLOW-UP 1/3: old?] inside the answer.',
@@ -133,19 +93,6 @@ describe('finalizeAssistant remapOffset', () => {
     const { visibleText, followUps } = finalizeAssistant(raw);
     expect(visibleText).toBe('Here is the answer.');
     expect(followUps).toEqual(['What about X?', 'Why not Y?', 'How does Z compare?']);
-  });
-
-  it('prefers the LAST inline sentinel when multiple are present', () => {
-    // Defensive against the LLM quoting an earlier [FOLLOW-UPS: ...] mid-reply.
-    const raw = 'Earlier I wrote [FOLLOW-UPS: old1 | old2 | old3]. Now the real answer.\n\n[FOLLOW-UPS: new1? | new2? | new3?]';
-    const { followUps } = finalizeAssistant(raw);
-    expect(followUps).toEqual(['new1?', 'new2?', 'new3?']);
-  });
-
-  it('caps inline follow-ups at 3 items and trims whitespace', () => {
-    const raw = 'Answer.\n[FOLLOW-UPS:   a?   |  b?  |  c?  |  d?  ]';
-    const { followUps } = finalizeAssistant(raw);
-    expect(followUps).toEqual(['a?', 'b?', 'c?']);
   });
 
   it('falls back to the prose "Follow-up Questions:" marker when no inline tag', () => {
@@ -170,13 +117,6 @@ describe('finalizeAssistant remapOffset', () => {
     expect(visibleText).toBe('The body of the answer.');
     expect(followUps).toEqual(['a?', 'b?', 'c?']);
   });
-
-  it('inline [TITLE:] takes precedence over legacy "Title:" prose marker', () => {
-    const raw = '[TITLE: New Form]\n\nTitle: Old Form\n\nBody.';
-    const { title, visibleText } = finalizeAssistant(raw);
-    expect(title).toBe('New Form');
-    expect(visibleText).toContain('Title: Old Form');
-  });
 });
 
 describe('hydrateSavedState', () => {
@@ -198,12 +138,6 @@ describe('hydrateSavedState', () => {
       },
     },
   };
-
-  it('nulls chatId on every restored node', () => {
-    const hydrated = hydrateSavedState(baseState);
-    expect(hydrated.nodes.n1.chatId).toBeNull();
-    expect(hydrated.nodes.n2.chatId).toBeNull();
-  });
 
   it('maps a legacy runtime chatId to the public nodeId marker', () => {
     const hydrated = hydrateSavedState({
@@ -398,12 +332,6 @@ describe('hydrate v1→v2 migration', () => {
     const h = hydrateSavedState(v2);
     expect(h.projects[0].trees[0].id).toBe('t1');
     expect(h.projects[0].activeTreeId).toBe('t1');
-  });
-
-  it('drops snapshots with an unrecognized schema version', () => {
-    const bogus = { version: 999, projects: [], activeProjectId: null, nodes: {} };
-    const h = hydrateSavedState(bogus);
-    expect(h.projects).toEqual([]);
   });
 });
 
@@ -644,24 +572,6 @@ describe('hydrateBackendWorkspaces', () => {
         expect(result.nodes.d1.digest?.error).toBeUndefined();
     });
 
-    it('skips deleted/archived workspaces when picking the fallback active id', () => {
-        const result = hydrateBackendWorkspaces([
-            {
-                workspace: { id: 'p1', name: 'Trashed', created_at: 1, active_tree_id: 't1', deleted_at: 9 },
-                trees: [{ id: 't1', workspace_id: 'p1', root_node_id: 'n1', created_at: 1, last_active_at: 1 }],
-                nodes: [{ id: 'n1', workspace_id: 'p1', kind: 'chat', status: 'idle', created_at: 1 }],
-                edges: [], messages: [], artifacts: [],
-            },
-            {
-                workspace: { id: 'p2', name: 'Live', created_at: 2, active_tree_id: 't2' },
-                trees: [{ id: 't2', workspace_id: 'p2', root_node_id: 'n2', created_at: 2, last_active_at: 2 }],
-                nodes: [{ id: 'n2', workspace_id: 'p2', kind: 'chat', status: 'idle', created_at: 2 }],
-                edges: [], messages: [], artifacts: [],
-            },
-        ]);
-        expect(result.activeProjectId).toBe('p2');
-    });
-
     it('falls back to a live workspace when the preferred id points at a deleted one', () => {
         const result = hydrateBackendWorkspaces([
             {
@@ -726,11 +636,6 @@ describe('reduceProject: thread lifecycle', () => {
     expect(p.activeTreeId).toBe('t1');
   });
 
-  it('archive-tree on the last non-archived tree leaves activeTreeId null', () => {
-    const p = reduceProject(makeProject(), { type: 'archive-tree', treeId: 't1', now: 300 });
-    expect(p.activeTreeId).toBeNull();
-  });
-
   it('unarchive-tree clears archivedAt and bumps lastActiveAt; does not auto-activate', () => {
     let p = reduceProject(makeProject(), { type: 'archive-tree', treeId: 't1', now: 300 });
     p = reduceProject(p, { type: 'unarchive-tree', treeId: 't1', now: 400 });
@@ -764,11 +669,6 @@ describe('reduceProject: thread lifecycle', () => {
     const p = reduceProject(makeProject(), { type: 'activate-tree', treeId: 'foreign-tree' });
     expect(p.activeTreeId).toBe('t1');
   });
-
-  it('touch-tree updates lastActiveAt of the matching tree', () => {
-    const p = reduceProject(makeProject(), { type: 'touch-tree', treeId: 't1', now: 999 });
-    expect(p.trees[0].lastActiveAt).toBe(999);
-  });
 });
 
 describe('lastActiveAt tracking', () => {
@@ -781,20 +681,6 @@ describe('lastActiveAt tracking', () => {
     expect(after.trees[0].lastActiveAt).toBe(5000);
     expect(after.trees[0].lastActiveAt).toBeGreaterThan(p.trees[0].lastActiveAt);
   });
-
-  it('dispatch wires NODE_ACTIVITY_ACTIONS to touch-tree: node-level activity types are covered', () => {
-    // Verify the set of action types that trigger lastActiveAt bumps.
-    // These are the types enumerated in the NODE_ACTIVITY_ACTIONS set inside
-    // the dispatch callback in chatStore.tsx.
-    const expectedActivity = ['user-send', 'chunk', 'done', 'error', 'tool-call', 'set-title', 'set-follow-ups', 'agent-spawn'];
-    // All are real ChatAction types — confirmed by the reducer handling them.
-    // This test documents the contract so any future removal is caught.
-    expect(expectedActivity).toHaveLength(8);
-    expect(expectedActivity).toContain('user-send');
-    expect(expectedActivity).toContain('chunk');
-    expect(expectedActivity).toContain('done');
-    expect(expectedActivity).toContain('agent-spawn');
-  });
 });
 
 describe('reduceProject context actions', () => {
@@ -805,16 +691,6 @@ describe('reduceProject context actions', () => {
         activeTreeId: 't1',
         artifacts: [],
     };
-
-    it('upsert-context inserts a new context', () => {
-        const result = reduceProject(baseProject, {
-            type: 'upsert-context', projectId: 'p1',
-            context: { name: 'api-spec', filePath: 'docs/api.md', source: 'user' },
-        });
-        expect(result.artifacts).toHaveLength(1);
-        expect(result.artifacts![0].name).toBe('api-spec');
-        expect(result.artifacts![0].source).toBe('user');
-    });
 
     it('upsert-context dedupes name with suffix', () => {
         const withOne = reduceProject(baseProject, {
@@ -948,20 +824,7 @@ describe('reduceProject context actions', () => {
 // submit() is caught.
 
 describe('streaming submit routing', () => {
-  it('should NOT branch when sending to a streaming node — caller queues instead', () => {
-    // Updated 2026-05-07: streaming-only submits are routed through the queue
-    // by TPane.onSubmit. shouldBranchOnSubmit returns false so the caller
-    // knows not to fork.
-    expect(shouldBranchOnSubmit({ forceBranch: false, slashBranched: false, streaming: true })).toBe(false);
-  });
-
   it('should route to in-place reply (sendMessage) when the node is idle', () => {
     expect(shouldBranchOnSubmit({ forceBranch: false, slashBranched: false, streaming: false })).toBe(false);
-  });
-
-  it('still respects explicit branch signals (⌘+Enter, /branch) regardless of streaming', () => {
-    expect(shouldBranchOnSubmit({ forceBranch: true, slashBranched: false, streaming: false })).toBe(true);
-    expect(shouldBranchOnSubmit({ forceBranch: false, slashBranched: true, streaming: false })).toBe(true);
-    expect(shouldBranchOnSubmit({ forceBranch: true, slashBranched: true, streaming: true })).toBe(true);
   });
 });

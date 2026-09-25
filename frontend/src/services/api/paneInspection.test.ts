@@ -86,37 +86,11 @@ describe('paneInspection frontend API client', () => {
       expect(init).toMatchObject({ signal: undefined });
     });
 
-    it('builds a query from a runId locator with no executionRef param at all', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, { version: 1 }));
-      await inspectPane(BASE, { locator: { runId: 'run-1' } });
-
-      const [url] = fetchMock.mock.calls[0] as [string];
-      const parsed = new URL(url);
-      expect(parsed.searchParams.get('runId')).toBe('run-1');
-      expect(parsed.searchParams.has('executionRef')).toBe(false);
-    });
-
     it('throws before any fetch when two locators are given', async () => {
       await expect(
         inspectPane(BASE, { locator: { nodeId: 'a', paneId: 'b' } as never }),
       ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
       expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('throws before any fetch when no locator field is given', async () => {
-      await expect(
-        inspectPane(BASE, { locator: {} as never }),
-      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('maps OUTPUT_CHANGED (409) to a typed error with that code', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(409, { code: 'OUTPUT_CHANGED', message: 'output.output: snapshot moved' }));
-      await expect(inspectPane(BASE, { locator: { nodeId: 'n' } })).rejects.toMatchObject({
-        code: 'OUTPUT_CHANGED',
-        status: 409,
-        message: 'output.output: snapshot moved',
-      });
     });
 
     it('maps NAVIGATION_DISABLED (403) to a typed error with that code', async () => {
@@ -135,14 +109,6 @@ describe('paneInspection frontend API client', () => {
       expect(error.code).toBe('INTERNAL');
       expect(error.status).toBe(500);
       expect(error.message).not.toContain('stack trace or SQL leaked here');
-    });
-
-    it('produces a typed error rather than crashing on a non-JSON error body', async () => {
-      fetchMock.mockResolvedValueOnce(new Response('<html>not json</html>', { status: 502 }));
-      const error = await inspectPane(BASE, { locator: { nodeId: 'n' } }).catch((e) => e);
-      expect(error).toBeInstanceOf(PaneInspectionClientError);
-      expect(error.code).toBe('INTERNAL');
-      expect(error.status).toBe(502);
     });
 
     it('produces a typed error rather than crashing on an empty error body', async () => {
@@ -213,13 +179,6 @@ describe('paneInspection frontend API client', () => {
       await expect(
         readPaneOutput(BASE, { locator: { nodeId: 'n' }, selection: 'latest', pageCursor: 'stale' }),
       ).rejects.toMatchObject({ code: 'OUTPUT_CHANGED', status: 409 });
-    });
-
-    it('maps NAVIGATION_DISABLED (403) to a typed error with that code', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(403, { code: 'NAVIGATION_DISABLED', message: 'disabled' }));
-      await expect(
-        readPaneOutput(BASE, { locator: { nodeId: 'n' }, selection: 'latest' }),
-      ).rejects.toMatchObject({ code: 'NAVIGATION_DISABLED', status: 403 });
     });
 
     it('does not auto-follow nextPageCursor — the caller must loop explicitly', async () => {

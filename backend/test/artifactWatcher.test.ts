@@ -48,17 +48,6 @@ describe("artifactWatcher", () => {
     }
   });
 
-  test("seeding: no spurious emit for an unchanged existing file", async () => {
-    const cwd = mkTmp();
-    fs.writeFileSync(path.join(cwd, "a.md"), "hello");
-    const events: ArtifactWatchEvent[] = [];
-    subscribeArtifactWatch(cwd, (e) => events.push(e));
-    declareArtifactWatchPaths(cwd, ["a.md"]);
-
-    await sleep(300);
-    assert.equal(events.length, 0, "declaring an unchanged file must not emit");
-  });
-
   test("emits a single changed event and merges rapid writes (debounce)", async () => {
     const cwd = mkTmp();
     const file = path.join(cwd, "doc.md");

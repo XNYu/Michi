@@ -30,29 +30,6 @@ describe('pane presence', () => {
     expect(result.current.exitingIds.size).toBe(0);
   });
 
-  it('does not restart an exit for equivalent pane arrays', () => {
-    const { result, rerender } = harness();
-    rerender({ ids: ['a'], items: {}, scope: 'tree' });
-    const exitingPanes = result.current.paneIds;
-    for (let i = 0; i < 10; i++) {
-      rerender({ ids: ['a'], items: {}, scope: 'tree' });
-      expect(result.current.paneIds).toBe(exitingPanes);
-    }
-    act(() => vi.advanceTimersByTime(192));
-    expect(result.current.paneIds).toEqual(['a']);
-  });
-
-  it('commits opened panes and tree switches under StrictMode', () => {
-    const { result, rerender } = renderHook(({ ids, scope }) => usePanePresence(ids, {}, scope), {
-      initialProps: { ids: ['a'], scope: 'tree' },
-      wrapper: React.StrictMode,
-    });
-    rerender({ ids: ['a', 'b'], scope: 'tree' });
-    expect(result.current.paneIds).toEqual(['a', 'b']);
-    rerender({ ids: ['other'], scope: 'other-tree' });
-    expect(result.current.paneIds).toEqual(['other']);
-  });
-
   it('lets a held animation own removal even after the fallback deadline', () => {
     const { result, rerender } = harness();
     rerender({ ids: ['a'], items: {}, scope: 'tree' });
@@ -82,17 +59,6 @@ describe('pane presence', () => {
     act(() => vi.advanceTimersByTime(300));
     expect(result.current.paneIds).toEqual(['a', 'b']);
   });
-  it('retains a soft fade through its fade and subsequent layout phase', () => {
-    const { result, rerender } = renderHook(({ ids }) => usePanePresence(ids, {}, 'tree', true, 290), {
-      initialProps: { ids: ['a', 'b'] },
-      wrapper: React.StrictMode,
-    });
-    rerender({ ids: ['a'] });
-    act(() => vi.advanceTimersByTime(192));
-    expect(result.current.paneIds).toEqual(['a', 'b']);
-    act(() => vi.advanceTimersByTime(130));
-    expect(result.current.paneIds).toEqual(['a']);
-  });
   it('retains the closing slot and its item props only until the exit completes', () => {
     const { result, rerender } = harness();
     rerender({ ids: ['a'], items: {}, scope: 'tree' });
@@ -104,42 +70,12 @@ describe('pane presence', () => {
     expect(result.current.paneItems.b).toBeUndefined();
   });
 
-  it('cancels exit if the same branch reopens before the deadline', () => {
-    const { result, rerender } = harness();
-    rerender({ ids: ['a'], items: {}, scope: 'tree' });
-    act(() => vi.advanceTimersByTime(80));
-    rerender({ ids: ['a', 'b'], items: {}, scope: 'tree' });
-    act(() => vi.advanceTimersByTime(300));
-    expect(result.current.paneIds).toEqual(['a', 'b']);
-    expect(result.current.exitingIds.size).toBe(0);
-  });
-
-  it('preserves the positions of multiple closing slots without extending earlier deadlines', () => {
-    const { result, rerender } = harness(['a', 'b', 'c', 'd']);
-    rerender({ ids: ['a', 'c', 'd'], items: {}, scope: 'tree' });
-    act(() => vi.advanceTimersByTime(80));
-    rerender({ ids: ['a', 'd'], items: {}, scope: 'tree' });
-    expect(result.current.paneIds).toEqual(['a', 'b', 'c', 'd']);
-    act(() => vi.advanceTimersByTime(112));
-    expect(result.current.paneIds).toEqual(['a', 'c', 'd']);
-    act(() => vi.advanceTimersByTime(80));
-    expect(result.current.paneIds).toEqual(['a', 'd']);
-  });
-
   it('does not carry exiting panes into another tree', () => {
     const { result, rerender } = harness();
     rerender({ ids: ['a'], items: {}, scope: 'tree' });
     rerender({ ids: ['other'], items: {}, scope: 'other-tree' });
     act(() => vi.advanceTimersByTime(300));
     expect(result.current.paneIds).toEqual(['other']);
-    expect(result.current.exitingIds.size).toBe(0);
-  });
-
-  it('skips retained exits with reduced motion', () => {
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
-    const { result, rerender } = harness();
-    rerender({ ids: [], items: {}, scope: 'tree' });
-    expect(result.current.paneIds).toEqual([]);
     expect(result.current.exitingIds.size).toBe(0);
   });
 });

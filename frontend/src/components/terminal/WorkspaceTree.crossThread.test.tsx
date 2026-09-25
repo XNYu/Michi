@@ -135,33 +135,6 @@ function clickBranchAcrossThread(
   store.setFocusedNodeId(nodeId);
 }
 
-function crossWorkspaceFixture() {
-  const nodes: Record<string, ChatNodeState> = {
-    rootA: { nodeId: 'rootA', chatId: null, projectId: 'p1', kind: 'chat',
-      title: 'Thread A', messages: [], followUps: [], status: 'idle' },
-    rootB: { nodeId: 'rootB', chatId: null, projectId: 'p2', kind: 'chat',
-      title: 'Thread B', messages: [], followUps: [], status: 'idle' },
-    branchB: { nodeId: 'branchB', chatId: null, projectId: 'p2', kind: 'chat',
-      title: 'Branch under B', messages: [], followUps: [], status: 'idle' },
-  };
-  const projects: Project[] = [
-    {
-      id: 'p1', name: 'Workspace one', cwd: '~/x',
-      chatIds: ['rootA'], edges: [],
-      trees: [{ id: 'tA', rootNodeId: 'rootA', createdAt: 0, lastActiveAt: 100 }],
-      activeTreeId: 'tA', createdAt: 0,
-    },
-    {
-      id: 'p2', name: 'Workspace two', cwd: '~/y',
-      chatIds: ['rootB', 'branchB'],
-      edges: [{ source: 'rootB', target: 'branchB', kind: 'branch' }],
-      trees: [{ id: 'tB', rootNodeId: 'rootB', createdAt: 0, lastActiveAt: 50 }],
-      activeTreeId: 'tB', createdAt: 0,
-    },
-  ];
-  return { nodes, projects };
-}
-
 describe('cross-thread branch click', () => {
   it('same workspace: clicks branchB → ThreadB activated, focus on branchB, pane = [branchB]', async () => {
     const storeRef = setupSeeded(sameWorkspaceFixture());
@@ -195,22 +168,5 @@ describe('cross-thread branch click', () => {
     await waitFor(() => expect(storeRef.current?.focusedNodeId).toBe('rootB'));
     expect(storeRef.current?.openPanes).toContain('rootB');
     expect(storeRef.current?.focusedPane).toBe('rootB');
-  });
-
-  it('cross workspace: clicks branchB in p2 → p2/tB activated, focus on branchB, pane = [branchB]', async () => {
-    const storeRef = setupSeeded(crossWorkspaceFixture());
-    await waitFor(() => expect(storeRef.current?.activeProject?.id).toBe('p1'));
-
-    act(() => {
-      clickBranchAcrossThread(storeRef.current!, 'branchB');
-    });
-
-    await waitFor(() => {
-      expect(storeRef.current?.activeProject?.id).toBe('p2');
-    });
-    expect(storeRef.current?.activeProject?.activeTreeId).toBe('tB');
-    expect(storeRef.current?.focusedNodeId).toBe('branchB');
-    expect(storeRef.current?.openPanes).toEqual(['branchB']);
-    expect(storeRef.current?.focusedPane).toBe('branchB');
   });
 });

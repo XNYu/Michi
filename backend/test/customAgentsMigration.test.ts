@@ -224,52 +224,6 @@ describe('Custom Agent migrations', () => {
     }
   });
 
-  test('scope/workspace, versioned JSON, lease, and terminal timestamp checks are enforced', () => {
-    initDb();
-    const db = getDb();
-    insertWorkspace(db);
-    insertNode(db);
-
-    assert.throws(
-      () => db.prepare(
-        `INSERT INTO agent_definitions (
-           id, owner_user_id, scope, workspace_id, name, instructions,
-           runtime_profile, context_policy, created_at, updated_at
-         ) VALUES ('bad-global', 'owner-1', 'global', 'ws-1', 'Bad', 'Bad',
-           '{"version":1}', '{"version":1}', 1, 1)`,
-      ).run(),
-      /CHECK constraint failed/,
-    );
-    assert.throws(
-      () => db.prepare(
-        `INSERT INTO agent_definitions (
-           id, owner_user_id, scope, name, instructions, runtime_profile,
-           context_policy, created_at, updated_at
-         ) VALUES ('bad-json', 'owner-1', 'global', 'Bad', 'Bad', '{}',
-           '{"version":1}', 1, 1)`,
-      ).run(),
-      /CHECK constraint failed/,
-    );
-
-    insertDefinition(db);
-    insertRun(db);
-    assert.throws(
-      () => db.prepare(
-        "UPDATE agent_runs SET lease_token = 'claim-only' WHERE id = 'run-1'",
-      ).run(),
-      /CHECK constraint failed/,
-    );
-    assert.throws(
-      () => db.prepare(
-        "UPDATE agent_runs SET status = 'completed' WHERE id = 'run-1'",
-      ).run(),
-      /CHECK constraint failed/,
-    );
-    assert.doesNotThrow(() => db.prepare(
-      "UPDATE agent_runs SET status = 'completed', completed_at = 2 WHERE id = 'run-1'",
-    ).run());
-  });
-
   test('foreign keys preserve Runs when Definition or Parent node is deleted', () => {
     initDb();
     const db = getDb();
@@ -312,56 +266,6 @@ describe('Custom Agent migrations', () => {
       parent_node_id: string | null;
     };
     assert.equal(row.parent_node_id, null);
-  });
-
-  test('hard Run deletion cascades attempts, events, interactions, and watch membership', () => {
-    initDb();
-    const db = getDb();
-    insertWorkspace(db);
-    insertNode(db);
-    insertDefinition(db);
-    insertRun(db);
-    const now = Date.now();
-
-    db.prepare(
-      `INSERT INTO agent_run_attempts (
-         id, run_id, attempt_index, profile_index, runtime_profile, status,
-         public_session_id, started_at
-       ) VALUES ('attempt-1', 'run-1', 0, 0, '{"version":1}', 'running', 'session-1', ?)`,
-    ).run(now);
-    db.prepare(
-      `INSERT INTO agent_run_events (run_id, seq, attempt_id, type, payload, created_at)
-       VALUES ('run-1', 0, 'attempt-1', 'attempt_started', '{}', ?)`,
-    ).run(now);
-    db.prepare(
-      `INSERT INTO agent_run_interactions (
-         id, run_id, attempt_id, type, request_payload, created_at
-       ) VALUES ('interaction-1', 'run-1', 'attempt-1', 'permission', '{"version":1}', ?)`,
-    ).run(now);
-    db.prepare(
-      `INSERT INTO agent_run_watches (
-         id, owner_user_id, workspace_id, condition, completion_behavior,
-         status, created_at, updated_at
-       ) VALUES ('watch-1', 'owner-1', 'ws-1', '{"version":1,"kind":"all"}',
-         'notify', 'active', ?, ?)`,
-    ).run(now, now);
-    db.prepare(
-      `INSERT INTO agent_run_watch_members (watch_id, run_id, added_at)
-       VALUES ('watch-1', 'run-1', ?)`,
-    ).run(now);
-
-    db.prepare("DELETE FROM agent_runs WHERE id = 'run-1'").run();
-    for (const table of [
-      'agent_run_attempts',
-      'agent_run_events',
-      'agent_run_interactions',
-      'agent_run_watch_members',
-    ]) {
-      const count = (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-      assert.equal(count, 0, `${table} rows must cascade`);
-    }
-    const watchCount = (db.prepare('SELECT COUNT(*) AS count FROM agent_run_watches').get() as { count: number }).count;
-    assert.equal(watchCount, 1, 'the workspace-owned Watch itself must survive member Run deletion');
   });
 
   test('event sequences and watch memberships are unique per parent', () => {

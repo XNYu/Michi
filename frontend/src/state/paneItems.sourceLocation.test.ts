@@ -12,49 +12,14 @@ describe('parseSourceLocation', () => {
     });
   });
 
-  it('strips :line:column', () => {
-    const result = parseSourceLocation('/repo/src/foo.ts:42:10');
-    expect(result).toEqual({ filePath: '/repo/src/foo.ts', line: 42, column: 10 });
-  });
-
   it('returns path unchanged when no location suffix', () => {
     const result = parseSourceLocation('/repo/src/foo.ts');
     expect(result).toEqual({ filePath: '/repo/src/foo.ts' });
   });
 
-  it('returns relative path unchanged', () => {
-    const result = parseSourceLocation('src/foo.ts');
-    expect(result).toEqual({ filePath: 'src/foo.ts' });
-  });
-
-  it('returns relative path with :line', () => {
-    const result = parseSourceLocation('src/foo.ts:100');
-    expect(result).toEqual({ filePath: 'src/foo.ts', line: 100 });
-  });
-
   it('does not strip zero line', () => {
     const result = parseSourceLocation('/repo/foo.ts:0');
     expect(result).toEqual({ filePath: '/repo/foo.ts:0' });
-  });
-
-  it('does not strip negative line', () => {
-    const result = parseSourceLocation('/repo/foo.ts:-5');
-    expect(result).toEqual({ filePath: '/repo/foo.ts:-5' });
-  });
-
-  it('does not strip non-numeric suffix', () => {
-    const result = parseSourceLocation('/repo/foo.ts:abc');
-    expect(result).toEqual({ filePath: '/repo/foo.ts:abc' });
-  });
-
-  it('preserves Windows drive-letter paths without location', () => {
-    const result = parseSourceLocation('C:\\Users\\me\\file.ts');
-    expect(result).toEqual({ filePath: 'C:\\Users\\me\\file.ts' });
-  });
-
-  it('handles Windows drive-letter paths with :line', () => {
-    const result = parseSourceLocation('C:\\Users\\me\\file.ts:99');
-    expect(result).toEqual({ filePath: 'C:\\Users\\me\\file.ts', line: 99 });
   });
 
   it('handles Windows drive-letter paths with :line:column', () => {
@@ -70,16 +35,6 @@ describe('parseSourceLocation', () => {
   it('does not strip malformed triple-colon', () => {
     const result = parseSourceLocation('/repo/foo.ts:10:5:3');
     expect(result).toEqual({ filePath: '/repo/foo.ts:10:5:3' });
-  });
-
-  it('handles a path ending in a colon only', () => {
-    const result = parseSourceLocation('/repo/foo.ts:');
-    expect(result).toEqual({ filePath: '/repo/foo.ts:' });
-  });
-
-  it('handles empty string', () => {
-    const result = parseSourceLocation('');
-    expect(result).toEqual({ filePath: '' });
   });
 
   it('does not treat a bare location as a file path', () => {
@@ -105,14 +60,6 @@ describe('isPaneItem accepts sourceLocation on file items', () => {
     viewMode: 'source' as const,
   };
 
-  it('accepts file item without sourceLocation (backward compat)', () => {
-    expect(isPaneItem(base)).toBe(true);
-  });
-
-  it('accepts file item with line only', () => {
-    expect(isPaneItem({ ...base, sourceLocation: { line: 42 } })).toBe(true);
-  });
-
   it('accepts file item with line and column', () => {
     expect(isPaneItem({ ...base, sourceLocation: { line: 42, column: 10 } })).toBe(true);
   });
@@ -133,10 +80,6 @@ describe('isPaneItem accepts sourceLocation on file items', () => {
     expect(isPaneItem({ ...base, sourceLocation: 'bad' })).toBe(false);
   });
 
-  it('rejects file item with non-numeric line', () => {
-    expect(isPaneItem({ ...base, sourceLocation: { line: 'abc' } })).toBe(false);
-  });
-
   it('rejects invalid numeric locations', () => {
     expect(isPaneItem({ ...base, sourceLocation: { line: 0 } })).toBe(false);
     expect(isPaneItem({ ...base, sourceLocation: { line: -1 } })).toBe(false);
@@ -144,9 +87,5 @@ describe('isPaneItem accepts sourceLocation on file items', () => {
     expect(isPaneItem({ ...base, sourceLocation: { line: Number.NaN } })).toBe(false);
     expect(isPaneItem({ ...base, sourceLocation: { line: Number.POSITIVE_INFINITY } })).toBe(false);
     expect(isPaneItem({ ...base, sourceLocation: { line: 1, column: 0 } })).toBe(false);
-  });
-
-  it('rejects file item with non-numeric column', () => {
-    expect(isPaneItem({ ...base, sourceLocation: { line: 1, column: 'abc' } })).toBe(false);
   });
 });

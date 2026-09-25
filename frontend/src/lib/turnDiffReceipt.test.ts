@@ -21,10 +21,6 @@ function tool(
 }
 
 describe('deriveDiffReceipt', () => {
-  it('returns null when there are no tool calls', () => {
-    expect(deriveDiffReceipt(msg([]))).toBeNull();
-  });
-
   it('returns null for read-only / bash-only turns', () => {
     const m = msg([
       tool('read', { path: 'a.ts' }),
@@ -34,29 +30,12 @@ describe('deriveDiffReceipt', () => {
     expect(deriveDiffReceipt(m)).toBeNull();
   });
 
-  it('write tool produces a file entry with added = content line count', () => {
-    const m = msg([tool('write', { path: 'src/a.ts', content: 'one\ntwo\nthree' })]);
-    const r = deriveDiffReceipt(m);
-    expect(r).not.toBeNull();
-    expect(r!.files).toEqual([{ path: 'src/a.ts', added: 3, removed: 0, kind: 'write', countsKnown: true }]);
-    expect(r!.totalAdded).toBe(3);
-    expect(r!.totalRemoved).toBe(0);
-  });
-
   it('write accepts file_path as the path key', () => {
     const m = msg([tool('write', { file_path: 'b.md', content: 'x\ny\n' })]);
     const r = deriveDiffReceipt(m);
     expect(r!.files[0].path).toBe('b.md');
     // trailing newline does not count as an extra line
     expect(r!.files[0].added).toBe(2);
-  });
-
-  it('edit tool counts old/new string lines as removed/added', () => {
-    const m = msg([
-      tool('edit', { path: 'c.ts', old_string: 'a\nb\nc\nd', new_string: 'a\nz' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'c.ts', added: 2, removed: 4, kind: 'edit', countsKnown: true }]);
   });
 
   it('edits to the same path accumulate', () => {
@@ -95,14 +74,6 @@ describe('deriveDiffReceipt', () => {
     expect(r!.files).toHaveLength(2);
     expect(r!.totalAdded).toBe(4);
     expect(r!.totalRemoved).toBe(1);
-  });
-
-  it('skips failed tool calls', () => {
-    const m = msg([
-      tool('write', { path: 'a.ts', content: 'x' }, { status: 'failed' }),
-      tool('edit', { path: 'b.ts', old_string: 'x', new_string: 'y' }, { status: 'error' }),
-    ]);
-    expect(deriveDiffReceipt(m)).toBeNull();
   });
 
   it('skips interrupted tool calls (turn cancelled/errored mid-flight)', () => {

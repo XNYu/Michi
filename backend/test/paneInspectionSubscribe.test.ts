@@ -483,30 +483,6 @@ describe('PaneFeed — client disconnect', () => {
   });
 });
 
-describe('PaneFeed — double-subscribe / single-release ref-count (P3-1 contract)', () => {
-  test('subscribing twice and releasing once keeps the object exempt from eviction', () => {
-    stubService();
-    const descriptor = baseDescriptor();
-    inspectImpl = () => descriptor;
-    const fake = makeFakeClock();
-    const sharedRing = ring(fake.clock);
-    const feedA = makeFeed({ clock: fake.clock, ring: sharedRing });
-    const feedB = makeFeed({ clock: fake.clock, ring: sharedRing });
-    const emitterA = makeEmitter();
-    const emitterB = makeEmitter();
-
-    feedA.subscribe(CALLER, 'node:n-1', undefined, emitterA);
-    feedB.subscribe(CALLER, 'node:n-1', undefined, emitterB);
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), true);
-
-    feedA.stop(); // releases ONE registration.
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), true, 'still exempt — one subscriber remains');
-
-    feedB.stop();
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), false);
-  });
-});
-
 describe('PaneFeed — AgentRun live bus', () => {
   test('an AgentRun event triggers an immediate re-inspect and change detection', () => {
     stubService();

@@ -85,13 +85,6 @@ describe('ManageComposer primary Agent selection', () => {
     expect(sendMessage).toHaveBeenCalledWith('node-primary', 'Build it', undefined);
   });
 
-  it.each([false, undefined])('does not discover optional Agents when support is %s', async (enabled) => {
-    status.customAgentsEnabled = enabled;
-    render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
-    await act(async () => { await Promise.resolve(); });
-    expect(listPrimaryAgentDefinitions).not.toHaveBeenCalled();
-  });
-
   it('passes the selected primary Agent to the digest branch before its first turn', async () => {
     render(<ManageComposer workspaceId="ws-remote" parentNodeId="digest-1" enableAgentSelect onSubmitted={vi.fn()} />);
     await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalled());

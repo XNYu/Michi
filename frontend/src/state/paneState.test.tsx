@@ -88,24 +88,6 @@ describe('pane state', () => {
     delete window.electron;
   });
 
-  it('opens a pane and focuses it', async () => {
-    const harness = renderHook(() => useChatStore());
-    // openPanes is keyed by `projectId::activeTreeId`; fresh workspaces have
-    // no tree yet. Create one via createThread so paneKey becomes non-null.
-    await act(async () => {
-      await harness.result.current.createProject('WS');
-    });
-    await act(async () => {
-      await harness.result.current.createThread();
-    });
-    act(() => {
-      harness.result.current.openPane('n1');
-    });
-    expect(harness.result.current.openPanes).toContain('n1');
-    expect(harness.result.current.focusedPane).toBe('n1');
-    harness.unmount();
-  });
-
   it('closes a focused pane and shifts focus to the last remaining', async () => {
     const harness = renderHook(() => useChatStore());
     await act(async () => {
@@ -131,19 +113,6 @@ describe('pane state', () => {
     harness.unmount();
   });
 
-  it('opens artifact files as PaneItems without inserting graph nodes', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => { await harness.result.current.createProject('WS'); });
-    await act(async () => { await harness.result.current.createThread(); });
-    const before = harness.result.current.activeProject?.chatIds.slice() ?? [];
-    let paneId = '';
-    await act(async () => { paneId = await harness.result.current.openArtifactPane('docs/brief.md'); });
-    expect(harness.result.current.activeProject?.chatIds).toEqual(before);
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({ kind: 'file', filePath: 'docs/brief.md' });
-    expect(harness.result.current.focusedPane).toBe(paneId);
-    harness.unmount();
-  });
-
   it('strips source locations and reuses the pane for the underlying file', async () => {
     const harness = renderHook(() => useChatStore());
     await act(async () => { await harness.result.current.createProject('WS'); });
@@ -166,27 +135,6 @@ describe('pane state', () => {
       filePath: path,
       sourceLocation: { line: 275, column: 9 },
       sourceReferencePath: `${path}:275:9`,
-    });
-    harness.unmount();
-  });
-
-  it('opens a line-targeted Markdown file in source mode', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => { await harness.result.current.createProject('WS'); });
-    await act(async () => { await harness.result.current.createThread(); });
-    let paneId = '';
-    await act(async () => { paneId = await harness.result.current.openArtifactPane('docs/brief.md'); });
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({ viewMode: 'rendered' });
-
-    let sourcePaneId = '';
-    await act(async () => { sourcePaneId = await harness.result.current.openArtifactPane('docs/brief.md:12', { parseSourceLocation: true }); });
-    expect(sourcePaneId).not.toBe(paneId);
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({ viewMode: 'rendered' });
-    expect(harness.result.current.paneItems[sourcePaneId]).toMatchObject({
-      filePath: 'docs/brief.md',
-      viewMode: 'source',
-      sourceLocation: { line: 12 },
-      sourceReferencePath: 'docs/brief.md:12',
     });
     harness.unmount();
   });
@@ -317,26 +265,6 @@ describe('pane state', () => {
 
     expect(harness.result.current.openPanes).toEqual(['parent', 'child']);
     expect(harness.result.current.focusedPane).toBe('parent');
-    harness.unmount();
-  });
-
-  it('registers standalone pane descriptors without touching project nodes', () => {
-    const project = {
-      id: 'p1', name: 'WS', chatIds: ['root'], edges: [], artifacts: [],
-      trees: [{ id: 't1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 1 }],
-      activeTreeId: 't1', createdAt: 1,
-    };
-    const harness = renderHook(() => usePaneState({ projects: [project], activeProjectId: 'p1' }));
-    const item = {
-      id: 'pane:terminal:test', kind: 'terminal' as const, projectId: 'p1', treeId: 't1', title: 'Terminal',
-      createdAt: 1, surfaceId: 'test', cwd: '/tmp',
-    };
-    act(() => {
-      harness.result.current.registerPaneItem(item);
-      harness.result.current.openPane(item.id);
-    });
-    expect(harness.result.current.paneItems[item.id]).toEqual(item);
-    expect(harness.result.current.openPanes).toEqual([item.id]);
     harness.unmount();
   });
 

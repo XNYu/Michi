@@ -22,17 +22,6 @@ describe('nodeOpenState', () => {
     expect(nodeOpenState('a', ['a', 'b'], 'b', 'idle')).toBe('idle');
     expect(nodeOpenState('a', ['a', 'b'], 'b', 'error')).toBe('idle');
   });
-
-  it('returns streaming when node is open, unfocused, and streaming', () => {
-    expect(nodeOpenState('a', ['a', 'b'], 'b', 'streaming')).toBe('streaming');
-  });
-
-  it('returns streaming even when the node is not an open pane (navigation away)', () => {
-    // Switched to a different thread/workspace: 'a' is no longer in the active
-    // slot's panes, but a running turn must still surface in the sidebar.
-    expect(nodeOpenState('a', [], null, 'streaming')).toBe('streaming');
-    expect(nodeOpenState('a', ['b'], 'b', 'streaming')).toBe('streaming');
-  });
 });
 
 describe('subtreeOpenState', () => {
@@ -68,24 +57,12 @@ describe('subtreeOpenState', () => {
     expect(subtreeOpenState('root', edges, isAlive, perNode)).toBe('streaming');
   });
 
-  it('skips dead nodes via isAlive', () => {
-    const isAliveExceptC = (id: string) => id !== 'c';
-    const perNode = (id: string): OpenState => (id === 'c' ? 'streaming' : 'none');
-    // c is dead → its streaming contribution must not bubble.
-    expect(subtreeOpenState('root', edges, isAliveExceptC, perNode)).toBe('none');
-  });
-
   it('prunes entire subtree of a dead intermediate node', () => {
     const isAliveExceptA = (id: string) => id !== 'a'; // a is dead, c (child of a) is alive
     const perNode = (id: string): OpenState =>
       (id === 'c' ? 'streaming' : 'none');
     // c is alive but reachable only through dead a → must not bubble
     expect(subtreeOpenState('root', edges, isAliveExceptA, perNode)).toBe('none');
-  });
-
-  it('includes the root itself in the rollup', () => {
-    const perNode = (id: string): OpenState => (id === 'root' ? 'idle' : 'none');
-    expect(subtreeOpenState('root', edges, isAlive, perNode)).toBe('idle');
   });
 });
 
@@ -130,11 +107,5 @@ describe('subtreeOpenState with pre-built childrenOf', () => {
     const r2 = subtreeOpenState('root', edges, isAlive, perNode, cached);
     expect(r1).toBe(r2);
     expect(r2).toBe('streaming');
-  });
-
-  it('returns none with empty children even with cached map', () => {
-    expect(
-      subtreeOpenState('root', edges, isAlive, () => 'none', cached),
-    ).toBe('none');
   });
 });

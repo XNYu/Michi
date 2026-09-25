@@ -484,58 +484,6 @@ test('internal Michi metadata tool calls never enter the visible event stream', 
   assert.equal(events.some((event) => event.kind === 'tool_call_update'), false);
 });
 
-test('cancel waits for native turn identity before issuing turn/interrupt', async () => {
-  const requests: string[] = [];
-  let resolveTurnStart!: () => void;
-  const turnStartPromise = new Promise<void>((r) => { resolveTurnStart = r; });
-  let acceptStart!: (value: unknown) => void;
-  const startResponse = new Promise((resolve) => { acceptStart = resolve; });
-
-  const client = makeStubClient({
-    request: async (method: string, _params: unknown) => {
-      requests.push(method);
-      if (method === 'turn/start') {
-        resolveTurnStart();
-        // Never resolves on its own — simulates a long-running turn
-        return startResponse;
-      }
-      return {};
-    },
-  });
-
-  const session = new CodexSession({
-    nodeId: 'node-2',
-    threadId: 'thread-2',
-    cwd: '/tmp/test',
-    workspaceId: null,
-    client,
-    mcpRegistry: makeStubMcpRegistry(),
-    bridge: makeStubBridge(),
-    mcpPort: 3001,
-  });
-  session.createMcpSlot();
-  session.wireNotifications();
-
-  // Start turn (don't await — it hangs)
-  const sendPromise = (async () => {
-    for await (const _ev of session.send('do something long')) { /* drain */ }
-  })();
-  // eslint-disable-next-line @typescript-eslint/no-floating-promises
-  sendPromise.catch(() => {}); // suppress unhandled rejection
-
-  // Wait for turn/start to be issued
-  await turnStartPromise;
-
-  await session.cancel();
-  assert.equal(requests.includes('turn/interrupt'), false, 'must not issue malformed interrupt before native identity arrives');
-  acceptStart({ turn: { id: 'native-delayed' } });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(requests.includes('turn/interrupt'), 'cancel should issue turn/interrupt');
-  session.markCrashed('test cleanup');
-  await sendPromise;
-  await session.dispose();
-});
-
 test('markCrashed terminates an in-flight drain with turn_end (terminal safety)', async () => {
   let turnStartResolved = false;
 

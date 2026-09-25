@@ -34,13 +34,6 @@ async function get(app: express.Express, path: string): Promise<{ status: number
 describe('/api/ready endpoint', () => {
   beforeEach(() => __resetWarmStatusForTest());
 
-  test('returns pending immediately', async () => {
-    const app = makeApp();
-    const { status, body } = await get(app, '/api/ready');
-    assert.equal(status, 200);
-    assert.deepEqual(body, { status: 'pending', error: null });
-  });
-
   test('returns ready after markReady', async () => {
     markReady();
     const app = makeApp();

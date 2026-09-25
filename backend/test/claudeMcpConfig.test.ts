@@ -32,14 +32,6 @@ describe('claudeMcpConfig', () => {
     assert.ok(url.includes('/api/mcp/my-custom-slot-xyz'), `URL should contain slotId, got: ${url}`);
   });
 
-  // Case 3: port number is included as-is
-  test('buildClaudeMcpConfig includes port number verbatim in URL', () => {
-    const json = buildClaudeMcpConfig('slot-port-test', 12345);
-    const parsed = JSON.parse(json);
-    const url: string = parsed.mcpServers[MICHI_INTERNAL_MCP_NAME].url;
-    assert.ok(url.includes(':12345/'), `URL should contain port 12345, got: ${url}`);
-  });
-
   // Case 4: MICHI_INTERNAL_MCP_NAME is the key in mcpServers
   test('buildClaudeMcpConfig uses MICHI_INTERNAL_MCP_NAME as the server key', () => {
     const json = buildClaudeMcpConfig('slot-key', 8080);

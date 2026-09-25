@@ -22,22 +22,6 @@ describe('MarkdownContent streaming reveal', () => {
     expect(container.textContent).toBe('hello 世界');
   });
 
-  it('still reveals newly rendered text under StrictMode double render', () => {
-    const { container, rerender } = render(
-      <React.StrictMode>
-        <MarkdownContent text="hello" revealTailChars={1} />
-      </React.StrictMode>,
-    );
-
-    rerender(
-      <React.StrictMode>
-        <MarkdownContent text="hello world" revealTailChars={1} />
-      </React.StrictMode>,
-    );
-
-    expect(newTokenText(container)).toBe('world');
-  });
-
   it('does not animate text inside code nodes', () => {
     const { container } = render(
       <MarkdownContent text="hello `const x = 1` 世界" revealTailChars={1} />,

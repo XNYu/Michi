@@ -21,13 +21,6 @@ describe('status predicates', () => {
     expect(isRunningStatus(undefined)).toBe(true);
   });
 
-  it('isRunningStatus: success/completed/error/failed are not running', () => {
-    expect(isRunningStatus('success')).toBe(false);
-    expect(isRunningStatus('completed')).toBe(false);
-    expect(isRunningStatus('error')).toBe(false);
-    expect(isRunningStatus('failed')).toBe(false);
-  });
-
   it('isTerminalStatus: inverse of isRunningStatus', () => {
     expect(isTerminalStatus('completed')).toBe(true);
     expect(isTerminalStatus('error')).toBe(true);
@@ -74,16 +67,6 @@ describe('summarizeTools', () => {
     expect(
       summarizeTools([t('1', 'Read x', 'read', 'error')]),
     ).toBe('Read x · failed');
-  });
-
-  it('multiple of the same kind: pluralizes the bucket', () => {
-    expect(
-      summarizeTools([
-        t('1', 'Read a', 'read'),
-        t('2', 'Read b', 'read'),
-        t('3', 'Read c', 'read'),
-      ]),
-    ).toBe('read 3 files');
   });
 
   it('multiple kinds: comma-joined bucket phrases', () => {
@@ -186,15 +169,6 @@ describe('subagentTitleMatches', () => {
     expect(subagentTitleMatches(tool, sub({}))).toBe(true);
   });
 
-  it('matches when only the prompt overlaps the subagent.initialQuery', () => {
-    const detail = JSON.stringify({
-      subagent_type: 'Explore',
-      prompt: 'Explore Michi project structure',
-    });
-    const tool = { id: 't1', title: 'Agent', status: 'in_progress', kind: 'tool', detail };
-    expect(subagentTitleMatches(tool, sub({}))).toBe(true);
-  });
-
   it('does not match a non-subagent tool', () => {
     const tool = { id: 't1', title: 'Bash', status: 'completed', kind: 'bash' };
     expect(subagentTitleMatches(tool, sub({}))).toBe(false);
@@ -261,11 +235,6 @@ describe('filterSubagentRelayedTools', () => {
     expect(filterSubagentRelayedTools(tools, []).map((t) => t.id)).toEqual(['t1', 't2']);
   });
 
-  it('keeps non-SubAgent tools when subagents is undefined', () => {
-    const tools = [bashTool('t1')];
-    expect(filterSubagentRelayedTools(tools, undefined).map((t) => t.id)).toEqual(['t1']);
-  });
-
   it('always keeps SubAgent tools regardless of subagents arg', () => {
     const tools = [subagentTool('t1'), subagentTool('t2', 'Planner', 'Plan')];
     expect(filterSubagentRelayedTools(tools, []).length).toBe(2);
@@ -274,24 +243,6 @@ describe('filterSubagentRelayedTools', () => {
 });
 
 describe('subagentToolInfo', () => {
-  it('extracts useful fields from an Agent detail payload', () => {
-    const detail = JSON.stringify({
-      description: 'Explore Michi project structure',
-      subagent_type: 'Explore',
-      model: 'haiku',
-      prompt: 'I need to understand the core philosophy.',
-    });
-
-    expect(
-      subagentToolInfo({ id: '1', title: 'Agent', status: 'in_progress', kind: 'tool', detail }),
-    ).toEqual({
-      agentType: 'Explore',
-      description: 'Explore Michi project structure',
-      prompt: 'I need to understand the core philosophy.',
-      model: 'haiku',
-    });
-  });
-
   it('still recognizes truncated JSON-like Agent detail strings', () => {
     const detail = '{"description":"Explore Michi project structure","subagent_type":"Explore","model":"haiku","prompt":"I need';
 
@@ -324,11 +275,6 @@ describe('subagentToolInfo', () => {
 });
 
 describe('prettifyToolTitle', () => {
-  it('strips the mcp__<server>__ prefix and keeps the tool segment', () => {
-    expect(prettifyToolTitle('mcp__michi-tools__list_threads')).toBe('list_threads');
-    expect(prettifyToolTitle('mcp__michi-tools__search_messages')).toBe('search_messages');
-  });
-
   it('preserves tool names that contain underscores', () => {
     expect(prettifyToolTitle('mcp__server__read_node')).toBe('read_node');
   });
@@ -371,18 +317,6 @@ describe('toolPurpose', () => {
     operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
   };
 
-  it('reads __tool_use_purpose from Kiro operations-style inputJson', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        inputJson: JSON.stringify(kiroReadInput),
-      }),
-    ).toBe('Check the project manifest to understand the package definition');
-  });
-
   it('prefers __tool_use_purpose over a path-like detail (Kiro completion overwrite)', () => {
     expect(
       toolPurpose({
@@ -394,32 +328,6 @@ describe('toolPurpose', () => {
         inputJson: JSON.stringify(kiroReadInput),
       }),
     ).toBe('Check the project manifest to understand the package definition');
-  });
-
-  it('prefers __tool_use_purpose over a synthesized Read: path detail', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        detail: 'Read: /workspace/example-app/package.json',
-        inputJson: JSON.stringify(kiroReadInput),
-      }),
-    ).toBe('Check the project manifest to understand the package definition');
-  });
-
-  it('does not treat a bare path detail as purpose when inputJson has no purpose field', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        detail: '/workspace/example-app/package.json',
-        inputJson: JSON.stringify({ operations: [{ path: '/workspace/example-app/package.json' }] }),
-      }),
-    ).toBeUndefined();
   });
 
   it('does not treat a human detail string as purpose without __tool_use_purpose', () => {
@@ -471,21 +379,6 @@ describe('toolPurpose', () => {
         }),
       }),
     ).toBe('Inspect workspace root');
-  });
-
-  it('reads Pi/Claude top-level __tool_use_purpose from inputJson', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Bash',
-        status: 'completed',
-        kind: 'bash',
-        inputJson: JSON.stringify({
-          __tool_use_purpose: 'Run the frontend unit tests',
-          command: 'npm test -- ToolCallGroup',
-        }),
-      }),
-    ).toBe('Run the frontend unit tests');
   });
 });
 

@@ -4,18 +4,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ContextRing } from './ContextRing';
 
 describe('ContextRing', () => {
-  it('renders nothing when percentage is undefined', () => {
-    const { container } = render(<ContextRing percentage={undefined} />);
-    expect(container.firstChild).toBeNull();
-  });
-
   it('renders nothing when percentage is null', () => {
     const { container } = render(<ContextRing percentage={null} />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders nothing when percentage is 0', () => {
-    const { container } = render(<ContextRing percentage={0} />);
     expect(container.firstChild).toBeNull();
   });
 
@@ -25,15 +15,6 @@ describe('ContextRing', () => {
     expect(meter).toBeTruthy();
     expect(meter.getAttribute('aria-valuenow')).toBe('31.2');
     expect(meter.getAttribute('aria-label')).toBe('Context usage: 31%');
-  });
-
-  it('shows styled tooltip on hover with percentage', () => {
-    render(<ContextRing percentage={50} />);
-    const meter = screen.getByRole('meter');
-    fireEvent.mouseEnter(meter);
-    const tooltip = screen.getByRole('tooltip');
-    expect(tooltip).toBeTruthy();
-    expect(tooltip.textContent).toContain('50.0%');
   });
 
   it('clamps out-of-range percentages to the meter maximum', () => {

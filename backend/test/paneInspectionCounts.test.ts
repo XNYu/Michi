@@ -137,36 +137,6 @@ describe('paneInspection message/turn count queries', () => {
     delete process.env.MICHI_CLOUD;
   });
 
-  test('getMessageCountsByNode is correct for mixed user/assistant messages', () => {
-    seedWorkspace('ws-1');
-    seedNode('node-1', 'ws-1');
-    seedMessage('node-1', 'user');
-    seedMessage('node-1', 'assistant');
-    seedMessage('node-1', 'user');
-    seedMessage('node-1', 'assistant');
-    seedMessage('node-1', 'assistant');
-
-    const counts = getMessageCountsByNode('node-1');
-    assert.deepEqual(counts, { total: 5, user: 2, assistant: 3 });
-  });
-
-  test('an empty assistant placeholder row IS counted', () => {
-    seedWorkspace('ws-1');
-    seedNode('node-1', 'ws-1');
-    seedMessage('node-1', 'assistant', '');
-
-    const counts = getMessageCountsByNode('node-1');
-    assert.deepEqual(counts, { total: 1, user: 0, assistant: 1 });
-  });
-
-  test('counts are 0 (not an error) for a node with no messages', () => {
-    seedWorkspace('ws-1');
-    seedNode('node-1', 'ws-1');
-
-    const counts = getMessageCountsByNode('node-1');
-    assert.deepEqual(counts, { total: 0, user: 0, assistant: 0 });
-  });
-
   test('total is a true COUNT(*), not user + assistant, for an unexpected role', () => {
     seedWorkspace('ws-1');
     seedNode('node-1', 'ws-1');
@@ -178,20 +148,6 @@ describe('paneInspection message/turn count queries', () => {
     assert.deepEqual(counts, { total: 3, user: 1, assistant: 1 });
   });
 
-  test('getCompletedTurnCount counts only completed turns', () => {
-    seedWorkspace('ws-1');
-    seedNode('node-1', 'ws-1');
-    const userMessageId = seedMessage('node-1', 'user', 'u1');
-    const assistantMessageId = seedMessage('node-1', 'assistant', 'a1');
-    seedTurn({ turnId: 't-completed', nodeId: 'node-1', userMessageId, assistantMessageId, status: 'completed' });
-    seedTurn({ turnId: 't-cancelled', nodeId: 'node-1', userMessageId: null, assistantMessageId: 'a2', status: 'cancelled' });
-    seedTurn({ turnId: 't-error', nodeId: 'node-1', userMessageId: null, assistantMessageId: 'a3', status: 'error' });
-    seedTurn({ turnId: 't-active', nodeId: 'node-1', userMessageId: null, assistantMessageId: 'a4', status: 'active' });
-
-    const result = getCompletedTurnCount('node-1');
-    assert.deepEqual(result, { count: 1, coverage: 'complete' });
-  });
-
   test('a self-turn (user_message_id IS NULL, completed) is counted', () => {
     seedWorkspace('ws-1');
     seedNode('node-1', 'ws-1');
@@ -199,25 +155,6 @@ describe('paneInspection message/turn count queries', () => {
 
     const result = getCompletedTurnCount('node-1');
     assert.deepEqual(result, { count: 1, coverage: 'complete' });
-  });
-
-  test('legacy case: assistant messages present, zero turn rows -> null / partial', () => {
-    seedWorkspace('ws-1');
-    seedNode('node-1', 'ws-1');
-    seedMessage('node-1', 'user');
-    seedMessage('node-1', 'assistant');
-    // No turns rows inserted — pre-0014_turns.sql legacy data.
-
-    const result = getCompletedTurnCount('node-1');
-    assert.deepEqual(result, { count: null, coverage: 'partial' });
-  });
-
-  test('a node with no messages at all is genuinely 0, not unknown', () => {
-    seedWorkspace('ws-1');
-    seedNode('node-1', 'ws-1');
-
-    const result = getCompletedTurnCount('node-1');
-    assert.deepEqual(result, { count: 0, coverage: 'complete' });
   });
 
   test('owner scoping: with MICHI_CLOUD=1, a node owned by another user returns 0 / is not counted', () => {

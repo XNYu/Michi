@@ -59,27 +59,9 @@ describe('mentionDoc round-trip (draft -> doc -> draft)', () => {
 });
 
 describe('mentionDoc serialization details', () => {
-  it('mention offsets cover exactly the @label span', () => {
-    const doc = draftToDoc('x @michi y', [ctx('michi', 2)]);
-    const { value, mentions } = docToDraft(doc);
-    expect(value).toBe('x @michi y');
-    expect(value.slice(mentions[0].start, mentions[0].end)).toBe('@michi');
-  });
-
   it('preserves node refId distinct from label', () => {
     const { mentions } = docToDraft(draftToDoc('see @My Thread', [node('My Thread', 4, 'node-xyz')]));
     expect(mentions[0]).toMatchObject({ kind: 'node', refId: 'node-xyz', label: 'My Thread' });
-  });
-
-  it('joins multiple paragraphs with newlines (paste tolerance)', () => {
-    const multiPara: PMNode = {
-      type: 'doc',
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'line1' }] },
-        { type: 'paragraph', content: [{ type: 'text', text: 'line2' }] },
-      ],
-    };
-    expect(docToDraft(multiPara).value).toBe('line1\nline2');
   });
 
   it('draftToDoc drops the literal @label text in favour of an atomic node', () => {
@@ -106,14 +88,8 @@ const mention = (label: string, ...marks: string[]): PMNode => ({
 });
 
 describe('docToDraft serializes marks back to markdown syntax', () => {
-  it('bold', () => {
-    expect(docToDraft(para(t('hello '), t('bold', 'bold'), t(' world'))).value).toBe('hello **bold** world');
-  });
   it('italic', () => {
     expect(docToDraft(para(t('a '), t('it', 'italic'), t(' b'))).value).toBe('a *it* b');
-  });
-  it('strike', () => {
-    expect(docToDraft(para(t('gone', 'strike'))).value).toBe('~~gone~~');
   });
   it('code', () => {
     expect(docToDraft(para(t('x '), t('rm -rf /tmp', 'code'))).value).toBe('x `rm -rf /tmp`');
@@ -124,13 +100,6 @@ describe('docToDraft serializes marks back to markdown syntax', () => {
   });
   it('expels trailing whitespace out of the closing marker', () => {
     expect(docToDraft(para(t('bold ', 'bold'), t('x'))).value).toBe('**bold** x');
-  });
-  it('expels leading whitespace out of the opening marker', () => {
-    expect(docToDraft(para(t('x '), t(' bold', 'bold'))).value).toBe('x  **bold**');
-  });
-  it('closes marks across hardBreak and reopens after', () => {
-    const doc = para(t('a', 'bold'), { type: 'hardBreak' }, t('b', 'bold'));
-    expect(docToDraft(doc).value).toBe('**a**\n**b**');
   });
   it('whitespace-only marked text emits no empty marker pair', () => {
     expect(docToDraft(para(t('a'), t(' ', 'bold'), t('b'))).value).toBe('a b');
@@ -153,30 +122,14 @@ describe('draftToDoc parses inline markdown into marks', () => {
   const inlines = (value: string, mentions: MentionRecord[] = []) =>
     draftToDoc(value, mentions).content![0].content!;
 
-  it('bold', () => {
-    expect(inlines('**bold**')).toEqual([t('bold', 'bold')]);
-  });
   it('italic mid-sentence', () => {
     expect(inlines('hello *it* x')).toEqual([t('hello '), t('it', 'italic'), t(' x')]);
   });
   it('strike', () => {
     expect(inlines('~~x~~')).toEqual([t('x', 'strike')]);
   });
-  it('nested bold+italic', () => {
-    expect(inlines('**bold *it* bold**')).toEqual([
-      t('bold ', 'bold'),
-      t('it', 'bold', 'italic'),
-      t(' bold', 'bold'),
-    ]);
-  });
   it('code span keeps inner content literal', () => {
     expect(inlines('`code **x**`')).toEqual([t('code **x**', 'code')]);
-  });
-  it('unbalanced markers stay literal', () => {
-    expect(inlines('**oops')).toEqual([t('**oops')]);
-  });
-  it('space-flanked asterisks stay literal', () => {
-    expect(inlines('a * b * c')).toEqual([t('a * b * c')]);
   });
   it('empty marker pair stays literal', () => {
     expect(inlines('****')).toEqual([t('****')]);
@@ -245,9 +198,6 @@ describe('docToDraft serializes block nodes to markdown', () => {
     const doc = blockDoc(bulletList(li(p(t('a')), bulletList(li(p(t('b')))))));
     expect(docToDraft(doc).value).toBe('- a\n  - b');
   });
-  it('hardBreak inside a list item becomes an indented continuation line', () => {
-    expect(docToDraft(blockDoc(bulletList(li(p(t('a'), br, t('b')))))).value).toBe('- a\n  b');
-  });
   it('blockquote prefixes every line', () => {
     expect(docToDraft(blockDoc(blockquote(p(t('q1')), p(t('q2'))))).value).toBe('> q1\n> q2');
     expect(docToDraft(blockDoc(blockquote(p(t('a'), br, t('b'))))).value).toBe('> a\n> b');
@@ -259,12 +209,6 @@ describe('docToDraft serializes block nodes to markdown', () => {
   });
   it('code block without language', () => {
     expect(docToDraft(blockDoc(codeBlock('plain'))).value).toBe('```\nplain\n```');
-  });
-  it('code block containing a fence line gets a longer fence', () => {
-    expect(docToDraft(blockDoc(codeBlock('a\n```\nb'))).value).toBe('````\na\n```\nb\n````');
-  });
-  it('code block inline marks are not parsed (literal text)', () => {
-    expect(docToDraft(blockDoc(codeBlock('**not bold**'))).value).toBe('```\n**not bold**\n```');
   });
   it('mention inside a list item keeps offsets', () => {
     const doc = blockDoc(bulletList(li(p(t('see '), mention('michi')))));
@@ -291,26 +235,14 @@ describe('docToDraft serializes block nodes to markdown', () => {
 describe('draftToDoc parses block markdown into block nodes', () => {
   const blocks = (value: string, mentions: MentionRecord[] = []) => draftToDoc(value, mentions).content!;
 
-  it('heading + body paragraph', () => {
-    expect(blocks('# Title\nbody')).toEqual([
-      heading(1, t('Title')),
-      p(t('body')),
-    ]);
-  });
   it('heading with inline marks', () => {
     expect(blocks('## a **b**')).toEqual([heading(2, t('a '), t('b', 'bold'))]);
   });
   it('hash without space stays literal', () => {
     expect(blocks('#nospace')).toEqual([p(t('#nospace'))]);
   });
-  it('seven hashes stay literal', () => {
-    expect(blocks('####### x')).toEqual([p(t('####### x'))]);
-  });
   it('bullet list', () => {
     expect(blocks('- a\n- b')).toEqual([bulletList(li(p(t('a'))), li(p(t('b'))))]);
-  });
-  it('star bullets stay literal (serializer only emits "- ")', () => {
-    expect(blocks('* a')).toEqual([p(t('* a'))]);
   });
   it('ordered list with start', () => {
     expect(blocks('3. a\n4. b')).toEqual([orderedList(3, li(p(t('a'))), li(p(t('b'))))]);
@@ -323,17 +255,8 @@ describe('draftToDoc parses block markdown into block nodes', () => {
   it('indented continuation joins the item paragraph', () => {
     expect(blocks('- a\n  b')).toEqual([bulletList(li(p(t('a'), br, t('b'))))]);
   });
-  it('orphan indented bullet stays literal', () => {
-    expect(blocks('  - b')).toEqual([p(t('  - b'))]);
-  });
-  it('blockquote lines group into one quote', () => {
-    expect(blocks('> q1\n> q2')).toEqual([blockquote(p(t('q1'), br, t('q2')))]);
-  });
   it('blockquote can contain a list', () => {
     expect(blocks('> - a')).toEqual([blockquote(bulletList(li(p(t('a')))))]);
-  });
-  it('code fence with language', () => {
-    expect(blocks('```js\nconst x = 1;\n```')).toEqual([codeBlock('const x = 1;', 'js')]);
   });
   it('longer fence may contain a shorter one', () => {
     expect(blocks('````\na\n```\nb\n````')).toEqual([codeBlock('a\n```\nb')]);

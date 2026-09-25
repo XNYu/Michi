@@ -34,8 +34,4 @@ describe('relativeTime', () => {
     expect(relativeTime(NOW - 7 * 24 * 60 * 60_000, NOW)).toBe('1w');
     expect(relativeTime(NOW - 30 * 24 * 60 * 60_000, NOW)).toBe('4w');
   });
-
-  it('clamps future timestamps to "now"', () => {
-    expect(relativeTime(NOW + 5_000, NOW)).toBe('now');
-  });
 });

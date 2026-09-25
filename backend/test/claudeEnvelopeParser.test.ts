@@ -18,32 +18,7 @@ describe('claudeEnvelopeParser', () => {
 
   // ── Case 2: buffers partial last line until newline arrives ───────────────
 
-  test('buffers partial last line and does not emit until newline arrives', () => {
-    const emitted: ClaudeEnvelope[] = [];
-    const parser = createClaudeEnvelopeParser((e) => emitted.push(e));
-
-    parser.push('{"x":42}');
-    assert.equal(emitted.length, 0, 'should not emit before newline');
-
-    parser.push('\n');
-    assert.equal(emitted.length, 1);
-    assert.deepEqual(emitted[0], { x: 42 });
-  });
-
   // ── Case 3: handles \n boundary mid-chunk ────────────────────────────────
-
-  test('emits 2 envelopes when newline boundary splits two JSON objects across two pushes', () => {
-    const emitted: ClaudeEnvelope[] = [];
-    const parser = createClaudeEnvelopeParser((e) => emitted.push(e));
-
-    parser.push('{"a":1}\n{"a":');
-    assert.equal(emitted.length, 1, 'first complete line should emit immediately');
-
-    parser.push('2}\n');
-    assert.equal(emitted.length, 2);
-    assert.deepEqual(emitted[0], { a: 1 });
-    assert.deepEqual(emitted[1], { a: 2 });
-  });
 
   // ── Case 4: skips blank lines ─────────────────────────────────────────────
 

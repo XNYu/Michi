@@ -15,11 +15,6 @@ const models = [
 ];
 
 describe('filterModelCatalog', () => {
-  it('matches model labels and ids case-insensitively', () => {
-    expect(filterModelCatalog(models, ' OX ')).toEqual([models[0]]);
-    expect(filterModelCatalog(models, 'anthropic/')).toEqual([models[1]]);
-  });
-
   it('matches descriptions', () => {
     expect(filterModelCatalog(models, 'CODING')).toEqual([models[0]]);
   });

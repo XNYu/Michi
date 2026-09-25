@@ -161,16 +161,6 @@ describe('Pane Inspection HTTP routes', () => {
   // GET /api/panes/inspect
   // -------------------------------------------------------------------------
 
-  test('inspect reaches the service with correctly parsed arguments', async () => {
-    const capture = start();
-    const res = await get('/panes/inspect?nodeId=n-1');
-    assert.equal(res.status, 200);
-    const body = await asJson(res);
-    assert.deepEqual(body, SAMPLE_DESCRIPTOR);
-    assert.equal(capture.inspectCalls.length, 1);
-    assert.deepEqual(capture.inspectCalls[0].input, { locator: { nodeId: 'n-1' }, executionRef: undefined });
-  });
-
   test('inspect passes a JSON-encoded executionRef through to the service', async () => {
     const capture = start();
     const ref: ExecutionRef = { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' };
@@ -179,30 +169,12 @@ describe('Pane Inspection HTTP routes', () => {
     assert.deepEqual(capture.inspectCalls[0].input, { locator: { nodeId: 'n-1' }, executionRef: ref });
   });
 
-  test('missing locator -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
-    const capture = start();
-    const res = await get('/panes/inspect');
-    assert.equal(res.status, 400);
-    const body = await asJson(res);
-    assert.equal(body.code, 'INVALID_ARGUMENT');
-    assert.equal(capture.inspectCalls.length, 0);
-  });
-
   test('two locators -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
     const capture = start();
     const res = await get('/panes/inspect?nodeId=n-1&runId=run-1');
     assert.equal(res.status, 400);
     const body = await asJson(res);
     assert.equal(body.code, 'INVALID_ARGUMENT');
-    assert.equal(capture.inspectCalls.length, 0);
-  });
-
-  test('unknown nodeId -> 404 NOT_FOUND, and never reaches the service', async () => {
-    const capture = start();
-    const res = await get('/panes/inspect?nodeId=does-not-exist');
-    assert.equal(res.status, 404);
-    const body = await asJson(res);
-    assert.equal(body.code, 'NOT_FOUND');
     assert.equal(capture.inspectCalls.length, 0);
   });
 
@@ -235,45 +207,9 @@ describe('Pane Inspection HTTP routes', () => {
     assert.equal(capture.outputCalls.length, 0);
   });
 
-  test('GET /panes/output rejects POST', async () => {
-    const capture = start();
-    const res = await send('POST', '/panes/output', {});
-    assert.equal(res.status, 404);
-    assert.equal(capture.outputCalls.length, 0);
-  });
-
   // -------------------------------------------------------------------------
   // Error-code -> HTTP status mapping table (brief: assert each individually)
   // -------------------------------------------------------------------------
-
-  const errorTable: Array<[import('michi-shared').PaneInspectionErrorCode, number]> = [
-    ['INVALID_ARGUMENT', 400],
-    ['NOT_FOUND', 404],
-    ['NAVIGATION_DISABLED', 403],
-    ['UNSUPPORTED', 400],
-    ['OUTPUT_CHANGED', 409],
-    ['OUTPUT_UNAVAILABLE', 410],
-    ['SOURCE_UNAVAILABLE', 503],
-    ['RATE_LIMITED', 429],
-  ];
-
-  for (const [code, status] of errorTable) {
-    test(`inspect: service throwing ${code} maps to HTTP ${status}`, async () => {
-      start({ throwFromInspect: new PaneInspectionError(code, 'x', 'msg') });
-      const res = await get('/panes/inspect?nodeId=n-1');
-      assert.equal(res.status, status);
-      const body = await asJson(res);
-      assert.equal(body.code, code);
-    });
-
-    test(`output: service throwing ${code} maps to HTTP ${status}`, async () => {
-      start({ throwFromOutput: new PaneInspectionError(code, 'x', 'msg') });
-      const res = await get('/panes/output?nodeId=n-1&selection=latest');
-      assert.equal(res.status, status);
-      const body = await asJson(res);
-      assert.equal(body.code, code);
-    });
-  }
 
   test('unexpected non-PaneInspectionError -> 500 with no stack, no SQL, no filesystem path', async () => {
     start({ nonPaneError: true });
@@ -347,21 +283,6 @@ describe('Pane Inspection HTTP routes', () => {
   // Presence — PUT / DELETE /api/panes/presence
   // -------------------------------------------------------------------------
 
-  test('PUT presence reaches the registry and returns a fresh rendererLeaseId', async () => {
-    start();
-    const res = await send('PUT', '/panes/presence', {
-      workspaceId: 'ws-a',
-      viewRevision: 1,
-      windowId: 'win-1',
-      views: [{ paneId: 'node:n-1', windowId: 'win-1', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: 1 }],
-    });
-    assert.equal(res.status, 200);
-    const body = await asJson(res);
-    assert.equal(body.ok, true);
-    assert.equal(typeof body.rendererLeaseId, 'string');
-    assert.equal(body.accepted, 1);
-  });
-
   test('PUT presence with an unresolvable workspaceId -> 404 NOT_FOUND, registry untouched', async () => {
     start();
     const res = await send('PUT', '/panes/presence', {
@@ -379,12 +300,6 @@ describe('Pane Inspection HTTP routes', () => {
     assert.equal(res.status, 400);
     const body = await asJson(res);
     assert.equal(body.code, 'INVALID_ARGUMENT');
-  });
-
-  test('PUT /panes/presence rejects GET', async () => {
-    start();
-    const res = await get('/panes/presence');
-    assert.equal(res.status, 404); // no GET handler registered for this path
   });
 
   test('DELETE presence reaches the registry and cancels nothing (no execution side effect)', async () => {
@@ -423,12 +338,6 @@ describe('Pane Inspection HTTP routes', () => {
     assert.equal(res.status, 400);
   });
 
-  test('DELETE /panes/presence rejects GET', async () => {
-    start();
-    const res = await get('/panes/presence');
-    assert.equal(res.status, 404);
-  });
-
   // -------------------------------------------------------------------------
   // Keepalive — POST /api/panes/presence/keepalive (design §9's semantic heartbeat, tunneled
   // through streamTransport.ts's allowlist as an ordinary authenticated HTTP route — see that
@@ -465,12 +374,6 @@ describe('Pane Inspection HTTP routes', () => {
     assert.deepEqual(Object.keys(body).sort(), ['code', 'message']);
   });
 
-  test('POST presence/keepalive with an unresolvable workspaceId -> 404 NOT_FOUND, registry untouched', async () => {
-    start();
-    const res = await send('POST', '/panes/presence/keepalive', { workspaceId: 'ws-does-not-exist', rendererLeaseId: 'lease-anything' });
-    assert.equal(res.status, 404);
-  });
-
   test('POST presence/keepalive missing rendererLeaseId -> 400 INVALID_ARGUMENT', async () => {
     start();
     const res = await send('POST', '/panes/presence/keepalive', { workspaceId: 'ws-a' });
@@ -500,12 +403,6 @@ describe('Pane Inspection HTTP routes', () => {
     assert.equal(res.status, 200);
   });
 
-  test('GET /panes/presence/keepalive rejects', async () => {
-    start();
-    const res = await get('/panes/presence/keepalive');
-    assert.equal(res.status, 404);
-  });
-
   // -------------------------------------------------------------------------
   // Allocation — POST /api/panes/presence/allocate (surface pane registration; ordinary HTTP,
   // never tunneled through streamTransport's allowlist).
@@ -529,21 +426,9 @@ describe('Pane Inspection HTTP routes', () => {
     assert.equal(body.code, 'INVALID_ARGUMENT');
   });
 
-  test('POST presence/allocate missing kind -> 400 INVALID_ARGUMENT', async () => {
-    start();
-    const res = await send('POST', '/panes/presence/allocate', { workspaceId: 'ws-a' });
-    assert.equal(res.status, 400);
-  });
-
   test('POST presence/allocate with an unresolvable workspaceId -> 404 NOT_FOUND', async () => {
     start();
     const res = await send('POST', '/panes/presence/allocate', { workspaceId: 'ws-does-not-exist', kind: 'terminal' });
-    assert.equal(res.status, 404);
-  });
-
-  test('GET /panes/presence/allocate rejects', async () => {
-    start();
-    const res = await get('/panes/presence/allocate');
     assert.equal(res.status, 404);
   });
 

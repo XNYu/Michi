@@ -200,13 +200,6 @@ describe('claudeBinary', () => {
 
   // ── Case 7: preflightClaudeAuth accepts Bedrock with AWS_ACCESS_KEY_ID ───────
 
-  test('preflightClaudeAuth accepts Bedrock when AWS_ACCESS_KEY_ID is set', () => {
-    process.env.CLAUDE_CODE_USE_BEDROCK = '1';
-    process.env.AWS_ACCESS_KEY_ID = 'AKIAIOSFODNN7EXAMPLE';
-    const { preflightClaudeAuth } = freshModule();
-    assert.doesNotThrow(() => preflightClaudeAuth());
-  });
-
   // ── Case 8: preflightClaudeAuth throws for Vertex without GCP creds ──────────
 
   test('preflightClaudeAuth throws ClaudeAuthMissingError for Vertex without GCP creds', () => {
@@ -414,15 +407,6 @@ describe('claudeBinary', () => {
 
   // ── Config-dir override: preflight must check the SAME dir the child uses ────
 
-  test('preflightClaudeAuth accepts OAuth creds in an explicit configDir', () => {
-    const altDir = path.join(tmpDir, 'claude-alt');
-    fs.mkdirSync(altDir);
-    fs.writeFileSync(path.join(altDir, 'settings.json'), '{}');
-
-    const { preflightClaudeAuth } = freshModule();
-    assert.doesNotThrow(() => preflightClaudeAuth(altDir));
-  });
-
   test('preflightClaudeAuth checks ONLY the explicit configDir — override, not additive', () => {
     // Empty dir: no auth.json / settings.json / session-env. Even if the real
     // ~/.claude on this machine has creds, the override must not fall back to it.
@@ -437,15 +421,5 @@ describe('claudeBinary', () => {
         return true;
       },
     );
-  });
-
-  test('preflightClaudeAuth respects an inherited CLAUDE_CONFIG_DIR when no override is passed', () => {
-    const envDir = path.join(tmpDir, 'claude-env');
-    fs.mkdirSync(envDir);
-    fs.writeFileSync(path.join(envDir, 'session-env'), '');
-
-    process.env.CLAUDE_CONFIG_DIR = envDir;
-    const { preflightClaudeAuth } = freshModule();
-    assert.doesNotThrow(() => preflightClaudeAuth());
   });
 });

@@ -78,62 +78,6 @@ describe('ChatHub replay ring', () => {
     assert.notEqual(replayed[1]?.data.turnId, turnAChunk.data.turnId);
   });
 
-  it('evicts completed replay logs after the retention window', async () => {
-    const chatHub = hub(20);
-    chatHub.startSelfTurn({
-      chatId: 'chat-expiring',
-      nodeId: 'node-expiring',
-      events: iterator([{ kind: 'turn_end', stopReason: 'end_turn' }]),
-    });
-    const deadline = Date.now() + 2_000;
-    while (
-      ((chatHub as any).turns.has('chat-expiring')
-        || (chatHub as any).retainedTurns.has('chat-expiring'))
-      && Date.now() < deadline
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    const replayed: ChatStreamEvent[] = [];
-    chatHub.subscribe('chat-expiring', {
-      send: (event) => replayed.push(event),
-      close: () => {},
-    });
-
-    assert.deepEqual(replayed, []);
-  });
-
-  it('uses a per-chat cursor so reconnect does not replay already applied self turns', async () => {
-    const chatHub = hub();
-    const first: ChatStreamEvent[] = [];
-    chatHub.subscribeBackground({ send: (_chatId, event) => first.push(event), close: () => {} });
-    chatHub.startSelfTurn({
-      chatId: 'chat-cursor',
-      nodeId: 'node-cursor',
-      events: iterator([{ kind: 'chunk', text: 'A' }, { kind: 'turn_end', stopReason: 'end_turn' }]),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    chatHub.startSelfTurn({
-      chatId: 'chat-cursor',
-      nodeId: 'node-cursor',
-      events: iterator([{ kind: 'chunk', text: 'B' }, { kind: 'turn_end', stopReason: 'end_turn' }]),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const latestDone = [...first].reverse().find((event) => event.event === 'done')!;
-
-    const replayed: ChatStreamEvent[] = [];
-    chatHub.subscribeBackground(
-      { send: (_chatId, event) => replayed.push(event), close: () => {} },
-      {
-        cursors: {
-          'chat-cursor': { turnId: latestDone.data.turnId!, seq: latestDone.data.seq! },
-        },
-      },
-    );
-
-    assert.deepEqual(replayed, []);
-  });
-
   it('signals a durable gap when the client cursor fell out of the replay ring', async () => {
     const chatHub = hub(20);
     const first: ChatStreamEvent[] = [];

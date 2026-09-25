@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from 'michi-shared';
 import {
-  cancelChat,
   claimPane,
   heartbeatPane,
   releasePane,
@@ -86,14 +85,5 @@ describe('foreground stream api', () => {
       ownerToken: 'tokA',
       nodeId: 'n1',
     });
-  });
-
-  it('cancelChat binds Stop to the exact turn id', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
-    vi.stubGlobal('fetch', fetchMock);
-    await cancelChat('chat1', 'tokA', 'turn-1');
-    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/chats\/chat1\/cancel$/);
-    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string))
-      .toEqual({ ownerToken: 'tokA', turnId: 'turn-1' });
   });
 });

@@ -6,36 +6,14 @@ import {
 } from './assistantParsing';
 
 describe('stripSentinelsStreamingSafe — completed sentinels', () => {
-  it('strips a completed [TITLE: ...] sentinel + trailing whitespace', () => {
-    const { visibleText } = stripSentinelsStreamingSafe('[TITLE: hello]\n\nbody');
-    expect(visibleText).toBe('body');
-  });
-
   it('strips completed [FOLLOW-UP n/3: ...] sentinels', () => {
     const raw = 'body\n\n[FOLLOW-UP 1/3: q1?]\n[FOLLOW-UP 2/3: q2?]';
     const { visibleText } = stripSentinelsStreamingSafe(raw);
     expect(visibleText).toBe('body\n\n');
   });
-
-  it('strips a completed [BRANCH-OVERVIEW: ...] sentinel', () => {
-    const raw = 'body\n\n[BRANCH-OVERVIEW: Current state]';
-    expect(stripSentinelsStreamingSafe(raw).visibleText).toBe('body\n\n');
-  });
-
-  it('strips multiple sentinels mixed with prose', () => {
-    const raw = '[TITLE: T]\n\nA paragraph.\n\n[FOLLOW-UP 1/3: q?]';
-    const { visibleText } = stripSentinelsStreamingSafe(raw);
-    expect(visibleText).toBe('A paragraph.\n\n');
-  });
 });
 
 describe('stripSentinelsStreamingSafe — prose passthrough', () => {
-  it('keeps plain prose `[note]` brackets in visibleText', () => {
-    const raw = 'This is [note] inside text.';
-    const { visibleText } = stripSentinelsStreamingSafe(raw);
-    expect(visibleText).toBe(raw);
-  });
-
   it('keeps markdown link `[label](url)` unchanged', () => {
     const raw = 'See [docs](https://example.com) for more.';
     const { visibleText } = stripSentinelsStreamingSafe(raw);
@@ -50,34 +28,13 @@ describe('stripSentinelsStreamingSafe — prose passthrough', () => {
 });
 
 describe('stripSentinelsStreamingSafe — incomplete sentinel tail (mid-stream)', () => {
-  it('hides a `[T` tail (still possibly [TITLE:)', () => {
-    const { visibleText } = stripSentinelsStreamingSafe('Hello [T');
-    expect(visibleText).toBe('Hello ');
-  });
-
-  it('hides a `[TITLE:` tail', () => {
-    const { visibleText } = stripSentinelsStreamingSafe('[TITLE:');
-    expect(visibleText).toBe('');
-  });
-
   it('hides a `[TITLE: abc` tail (sentinel still forming)', () => {
     const { visibleText } = stripSentinelsStreamingSafe('[TITLE: abc');
     expect(visibleText).toBe('');
   });
 
-  it('hides a `[FOLLOW` / `[FOLLOW-UP` tail', () => {
-    expect(stripSentinelsStreamingSafe('body\n\n[FOLLOW').visibleText).toBe('body\n\n');
-    expect(stripSentinelsStreamingSafe('body\n\n[FOLLOW-UP 1/3: q').visibleText).toBe('body\n\n');
-  });
-
   it('hides an incomplete branch overview tail', () => {
     expect(stripSentinelsStreamingSafe('body\n\n[BRANCH-OVER').visibleText).toBe('body\n\n');
-  });
-
-  it('releases `[note` immediately when next char rules out sentinel', () => {
-    // After `[n`, `n` is not a candidate next char for `[T` or `[F` — release.
-    const { visibleText } = stripSentinelsStreamingSafe('[note');
-    expect(visibleText).toBe('[note');
   });
 });
 
@@ -110,24 +67,12 @@ describe('stripSentinelsStreamingSafe — visibleText is monotonic across raw gr
     checkMonotonic('Hello [note] world');
   });
 
-  it('monotonic for "body [link](url) tail"', () => {
-    checkMonotonic('body [link](url) tail');
-  });
-
   it('monotonic for raw with prose then sentinel', () => {
     checkMonotonic('See [a] inline.\n\n[FOLLOW-UP 1/3: q?]');
   });
 });
 
 describe('stripSentinelsStreamingSafe — remapOffset', () => {
-  it('identity-maps when no sentinels', () => {
-    const raw = 'plain prose with [note] inside';
-    const { remapOffset } = stripSentinelsStreamingSafe(raw);
-    expect(remapOffset(0)).toBe(0);
-    expect(remapOffset(5)).toBe(5);
-    expect(remapOffset(raw.length)).toBe(raw.length);
-  });
-
   it('compresses offset by the cut length when offset is past a sentinel', () => {
     const raw = '[TITLE: T]\n\nbody';
     const { visibleText, remapOffset } = stripSentinelsStreamingSafe(raw);

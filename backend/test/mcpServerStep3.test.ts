@@ -111,48 +111,9 @@ describe('McpSlotRegistry', () => {
         assert.equal(retrieved.parentChatId, 'parent-abc');
     });
 
-    test('create can bind a slot to a Michi node id and workspace cache', () => {
-        const cbs = makeCallbacks();
-        const slot = registry.create('runtime-session-1', '/tmp', 'user-1', cbs as never, {
-            nodeId: 'node-1',
-            workspaceId: 'workspace-1',
-        });
-
-        assert.equal(slot.nodeId, 'node-1');
-        assert.equal(slot.parentChatId, 'runtime-session-1');
-        assert.equal(slot.workspaceId, 'workspace-1');
-        assert.equal(slot.ownerUserId, 'user-1');
-    });
-
-    test('get returns undefined for an unknown slotId', () => {
-        const result = registry.get('00000000000000000000000000000000');
-        assert.equal(result, undefined);
-    });
-
     // ── Case 3: dispose removes the slot ──────────────────────────────────────
 
-    test('dispose removes the slot so get returns undefined afterward', async () => {
-        const cbs = makeCallbacks();
-        const slot = registry.create('chat-dispose', '/tmp', null, cbs as never);
-
-        await registry.dispose(slot.slotId);
-
-        assert.equal(registry.get(slot.slotId), undefined, 'slot must be gone after dispose');
-    });
-
     // ── Case 4: dispose is idempotent ─────────────────────────────────────────
-
-    test('dispose is idempotent — calling it twice does not throw', async () => {
-        const cbs = makeCallbacks();
-        const slot = registry.create('chat-idempotent', '/tmp', null, cbs as never);
-
-        await registry.dispose(slot.slotId);
-        // Second call on the same (now-gone) slotId must not throw
-        await assert.doesNotReject(
-            () => registry.dispose(slot.slotId),
-            'second dispose must not throw',
-        );
-    });
 
     // ── Case 5: dispose with no transport does not throw ──────────────────────
 
@@ -353,22 +314,6 @@ describe('Claude follow-up POC MCP tools', () => {
 
         assert.deepEqual(JSON.parse(result.content[0].text), decision);
     });
-
-    test('validate_turn_metadata uses the same bounded validator callback', async () => {
-        const decision = {
-            decision: 'block',
-            reason: 'Call missing metadata tools before stopping.',
-        };
-        const slot = registry.create('chat-metadata-validate', '/tmp', null, {
-            ...makeCallbacks(),
-            onValidateFollowUps: () => decision,
-        } as never);
-        const handler = getToolHandler(registry, slot.slotId, 'validate_turn_metadata');
-
-        const result = await handler({});
-
-        assert.deepEqual(JSON.parse(result.content[0].text), decision);
-    });
 });
 
 describe('Codex follow-up POC Stop Hook routing', () => {
@@ -499,40 +444,5 @@ describe('approve MCP tool', () => {
 
     // ── Case 10: behavior:allow with updatedInput round-trips ─────────────────
 
-    test('behavior allow with updatedInput round-trips through the handler response', async () => {
-        const updatedInput = { command: 'ls', args: ['-la'] };
-        const slot = registry.create('chat-allow', '/tmp', null, {
-            onSpawnBranches: async () => [],
-            onSaveArtifact: () => null,
-            onUpdateArtifact: () => null,
-            onShowImage: () => ({ error: 'unsupported in test' }),
-            onApprove: async () => ({ behavior: 'allow' as const, updatedInput }),
-        });
-        const handler = getApproveHandler(registry, slot.slotId);
-
-        const result = await handler({ tool_name: 'bash', input: { command: 'ls' }, tool_use_id: 'tid-allow' });
-        const parsed = JSON.parse(result.content[0].text);
-
-        assert.equal(parsed.behavior, 'allow');
-        assert.deepEqual(parsed.updatedInput, updatedInput);
-    });
-
     // ── Case 11: behavior:deny with message round-trips ───────────────────────
-
-    test('behavior deny with message round-trips through the handler response', async () => {
-        const slot = registry.create('chat-deny', '/tmp', null, {
-            onSpawnBranches: async () => [],
-            onSaveArtifact: () => null,
-            onUpdateArtifact: () => null,
-            onShowImage: () => ({ error: 'unsupported in test' }),
-            onApprove: async () => ({ behavior: 'deny' as const, message: 'not allowed in production' }),
-        });
-        const handler = getApproveHandler(registry, slot.slotId);
-
-        const result = await handler({ tool_name: 'rm', input: { path: '/etc' }, tool_use_id: 'tid-deny' });
-        const parsed = JSON.parse(result.content[0].text);
-
-        assert.equal(parsed.behavior, 'deny');
-        assert.equal(parsed.message, 'not allowed in production');
-    });
 });

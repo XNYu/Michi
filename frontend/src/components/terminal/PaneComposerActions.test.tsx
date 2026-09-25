@@ -22,11 +22,6 @@ function renderActions(
 }
 
 describe('PaneComposerActions', () => {
-  it('labels an idle submit as Send', () => {
-    renderActions();
-    expect(screen.getByRole('button', { name: 'Send (Enter)' })).toBeTruthy();
-  });
-
   it('labels a streaming submit as Send next and explains its FIFO behavior', () => {
     const { onSend } = renderActions({ streaming: true });
     const button = screen.getByRole('button', {

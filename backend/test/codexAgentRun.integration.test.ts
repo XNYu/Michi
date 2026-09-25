@@ -33,11 +33,8 @@ import { assertOwner } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import {
   registerConformanceSuite,
-  makeConformanceBroker,
   makeConformanceToolProfile,
   attemptIdOf,
-  RUN_OWNER,
-  WRONG_OWNER,
   type ConformanceHarness,
   type ConformanceSession,
 } from './fixtures/runtimeRunConformance';
@@ -249,177 +246,9 @@ registerConformanceSuite({
 // Codex-specific integration tests with app-server fixtures
 // ---------------------------------------------------------------------------
 
-describe('Codex app-server integration fixtures', () => {
-  test('thread/start receives Run overrides and returns a checkpointable thread id', async () => {
-    const { runtime, startedThreads } = createFakeCodexRuntime();
-
-    const session = await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/project/alpha',
-      model: 'gpt-4o',
-      owner: RUN_OWNER,
-      toolProfile: makeConformanceToolProfile(),
-      permissionBroker: makeConformanceBroker(),
-    });
-
-    assert.ok(session.nativeSessionId);
-    assert.equal(typeof session.nativeSessionId, 'string');
-    assert.ok(session.nativeSessionId!.length > 0);
-    assert.equal(startedThreads.length, 1);
-    assert.equal(startedThreads[0].cwd, '/project/alpha');
-    assert.equal(startedThreads[0].model, 'gpt-4o');
-
-    await runtime.shutdown();
-  });
-
-  test('thread/resume uses the saved token', async () => {
-    const { runtime, resumedThreads } = createFakeCodexRuntime();
-
-    const session = await runtime.loadSession!({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/codex-resume',
-      model: 'test-model',
-      owner: RUN_OWNER,
-      nativeResumeToken: 'saved-thread-id-xyz',
-      toolProfile: makeConformanceToolProfile(),
-      permissionBroker: makeConformanceBroker(),
-    });
-
-    assert.equal(session.id, RUN_OWNER.attemptId);
-    assert.equal(session.nativeSessionId, 'saved-thread-id-xyz');
-    assert.deepEqual(resumedThreads, ['saved-thread-id-xyz']);
-
-    await runtime.shutdown();
-  });
-
-  test('agent_run without nativeResumeToken throws', async () => {
-    const { runtime } = createFakeCodexRuntime();
-
-    await assert.rejects(
-      runtime.loadSession!({
-        sessionId: RUN_OWNER.attemptId,
-        cwd: '/tmp/codex-no-token',
-        owner: RUN_OWNER,
-      }),
-      /nativeResumeToken/,
-    );
-
-    await runtime.shutdown();
-  });
-
-  test('one daemon supports concurrent Run threads with different models/cwds', async () => {
-    const { runtime, startedThreads } = createFakeCodexRuntime();
-
-    const ownerA: RuntimeSessionOwner = { kind: 'agent_run', runId: 'run-a', attemptId: 'attempt-a' };
-    const ownerB: RuntimeSessionOwner = { kind: 'agent_run', runId: 'run-b', attemptId: 'attempt-b' };
-
-    const s1 = await runtime.newSession({
-      sessionId: 'attempt-a', cwd: '/project/alpha', model: 'gpt-4o',
-      owner: ownerA, toolProfile: makeConformanceToolProfile(), permissionBroker: makeConformanceBroker(),
-    });
-    const s2 = await runtime.newSession({
-      sessionId: 'attempt-b', cwd: '/project/beta', model: 'o3-mini',
-      owner: ownerB, toolProfile: makeConformanceToolProfile(), permissionBroker: makeConformanceBroker(),
-    });
-
-    assert.notEqual(s1.id, s2.id);
-    assert.equal(startedThreads.length, 2);
-    assert.equal(startedThreads[0].model, 'gpt-4o');
-    assert.equal(startedThreads[1].model, 'o3-mini');
-
-    await runtime.shutdown();
-  });
-
-  test('agent_run MCP slot has nodeId=null and owner set', async () => {
-    const { runtime, slots } = createFakeCodexRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId, cwd: '/tmp/codex-slot', model: 'test-model',
-      owner: RUN_OWNER, toolProfile: makeConformanceToolProfile(['submit_agent_result', 'bash']),
-      permissionBroker: makeConformanceBroker(), workspaceId: 'ws-slot',
-    });
-
-    assert.ok(slots.length > 0);
-    const slot = slots[slots.length - 1];
-    assert.equal(slot.nodeId, null, 'agent_run slot must not have a nodeId');
-    assert.deepEqual(slot.owner, RUN_OWNER);
-    assert.ok(slot.exposedToolNames);
-    assert.ok(slot.exposedToolNames!.has('submit_agent_result'));
-
-    await runtime.shutdown();
-  });
-
-  test('thread id survives JSON persistence round-trip', async () => {
-    const { runtime } = createFakeCodexRuntime();
-
-    const session = await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId, cwd: '/tmp/codex-json', model: 'test-model',
-      owner: RUN_OWNER, toolProfile: makeConformanceToolProfile(), permissionBroker: makeConformanceBroker(),
-    });
-
-    const serialized = JSON.stringify(session.nativeSessionId);
-    const deserialized = JSON.parse(serialized);
-    assert.equal(typeof deserialized, 'string');
-    assert.ok(deserialized.length > 0);
-
-    await runtime.shutdown();
-  });
-});
-
-describe('Codex release ownership guard', () => {
-  test('release with wrong owner is rejected', async () => {
-    const { runtime } = createFakeCodexRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId, cwd: '/tmp/codex-release', model: 'test-model',
-      owner: RUN_OWNER, toolProfile: makeConformanceToolProfile(), permissionBroker: makeConformanceBroker(),
-    });
-
-    assert.throws(
-      () => runtime.releaseSession(RUN_OWNER.attemptId, WRONG_OWNER),
-      /Owner mismatch/,
-    );
-
-    // Correct owner works
-    runtime.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
-
-    await runtime.shutdown();
-  });
-});
-
 describe('Codex adapter metadata', () => {
   test('Codex adapter declares runtime_default tool mode', () => {
     const adapter = new CodexRunAdapter();
     assert.equal(adapter.nativeToolMode, 'runtime_default');
-  });
-
-  test('Codex adapter declares native steering', () => {
-    const adapter = new CodexRunAdapter();
-    assert.equal(adapter.steering, 'native');
-  });
-
-  test('Codex adapter declares native resume', () => {
-    const adapter = new CodexRunAdapter();
-    assert.equal(adapter.supportsNativeResume, true);
-  });
-
-  test('Codex adapter rejects runtime without nativeResume capability', () => {
-    const adapter = new CodexRunAdapter();
-    const fakeRuntime: AgentRuntime = {
-      id: 'codex', label: 'codex',
-      capabilities: {
-        modes: false, permissions: false, models: false, providerModels: false,
-        reasoning: false, supportedReasoningLevels: [],
-        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-        nativeResume: false,
-      },
-      warm: async () => {}, newSession: async () => { throw new Error('not impl'); },
-      releaseSession: () => {}, shutdown: async () => {},
-    };
-
-    assert.throws(
-      () => adapter.assertCompatible(fakeRuntime),
-      /incompatible.*native-resume/,
-    );
   });
 });

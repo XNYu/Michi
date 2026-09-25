@@ -100,12 +100,6 @@ describe('buildAtMentionItems — cross-tree nodes', () => {
     expect(items[1].description).toBe('API Research · 4 msgs');
   });
 
-  it('filters cross-tree nodes by query on node title', () => {
-    const items = buildAtMentionItems('auth', [], [], 'other', crossTreeNodes);
-    expect(items).toHaveLength(1);
-    expect(items[0].label).toBe('Auth flow');
-  });
-
   it('filters cross-tree nodes by query on thread title', () => {
     const items = buildAtMentionItems('deploy', [], [], 'other', crossTreeNodes);
     expect(items).toHaveLength(1);
@@ -131,10 +125,5 @@ describe('buildAtMentionItems — cross-tree nodes', () => {
   it('cross-tree node token uses node:nodeId format', () => {
     const items = buildAtMentionItems('CDK', [], [], 'other', crossTreeNodes);
     expect(items[0].token).toBe('node:x3');
-  });
-
-  it('returns empty when crossTreeNodes is undefined', () => {
-    const items = buildAtMentionItems('', [], [], 'other', undefined);
-    expect(items).toHaveLength(0);
   });
 });

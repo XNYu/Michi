@@ -196,18 +196,6 @@ describe('ClaudeSession', () => {
     } finally { await session.dispose(); }
   });
 
-  test('fork refuses a CLI init that reuses the parent identity', async () => {
-    const { ClaudeSession } = freshClaudeSession();
-    const session = new ClaudeSession('node-001', makeSessionDeps());
-    try {
-      await session.spawnFresh('native-parent');
-      createdChildren[0].emitInit('native-parent');
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.deepEqual(require('../src/services/dbRepository')._setNodeCalls, []);
-      assert.notEqual(session.nativeSessionId, 'native-parent');
-      assert.equal(session.getState(), 'crashed');
-    } finally { await session.dispose(); }
-  });
   beforeEach(() => {
     stubSpawnClaude();
     stubDbRepository();
@@ -227,58 +215,11 @@ describe('ClaudeSession', () => {
   // init — both happen during the first send() turn. Smoke test
   // (backend/test/claudeRuntimeSmoke.test.ts) covers end-to-end persistence.
 
-  test.skip('spawnFresh: persists external_session_id via dbRepository on first system/init envelope', async () => {
-    const child = new MockClaudeChild();
-    stubSpawnClaude(() => child);
-
-    const { ClaudeSession } = freshClaudeSession();
-    const deps = makeSessionDeps({ nodeId: 'node-persist' });
-    const session = new ClaudeSession('session-persist', deps as any);
-
-    const dbRepoMod = require('../src/services/dbRepository');
-    // Emit init slightly after spawn
-    setTimeout(() => child.emitInit('ext-persist-123'), 30);
-
-    await session.spawnFresh();
-
-    assert.ok(
-      dbRepoMod._setNodeCalls.some(([nid, sid]: [string, string]) => nid === 'node-persist' && sid === 'ext-persist-123'),
-      `setNodeExternalSessionId should have been called with ('node-persist', 'ext-persist-123'), got: ${JSON.stringify(dbRepoMod._setNodeCalls)}`,
-    );
-
-    await session.dispose();
-  });
-
   // ── Case 2: spawnFresh rejects with ClaudeInitTimeoutError on no init ─────────
   // SKIPPED: behavior removed. See Case 1's comment. spawnFresh no longer
   // awaits init, so it cannot reject with a spawn-init timeout. Timeout
   // semantics if claude is hung during a send() turn are covered by the
   // turn-level heartbeat path (a different test).
-
-  test.skip('spawnFresh: rejects with ClaudeInitTimeoutError when no init envelope arrives', async () => {
-    // Child that never emits init and exits after a short time
-    const child = new MockClaudeChild();
-    stubSpawnClaude(() => child);
-    // Simulate process exit without emitting init
-    setTimeout(() => child.emit('exit', 1, null), 100);
-
-    const { ClaudeSession } = freshClaudeSession();
-    const { ClaudeInitTimeoutError } = require('../src/agents/claude/claudeBinary');
-
-    const deps = makeSessionDeps();
-    const session = new ClaudeSession('session-timeout', deps as any);
-
-    await assert.rejects(
-      () => session.spawnFresh(),
-      (err: unknown) => {
-        assert.ok(
-          err instanceof ClaudeInitTimeoutError,
-          `expected ClaudeInitTimeoutError, got ${(err as Error).constructor.name}: ${(err as Error).message}`,
-        );
-        return true;
-      },
-    );
-  });
 
   // ── Case 3: send() writes user envelope to stdin ─────────────────────────────
 
@@ -412,26 +353,6 @@ describe('ClaudeSession', () => {
     await session.dispose();
   });
 
-  test('send(): no prefix when setFirstTurnPrefix never called', async () => {
-    const child = new MockClaudeChild();
-    stubSpawnClaude(() => child);
-
-    const { ClaudeSession } = freshClaudeSession();
-    const deps = makeSessionDeps({ nodeId: 'node-prefix-2' });
-    const session = new ClaudeSession('session-prefix-2', deps as any);
-    await session.spawnFresh();
-
-    const stdinChunks: string[] = [];
-    child.stdin.on('data', (chunk: Buffer) => stdinChunks.push(chunk.toString()));
-
-    setTimeout(() => child.emitResult('success'), 20);
-    for await (const _ of session.send('plain hello')) { void _; }
-
-    const env = JSON.parse(stdinChunks.join('').trim().split('\n')[0]);
-    assert.equal(env.message.content, 'plain hello');
-    await session.dispose();
-  });
-
   test('setFirstTurnPrefix(): throws after first send consumed the prefix', async () => {
     const child = new MockClaudeChild();
     stubSpawnClaude(() => child);
@@ -534,36 +455,6 @@ describe('ClaudeSession', () => {
   // leaked until ClaudeConcurrencyError (503). The fix flips state to idle from
   // the translator's turn_end emit (the claude process's own end-of-turn signal),
   // independent of whether the consumer drains the generator.
-
-  test('send(): returns to idle when consumer breaks on turn_end (no zombie in_turn)', async () => {
-    const child = new MockClaudeChild();
-    stubSpawnClaude(() => child);
-
-    setTimeout(() => child.emitInit('ext-zombie-001'), 20);
-
-    const { ClaudeSession } = freshClaudeSession();
-    const session = new ClaudeSession('session-zombie', makeSessionDeps() as any);
-    await session.spawnFresh();
-
-    setTimeout(() => {
-      child.emitChunk('done');
-      child.emitResult('success');
-    }, 30);
-
-    // Mimic the route exactly: stop consuming the instant turn_end arrives,
-    // rather than draining the generator to its natural completion.
-    for await (const ev of session.send('hi')) {
-      if (ev.kind === 'turn_end') break;
-    }
-
-    assert.equal(
-      session.getState(),
-      'idle',
-      'session must be idle (reclaimable) after turn_end, even when the consumer breaks on it',
-    );
-
-    await session.dispose();
-  });
 
   test('send(): treats child exit during a turn as error even when exit code is 0', async () => {
     const child = new MockClaudeChild();

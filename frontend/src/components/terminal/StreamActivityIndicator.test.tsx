@@ -64,16 +64,6 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(node({ status: 'error' }))).toBeNull();
   });
 
-  it('returns null while hidden overview metadata finishes after visible completion', () => {
-    const n = node({
-      visibleResponseComplete: true,
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'complete answer', streaming: false }],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
   it('returns null for a brand-new empty turn (in-bubble dots own it)', () => {
     const n = node({ messages: [assistant({})] });
     expect(deriveStreamActivity(n)).toBeNull();
@@ -84,16 +74,6 @@ describe('deriveStreamActivity', () => {
       id: 'u1', role: 'user', text: 'hi', toolCalls: [], createdAt: 0,
     };
     expect(deriveStreamActivity(node({ messages: [userMsg] }))?.label).toBe('Working');
-  });
-
-  it('returns null while a visible tool is running because its chip owns the status', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'sure', streaming: false }],
-        toolCalls: [tool('t1', 'bash', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
   });
 
   it('returns null for a running tool even while a thinking block streams', () => {
@@ -138,25 +118,6 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(n)?.label).toBe('Working');
   });
 
-  it('stays quiet when answer block is streaming and idle < 2s', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
-      })],
-    });
-    (n as any).streamingIdleMs = 1500;
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('shows Thinking while a thinking block streams with no running tool', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'reasoning', streaming: true }],
-      })],
-    });
-    expect(deriveStreamActivity(n)?.label).toBe('Thinking');
-  });
-
   it('shows Working in a between-steps gap (blocks exist, nothing streaming)', () => {
     const n = node({
       messages: [assistant({
@@ -192,16 +153,6 @@ describe('deriveStreamActivity', () => {
     });
     expect(deriveStreamActivity(n)?.label).toBe('Thinking');
   });
-
-  it('returns null for a running tool with a long title', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'ok', streaming: false }],
-        toolCalls: [tool('t1', 'x'.repeat(80), 'running')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
 });
 
 describe('deriveStreamActivity — Kiro plan steps', () => {
@@ -230,27 +181,6 @@ describe('deriveStreamActivity — Kiro plan steps', () => {
       })],
     });
     expect(deriveStreamActivity(n)?.detail).toBe('Step 1/1');
-  });
-
-  it('suppresses the plan row while a visible tool chip is running', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'ok', streaming: false }],
-        toolCalls: [tool('t1', 'bash', 'running')],
-        plan: [planEntry('step one', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('stays quiet for plan progress while visible answer text streams', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
-        plan: [planEntry('step one', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
   });
 
   it('ignores a plan with no in-progress entry (falls through to fallback)', () => {

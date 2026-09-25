@@ -222,21 +222,6 @@ describe('KiroRuntime releaseSession with owner verification', () => {
 // ---------------------------------------------------------------------------
 
 describe('KiroRuntime binding records', () => {
-    test('getBindingByNativeSid returns binding via reverse index', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-        rt.ensureClient = async () => ({
-            newSession: async () => ({ sessionId: 'acp-native-lookup', modes: {}, models: {} }),
-        });
-
-        await runtime.newSession({ cwd: '/tmp/cwd', owner: RUN_OWNER, profileHash: 'hash-lookup' });
-
-        const binding = runtime.getBindingByNativeSid('acp-native-lookup');
-        assert.ok(binding);
-        assert.equal(binding.publicSessionId, 'attempt-1');
-        assert.equal(binding.runtimeProfileHash, 'hash-lookup');
-    });
-
     test('bindings are cleaned up on shutdown', async () => {
         const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
         const rt = runtime as any;

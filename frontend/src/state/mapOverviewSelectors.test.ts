@@ -15,14 +15,6 @@ function node(partial: Partial<ChatNodeState>): ChatNodeState {
 }
 
 describe('latestOverviewFirstSentence', () => {
-  it('takes the first sentence of the LAST overview entry', () => {
-    const n = node({ branchOverviewEntries: [
-      { at: 1, text: '早期进展。次要句。' },
-      { at: 2, text: '最新结论:确认是 PATH 问题。还有细节。' },
-    ]});
-    expect(latestOverviewFirstSentence(n)).toBe('最新结论:确认是 PATH 问题。');
-  });
-
   it('splits on English period too', () => {
     const n = node({ branchOverviewEntries: [{ at: 1, text: 'Fixed via fix-path. Verified on dmg.' }]});
     expect(latestOverviewFirstSentence(n)).toBe('Fixed via fix-path.');

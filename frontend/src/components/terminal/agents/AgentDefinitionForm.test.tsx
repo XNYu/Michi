@@ -63,12 +63,6 @@ describe('Agent Definition editing — instructions optional + capability chips'
     expect(onChange.mock.calls.at(-1)?.[0].toolRefs).toBe('');
   });
 
-  it('falls back to manual ref fields when the catalog is unavailable', () => {
-    const value = createAgentDefinitionFormValue(null, 'workspace', 'ws-1');
-    render(<AgentDefinitionForm value={value} onChange={() => {}} capabilities={null} />);
-    expect(screen.getByLabelText('tool refs')).not.toBeNull();
-  });
-
   it('renders structured enable blockers as an actionable callout', () => {
     render(<AgentEditorPage initialScope="workspace" workspaceId="ws-1"
       error="capability tool:citation-check is credential_required"

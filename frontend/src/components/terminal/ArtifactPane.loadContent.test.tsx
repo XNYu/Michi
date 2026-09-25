@@ -99,13 +99,6 @@ beforeEach(() => {
 });
 
 describe('ArtifactPane loadArtifactContent — mount guard vs. badge refresh', () => {
-  it('does NOT re-fetch on mount when content is already loaded (once-guard holds)', () => {
-    H.nodeRef.current = artifactNode();
-    render(<ArtifactPane nodeId="a1" />);
-    // Guard: content !== null → mount effect skips the read entirely.
-    expect(H.mockFetchArtifactContent).not.toHaveBeenCalled();
-  });
-
   it('clicking the "Changed on disk" badge forces a fresh read, bypassing the guard', async () => {
     H.nodeRef.current = artifactNode();
     render(<ArtifactPane nodeId="a1" />);

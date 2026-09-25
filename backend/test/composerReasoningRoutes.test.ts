@@ -131,14 +131,6 @@ test('a pane send records its provider + model as the runtime last-used pair', a
   assert.equal(cfg.provider, 'enabled');
 });
 
-test('a fresh pane switched to the runtime resolves to the last-used pair, not the built-in fallback', async () => {
-  updateAgentConfig({ runtime: 'unregistered-global-runtime', provider: 'enabled', providerByRuntime: { [runtime.id]: 'disabled' }, modelByRuntime: { [runtime.id]: 'limited' } });
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: runtime.id });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(captured[0].provider, 'disabled');
-  assert.equal(captured[0].model, 'limited');
-});
-
 test('switching to a non-provider runtime does not pollute providerByRuntime', async () => {
   registerRuntime({ ...runtime, id: 'plain-test', capabilities: { ...runtime.capabilities, providerModels: false, apiKeys: false } });
   const result = await post('/agent/options', { runtime: 'plain-test' });

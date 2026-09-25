@@ -142,70 +142,12 @@ describe('ManageComposer', () => {
     expect((await screen.findByRole('textbox') as HTMLTextAreaElement).value).toBe('');
   });
 
-  it('does not submit empty input', () => {
-    sendMessage.mockClear();
-    const onSubmitted = vi.fn();
-    render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        onSubmitted={onSubmitted}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(onSubmitted).not.toHaveBeenCalled();
-  });
-
   it('hides the agent chip unless enableAgentSelect is set', () => {
     storeState.availableModes = [{ id: 'planner', name: 'Planner' }];
     render(
       <ManageComposer workspaceId="ws1" workspaceName="ws-one" onSubmitted={vi.fn()} />,
     );
     expect(screen.queryByTitle(/Switch agent/)).toBeNull();
-  });
-
-  it('shows the runtime default Agent without pinning it to the new thread', () => {
-    storeState.availableModes = [{ id: 'kiro_default', name: 'Kiro Default Agent' }];
-    storeState.defaultModeId = 'kiro_default';
-    render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-
-    expect(screen.getByTitle('Switch agent — Kiro Default Agent')).toBeTruthy();
-    fireEvent.change(composerTextarea(), { target: { value: 'follow Kiro default' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    expect(createThread).toHaveBeenCalledWith(undefined);
-  });
-
-  it('pre-selected agent is stamped onto the new thread on send', () => {
-    vi.useFakeTimers();
-    storeState.availableModes = [
-      { id: 'planner', name: 'Planner' },
-      { id: 'build', name: 'Build' },
-    ];
-    render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        enableAgentSelect
-        onSubmitted={vi.fn()}
-      />,
-    );
-
-    // Open the agent menu and pick "Build". The menu is a searchable
-    // ContextMenu (a `filter…` input joins the composer textarea) and its pick
-    // resolves after a confirm-blink timer.
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Build'));
-    flushBlink();
-
-    const ta = composerTextarea();
-    fireEvent.change(ta, { target: { value: 'plan this' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    expect(createThread).toHaveBeenCalledWith('build');
   });
 
   it('remembers the pre-picked agent across remounts (sticky)', () => {

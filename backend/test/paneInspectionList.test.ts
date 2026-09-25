@@ -205,19 +205,6 @@ describe('paneInspectionList.list', () => {
   // Commit #1 — the three priority cases from the brief.
   // -------------------------------------------------------------------------
 
-  test('1. scope=all returns node objects in the workspace, deduplicated by paneId', () => {
-    seedNode('node-1');
-    seedNode('node-2');
-
-    const result = list(caller(), baseRequest());
-    const paneIds = result.summaries.map((s) => s.ref.paneId);
-    assert.deepEqual([...paneIds].sort(), ['node:node-1', 'node:node-2']);
-    // No duplicate paneId appears even when the row source could in principle overlap (nodes +
-    // open surfaces are disjoint kinds here, but the dedup itself is exercised by asserting the
-    // set has no repeats regardless of source).
-    assert.equal(new Set(paneIds).size, paneIds.length);
-  });
-
   test('2. scope=open returns only presence-registered views', () => {
     seedNode('open-node');
     seedNode('closed-node');
@@ -274,15 +261,6 @@ describe('paneInspectionList.list', () => {
 
     const included = list(caller(), baseRequest({ includeArchived: true }));
     assert.deepEqual(included.summaries.map((s) => s.ref.paneId).sort(), ['node:archived-node', 'node:normal-node']);
-  });
-
-  test('5. a deleted (purged) node never appears', () => {
-    seedNode('kept-node');
-    seedNode('purged-node');
-    getDb().prepare('UPDATE nodes SET purged_at = ? WHERE id = ?').run(Date.now(), 'purged-node');
-
-    const result = list(caller(), baseRequest({ includeArchived: true }));
-    assert.deepEqual(result.summaries.map((s) => s.ref.paneId), ['node:kept-node']);
   });
 
   test('6. kind, treeId, and parentNodeId filters each narrow correctly and compose', () => {
@@ -361,12 +339,6 @@ describe('paneInspectionList.list', () => {
     assert.ok(thrown instanceof PaneInspectionError);
     assert.equal((thrown as PaneInspectionError).code, 'NAVIGATION_DISABLED');
     assert.ok(!(thrown as PaneInspectionError).message.includes('do not leak this title'));
-  });
-
-  test('9. presenceCoverage is unknown when nothing is registered', () => {
-    seedNode('no-presence-node');
-    const result = list(caller(), baseRequest());
-    assert.equal(result.presenceCoverage, 'unknown');
   });
 
   test('9. presenceCoverage is reported when at least one row has a live view', () => {

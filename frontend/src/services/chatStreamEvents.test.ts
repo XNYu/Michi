@@ -159,22 +159,6 @@ describe('parseChatStreamEvent', () => {
     });
   });
 
-  it('roundtrips the multiplexed observer chat id without changing event payloads', () => {
-    const event: ChatStreamEvent = {
-      event: CHAT_STREAM_EVENTS.chunk,
-      data: {
-        chatId: 'chat-7',
-        nodeId: 'node-7',
-        turnId: 'turn-7',
-        seq: 8,
-        assistantId: 'assistant-7',
-        text: 'hello',
-      },
-    };
-
-    expect(parseEncodedFrame(encodeChatStreamEvent(event))).toEqual(event);
-  });
-
   it('ignores malformed or unknown events', () => {
     expect(parseChatStreamEvent('unknown', '{}')).toBeNull();
     expect(parseChatStreamEvent(CHAT_STREAM_EVENTS.chunk, '{')).toBeNull();

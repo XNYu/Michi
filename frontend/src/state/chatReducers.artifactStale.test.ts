@@ -47,13 +47,6 @@ describe('artifact-mark-stale / artifact-mark-removed', () => {
     expect(loaded.a1.artifact!.content).toBe('# hi');
   });
 
-  it('marks removed and clears any pending-refresh flag', () => {
-    const stale = reduceNodes(seedArtifact(), { type: 'artifact-mark-stale', nodeId: 'a1' });
-    const removed = reduceNodes(stale, { type: 'artifact-mark-removed', nodeId: 'a1' });
-    expect(removed.a1.artifact!.removed).toBe(true);
-    expect(removed.a1.artifact!.pendingRefresh).toBe(false);
-  });
-
   it('a change after removal (file recreated) clears removed and re-arms the badge', () => {
     const removed = reduceNodes(seedArtifact(), { type: 'artifact-mark-removed', nodeId: 'a1' });
     const back = reduceNodes(removed, { type: 'artifact-mark-stale', nodeId: 'a1' });

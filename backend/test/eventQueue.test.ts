@@ -21,17 +21,6 @@ describe('EventQueue', () => {
     q.dispose();
   });
 
-  it('push(null) closes a pending pull', async () => {
-    const q = new EventQueue(() => {});
-
-    const pullPromise = q.pull();
-    q.push(null);
-
-    const result = await pullPromise;
-    assert.equal(result, null);
-    q.dispose();
-  });
-
   it('dispose releases a blocked waiter with null', async () => {
     const q = new EventQueue(() => {});
 

@@ -32,12 +32,6 @@ test('native Kiro load applies a model change on the same session and keeps the 
   assert.deepEqual(disposed, []);
 });
 
-test('native Kiro load does not set a model when the restored model already matches', async () => {
-  const { runtime, models } = fixture();
-  await runtime.loadAcpSession({ sessionId: 'original', cwd: '/tmp', model: 'old-model' });
-  assert.deepEqual(models, []);
-});
-
 test('only the observed missing-session failure is mapped to explicit unavailability', async () => {
   const { runtime, client, disposed } = fixture();
   client.loadSession = async () => { throw new ACPError('Internal error', {

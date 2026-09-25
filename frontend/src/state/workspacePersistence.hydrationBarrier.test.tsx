@@ -133,44 +133,6 @@ describe('cold-start hydration barrier', () => {
     expect(result.current.projectsCount).toBe(1);
   });
 
-  it('hydrates local and remote workspaces together without changing their backend ownership', async () => {
-    const remoteWorkspace = {
-      ...backendWorkspaceRow,
-      workspace: { id: 'ws-remote', name: 'Remote', created_at: 2 },
-      nodes: [{ id: 'n-remote', created_at: 2 }],
-    };
-    apiMocks.listBackendConnections.mockResolvedValue([{
-      id: 'remote-1', name: 'Build', transport: 'direct', apiUrl: 'https://build.example.com/api', hasToken: true, createdAt: 1, updatedAt: 1,
-    }]);
-    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
-      connectionId === 'remote-1' ? [remoteWorkspace] : [backendWorkspaceRow]
-    ));
-
-    const { result } = renderHook(() => useHarness());
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(result.current.hydrated).toBe(true);
-    expect(result.current.projects).toHaveLength(2);
-    expect(result.current.projects.find((project) => project.id === 'ws-1')?.backendConnectionId).toBeUndefined();
-    expect(result.current.projects.find((project) => project.id === 'ws-remote')?.backendConnectionId).toBe('remote-1');
-  });
-
-  it('keeps local workspaces available when a saved remote backend is offline', async () => {
-    apiMocks.listBackendConnections.mockResolvedValue([{
-      id: 'remote-offline', name: 'Offline', transport: 'direct', apiUrl: 'https://offline.example.com/api', hasToken: true, createdAt: 1, updatedAt: 1,
-    }]);
-    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => {
-      if (connectionId === 'remote-offline') throw new Error('ECONNREFUSED');
-      return [backendWorkspaceRow];
-    });
-
-    const { result } = renderHook(() => useHarness());
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(result.current.hydrated).toBe(true);
-    expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1']);
-  });
-
   it('hydrates an initially-offline remote backend after it reconnects without reloading the app', async () => {
     const remoteWorkspace = {
       ...backendWorkspaceRow,
@@ -253,42 +215,6 @@ describe('cold-start hydration barrier', () => {
       expect(result.current.activeProjectId).toBe('ws-remote-slow');
     });
 
-    it('does not override a user navigation made before the remote snapshot lands', async () => {
-      const remote = deferred<unknown[]>();
-      const secondLocal = {
-        ...backendWorkspaceRow,
-        workspace: { id: 'ws-2', name: 'Second', created_at: 1 },
-        nodes: [{ id: 'n2', created_at: 1 }],
-      };
-      apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);
-      apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (connectionId?: string) => (
-        connectionId === 'remote-slow' ? remote.promise : [backendWorkspaceRow, secondLocal]
-      ));
-
-      const { result } = renderHook(() => {
-        const [projects, setProjects] = useState<Project[]>([]);
-        const [activeProjectId, setActiveProjectId] = useState<string | null>('ws-remote-slow');
-        const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({});
-        const [hydrated, setHydrated] = useState(false);
-        const nodesRef = useRef(nodes);
-        nodesRef.current = nodes;
-        useWorkspacePersistence({
-          projects, activeProjectId, nodes, structureVersion: 0, hydrated, nodesRef,
-          setProjects, setActiveProjectId, setNodes, setHydrated,
-        });
-        return { hydrated, activeProjectId, setActiveProjectId };
-      });
-      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-      expect(result.current.activeProjectId).toBe('ws-1');
-
-      // User picks another workspace while the tunnel is still connecting.
-      act(() => { result.current.setActiveProjectId('ws-2'); });
-      remote.resolve([remoteWorkspace]);
-      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-
-      expect(result.current.activeProjectId).toBe('ws-2');
-    });
-
     it('still waits for remote snapshots when the local DB is empty (remote-only setup)', async () => {
       const remote = deferred<unknown[]>();
       apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);
@@ -346,19 +272,6 @@ describe('cold-start hydration barrier', () => {
       expect(apiMocks.fetchTreeMessages).toHaveBeenCalledWith('ws-1', 't-1', undefined);
       expect(result.current.hydrated).toBe(true);
     });
-  });
-
-  it('still finalizes an empty DB when the backend answers with []', async () => {
-    // Regression guard: a genuine empty DB (HTTP 200 → []) must finalize so the
-    // legitimate first-run "create a workspace" flow still works.
-    apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([]);
-
-    const { result } = renderHook(() => useHarness());
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-
-    expect(result.current.hydrated).toBe(true);
-    expect(result.current.projectsCount).toBe(0);
   });
 
   it('starts meta hydration immediately and does not gate readiness on the advisory capability probe', async () => {

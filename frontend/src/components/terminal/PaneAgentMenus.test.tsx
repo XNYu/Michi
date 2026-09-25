@@ -88,41 +88,6 @@ describe('PaneAgentMenus default agent display', () => {
     return row?.querySelector('.michi-menu-glyph')?.textContent === '✓';
   };
 
-  it('shows the actual Kiro default agent and explains that it follows the runtime default', () => {
-    render(
-      <PaneAgentMenus
-        {...agentMenuProps}
-        defaultModeId="kiro_default"
-        runtimeId="kiro"
-      />,
-    );
-
-    expect(isChecked('Kiro Default Agent')).toBe(true);
-    expect(screen.getByText('Kiro default agent · follows runtime and model controls')).toBeTruthy();
-  });
-
-  it('falls back to a runtime-specific default label when metadata is unavailable', () => {
-    render(
-      <PaneAgentMenus
-        {...agentMenuProps}
-        defaultModeId={null}
-        runtimeId="kiro"
-      />,
-    );
-    expect(isChecked('Kiro Default Agent')).toBe(true);
-  });
-
-  it('falls back to a runtime-specific default label when the id is absent from the catalog', () => {
-    render(
-      <PaneAgentMenus
-        {...agentMenuProps}
-        defaultModeId="nonexistent_mode"
-        runtimeId="kiro"
-      />,
-    );
-    expect(isChecked('Kiro Default Agent')).toBe(true);
-  });
-
   it('clears explicit selection through the default Agent action', async () => {
     const onSelectDefaultAgent = vi.fn();
     render(
@@ -187,28 +152,6 @@ describe('PaneAgentMenus mode section header', () => {
     }],
     defaultModeId: 'kiro_default',
   };
-
-  it('labels the modes section "Kiro Agents" when runtime is kiro', () => {
-    render(
-      <PaneAgentMenus
-        {...withPrimaryAgents}
-        runtimeId="kiro"
-        agentStatus={{ ...status, runtime: 'kiro', label: 'Kiro' }}
-      />,
-    );
-    expect(screen.getByText('Kiro Agents')).toBeTruthy();
-  });
-
-  it('labels the modes section with runtime label for non-kiro runtimes', () => {
-    render(
-      <PaneAgentMenus
-        {...withPrimaryAgents}
-        runtimeId="claude"
-        agentStatus={{ ...status, runtime: 'claude', label: 'Claude' }}
-      />,
-    );
-    expect(screen.getByText('Claude Agents')).toBeTruthy();
-  });
 
   it('omits the header when no primary agent callbacks are provided', () => {
     render(

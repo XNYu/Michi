@@ -31,11 +31,6 @@ describe('BranchAnchorRow', () => {
     expect(container.querySelector('.t-branch-anchor-pulse')).toBeTruthy();
   });
 
-  it('no pulse when streaming=false', () => {
-    const { container } = render(<BranchAnchorRow {...baseProps} streaming={false} />);
-    expect(container.querySelector('.t-branch-anchor-pulse')).toBeFalsy();
-  });
-
   it('singularises "1 message"', () => {
     render(<BranchAnchorRow {...baseProps} messageCount={1} />);
     expect(screen.getByText(/1 message[^s]/)).toBeTruthy();

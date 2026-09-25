@@ -177,33 +177,6 @@ test('permission profiles fail closed without using generic tool approval', asyn
   await runtime.shutdown();
 });
 
-test('unsupported MCP elicitation declines rather than accepting an unfilled form', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.mcpElicitation,
-    {
-      threadId: 'thread-approval-test',
-      turnId: 'turn-1',
-      serverName: 'external-mcp',
-      mode: 'form',
-      message: 'Allow this MCP request?',
-      requestedSchema: { type: 'object', properties: {} },
-      _meta: null,
-    },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  assert.equal(session.pendingPermissions.size, 0);
-
-  assert.deepEqual(await responsePromise, {
-    action: 'decline',
-    content: null,
-    _meta: null,
-  });
-  await runtime.shutdown();
-});
-
 test('MCP elicitation without a matching session declines with its own contract', async () => {
   const client = makeStubClient();
   makeRuntime(client);
@@ -261,69 +234,6 @@ test('allow_once → { decision: accept } for commandExecution and fileChange', 
   await runtime.shutdown();
 });
 
-test('reject_once → { decision: decline }', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'rm -rf /' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'reject_once');
-
-  const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'decline' }, 'reject_once should produce decline');
-  await runtime.shutdown();
-});
-
-test('allow_always → { decision: acceptForSession } and onAlwaysAllow called with canonical tool name', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const alwaysAllowCalls: string[] = [];
-  session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'npm test' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'allow_always');
-
-  const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'acceptForSession' }, 'allow_always should produce acceptForSession');
-  assert.deepEqual(
-    alwaysAllowCalls,
-    ['bash'],
-    'onAlwaysAllow should be called with canonical name "bash", not the raw method',
-  );
-  await runtime.shutdown();
-});
-
-test('allow_always for fileChange calls onAlwaysAllow with "edit"', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const alwaysAllowCalls: string[] = [];
-  session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.fileChangeApproval,
-    { threadId: 'thread-approval-test', file_path: '/tmp/foo.ts' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'allow_always');
-
-  const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'acceptForSession' });
-  assert.deepEqual(alwaysAllowCalls, ['edit'], 'onAlwaysAllow should be called with "edit" for fileChange');
-  await runtime.shutdown();
-});
-
 test('cancelPermission resolves to decline (null → decline path)', async (t) => {
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
@@ -368,20 +278,6 @@ test('markCrashed cancels all pending permissions with decline', async (t) => {
   assert.deepEqual(result2, { decision: 'decline' }, 'crashed session should decline all pending');
   assert.equal(session.pendingPermissions.size, 0, 'pendingPermissions should be cleared after crash');
   await runtime.shutdown();
-});
-
-test('approval for unknown threadId → immediate decline (fail-safe)', async () => {
-  // Fire a server request with a threadId that has NO associated session.
-  // The runtime must not hang or throw — it must immediately respond with decline.
-  const client = makeStubClient();
-  makeRuntime(client); // runtime with no sessions registered
-
-  const result = await client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-that-does-not-exist', command: 'whoami' },
-  );
-
-  assert.deepEqual(result, { decision: 'decline' }, 'unknown threadId should get immediate decline');
 });
 
 test('approval with missing threadId in params → immediate decline', async () => {

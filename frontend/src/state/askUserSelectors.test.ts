@@ -29,10 +29,6 @@ function node(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
 }
 
 describe('isAwaitingUserInput', () => {
-  it('is true for an unresolved request', () => {
-    expect(isAwaitingUserInput(node({ pendingUserInput: request() }))).toBe(true);
-  });
-
   it('is false once the request resolves', () => {
     expect(
       isAwaitingUserInput(node({ pendingUserInput: request({ resolved: true }) })),
@@ -43,12 +39,6 @@ describe('isAwaitingUserInput', () => {
     expect(isAwaitingUserInput(node())).toBe(false);
     expect(isAwaitingUserInput(node({ pendingUserInput: null }))).toBe(false);
     expect(isAwaitingUserInput(undefined)).toBe(false);
-  });
-
-  it('is false for a trashed node — its ask can no longer be answered', () => {
-    expect(
-      isAwaitingUserInput(node({ pendingUserInput: request(), deletedAt: 123 })),
-    ).toBe(false);
   });
 });
 

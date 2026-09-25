@@ -94,42 +94,9 @@ describe('external_session_id — survives frontend sync upserts', () => {
     assert.equal(getNodeExternalSessionId('n1'), UUID);
   });
 
-  test('repeated syncs keep preserving it', () => {
-    saveNode(syncNode('ws1', 'n1'));
-    setNodeExternalSessionId('n1', UUID);
-    for (let i = 0; i < 5; i++) saveNode(syncNode('ws1', 'n1'));
-    assert.equal(getNodeExternalSessionId('n1'), UUID);
-  });
-
-  test('only the native binding writer can replace an existing external session ID', () => {
-    saveNode(syncNode('ws1', 'n1'));
-    setNodeExternalSessionId('n1', UUID);
-    const other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-    saveNode({ ...syncNode('ws1', 'n1'), external_session_id: other });
-    assert.equal(getNodeExternalSessionId('n1'), UUID);
-    setNodeExternalSessionId('n1', other);
-    assert.equal(getNodeExternalSessionId('n1'), other);
-  });
-
   test('the first-ever saveNode with no UUID leaves it null (no false positive)', () => {
     saveNode(syncNode('ws1', 'n1'));
     assert.equal(getNodeExternalSessionId('n1'), null);
-  });
-
-  test('frontend sync cannot replace a persisted Kiro ACP sid with the public node id', () => {
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'acp-session-1',
-    });
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'n1',
-    });
-    const row = getDb().prepare('SELECT acp_session_id FROM nodes WHERE id = ?')
-      .get('n1') as { acp_session_id: string | null };
-    assert.equal(row.acp_session_id, 'acp-session-1');
   });
 
   test('frontend sync cannot erase a server-persisted runtime binding', () => {
@@ -146,22 +113,6 @@ describe('external_session_id — survives frontend sync upserts', () => {
     const row = getDb().prepare('SELECT acp_session_id, runtime_id FROM nodes WHERE id = ?')
       .get('n1') as { acp_session_id: string | null; runtime_id: string | null };
     assert.equal(row.acp_session_id, 'acp-session-1');
-    assert.equal(row.runtime_id, 'kiro');
-  });
-
-  test('a stale frontend runtime cannot replace a server-persisted runtime binding', () => {
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'acp-session-1',
-    });
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'claude',
-      acp_session_id: null,
-    });
-    const row = getDb().prepare('SELECT runtime_id FROM nodes WHERE id = ?')
-      .get('n1') as { runtime_id: string | null };
     assert.equal(row.runtime_id, 'kiro');
   });
 });

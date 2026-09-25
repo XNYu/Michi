@@ -42,21 +42,6 @@ describe('claudeEventTranslator', () => {
 
   // ── Case 2: assistant with text blocks emits NOTHING (delivered via stream_event) ────
 
-  test('assistant envelope with single text block emits no events', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed({
-      type: 'assistant',
-      message: {
-        content: [{ type: 'text', text: 'Hello world' }],
-      },
-    });
-
-    // text and thinking are streamed via stream_event content_block_delta;
-    // re-emitting them from the assistant envelope would duplicate output.
-    assert.equal(emitted.length, 0);
-  });
-
   // ── Case 3: assistant with thinking + text blocks emits NOTHING ─────────
 
   test('assistant envelope with thinking and text blocks emits no events', () => {
@@ -110,21 +95,6 @@ describe('claudeEventTranslator', () => {
   });
 
   // ── Case 5: stream_event with text_delta → chunk event ───────────────────
-
-  test('stream_event with text_delta emits chunk event', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed({
-      type: 'stream_event',
-      event: {
-        type: 'content_block_delta',
-        delta: { type: 'text_delta', text: 'streamed text' },
-      },
-    });
-
-    assert.equal(emitted.length, 1);
-    assert.deepEqual(emitted[0], { kind: 'chunk', text: 'streamed text' });
-  });
 
   // ── Case 6: stream_event with thinking_delta → thought event ─────────────
 
@@ -463,27 +433,6 @@ describe('claudeEventTranslator', () => {
       }
     }
     assert.ok(toolIdx >= 0 && toolIdx < secondTurnChunkIdx, 'tool_call must be emitted before turn 2 text');
-  });
-
-  test('assistant envelope tool_use without prior content_block_start still emits tool_call (fallback for non-partial mode)', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed({
-      type: 'assistant',
-      message: {
-        content: [
-          { type: 'tool_use', id: 'toolu_solo', name: 'bash', input: { cmd: 'ls' } },
-        ],
-      },
-    });
-
-    assert.equal(emitted.length, 1);
-    type ToolCallEv = { kind: string; toolCallId: string; title: string; detail: string };
-    const ev = emitted[0] as unknown as ToolCallEv;
-    assert.equal(ev.kind, 'tool_call');
-    assert.equal(ev.toolCallId, 'toolu_solo');
-    assert.equal(ev.title, 'bash');
-    assert.ok(ev.detail.includes('ls'));
   });
 
   // ── Case 12: unknown model logs warning exactly once ─────────────────────

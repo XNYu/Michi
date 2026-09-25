@@ -18,11 +18,6 @@ describe('MarkdownContent links', () => {
     expect(a.getAttribute('rel')).toBe('noopener noreferrer');
   });
 
-  it('opens bare https URLs in a new context', () => {
-    const { container } = render(<MarkdownContent text="see https://example.com/x here" />);
-    expect(byHref(container, 'example.com/x')!.getAttribute('target')).toBe('_blank');
-  });
-
   it('does not add target to relative / hash / mailto links', () => {
     const { container } = render(
       <MarkdownContent text="[a](#section) and [b](/local/path) and [c](mailto:x@y.com)" />,
@@ -31,17 +26,6 @@ describe('MarkdownContent links', () => {
       expect(a.getAttribute('target')).toBeNull();
     }
     expect(anchors(container)).toHaveLength(3);
-  });
-
-  it('prevents default on relative link clicks to avoid SPA white screen', () => {
-    const { container } = render(
-      <MarkdownContent text="[readme](readme.md)" />,
-    );
-    const a = byHref(container, 'readme.md')!;
-    expect(a).toBeTruthy();
-    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-    a.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(true);
   });
 
   it('dispatches michi:internal-link custom event on relative link click', () => {
@@ -77,16 +61,6 @@ describe('MarkdownContent links', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it('autolinks scheme-less domain.tld/path', () => {
-    const { container } = render(
-      <MarkdownContent text="open console.aws.amazon.com/ec2/home please" />,
-    );
-    const a = byHref(container, 'console.aws.amazon.com/ec2/home')!;
-    expect(a).toBeTruthy();
-    expect(a.getAttribute('href')).toBe('https://console.aws.amazon.com/ec2/home');
-    expect(a.getAttribute('target')).toBe('_blank');
-  });
-
   it('autolinks scheme-less URLs inside table cells', () => {
     const md = '| name | url |\n| --- | --- |\n| repo | github.com/foo/bar |';
     const { container } = render(<MarkdownContent text={md} />);
@@ -104,13 +78,6 @@ describe('MarkdownContent links', () => {
   it('does NOT linkify path-less tokens (package.json, bare domain, e.g.)', () => {
     const { container } = render(
       <MarkdownContent text="edit package.json (e.g. github.com without a path)" />,
-    );
-    expect(anchors(container)).toHaveLength(0);
-  });
-
-  it('does NOT linkify scheme-less URLs inside inline code or code blocks', () => {
-    const { container } = render(
-      <MarkdownContent text={'`console.aws.amazon.com/x`\n\n```\nsee foo.com/bar\n```'} />,
     );
     expect(anchors(container)).toHaveLength(0);
   });

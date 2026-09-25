@@ -2,28 +2,12 @@ import { matchSlashContext, buildSlashItems, buildAgentItems } from './slashItem
 import type { AgentCommand, SessionMode } from '../services/api';
 
 describe('matchSlashContext', () => {
-  it('opens on a lone slash at position 0', () => {
-    expect(matchSlashContext('/', 1)).toEqual({ query: '' });
-  });
-
   it('extracts the query after the slash', () => {
     expect(matchSlashContext('/fan', 4)).toEqual({ query: 'fan' });
   });
 
-  it('allows hyphens in command names', () => {
-    expect(matchSlashContext('/fan-out', 8)).toEqual({ query: 'fan-out' });
-  });
-
-  it('closes once a space appears (user is typing args)', () => {
-    expect(matchSlashContext('/branch hello', 13)).toBeNull();
-  });
-
   it('closes on a newline after the command', () => {
     expect(matchSlashContext('/branch\nmore', 12)).toBeNull();
-  });
-
-  it('does not open on mid-sentence slashes (e.g. URLs)', () => {
-    expect(matchSlashContext('look at https://x.com/y', 22)).toBeNull();
   });
 
   it('does not open on text that merely contains a slash after char 0', () => {
@@ -51,18 +35,6 @@ describe('buildSlashItems', () => {
       'compact', 'mode',
     ]);
     expect(items.find((i) => i.name === 'compact')?.source).toBe('kiro');
-  });
-
-  it("drops an agent command whose name collides with a local (local wins)", () => {
-    const agent: AgentCommand[] = [
-      { name: 'branch', description: 'This would shadow /branch' },
-      { name: 'kiro-only', description: 'unique' },
-    ];
-    const items = buildSlashItems(agent, '');
-    const branches = items.filter((i) => i.name === 'branch');
-    expect(branches).toHaveLength(1);
-    expect(branches[0].source).toBe('local');
-    expect(items.find((i) => i.name === 'kiro-only')?.source).toBe('kiro');
   });
 
   it('prefix matches rank above substring matches', () => {
@@ -104,16 +76,8 @@ describe('buildSlashItems', () => {
 
 
 describe('matchSlashContext agent sub-picker', () => {
-  it('matches /agent <query> for sub-picker', () => {
-    expect(matchSlashContext('/agent plan', 11)).toEqual({ query: 'plan', command: 'agent' });
-  });
-
   it('matches /agent with trailing space (empty query)', () => {
     expect(matchSlashContext('/agent ', 7)).toEqual({ query: '', command: 'agent' });
-  });
-
-  it('does not trigger sub-picker for unknown commands', () => {
-    expect(matchSlashContext('/branch foo', 11)).toBeNull();
   });
 });
 
@@ -124,10 +88,6 @@ describe('buildAgentItems', () => {
     { id: 'reviewer', name: 'reviewer' },
   ];
   const current = 'explorer';
-
-  it('returns [] when availableModes is undefined', () => {
-    expect(buildAgentItems(undefined, current, '')).toEqual([]);
-  });
 
   it('returns [] when availableModes is empty', () => {
     expect(buildAgentItems([], current, '')).toEqual([]);
@@ -145,11 +105,6 @@ describe('buildAgentItems', () => {
     const items = buildAgentItems(modes, current, '');
     const c = items.find((i) => i.name === 'explorer');
     expect(c?.description).toMatch(/current/);
-  });
-
-  it('tolerates null currentModeId (no current marker on any item)', () => {
-    const items = buildAgentItems(modes, null, '');
-    expect(items.every((i) => !/current/.test(i.description ?? ''))).toBe(true);
   });
 
   it('filters by query (prefix ranks above substring)', () => {

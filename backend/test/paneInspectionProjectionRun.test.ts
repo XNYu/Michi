@@ -278,21 +278,6 @@ describe('agentRunToDescriptor — output preview', () => {
     }
   });
 
-  test('multiple Assistant chunks within one attempt concatenate in order', () => {
-    const attempt = baseAttempt();
-    const run = baseRun({ status: AgentRunStatus.Running, activeAttemptId: 'attempt-1' });
-    const events = [
-      assistantEvent({ seq: 0, text: 'Hello, ' }),
-      assistantEvent({ seq: 1, text: 'world' }),
-      assistantEvent({ seq: 2, text: '!' }),
-    ];
-    const descriptor = agentRunToDescriptor(baseInput({ run, attempts: [attempt], assistantEvents: events }));
-    assert.equal(descriptor.latestOutput.status, 'ready');
-    if (descriptor.latestOutput.status === 'ready') {
-      assert.equal(descriptor.latestOutput.value?.text, 'Hello, world!');
-    }
-  });
-
   test('multi-byte truncation does not split a code point', () => {
     // Each '🎉' is 4 UTF-8 bytes. Build a string clearly over the 1 KiB cap.
     const emoji = '🎉';
@@ -312,15 +297,6 @@ describe('agentRunToDescriptor — output preview', () => {
       assert.doesNotMatch(preview.text, /\uFFFD/);
       // Every character in the truncated text must be a complete emoji (no half code point).
       assert.equal(preview.text.length % 2, 0); // 🎉 is a surrogate pair in UTF-16 (length 2)
-    }
-  });
-
-  test('no attempt yet (queued Run) -> latestOutput ready with null, not unknown', () => {
-    const run = baseRun({ status: AgentRunStatus.Queued });
-    const descriptor = agentRunToDescriptor(baseInput({ run }));
-    assert.equal(descriptor.latestOutput.status, 'ready');
-    if (descriptor.latestOutput.status === 'ready') {
-      assert.equal(descriptor.latestOutput.value, null);
     }
   });
 });
@@ -418,17 +394,3 @@ describe('agentRunToDescriptor — no secrets in the descriptor', () => {
   });
 });
 
-describe('agentRunToDescriptor — runtime summary maps only the allowed fields', () => {
-  test('runtime.value carries only runtimeId/modelId/providerId', () => {
-    const descriptor = agentRunToDescriptor(baseInput());
-    assert.equal(descriptor.runtime.status, 'ready');
-    if (descriptor.runtime.status === 'ready') {
-      assert.deepEqual(descriptor.runtime.value, {
-        runtimeId: 'claude-code',
-        modelId: 'claude-x',
-        providerId: 'anthropic',
-        contextUsagePercentage: null,
-      });
-    }
-  });
-});

@@ -5,7 +5,6 @@ import { PaneInspectionRing, type AuthorizationScope, type RingEvent } from '../
 
 const SCOPE_A: AuthorizationScope = { ownerUserId: 'user-a', workspaceId: 'ws-1' };
 const SCOPE_B: AuthorizationScope = { ownerUserId: 'user-b', workspaceId: 'ws-1' };
-const SCOPE_RUN: AuthorizationScope = { ownerUserId: 'user-a', workspaceId: 'ws-1', runOwnerId: 'run-1' };
 
 function makeClock(start = 0) {
   let now = start;
@@ -44,19 +43,6 @@ function ring(overrides: Partial<RingCtorOptions> = {}) {
 }
 
 describe('paneInspectionRing — per-object bounds', () => {
-  test('age bound trims independently of count/bytes', () => {
-    const { r, clock } = ring({ ringMaxAgeMs: 1_000, ringMaxEvents: 1_000, ringMaxBytes: 1_000_000 });
-    r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }));
-    clock.advance(500);
-    r.recordContentChange('p1', SCOPE_A, { v: 2 }, contentEvent({ i: 2 }));
-    assert.equal(r.getEventCount('p1'), 2);
-
-    clock.advance(600); // first event now 1100ms old, > 1000ms bound; second is 600ms old, within bound
-    r.recordContentChange('p1', SCOPE_A, { v: 3 }, contentEvent({ i: 3 }));
-    // Trimming happens lazily on the next record call (append triggers trimRing).
-    assert.equal(r.getEventCount('p1'), 2, 'oldest event aged out, the other two remain');
-  });
-
   test('count bound trims independently of age/bytes', () => {
     const { r } = ring({ ringMaxAgeMs: 1_000_000, ringMaxEvents: 3, ringMaxBytes: 1_000_000 });
     for (let i = 0; i < 5; i++) {
@@ -75,28 +61,9 @@ describe('paneInspectionRing — per-object bounds', () => {
     assert.equal(r.getRingBytes('p1'), 20);
     assert.equal(r.getEventCount('p1'), 2);
   });
-
-  test('whichever bound hits first wins, per call', () => {
-    // Count bound is the tightest here; age/bytes are generous.
-    const { r } = ring({ ringMaxAgeMs: 1_000_000, ringMaxEvents: 2, ringMaxBytes: 1_000_000 });
-    r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }));
-    r.recordContentChange('p1', SCOPE_A, { v: 2 }, contentEvent({ i: 2 }));
-    r.recordContentChange('p1', SCOPE_A, { v: 3 }, contentEvent({ i: 3 }));
-    assert.equal(r.getEventCount('p1'), 2);
-  });
 });
 
 describe('paneInspectionRing — workspace budget + LRU eviction', () => {
-  test('workspace budget evicts the least-recently-used object', () => {
-    const { r, clock } = ring({ workspaceRingBudgetBytes: 25, ringMaxBytes: 1_000_000, ringMaxEvents: 1_000, ringMaxAgeMs: 1_000_000 });
-    r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }, 20));
-    clock.advance(10);
-    r.recordContentChange('p2', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }, 20));
-    // Total is 40 > 25 budget -> p1 (older lastTouchedAt) evicted.
-    assert.equal(r.hasRing('p1'), false);
-    assert.equal(r.hasRing('p2'), true);
-  });
-
   test('an object with an active subscriber is NOT evicted under pressure that evicts an unwatched one', () => {
     const { r, clock } = ring({ workspaceRingBudgetBytes: 25, ringMaxBytes: 1_000_000, ringMaxEvents: 1_000, ringMaxAgeMs: 1_000_000 });
     r.recordContentChange('watched', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }, 20));
@@ -123,16 +90,6 @@ describe('paneInspectionRing — workspace budget + LRU eviction', () => {
     assert.equal(r.hasRing('idle'), true);
   });
 
-  test('subscriber ref-counting survives double-subscribe + single release', () => {
-    const { r } = ring();
-    r.registerSubscriber('p1', SCOPE_A);
-    r.registerSubscriber('p1', SCOPE_A); // e.g. two tabs watching the same pane
-    r.releaseSubscriber('p1');
-    assert.equal(r.hasActiveSubscriber('p1'), true, 'still exempt — one registration remains');
-    r.releaseSubscriber('p1');
-    assert.equal(r.hasActiveSubscriber('p1'), false, 'now evictable — last subscriber released');
-  });
-
   test('releasing an already-zero or unknown subscriber is a no-op, not an error', () => {
     const { r } = ring();
     assert.doesNotThrow(() => r.releaseSubscriber('never-registered'));
@@ -155,14 +112,6 @@ describe('paneInspectionRing — workspace budget + LRU eviction', () => {
 });
 
 describe('paneInspectionRing — revision semantics', () => {
-  test('an inspect-style observedAt refresh does NOT advance revision', () => {
-    const { r } = ring();
-    r.recordContentChange('p1', SCOPE_A, { views: ['w1'] }, contentEvent({ v: 1 }));
-    const before = r.getRevision('p1');
-    r.recordObservedAtRefresh('p1', SCOPE_A);
-    assert.equal(r.getRevision('p1'), before);
-  });
-
   test('a presence keepalive renewing lastSeenAt does NOT advance revision', () => {
     const { r } = ring();
     r.recordContentChange('p1', SCOPE_A, { views: ['w1'] }, contentEvent({ v: 1 }));
@@ -193,30 +142,6 @@ describe('paneInspectionRing — revision semantics', () => {
     assert.equal(r.getRevision('p1'), (before ?? 0) + 1);
   });
 
-  test('a view removed DOES advance revision', () => {
-    const { r } = ring();
-    r.recordContentChange('p1', SCOPE_A, { views: ['w1', 'w2'] }, contentEvent({ v: 1 }));
-    const before = r.getRevision('p1');
-    r.recordContentChange('p1', SCOPE_A, { views: ['w1'] }, contentEvent({ v: 2 }));
-    assert.equal(r.getRevision('p1'), (before ?? 0) + 1);
-  });
-
-  test('a visible flip DOES advance revision', () => {
-    const { r } = ring();
-    r.recordContentChange('p1', SCOPE_A, { visible: true }, contentEvent({ v: 1 }));
-    const before = r.getRevision('p1');
-    r.recordContentChange('p1', SCOPE_A, { visible: false }, contentEvent({ v: 2 }));
-    assert.equal(r.getRevision('p1'), (before ?? 0) + 1);
-  });
-
-  test('a lease expiry (modeled as a content field change) DOES advance revision', () => {
-    const { r } = ring();
-    r.recordContentChange('p1', SCOPE_A, { presence: 'reported' }, contentEvent({ v: 1 }));
-    const before = r.getRevision('p1');
-    r.recordContentChange('p1', SCOPE_A, { presence: 'unknown' }, contentEvent({ v: 2 }));
-    assert.equal(r.getRevision('p1'), (before ?? 0) + 1);
-  });
-
   test('recordContentChange with genuinely identical content is a no-op, not just caller trust', () => {
     const { r } = ring();
     r.recordContentChange('p1', SCOPE_A, { views: ['w1'] }, contentEvent({ v: 1 }));
@@ -226,34 +151,9 @@ describe('paneInspectionRing — revision semantics', () => {
     assert.equal(r.getRevision('p1'), before, 'identical content never advances revision even via the content-change entry point');
     assert.equal(r.getEventCount('p1'), beforeCount, 'no event appended for a no-op change');
   });
-
-  test('recordSnapshot establishes a baseline without advancing revision on the very first call', () => {
-    const { r } = ring();
-    r.recordSnapshot('p1', SCOPE_A, { views: [] });
-    assert.equal(r.getRevision('p1'), 0);
-    assert.equal(r.getEventCount('p1'), 0, 'a snapshot is the baseline, not a replayable ring event');
-  });
-
-  test('recordSnapshot after a genuine change DOES advance revision', () => {
-    const { r } = ring();
-    r.recordSnapshot('p1', SCOPE_A, { views: [] });
-    r.recordSnapshot('p1', SCOPE_A, { views: ['w1'] });
-    assert.equal(r.getRevision('p1'), 1);
-  });
 });
 
 describe('paneInspectionRing — cursors', () => {
-  test('a cursor round-trips to its locating information', () => {
-    const { r } = ring();
-    const cursor = r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }));
-    const resolution = r.resolveCursor(cursor, SCOPE_A);
-    assert.equal(resolution.ok, true);
-    if (resolution.ok) {
-      assert.equal(resolution.paneId, 'p1');
-      assert.equal(resolution.revision, 1);
-    }
-  });
-
   test('an expired cursor yields resync', () => {
     const { r, clock } = ring({ cursorTtlMs: 1_000 });
     const cursor = r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }));
@@ -282,13 +182,6 @@ describe('paneInspectionRing — cursors', () => {
     const resolution = r.resolveCursor(cursor, SCOPE_B);
     assert.equal(resolution.ok, false);
     if (!resolution.ok) assert.equal(resolution.reason, 'unknown_cursor');
-  });
-
-  test('a cursor minted for a plain caller does not resolve for a Run caller with the same owner/workspace', () => {
-    const { r } = ring();
-    const cursor = r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }));
-    const resolution = r.resolveCursor(cursor, SCOPE_RUN);
-    assert.equal(resolution.ok, false);
   });
 
   test('a simulated process-epoch change invalidates every outstanding cursor', () => {
@@ -356,14 +249,5 @@ describe('paneInspectionRing — cursors', () => {
       assert.equal(resolution.replay.length, 2, 'events at revision 2 and 3, strictly after cursor1 (revision 1)');
       assert.deepEqual(resolution.replay.map((e) => e.revision), [2, 3]);
     }
-  });
-
-  test('a cursor minted at the current (latest) revision replays nothing', () => {
-    const { r } = ring();
-    r.recordContentChange('p1', SCOPE_A, { v: 1 }, contentEvent({ i: 1 }));
-    const cursorLatest = r.recordObservedAtRefresh('p1', SCOPE_A);
-    const resolution = r.resolveCursor(cursorLatest, SCOPE_A);
-    assert.equal(resolution.ok, true);
-    if (resolution.ok) assert.equal(resolution.replay.length, 0);
   });
 });

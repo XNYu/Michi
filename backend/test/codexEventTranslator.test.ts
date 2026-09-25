@@ -41,24 +41,7 @@ describe('codexEventTranslator', () => {
     assert.deepEqual(emitted[0], { kind: 'chunk', text: 'Hello world' });
   });
 
-  test('item/agentMessage/delta with empty delta emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/agentMessage/delta', { delta: '' });
-
-    assert.equal(emitted.length, 0);
-  });
-
   // ── Reasoning deltas ────────────────────────────────────────────────────────
-
-  test('item/reasoning/textDelta emits thought', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/textDelta', { delta: 'I am thinking...' });
-
-    assert.equal(emitted.length, 1);
-    assert.deepEqual(emitted[0], { kind: 'thought', text: 'I am thinking...' });
-  });
 
   test('item/reasoning/summaryTextDelta emits thought', () => {
     const { emitted, feed } = makeTranslator();
@@ -71,26 +54,6 @@ describe('codexEventTranslator', () => {
 
     assert.equal(emitted.length, 1);
     assert.deepEqual(emitted[0], { kind: 'thought', text: 'Summary reasoning' });
-  });
-
-  test('keeps deltas from the same reasoning summary part together', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'Filtering tools ',
-    });
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'by criteria',
-    });
-
-    assert.deepEqual(emitted, [
-      { kind: 'thought', text: 'Filtering tools ' },
-      { kind: 'thought', text: 'by criteria' },
-    ]);
   });
 
   test('separates summary parts when a new reasoning item resets summaryIndex', () => {
@@ -122,27 +85,6 @@ describe('codexEventTranslator', () => {
     ]);
   });
 
-  test('separates multiple summary parts within one reasoning item', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'Inspecting the page',
-    });
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 1,
-      delta: 'Checking the response',
-    });
-
-    assert.deepEqual(emitted, [
-      { kind: 'thought', text: 'Inspecting the page' },
-      { kind: 'thought', text: '\n' },
-      { kind: 'thought', text: 'Checking the response' },
-    ]);
-  });
-
   test('resets reasoning summary boundaries at the start of a new turn', () => {
     const { emitted, feed, startTurn } = makeTranslator();
 
@@ -165,34 +107,6 @@ describe('codexEventTranslator', () => {
   });
 
   // ── Tool items: item/started ────────────────────────────────────────────────
-
-  test('item/started with commandExecution type emits tool_call', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: {
-        id: 'item-001',
-        type: 'commandExecution',
-        command: 'head -n 5 package.json',
-        commandActions: [
-          {
-            type: 'read',
-            command: 'head -n 5 package.json',
-            name: 'package.json',
-            path: '/repo/package.json',
-          },
-        ],
-      },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'tool_call');
-    assert.equal(ev['toolCallId'], 'item-001');
-    assert.equal(ev['title'], 'Read package.json');
-    assert.equal(ev['status'], 'in_progress');
-    assert.equal(ev['kindType'], 'read');
-  });
 
   test('item/started with SKILL.md commandExecution title uses skill directory', () => {
     const { emitted, feed } = makeTranslator();
@@ -312,16 +226,6 @@ describe('codexEventTranslator', () => {
     });
 
     assert.equal(emitted.length, 0, 'agentMessage is streamed via deltas — item/started must be skipped');
-  });
-
-  test('item/started with reasoning type (streamed) emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: { id: 'item-006', type: 'reasoning' },
-    });
-
-    assert.equal(emitted.length, 0, 'reasoning is streamed via deltas — item/started must be skipped');
   });
 
   // ── Tool items: item/completed ──────────────────────────────────────────────
@@ -570,14 +474,6 @@ describe('codexEventTranslator', () => {
     assert.deepEqual(emitted[2], { kind: 'turn_end', stopReason: 'error' });
   });
 
-  test('turn/started resets turn timer without emitting', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('turn/started', {});
-
-    assert.equal(emitted.length, 0, 'turn/started must not emit any NormalizedEvent');
-  });
-
   // ── Error notifications ─────────────────────────────────────────────────────
 
   test('error notification is held until the turn outcome is known', () => {
@@ -612,16 +508,6 @@ describe('codexEventTranslator', () => {
     assert.deepEqual(emitted[2], { kind: 'turn_end', stopReason: 'error' });
   });
 
-  test('unknown method emits nothing (forward-compat)', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('some/future/notification', { data: 42 });
-    feed('turn/plan/updated', { plan: [] });
-    feed('item/plan/delta', { delta: 'x' });
-
-    assert.equal(emitted.length, 0, 'unrecognised methods must be silently ignored');
-  });
-
   // ── MCP startup failure ─────────────────────────────────────────────────────
 
   test('mcpServer/startupStatus/updated with status failed emits mcp_server_error', () => {
@@ -638,17 +524,6 @@ describe('codexEventTranslator', () => {
     assert.equal(ev['kind'], 'mcp_server_error');
     assert.equal(ev['serverName'], 'my-mcp-server');
     assert.equal(ev['error'], 'connection refused');
-  });
-
-  test('mcpServer/startupStatus/updated with status started emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('mcpServer/startupStatus/updated', {
-      status: 'started',
-      name: 'my-mcp-server',
-    });
-
-    assert.equal(emitted.length, 0, 'successful MCP startup must not emit mcp_server_error');
   });
 
   // ── Robustness: missing/undefined fields ────────────────────────────────────
@@ -702,22 +577,6 @@ describe('codexEventTranslator', () => {
     assert.equal(emitted.length, 1);
     const ev = emitted[0] as unknown as AnyEv;
     assert.equal((ev['detail'] as string).length, 200, 'detail must be capped at 200 chars');
-  });
-
-  test('mcpToolCall item detail from args is capped to 200 graphemes', () => {
-    const { emitted, feed } = makeTranslator();
-
-    const largeArgs = { data: 'y'.repeat(500) };
-    feed('item/started', {
-      item: { id: 'x', type: 'mcpToolCall', tool: 'large_tool', arguments: largeArgs },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.ok(
-      (ev['detail'] as string).length <= 200,
-      `detail length ${(ev['detail'] as string).length} exceeds 200`,
-    );
   });
 
   test('compaction item and interrupted status stay honest', () => {

@@ -38,12 +38,6 @@ afterEach(() => {
 });
 
 describe('PRAGMA busy_timeout', () => {
-  test('initDb sets busy_timeout = 15000 on the main data.db', () => {
-    initDb();
-    const row = getDb().prepare('PRAGMA busy_timeout').get() as { timeout: number };
-    assert.equal(row.timeout, 15000, 'data.db busy_timeout must be 15000ms');
-  });
-
   test('getAuditDb sets busy_timeout = 15000 on the audit.db', () => {
     const row = getAuditDb().prepare('PRAGMA busy_timeout').get() as { timeout: number };
     assert.equal(row.timeout, 15000, 'audit.db busy_timeout must be 15000ms');

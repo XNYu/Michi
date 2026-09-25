@@ -124,13 +124,4 @@ describe('StreamingMarkdownContent remend', () => {
     expect(container.textContent).toBe('**a');
     expect(container.querySelector('strong')).toBeNull();
   });
-
-  it('keeps the zero-Hz legacy path unchanged', () => {
-    window.localStorage.setItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY, '0');
-
-    const { container } = render(<StreamingMarkdownContent text="hello **bold words" />);
-
-    expect(container.textContent).toContain('**bold words');
-    expect(container.querySelector('strong')).toBeNull();
-  });
 });

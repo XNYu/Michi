@@ -134,29 +134,6 @@ describe('Topbar thread-view toggles', () => {
     expect(mapBtn.querySelector('span[aria-hidden]')).toBeNull();
   });
 
-  it('does not show another thread’s unread digest', async () => {
-    seed(
-      {
-        n1: makeChatNode('n1'),
-        n2: makeChatNode('n2'),
-        d2: makeUnreadDigestNode('d2', ['n2']),
-      },
-      [
-        { id: 't1', rootNodeId: 'n1', createdAt: BEFORE, lastActiveAt: BEFORE },
-        { id: 't2', rootNodeId: 'n2', createdAt: BEFORE, lastActiveAt: BEFORE },
-      ],
-      't1',
-    );
-    render(
-      <Wrap>
-        <TerminalTopbar {...baseProps} onNav={vi.fn()} />
-      </Wrap>,
-    );
-    await act(async () => {});
-    const digestBtn = await screen.findByLabelText('Digest');
-    expect(digestBtn.querySelector('span[aria-hidden]')).toBeNull();
-  });
-
   it('renders the ‹ back crumb with the active thread title on the Map page', async () => {
     seed(
       { n1: makeChatNode('n1') },

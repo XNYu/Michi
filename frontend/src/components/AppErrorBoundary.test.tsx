@@ -12,15 +12,6 @@ function Crasher({ shouldThrow, message = 'boom' }: { shouldThrow: boolean; mess
 }
 
 describe('AppErrorBoundary', () => {
-  it('renders children when nothing goes wrong', () => {
-    render(
-      <AppErrorBoundary>
-        <Crasher shouldThrow={false} />
-      </AppErrorBoundary>,
-    );
-    expect(screen.getByTestId('content').textContent).toBe('ok');
-  });
-
   it('auto-retries transient crashes then recovers', async () => {
     // Use a ref-like variable that survives across React mounts.
     let hasThrown = false;

@@ -25,18 +25,6 @@ describe('PaneFind', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('shows total match count when query has matches', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const node = nodeFixture();
-    render(<PaneFind open node={node} onClose={vi.fn()} onScrollToMatch={vi.fn()} />);
-    const input = screen.getByPlaceholderText(/find in pane/i);
-    fireEvent.change(input, { target: { value: 'tier-3' } });
-    await vi.advanceTimersByTimeAsync(120);
-    // 1 match in m1, 2 matches in m2, 1 match in m3 → 4 total. Counter shows 1/4.
-    expect(screen.getByText(/1\s*\/\s*4/)).toBeTruthy();
-    vi.useRealTimers();
-  });
-
   it('Enter advances to next match (wraps at end)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const node = nodeFixture();

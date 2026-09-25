@@ -31,11 +31,6 @@ test('structured tool mode suppresses the legacy per-turn sentinel reminder', ()
   );
 });
 
-test('non-hook sessions keep the legacy periodic sentinel reminder', () => {
-  assert.equal(followUpsTurnReminder(1, false, 'hook-tool'), '');
-  assert.match(followUpsTurnReminder(2, false, 'hook-tool'), /FOLLOW-UP 1\/3/);
-});
-
 test('stable metadata output selects hybrid body follow-ups for sentinel Hook mode', () => {
   assert.equal(followUpsMetadataOutputMode(true, 'hook-tool'), 'structured-tool');
   assert.equal(

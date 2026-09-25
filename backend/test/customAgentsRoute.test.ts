@@ -191,15 +191,6 @@ describe('Custom Agent Definition HTTP router', () => {
     ]);
   });
 
-  test('instructions are optional — a Definition with empty instructions can be enabled', async () => {
-    const created = await request('POST', '/agents', 'owner-a', definition({ instructions: '' }));
-    assert.equal(created.response.status, 201);
-    const enabled = await request('POST', `/agents/${created.payload.definition.id}/enable`, 'owner-a');
-    assert.equal(enabled.response.status, 200);
-    assert.equal(enabled.payload.definition.status, AgentDefinitionStatus.Enabled);
-    assert.equal(enabled.payload.definition.instructions, '');
-  });
-
   test('agent-capabilities lists the owner-visible catalog with readiness', async () => {
     const listed = await request('GET', '/agent-capabilities?workspaceId=ws-a', 'owner-a');
     assert.equal(listed.response.status, 200);

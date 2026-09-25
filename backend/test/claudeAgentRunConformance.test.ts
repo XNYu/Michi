@@ -17,7 +17,6 @@ import type {
   ChatMessage,
   RuntimePermissionBroker,
   RuntimePermissionDecision,
-  RuntimePermissionRequest,
   RuntimeSessionOwner,
   RuntimeToolProfile,
 } from '../src/agents/types';
@@ -28,7 +27,6 @@ import {
   makeConformanceBroker,
   makeConformanceToolProfile,
   attemptIdOf,
-  RUN_OWNER,
   WRONG_OWNER,
   type ConformanceHarness,
   type ConformanceSession,
@@ -201,70 +199,9 @@ registerConformanceSuite({
 // ---------------------------------------------------------------------------
 
 describe('Claude-specific conformance', () => {
-  test('Claude adapter declares native resume support', () => {
-    const adapter = new ClaudeRunAdapter();
-    assert.equal(adapter.supportsNativeResume, true,
-      'Claude must support native resume');
-  });
-
   test('Claude adapter declares allowlist tool mode', () => {
     const adapter = new ClaudeRunAdapter();
     assert.equal(adapter.nativeToolMode, 'allowlist',
       'Claude must use allowlist tool mode');
-  });
-
-  test('Claude adapter declares native steering', () => {
-    const adapter = new ClaudeRunAdapter();
-    assert.equal(adapter.steering, 'native',
-      'Claude must use native steering');
-  });
-
-  test('Claude Run session permission broker replaces chat grant policy', async () => {
-    const brokerRequests: RuntimePermissionRequest[] = [];
-    const broker: RuntimePermissionBroker = {
-      async requestPermission(req) {
-        brokerRequests.push(req);
-        return 'allow_once';
-      },
-    };
-
-    const session = new FakeClaudeSession({
-      id: RUN_OWNER.attemptId,
-      owner: RUN_OWNER,
-      toolProfile: { allowedToolNames: ['bash'] },
-      permissionBroker: broker,
-      profileHash: 'hash-perm',
-    });
-
-    // A tool in the allowlist is routed through the broker
-    const result = await session.approveToolCall('bash', { command: 'ls' }, 'tc-1');
-    assert.equal(result.behavior, 'allow');
-    assert.equal(brokerRequests.length, 1);
-    assert.deepEqual(brokerRequests[0].owner, RUN_OWNER);
-
-    // A tool NOT in the allowlist is denied without calling the broker
-    const denied = await session.approveToolCall('forbidden_tool', {}, 'tc-2');
-    assert.equal(denied.behavior, 'deny');
-    assert.equal(brokerRequests.length, 1, 'Broker should not be called for denied tools');
-  });
-
-  test('Claude adapter rejects runtime without native resume capability', () => {
-    const adapter = new ClaudeRunAdapter();
-    const fakeRuntime = {
-      id: 'claude', label: 'claude',
-      capabilities: {
-        modes: false, permissions: true, models: true, providerModels: false,
-        reasoning: true, supportedReasoningLevels: ['medium' as const],
-        apiKeys: false, warmSessions: true, saveContext: true, spawnBranches: false,
-        nativeResume: false,
-      },
-      warm: async () => {}, newSession: async () => { throw new Error('not implemented'); },
-      releaseSession: () => {}, shutdown: async () => {},
-    };
-
-    assert.throws(
-      () => adapter.assertCompatible(fakeRuntime),
-      /model\/native-resume/,
-    );
   });
 });

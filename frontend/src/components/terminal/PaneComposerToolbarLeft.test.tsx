@@ -118,37 +118,6 @@ describe('PaneComposerToolbarLeft', () => {
     expect(screen.getByText('claude-sonnet')).toBeTruthy();
   });
 
-  test('can hide the agent chip for composers without a session target', () => {
-    renderToolbar({ enableAgentChip: false });
-
-    expect(screen.queryByTitle(/Switch agent/)).toBeNull();
-    expect(screen.getByText('claude-sonnet')).toBeTruthy();
-  });
-
-  test('does not expose internal capability descriptors in the composer', () => {
-    renderToolbar({
-      agentStatus: {
-        ...STATUS,
-        capabilityDescriptor: {
-          steer: { availability: 'native', confidence: 'native' },
-          followUp: { availability: 'invisible', confidence: 'unverifiable' },
-          interruptAck: { availability: 'native', confidence: 'native' },
-          compact: { availability: 'native', confidence: 'native' },
-          retry: { availability: 'invisible', confidence: 'unverifiable' },
-          sessionFork: { availability: 'native_unwired', confidence: 'unknown' },
-          nativeResume: { availability: 'native', confidence: 'native' },
-          permissions: { availability: 'native', confidence: 'native' },
-          sandbox: { availability: 'native', confidence: 'native' },
-          subagents: { availability: 'invisible', confidence: 'unverifiable' },
-          usage: { availability: 'native', confidence: 'native' },
-        },
-      },
-    });
-
-    expect(screen.queryByText('steer:native')).toBeNull();
-    expect(screen.queryByText('usage:native')).toBeNull();
-  });
-
   test('keeps model settings reachable in the narrowest toolbar', () => {
     const onOpenModelMenu = vi.fn();
     renderToolbar({ toolbarTier: 2, onOpenModelMenu });

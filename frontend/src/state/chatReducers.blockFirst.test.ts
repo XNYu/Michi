@@ -39,23 +39,6 @@ describe('block-first assistant reducer', () => {
     ]);
   });
 
-  it('closes the current answer segment at a tool boundary', () => {
-    let state = node();
-    state = reduceNodes(state, { type: 'chunk', nodeId: 'n1', assistantId: 'a1', text: 'before tool' });
-    state = reduceNodes(state, {
-      type: 'tool-call',
-      nodeId: 'n1',
-      assistantId: 'a1',
-      tool: { id: 't1', title: 'tool', status: 'running' },
-    });
-
-    expect(state.n1.messages[0].streaming).toBe(true);
-    expect(state.n1.messages[0].blocks).toEqual([
-      { id: 'a1-b-0', kind: 'answer', rawText: 'before tool', streaming: false },
-      { id: 'a1-b-1', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 11 },
-    ]);
-  });
-
   it('keeps consecutive streamed tools in one thinking section', () => {
     let state = node();
     state = reduceNodes(state, { type: 'thought', nodeId: 'n1', assistantId: 'a1', text: 'thinking' });

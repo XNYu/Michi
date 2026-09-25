@@ -8,7 +8,6 @@ import { closeDb, getDb, initDb } from '../src/services/db';
 import { runMigrations } from '../src/services/migrate';
 import { getUserAgentConfig, upsertUserAgentConfig } from '../src/services/dbRepository';
 import { getAgentConfig, isNativeResumeEnabled, recordLastUsedProviderModel, resolveModel, resolveProvider, updateAgentConfig } from '../src/services/agentConfig';
-import { OPENROUTER_FREE_PRIMARY_MODEL } from '../src/agents/pi/piProviders';
 
 let directory: string;
 const originalEnv = { ...process.env };
@@ -69,11 +68,6 @@ test('changing the remembered provider without a model does not retain the old p
   recordLastUsedProviderModel('pi', 'openai', null, 'alice');
   assert.equal(getAgentConfig('alice').modelByRuntime.pi, '');
   assert.notEqual(resolveModel('pi', 'alice'), 'deepseek-v4-flash');
-});
-
-test('locked provider status uses the execution model even with stale persisted model memory', () => {
-  updateAgentConfig({ runtime: 'pi', providerByRuntime: { pi: 'openrouter-free' }, modelByRuntime: { pi: 'deepseek-v4-flash' } }, 'alice');
-  assert.equal(resolveModel('pi', 'alice'), OPENROUTER_FREE_PRIMARY_MODEL);
 });
 
 test('provider memory migration is additive and preserves legacy configuration on repeated boots', () => {

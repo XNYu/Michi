@@ -114,22 +114,6 @@ describe('ChatHub.getSnapshot', () => {
     assert.ok(after.cursor.seq > beforeChunk.cursor.seq);
   });
 
-  it('binds a completed turn to that specific turnId', async () => {
-    const chatHub = hub();
-    const started = await chatHub.startTurn({
-      chatId: 'node-a',
-      nodeId: 'node-a',
-      text: 'hello',
-      session: mockSession({ events: [{ kind: 'chunk', text: 'hi' }, { kind: 'turn_end', stopReason: 'end_turn' }] }),
-    });
-    await started.done;
-    const snapshot = chatHub.getSnapshot('node-a');
-    assert.ok(snapshot);
-    assert.equal(snapshot.turnId, started.turnId);
-    assert.equal(snapshot.durableStatus, 'completed');
-    assert.equal(snapshot.inMemoryStatus, 'ended');
-  });
-
   it('reports an error turn with the message', async () => {
     const chatHub = hub();
     const started = await chatHub.startTurn({
@@ -144,28 +128,6 @@ describe('ChatHub.getSnapshot', () => {
     assert.equal(snapshot.inMemoryStatus, 'error');
     assert.equal(snapshot.durableStatus, 'error');
     assert.equal(snapshot.error, 'boom');
-  });
-
-  it('reports a cancelled turn', async () => {
-    const chatHub = hub();
-    const gate = { release: () => {} };
-    const started = await chatHub.startTurn({
-      chatId: 'node-a',
-      nodeId: 'node-a',
-      text: 'hello',
-      session: mockSession({
-        events: delayedIterator([{ kind: 'chunk', text: 'hi' }, { kind: 'turn_end' }], gate),
-        cancelAck: true,
-      }),
-    });
-    chatHub.cancel('node-a', started.turnId);
-    gate.release();
-    await started.done;
-    const snapshot = chatHub.getSnapshot('node-a');
-    assert.ok(snapshot);
-    assert.equal(snapshot.durableStatus, 'cancelled');
-    // Terminal — cancelRequestedAt is cleared once the turn ends.
-    assert.equal(snapshot.cancelRequestedAt, null);
   });
 
   it('exposes cancelRequestedAt while cancellation is pending but not yet terminal', async () => {

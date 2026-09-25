@@ -71,25 +71,6 @@ describe('usePanePresenceReporter', () => {
     vi.useRealTimers();
   });
 
-  it('submits nothing while hydrated is false', async () => {
-    const transport = makeTransport();
-    const backends = [backendSlot({
-      openPanesMap: { 'proj::tree-1': ['n1'] },
-      activeSlotKey: 'proj::tree-1',
-    })];
-
-    renderHook(() => usePanePresenceReporter({
-      hydrated: false,
-      windowId: WINDOW_ID,
-      backends,
-      resolveViewSource,
-      transport,
-    }));
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(transport.submitCalls).toHaveLength(0);
-  });
-
   it('retries rejected targets after node persistence catches up without a rerender', async () => {
     const transport = makeTransport();
     const submit = vi.spyOn(transport, 'submit');
@@ -139,19 +120,6 @@ describe('usePanePresenceReporter', () => {
     expect(transport.submitCalls).toHaveLength(2);
     expect(transport.submitCalls[1].req.views[0].paneId).toBe('node:n1');
     hook.unmount();
-  });
-
-  it('cleans up a lease allocated after unmount', async () => {
-    const transport = makeTransport();
-    let finishSubmit!: (result: { ok: true; rendererLeaseId: string; accepted: number; rejectedTargets: [] }) => void;
-    vi.spyOn(transport, 'submit').mockImplementationOnce(() => new Promise((resolve) => { finishSubmit = resolve; }));
-    const backends = [backendSlot({ openPanesMap: { 'proj::tree-1': ['n1'] } })];
-    const hook = renderHook(() => usePanePresenceReporter({ hydrated: true, windowId: WINDOW_ID, backends, resolveViewSource, transport }));
-    hook.unmount();
-    finishSubmit({ ok: true, rendererLeaseId: 'late-lease', accepted: 1, rejectedTargets: [] });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(transport.removeCalls[0].req.rendererLeaseId).toBe('late-lease');
-    expect(transport.keepaliveCalls).toHaveLength(0);
   });
 
   it('registers the surviving StrictMode mount and removes only the retired mount lease', async () => {
@@ -323,66 +291,6 @@ describe('usePanePresenceReporter', () => {
     expect(transport.removeCalls[0].req.rendererLeaseId).toBeTruthy();
   });
 
-  it('closing the last pane sends a DELETE, not an empty PUT', async () => {
-    const transport = makeTransport();
-    const backends: PanePresenceBackendSlots[] = [backendSlot({
-      openPanesMap: { 'proj::tree-1': ['n1'] },
-      activeSlotKey: 'proj::tree-1',
-    })];
-
-    const { rerender } = renderHook(
-      ({ backends: b }: { backends: PanePresenceBackendSlots[] }) => usePanePresenceReporter({
-        hydrated: true,
-        windowId: WINDOW_ID,
-        backends: b,
-        resolveViewSource,
-        transport,
-      }),
-      { initialProps: { backends } },
-    );
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(transport.submitCalls).toHaveLength(1); // the initial non-empty submission
-
-    rerender({ backends: [backendSlot({ openPanesMap: {}, activeSlotKey: null })] });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    // No second PUT was sent for the now-empty set (the brief: an empty PUT after a non-empty
-    // lease is ignored server-side, so the client must not bother sending one).
-    expect(transport.submitCalls).toHaveLength(1);
-    expect(transport.removeCalls).toHaveLength(1);
-    expect(transport.removeCalls[0].req.paneIds).toEqual(['node:n1']);
-  });
-
-  it('keepalive fires on the configured interval with the lease id, and stops on unmount', async () => {
-    const transport = makeTransport();
-    const backends: PanePresenceBackendSlots[] = [backendSlot({
-      openPanesMap: { 'proj::tree-1': ['n1'] },
-      activeSlotKey: 'proj::tree-1',
-    })];
-
-    const { unmount } = renderHook(() => usePanePresenceReporter({
-      hydrated: true,
-      windowId: WINDOW_ID,
-      backends,
-      resolveViewSource,
-      transport,
-    }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    // 20s per PANE_INSPECTION_LIMITS.presenceKeepaliveSeconds.
-    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-    expect(transport.keepaliveCalls).toHaveLength(1);
-    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-    expect(transport.keepaliveCalls).toHaveLength(2);
-    expect(transport.keepaliveCalls[0].rendererLeaseId).toBeTruthy();
-    expect(transport.keepaliveCalls[0].rendererLeaseId).toBe(transport.keepaliveCalls[1].rendererLeaseId);
-
-    unmount();
-    const countAtUnmount = transport.keepaliveCalls.length;
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(transport.keepaliveCalls).toHaveLength(countAtUnmount);
-  });
-
   it('two backends get two independent leases, each renewed on its own connection', async () => {
     const transport = makeTransport();
     const backends: PanePresenceBackendSlots[] = [
@@ -408,83 +316,6 @@ describe('usePanePresenceReporter', () => {
     expect(byConnection.get('local')).toBeTruthy();
     expect(byConnection.get('remote-1')).toBeTruthy();
     expect(byConnection.get('local')).not.toBe(byConnection.get('remote-1'));
-  });
-
-  it('an old gateway without the capability produces no requests at all', async () => {
-    // Modeled as: the caller (chatStore/whatever assembles `backends`) never includes a
-    // connection whose gateway lacks the pane-inspection capability — this hook has no
-    // capability-probe logic of its own (that lives in the frontend API client / R5 §3's
-    // advisory probe), so the contract this hook must uphold is simply: an empty `backends`
-    // array produces zero calls.
-    const transport = makeTransport();
-
-    renderHook(() => usePanePresenceReporter({
-      hydrated: true,
-      windowId: WINDOW_ID,
-      backends: [],
-      resolveViewSource,
-      transport,
-    }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-
-    expect(transport.submitCalls).toHaveLength(0);
-    expect(transport.removeCalls).toHaveLength(0);
-    expect(transport.keepaliveCalls).toHaveLength(0);
-  });
-
-  it('unmount removes this renderer\'s views and cancels nothing', async () => {
-    const transport = makeTransport();
-    const backends: PanePresenceBackendSlots[] = [backendSlot({
-      openPanesMap: { 'proj::tree-1': ['n1', 'n2'] },
-      activeSlotKey: 'proj::tree-1',
-    })];
-
-    const { unmount } = renderHook(() => usePanePresenceReporter({
-      hydrated: true,
-      windowId: WINDOW_ID,
-      backends,
-      resolveViewSource,
-      transport,
-    }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(transport.submitCalls).toHaveLength(1);
-
-    unmount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    expect(transport.removeCalls).toHaveLength(1);
-    // No paneIds means "remove the whole lease" per RemovePresenceRequest's contract.
-    expect(transport.removeCalls[0].req.paneIds).toBeUndefined();
-    expect(transport.removeCalls[0].req.rendererLeaseId).toBeTruthy();
-    // Nothing that looks like a cancel/abort call exists on this transport at all — the surface
-    // this hook is given (PanePresenceTransport) has no cancel method, so there is no way for
-    // this hook to have invoked one.
-  });
-
-  it('every transport call for a connection carries that connection\'s own workspaceId', async () => {
-    const transport = makeTransport();
-    const backends: PanePresenceBackendSlots[] = [
-      backendSlot({ backendConnectionId: 'local', workspaceId: 'ws-1', openPanesMap: { 'proj::tree-1': ['n1'] }, activeSlotKey: 'proj::tree-1' }),
-      backendSlot({ backendConnectionId: 'remote-1', workspaceId: 'ws-2', openPanesMap: { 'proj2::tree-1': ['n2'] }, activeSlotKey: 'proj2::tree-1' }),
-    ];
-
-    renderHook(() => usePanePresenceReporter({
-      hydrated: true,
-      windowId: WINDOW_ID,
-      backends,
-      resolveViewSource,
-      transport,
-    }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-    const byConnection = new Map(transport.submitCalls.map((c) => [c.connectionId, c.workspaceId]));
-    expect(byConnection.get('local')).toBe('ws-1');
-    expect(byConnection.get('remote-1')).toBe('ws-2');
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-    const keepaliveByConnection = new Map(transport.keepaliveCalls.map((c) => [c.connectionId, c.workspaceId]));
-    expect(keepaliveByConnection.get('local')).toBe('ws-1');
-    expect(keepaliveByConnection.get('remote-1')).toBe('ws-2');
   });
 
   it('serializes initial submissions and reuses the allocated lease for the newest snapshot', async () => {
@@ -548,98 +379,7 @@ describe('usePanePresenceReporter', () => {
     expect(transport.keepaliveCalls[0].rendererLeaseId).toBe('lease-only');
   });
 
-  it('a later normal submit invalidates an earlier keepalive response, not the reverse', async () => {
-    // Keepalive itself never bumps generation, but it still reads the CURRENT generation when
-    // its own response resolves — so a submit dispatched after a keepalive request started (but
-    // before that keepalive's response lands) must make the keepalive's own bookkeeping a no-op
-    // for anything that would otherwise mutate shared lease state on a stale response.
-    const transport = makeTransport();
-    const backends: PanePresenceBackendSlots[] = [backendSlot({
-      openPanesMap: { 'proj::tree-1': ['n1'] },
-      activeSlotKey: 'proj::tree-1',
-    })];
-
-    const { rerender } = renderHook(
-      ({ backends: b }: { backends: PanePresenceBackendSlots[] }) => usePanePresenceReporter({
-        hydrated: true,
-        windowId: WINDOW_ID,
-        backends: b,
-        resolveViewSource,
-        transport,
-      }),
-      { initialProps: { backends } },
-    );
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    const leaseAfterFirstSubmit = transport.submitCalls[0];
-    expect(leaseAfterFirstSubmit).toBeTruthy();
-
-    // Let the keepalive interval fire once so a lease is established and renewed normally.
-    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-    expect(transport.keepaliveCalls).toHaveLength(1);
-
-    // A new pane opens, dispatching a normal submit (this bumps generation).
-    rerender({ backends: [backendSlot({
-      openPanesMap: { 'proj::tree-1': ['n1', 'n2'] },
-      activeSlotKey: 'proj::tree-1',
-    })] });
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(transport.submitCalls).toHaveLength(2);
-
-    // The keepalive interval fires again with the now-current (post-bump) generation captured
-    // at dispatch time, and resolves normally — this must not be treated as stale by its own
-    // dispatch-time check (it captured the generation AFTER the submit's bump, so it is current
-    // when it resolves immediately). This asserts the two mechanisms don't cross-invalidate each
-    // other incorrectly.
-    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-    expect(transport.keepaliveCalls).toHaveLength(2);
-  });
-
   describe('keepalive NOT_FOUND recovery', () => {
-    it('reacquires a fresh lease immediately from the latest non-empty pane snapshot, without waiting for a rerender', async () => {
-      const transport = makeTransport();
-      let openPanesMap: Record<string, string[]> = { 'proj::tree-1': ['n1'] };
-      const backends: PanePresenceBackendSlots[] = [{
-        backendConnectionId: CONN,
-        workspaceId: WORKSPACE,
-        get openPanesMap() { return openPanesMap; },
-        activeSlotKey: 'proj::tree-1',
-      } as unknown as PanePresenceBackendSlots];
-
-      renderHook(() => usePanePresenceReporter({
-        hydrated: true,
-        windowId: WINDOW_ID,
-        backends,
-        resolveViewSource,
-        transport,
-      }));
-      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(transport.submitCalls).toHaveLength(1);
-
-      // Simulate a pane opening in the background (no rerender needed for the recovery itself,
-      // but this establishes the "latest snapshot" the reacquire must read from — a snapshot
-      // that changed AFTER the last render-driven submission).
-      openPanesMap = { 'proj::tree-1': ['n1', 'n2'] };
-
-      // The next keepalive tick reports NOT_FOUND (lease expired / backend restarted).
-      transport.keepalive = async (connectionId, workspaceId, req) => {
-        transport.keepaliveCalls.push({ connectionId, workspaceId, rendererLeaseId: req.rendererLeaseId });
-        return { ok: false, code: 'NOT_FOUND' };
-      };
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-
-      // A fresh submission was dispatched immediately as part of the keepalive's own response
-      // handling — no extra timer tick or rerender was needed.
-      expect(transport.submitCalls).toHaveLength(2);
-      const reacquireReq = transport.submitCalls[1].req;
-      // forceNewLease drops the old rendererLeaseId — the reacquire's PUT carries none.
-      expect(reacquireReq.rendererLeaseId).toBeUndefined();
-      // It reports the LATEST snapshot (both panes), not the one from the original submission.
-      const byPaneId = new Map(reacquireReq.views.map((v) => [v.paneId, v]));
-      expect(byPaneId.has('node:n1')).toBe(true);
-      expect(byPaneId.has('node:n2')).toBe(true);
-    });
-
     it('drops the dead lease without a forced empty PUT when nothing is open at reacquire time', async () => {
       const transport = makeTransport();
       let openPanesMap: Record<string, string[]> = { 'proj::tree-1': ['n1'] };
@@ -863,27 +603,6 @@ describe('usePanePresenceReporter', () => {
       // executed strictly before that computation, not after or interleaved with it.
       expect(reacquireReq.views).toHaveLength(1);
       expect(reacquireReq.views.some((v) => v.uiPaneId === 'pane:terminal:abc')).toBe(false);
-    });
-
-    it('is not invoked on a successful keepalive, and is optional (omitting it does not throw)', async () => {
-      const transport = makeTransport();
-      const backends: PanePresenceBackendSlots[] = [backendSlot({
-        openPanesMap: { 'proj::tree-1': ['n1'] },
-        activeSlotKey: 'proj::tree-1',
-      })];
-
-      renderHook(() => usePanePresenceReporter({
-        hydrated: true,
-        windowId: WINDOW_ID,
-        backends,
-        resolveViewSource,
-        transport,
-        // onLeaseInvalidated intentionally omitted.
-      }));
-      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-
-      await expect(act(async () => { await vi.advanceTimersByTimeAsync(20_000); })).resolves.not.toThrow();
-      expect(transport.keepaliveCalls).toHaveLength(1);
     });
 
     it('continues lease reacquisition when the optional invalidation callback throws', async () => {

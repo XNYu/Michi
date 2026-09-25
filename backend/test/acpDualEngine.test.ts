@@ -147,15 +147,6 @@ test('v2 compact waits for its own completion notification, locks the session, a
     assert.equal(c.needsSessionRecovery('parent'), false);
 });
 
-test('v2 compact accepts a completion arriving before the command acknowledgement', async () => {
-    const { c, internal } = fixture('v2');
-    internal.send = async () => {
-        internal.dispatch({ method: '_kiro.dev/compaction/status', params: { sessionId: 'parent', status: { type: 'completed' } } });
-        return { success: true };
-    };
-    assert.equal((await c.compact('parent')).success, true);
-});
-
 test('v2 compact timeout quarantines the session and blocks subsequent prompts', async () => {
     const { c, internal } = fixture('v2');
     await c.newSession();

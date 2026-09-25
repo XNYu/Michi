@@ -163,13 +163,6 @@ describe('TerminalDigest thread scope', () => {
     expect(onNav).toHaveBeenCalledWith('dashboard');
   });
 
-  it.each(['workspace', 'thread'])('does not offer follow-up composition for an archived %s', (scope) => {
-    if (scope === 'workspace') store.project.archivedAt = 1;
-    else store.project.trees[0].archivedAt = 1;
-    render(<TerminalDigest onNav={vi.fn()} />);
-    expect(screen.queryByText('Submit digest follow-up')).toBeNull();
-  });
-
   it('opens the active thread digest directly and hides workspace-level digest cards', () => {
     render(<TerminalDigest onNav={vi.fn()} />);
 

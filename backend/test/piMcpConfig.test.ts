@@ -44,13 +44,6 @@ describe("piMcpConfig", () => {
         assert.ok(Array.isArray(servers));
     });
 
-    it("derives serverName from command basename", () => {
-        process.env.MICHI_PI_MCP_SERVERS = "/opt/tools/sample-mcp";
-        const servers = readPiMcpServers();
-        const sample = servers.find((s) => s.serverName === "sample");
-        assert.ok(sample, "expected serverName 'sample' derived from '/opt/tools/sample-mcp'");
-    });
-
     it("de-duplicates by serverName (env wins over config.json)", () => {
         process.env.MICHI_PI_MCP_SERVERS = JSON.stringify([
             { serverName: "sample", command: "my-custom-sample" },

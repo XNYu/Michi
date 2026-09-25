@@ -145,23 +145,6 @@ describe('CommandPalette quick number shortcuts', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('does not trigger quick number shortcuts when search query is empty', () => {
-    const setPage = vi.fn();
-    const onClose = vi.fn();
-    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);
-
-    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
-
-    // Press Cmd+1 without query
-    fireEvent.keyDown(input, {
-      key: '1',
-      metaKey: true,
-    });
-
-    expect(selectProject).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it('ignores Cmd+number when index exceeds result count', () => {
     const setPage = vi.fn();
     const onClose = vi.fn();

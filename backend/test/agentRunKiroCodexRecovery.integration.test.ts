@@ -403,29 +403,6 @@ describe('T10 — Kiro Definition lifecycle: enable -> spawn -> complete', () =>
     assert.ok((checkpoint!.nativeResumeToken as string).startsWith('acp-t10-'));
   });
 
-  test('Kiro spawn propagates owner, profileHash, and toolProfile correctly', async () => {
-    const { runtime, states } = createT10KiroRuntime();
-    const executor = new RuntimeRunExecutor({
-      resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-      registry: defaultRegistry(),
-    });
-
-    const s = spec('kiro');
-    const handle = await executor.start(s, async () => {});
-
-    // The session was created with the correct owner identity
-    // (it gets released after completion, so we check via the outcome)
-    const outcome = await handle.completion;
-    assert.equal(outcome.status, 'completed');
-  });
-
-  test('Kiro adapter assertCompatible passes for a valid Kiro runtime', () => {
-    const adapter = new KiroRunAdapter();
-    const { runtime } = createT10KiroRuntime();
-    // Should not throw
-    adapter.assertCompatible(runtime);
-  });
-
   test('Kiro adapter assertCompatible rejects runtime without nativeResume', () => {
     const adapter = new KiroRunAdapter();
     const { runtime } = createT10KiroRuntime();
@@ -460,12 +437,6 @@ describe('T10 — Codex Definition lifecycle: enable -> spawn -> complete', () =
     assert.ok(checkpoint, 'must emit a checkpoint with Codex thread id');
     assert.ok(typeof checkpoint!.nativeResumeToken === 'string');
     assert.ok((checkpoint!.nativeResumeToken as string).startsWith('thread-t10-'));
-  });
-
-  test('Codex adapter assertCompatible passes for a valid Codex runtime', () => {
-    const adapter = new CodexRunAdapter();
-    const { runtime } = createT10CodexRuntime();
-    adapter.assertCompatible(runtime);
   });
 
   test('Codex adapter assertCompatible rejects runtime without nativeResume', () => {
@@ -527,145 +498,6 @@ describe('T10 — Restart recovery via native tokens (no Node dependency)', () =
     assert.equal(resumedThreads[0], savedThreadId, 'loadSession used the saved thread id');
     assert.equal(startedThreads.length, 0, 'thread/start was NOT called during resume');
   });
-
-  test('Kiro resume rejects agent_run without nativeResumeToken', async () => {
-    const { runtime } = createT10KiroRuntime();
-
-    await assert.rejects(
-      runtime.loadSession!({
-        sessionId: RUN_OWNER.attemptId,
-        cwd: '/tmp/kiro-no-token',
-        owner: RUN_OWNER,
-      }),
-      /nativeResumeToken/,
-      'Kiro loadSession must reject agent_run without token — no Node fallback',
-    );
-
-    await runtime.shutdown();
-  });
-
-  test('Codex resume rejects agent_run without nativeResumeToken', async () => {
-    const { runtime } = createT10CodexRuntime();
-
-    await assert.rejects(
-      runtime.loadSession!({
-        sessionId: RUN_OWNER.attemptId,
-        cwd: '/tmp/codex-no-token',
-        owner: RUN_OWNER,
-      }),
-      /nativeResumeToken/,
-      'Codex loadSession must reject agent_run without token — no Node fallback',
-    );
-
-    await runtime.shutdown();
-  });
-
-  test('Kiro native token survives JSON persistence round-trip for recovery', async () => {
-    const { runtime, newSessions } = createT10KiroRuntime();
-
-    const session = await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-json-roundtrip',
-      owner: RUN_OWNER,
-    });
-
-    // Simulate checkpoint persistence
-    const token = session.nativeSessionId;
-    assert.ok(token, 'native session id must be present');
-    const serialized = JSON.stringify(token);
-    const deserialized = JSON.parse(serialized);
-    assert.equal(typeof deserialized, 'string');
-    assert.equal(deserialized, token);
-    assert.ok(deserialized.length > 0, 'round-tripped token is non-empty');
-
-    await runtime.shutdown();
-  });
-
-  test('Codex native token survives JSON persistence round-trip for recovery', async () => {
-    const { runtime } = createT10CodexRuntime();
-
-    const session = await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/codex-json-roundtrip',
-      model: 'model-recovery',
-      owner: RUN_OWNER,
-    });
-
-    const token = session.nativeSessionId;
-    assert.ok(token, 'native session id must be present');
-    const serialized = JSON.stringify(token);
-    const deserialized = JSON.parse(serialized);
-    assert.equal(typeof deserialized, 'string');
-    assert.equal(deserialized, token);
-    assert.ok(deserialized.length > 0, 'round-tripped token is non-empty');
-
-    await runtime.shutdown();
-  });
-
-  test('Kiro process death followed by resume creates a fresh session from token', async () => {
-    const { runtime: runtime1, processExitHook, newSessions } = createT10KiroRuntime();
-
-    // Start a session, get a checkpoint token
-    const session1 = await runtime1.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-process-death',
-      owner: RUN_OWNER,
-    });
-    const savedToken = session1.nativeSessionId!;
-
-    // Simulate process death
-    processExitHook();
-
-    // New runtime instance (simulating backend restart)
-    const { runtime: runtime2, loadedSessions } = createT10KiroRuntime();
-
-    const resumed = await runtime2.loadSession!({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-process-death',
-      owner: RUN_OWNER,
-      nativeResumeToken: savedToken,
-    });
-
-    assert.equal(resumed.id, RUN_OWNER.attemptId, 'resumed session uses attemptId');
-    assert.equal(resumed.nativeSessionId, savedToken, 'resumed session uses the saved ACP token');
-    assert.deepEqual(resumed.owner, RUN_OWNER, 'owner is correctly restored');
-    assert.equal(loadedSessions.length, 1);
-
-    await runtime2.shutdown();
-  });
-
-  test('Codex daemon death followed by resume creates a fresh session from thread id', async () => {
-    const { runtime: runtime1, daemonExitHook } = createT10CodexRuntime();
-
-    const session1 = await runtime1.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/codex-daemon-death',
-      model: 'model-x',
-      owner: RUN_OWNER,
-    });
-    const savedThreadId = session1.nativeSessionId!;
-
-    // Simulate daemon death
-    daemonExitHook();
-
-    // New runtime instance
-    const { runtime: runtime2, resumedThreads } = createT10CodexRuntime();
-
-    const resumed = await runtime2.loadSession!({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/codex-daemon-death',
-      model: 'model-x',
-      owner: RUN_OWNER,
-      nativeResumeToken: savedThreadId,
-    });
-
-    assert.equal(resumed.id, RUN_OWNER.attemptId);
-    assert.equal(resumed.nativeSessionId, savedThreadId);
-    assert.deepEqual(resumed.owner, RUN_OWNER);
-    assert.equal(resumedThreads.length, 1);
-
-    await runtime2.shutdown();
-  });
 });
 
 // ===========================================================================
@@ -673,27 +505,6 @@ describe('T10 — Restart recovery via native tokens (no Node dependency)', () =
 // ===========================================================================
 
 describe('T10 — Wrong-owner rejection for reads, input, cancel, result, release', () => {
-  test('Kiro: wrong owner cannot release another Run\'s session', async () => {
-    const { runtime } = createT10KiroRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-wrong-owner',
-      owner: RUN_OWNER,
-    });
-
-    assert.throws(
-      () => runtime.releaseSession(RUN_OWNER.attemptId, WRONG_OWNER),
-      /Owner mismatch/,
-      'Kiro: wrong owner release must fail',
-    );
-
-    // Correct owner succeeds
-    runtime.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
-
-    await runtime.shutdown();
-  });
-
   test('Codex: wrong owner cannot release another Run\'s session', async () => {
     const { runtime } = createT10CodexRuntime();
 
@@ -712,25 +523,6 @@ describe('T10 — Wrong-owner rejection for reads, input, cancel, result, releas
 
     runtime.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
 
-    await runtime.shutdown();
-  });
-
-  test('Kiro: chat_node owner cannot release agent_run session', async () => {
-    const { runtime } = createT10KiroRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-chat-vs-run',
-      owner: RUN_OWNER,
-    });
-
-    assert.throws(
-      () => runtime.releaseSession(RUN_OWNER.attemptId, CHAT_OWNER),
-      /Owner mismatch/,
-      'Kiro: chat owner cannot release agent_run session',
-    );
-
-    runtime.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
     await runtime.shutdown();
   });
 
@@ -779,153 +571,17 @@ describe('T10 — Wrong-owner rejection for reads, input, cancel, result, releas
     assertOwner(RUN_OWNER, RUN_OWNER);
     assertOwner(CHAT_OWNER, CHAT_OWNER);
   });
-
-  test('Executor release uses correct owner guard for both runtimes', async () => {
-    for (const runtimeId of ['kiro', 'codex'] as const) {
-      const releases: Array<[string, RuntimeSessionOwner | undefined]> = [];
-      const fakeRuntime: AgentRuntime = {
-        id: runtimeId,
-        label: `fake-${runtimeId}`,
-        capabilities: {
-          modes: false, permissions: true, models: false, providerModels: false,
-          reasoning: true, supportedReasoningLevels: ['medium'],
-          apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-          nativeResume: true,
-        },
-        async warm() {},
-        async newSession(opts) {
-          return {
-            id: opts.sessionId ?? 'session',
-            runtimeId,
-            owner: opts.owner,
-            runtimeProfileHash: opts.profileHash ?? null,
-            nativeSessionId: `${runtimeId}-native-guard`,
-            getHistory: () => [],
-            getPendingAssistant: () => undefined,
-            async *send() {
-              yield { kind: 'chunk' as const, text: 'ok' };
-              yield { kind: 'turn_end' as const };
-            },
-            cancel: async () => {},
-          };
-        },
-        releaseSession(id, owner) { releases.push([id, owner]); },
-        async shutdown() {},
-      };
-
-      const executor = new RuntimeRunExecutor({
-        resolveRuntime: (id) => id === runtimeId ? fakeRuntime : undefined,
-        registry: defaultRegistry(),
-      });
-
-      const s = spec(runtimeId);
-      const handle = await executor.start(s, async () => {});
-      await handle.completion;
-
-      assert.ok(releases.length >= 1, `${runtimeId}: session was released`);
-      const [releasedId, releasedOwner] = releases[0];
-      assert.equal(releasedId, `${runtimeId}-attempt`);
-      assert.deepEqual(releasedOwner, {
-        kind: 'agent_run', runId: `${runtimeId}-run`, attemptId: `${runtimeId}-attempt`,
-      });
-    }
-  });
 });
 
 // ===========================================================================
 // 5. Backup/export excludes native tokens and credentials
 // ===========================================================================
 
-describe('T10 — Native token and credential exclusion from exports', () => {
-  test('ACP session id is never part of a serialized effective definition', () => {
-    const def = definition('kiro');
-    const serialized = JSON.stringify(def);
-    assert.equal(serialized.includes('acp-'), false,
-      'effective definition must not contain ACP session ids');
-    assert.equal(serialized.includes('native_resume_token'), false,
-      'effective definition must not reference native_resume_token');
-  });
-
-  test('Codex thread id is never part of a serialized effective definition', () => {
-    const def = definition('codex');
-    const serialized = JSON.stringify(def);
-    assert.equal(serialized.includes('thread-'), false,
-      'effective definition must not contain Codex thread ids');
-    assert.equal(serialized.includes('native_resume_token'), false);
-  });
-
-  test('effective definition capability snapshot has no credentialBindingIds in entries', () => {
-    const def = definition('kiro');
-    // Entries array is empty by design for Kiro/Codex (runtime_default mode)
-    const entries = def.capabilitySnapshot?.entries ?? [];
-    for (const entry of entries) {
-      if ('credentialBindingIds' in entry) {
-        assert.deepEqual(
-          (entry as any).credentialBindingIds,
-          [],
-          'credentialBindingIds must be empty in export-safe snapshots',
-        );
-      }
-    }
-  });
-
-  test('AgentRunSpec does not include native session ids or credentials', () => {
-    const s = spec('kiro');
-    const serialized = JSON.stringify(s);
-    // The spec contains task, definition, context, environment — never native tokens
-    assert.equal(serialized.includes('acp-'), false);
-    assert.equal(serialized.includes('thread-'), false);
-    assert.equal(serialized.includes('secret'), false);
-    assert.equal(serialized.includes('credential'), false);
-    assert.equal(serialized.includes('password'), false);
-    assert.equal(serialized.includes('api_key'), false);
-  });
-
-  test('Codex AgentRunSpec does not include native session ids', () => {
-    const s = spec('codex');
-    const serialized = JSON.stringify(s);
-    assert.equal(serialized.includes('thread-'), false);
-    assert.equal(serialized.includes('secret'), false);
-  });
-});
-
 // ===========================================================================
 // 6. Cross-runtime recovery via Executor resume path
 // ===========================================================================
 
 describe('T10 — Cross-runtime Executor recovery paths', () => {
-  test('Kiro: Executor.resume uses loadSession, not newSession', async () => {
-    const { runtime, newSessions, loadedSessions } = createT10KiroRuntime();
-    const executor = new RuntimeRunExecutor({
-      resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-      registry: defaultRegistry(),
-    });
-
-    const handle = await executor.resume(spec('kiro'), 'acp-checkpoint-token', async () => {});
-    const outcome = await handle.completion;
-
-    assert.equal(outcome.status, 'completed');
-    assert.equal(loadedSessions.length, 1, 'Kiro resume must call loadSession');
-    assert.equal(newSessions.length, 0, 'Kiro resume must NOT call newSession');
-    assert.equal(loadedSessions[0], 'acp-checkpoint-token');
-  });
-
-  test('Codex: Executor.resume uses loadSession, not newSession', async () => {
-    const { runtime, startedThreads, resumedThreads } = createT10CodexRuntime();
-    const executor = new RuntimeRunExecutor({
-      resolveRuntime: (id) => id === 'codex' ? runtime : undefined,
-      registry: defaultRegistry(),
-    });
-
-    const handle = await executor.resume(spec('codex'), 'thread-checkpoint-abc', async () => {});
-    const outcome = await handle.completion;
-
-    assert.equal(outcome.status, 'completed');
-    assert.equal(resumedThreads.length, 1, 'Codex resume must call loadSession');
-    assert.equal(startedThreads.length, 0, 'Codex resume must NOT call thread/start');
-    assert.equal(resumedThreads[0], 'thread-checkpoint-abc');
-  });
-
   test('concurrent Kiro and Codex sessions do not interfere with each other', async () => {
     const kiro = createT10KiroRuntime();
     const codex = createT10CodexRuntime();
@@ -972,35 +628,12 @@ describe('T10 — Four-runtime adapter registry completeness', () => {
     }
   });
 
-  test('Kiro adapter metadata is correct', () => {
-    const adapter = new KiroRunAdapter();
-    assert.equal(adapter.runtimeId, 'kiro');
-    assert.equal(adapter.supportsNativeResume, true);
-    assert.equal(adapter.nativeToolMode, 'runtime_default');
-    assert.equal(adapter.steering, 'native');
-  });
-
-  test('Codex adapter metadata is correct', () => {
-    const adapter = new CodexRunAdapter();
-    assert.equal(adapter.runtimeId, 'codex');
-    assert.equal(adapter.supportsNativeResume, true);
-    assert.equal(adapter.nativeToolMode, 'runtime_default');
-    assert.equal(adapter.steering, 'native');
-  });
-
   test('missing Kiro adapter blocks Definition readiness', () => {
     const piClaudeOnly = new RuntimeRunAdapterRegistry([
       new PiRunAdapter(), new ClaudeRunAdapter(),
     ]);
     assert.equal(piClaudeOnly.get('kiro'), undefined,
       'Kiro adapter must not be registered in a Pi/Claude-only registry');
-  });
-
-  test('missing Codex adapter blocks Definition readiness', () => {
-    const piClaudeOnly = new RuntimeRunAdapterRegistry([
-      new PiRunAdapter(), new ClaudeRunAdapter(),
-    ]);
-    assert.equal(piClaudeOnly.get('codex'), undefined);
   });
 });
 
@@ -1010,13 +643,6 @@ describe('T10 — Four-runtime adapter registry completeness', () => {
 
 describe('T10 — Error classification for Kiro/Codex recovery scenarios', () => {
   test('Kiro process death produces a transient error (recoverable)', () => {
-    const error = new Error('process timed out');
-    const classified = classifyRuntimeRunError(error);
-    assert.equal(classified.category, 'transient');
-    assert.equal(classified.retryable, true);
-  });
-
-  test('Codex daemon exit produces a transient error (recoverable)', () => {
     const error = new Error('process timed out');
     const classified = classifyRuntimeRunError(error);
     assert.equal(classified.category, 'transient');

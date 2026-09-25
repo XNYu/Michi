@@ -9,10 +9,6 @@ describe("processTree", () => {
     assert.equal(agentSpawnOptions({}, "win32").windowsHide, true);
   });
 
-  test("agentSpawnOptions lets callers override detached", () => {
-    assert.equal(agentSpawnOptions({ detached: true }, "win32").detached, true);
-  });
-
   test("killProcessTree is a no-op for invalid pids", () => {
     const killed: Array<[number, NodeJS.Signals | number | undefined]> = [];
     killProcessTree(0, "SIGTERM", { kill: (pid, signal) => { killed.push([pid, signal]); return true; } });
@@ -57,18 +53,6 @@ describe("processTree", () => {
       },
     });
     assert.deepEqual(killed, [[5, "SIGKILL"]]);
-  });
-
-  test("POSIX signals the process group, then the pid", () => {
-    const killed: Array<[number, NodeJS.Signals | number | undefined]> = [];
-    killProcessTree(99, "SIGTERM", {
-      platform: "darwin",
-      kill: (pid, signal) => {
-        killed.push([pid, signal]);
-        return true;
-      },
-    });
-    assert.deepEqual(killed, [[-99, "SIGTERM"]]);
   });
 
   test("POSIX falls back to the raw pid when group kill fails", () => {

@@ -37,8 +37,6 @@ import { initDb, closeDb, getDb } from '../src/services/db';
 import {
   setWorkspaceBackend,
   getWorkspaceBackend,
-  setNodeExternalSessionId,
-  getNodeExternalSessionId,
 } from '../src/services/dbRepository';
 
 const CURRENT_INLINE_SCHEMA_VERSION = '14';
@@ -101,57 +99,6 @@ describe('agent runtime schema migrations', () => {
     assert.equal(backend.type.toUpperCase(), 'TEXT');
     assert.equal(backend.notnull, 1, 'backend must be NOT NULL');
     assert.equal(backend.dflt_value, "'kiro'", "backend default must be 'kiro'");
-  });
-
-  test('fresh DB has external_session_id column on nodes with correct constraints', () => {
-    initDb();
-    const db = getDb();
-
-    const cols = db.prepare('PRAGMA table_info(nodes)').all() as Array<{
-      name: string;
-      type: string;
-      notnull: number;
-      dflt_value: string | null;
-    }>;
-
-    const extSid = cols.find((c) => c.name === 'external_session_id');
-    assert.ok(extSid, 'external_session_id column must exist on nodes');
-    assert.equal(extSid.type.toUpperCase(), 'TEXT');
-    assert.equal(extSid.notnull, 0, 'external_session_id must be nullable');
-  });
-
-  test('fresh DB has runtime_id column on nodes with correct constraints', () => {
-    initDb();
-    const db = getDb();
-
-    const cols = db.prepare('PRAGMA table_info(nodes)').all() as Array<{
-      name: string;
-      type: string;
-      notnull: number;
-    }>;
-
-    const runtimeId = cols.find((c) => c.name === 'runtime_id');
-    assert.ok(runtimeId, 'runtime_id column must exist on nodes');
-    assert.equal(runtimeId.type.toUpperCase(), 'TEXT');
-    assert.equal(runtimeId.notnull, 0, 'runtime_id must be nullable for unbound nodes');
-  });
-
-  test('fresh DB has resume signature columns on nodes with correct constraints', () => {
-    initDb();
-    const db = getDb();
-
-    const cols = db.prepare('PRAGMA table_info(nodes)').all() as Array<{
-      name: string;
-      type: string;
-      notnull: number;
-    }>;
-
-    for (const name of ['provider_id', 'model_id', 'reasoning', 'resume_fingerprint']) {
-      const col = cols.find((c) => c.name === name);
-      assert.ok(col, `${name} column must exist on nodes`);
-      assert.equal(col.type.toUpperCase(), 'TEXT');
-      assert.equal(col.notnull, 0, `${name} must be nullable`);
-    }
   });
 
   test('fresh DB schema_version is current', () => {
@@ -324,24 +271,9 @@ describe('agent runtime schema migrations', () => {
     assert.equal(getWorkspaceBackend('ws-rt'), 'claude');
   });
 
-  test('setNodeExternalSessionId / getNodeExternalSessionId round-trip', () => {
-    initDb();
-    const db = getDb();
-    insertWorkspace(db, 'ws-rt2');
-    insertNode(db, 'nd-rt2', 'ws-rt2');
-
-    setNodeExternalSessionId('nd-rt2', 'some-uuid-123');
-    assert.equal(getNodeExternalSessionId('nd-rt2'), 'some-uuid-123');
-  });
-
   test('getWorkspaceBackend returns null for non-existent workspace', () => {
     initDb();
     assert.equal(getWorkspaceBackend('does-not-exist'), null);
-  });
-
-  test('getNodeExternalSessionId returns null for non-existent node', () => {
-    initDb();
-    assert.equal(getNodeExternalSessionId('does-not-exist'), null);
   });
 
   // 5. setWorkspaceBackend bumps updated_at

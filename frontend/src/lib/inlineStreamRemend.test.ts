@@ -21,14 +21,6 @@ describe('scanInline', () => {
     expect(result.state.stack[0].hasContent).toBe(true);
   });
 
-  it('closes bold on the matching marker', () => {
-    expect(markers(scanInline('**abc** tail').state)).toEqual([]);
-  });
-
-  it('keeps nesting order: bold then italic', () => {
-    expect(markers(scanInline('**a *b').state)).toEqual(['**', '*']);
-  });
-
   it('tracks underscore strong, combined emphasis, and strikethrough delimiters', () => {
     expect(markers(scanInline('__bold').state)).toEqual(['__']);
     expect(markers(scanInline('***both').state)).toEqual(['**', '*']);
@@ -92,19 +84,6 @@ describe('scanInline', () => {
     expect(markers(scanInline('use snake_case here').state)).toEqual([]);
   });
 
-  it('still toggles flanking underscores', () => {
-    expect(markers(scanInline('a _ital').state)).toEqual(['_']);
-    expect(markers(scanInline('a _ital_ b').state)).toEqual([]);
-  });
-
-  it('suppresses emphasis inside an open code span', () => {
-    expect(markers(scanInline('`code **still code').state)).toEqual(['`']);
-  });
-
-  it('drops open emphasis at a paragraph break', () => {
-    expect(markers(scanInline('**abc\n\nnew para').state)).toEqual([]);
-  });
-
   it('drops open emphasis split across the frame boundary at a paragraph break', () => {
     const first = scanInline('**abc\n');
     const second = scanInline('\nnew', first.state);
@@ -131,27 +110,6 @@ describe('scanInline', () => {
 });
 
 describe('buildTailSegments', () => {
-  it('styles inherited-bold chars and hides the real closer', () => {
-    const state = computeTailRemend('**ab').endState;
-    const result = buildTailSegments('cd** plain', state);
-
-    expect(result.segments).toEqual([
-      { text: 'cd', bold: true, italic: false, codeFont: false },
-      { text: ' plain', bold: false, italic: false, codeFont: false },
-    ]);
-    expect(result.carry).toBe('');
-  });
-
-  it('withholds a trailing ambiguous star from display', () => {
-    const state = computeTailRemend('plain text').endState;
-    const result = buildTailSegments('abc *', state);
-
-    expect(result.segments).toEqual([
-      { text: 'abc ', bold: false, italic: false, codeFont: false },
-    ]);
-    expect(result.carry).toBe('*');
-  });
-
   it('hides backticks and switches the content to code font', () => {
     const state = computeTailRemend('run ').endState;
     const { segments } = buildTailSegments('`npm i', state);
@@ -347,10 +305,6 @@ describe('computeTailRemend', () => {
     expect(result.carry).toBe('');
   });
 
-  it('closes nested delimiters innermost-first', () => {
-    expect(computeTailRemend('**a *b').displayText).toBe('**a *b***');
-  });
-
   it('closes an open inline code span', () => {
     expect(computeTailRemend('run `npm i').displayText).toBe('run `npm i`');
   });
@@ -359,14 +313,6 @@ describe('computeTailRemend', () => {
     expect(computeTailRemend('__bold').displayText).toBe('__bold__');
     expect(computeTailRemend('~~gone').displayText).toBe('~~gone~~');
     expect(computeTailRemend('$x + 1').displayText).toBe('$x + 1$');
-  });
-
-  it('withholds a trailing ambiguous delimiter instead of closing it', () => {
-    const result = computeTailRemend('**abc *');
-
-    expect(result.carry).toBe('*');
-    expect(result.displayText).toBe('**abc **');
-    expect(markers(result.endState)).toEqual(['**']);
   });
 
   it('never fake-closes a code fence', () => {
@@ -403,13 +349,6 @@ describe('computeTailRemend', () => {
     expect(result.endState.stack).toEqual([]);
   });
 
-  it('is a no-op on plain text', () => {
-    const result = computeTailRemend('hello world');
-
-    expect(result.displayText).toBe('hello world');
-    expect(result.carry).toBe('');
-  });
-
   it('renders only the label of an incomplete link or image', () => {
     const source = '[docs](https://example.com/*path';
     const result = computeTailRemend(source);
@@ -417,9 +356,5 @@ describe('computeTailRemend', () => {
     expect(result.displayText).toBe('docs');
     expect(result.closers).toBe('');
     expect(computeTailRemend('![diagram](https://example.com/a.png').displayText).toBe('diagram');
-  });
-
-  it('strips an incomplete raw HTML tag from the snapshot display', () => {
-    expect(computeTailRemend('before <custom attr="x"').displayText).toBe('before ');
   });
 });

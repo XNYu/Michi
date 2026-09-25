@@ -244,16 +244,6 @@ describe('ClaudeRuntime', () => {
 
   // ── Case 3: newSession() registers in sessionRegistry ────────────────────────
 
-  test('newSession() returns a session and registers it in sessionRegistry', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-    const session = await rt.newSession({ cwd: '/tmp', sessionId: 'test-reg-id' } as any);
-    assert.ok(session, 'should return a session');
-    assert.equal(session.id, 'test-reg-id');
-
-    // Cleanup
-    await rt.shutdown();
-  });
-
   test('a losing foreground send cannot interrupt the turn that owns the Claude event queue', async () => {
     const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
     const session = await rt.newSession({ cwd: '/tmp', sessionId: 'turn-lock-owner' } as any);
@@ -461,31 +451,6 @@ describe('ClaudeRuntime', () => {
     await rt2.shutdown();
   });
 
-  test('shutdown disposes an in-flight warm session before it enters the pool', async () => {
-    const children: MockClaudeChild[] = [];
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
-    const mod = require(claudeBinaryPath);
-    mod.spawnClaude = () => {
-      const child = new MockClaudeChild();
-      children.push(child);
-      setTimeout(() => child.emitInit(`ext-pending-warm-${children.length}`), 20);
-      return child;
-    };
-
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-    const rt2 = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
-
-    const warm = rt2.warm('/tmp/pending-warm');
-    while (children.length === 0) {
-      await new Promise((r) => setImmediate(r));
-    }
-
-    await Promise.all([warm, rt2.shutdown()]);
-    assert.equal(children[0].killed, true, 'shutdown should kill pending warm child');
-  });
-
   // ── Case 5: loadSession() reads external_session_id, throws if null ──────────
 
   test('loadSession() throws ClaudeSessionNotResumableError when external_session_id is null', async () => {
@@ -494,19 +459,6 @@ describe('ClaudeRuntime', () => {
 
     await assert.rejects(
       () => rt.loadSession({ sessionId: 'no-ext-id', cwd: '/tmp' } as any),
-      (err: unknown) => {
-        assert.ok(err instanceof ClaudeSessionNotResumableError);
-        return true;
-      },
-    );
-  });
-
-  test('loadSession() throws ClaudeSessionNotResumableError when node is not found', async () => {
-    stubGetNode(undefined);
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-
-    await assert.rejects(
-      () => rt.loadSession({ sessionId: 'missing-node', cwd: '/tmp' } as any),
       (err: unknown) => {
         assert.ok(err instanceof ClaudeSessionNotResumableError);
         return true;

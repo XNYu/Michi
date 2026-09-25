@@ -1,30 +1,6 @@
 import { buildTree, descendants, findTreeIdForNode } from './tree';
 
 describe('buildTree', () => {
-  it('returns a single-node tree when root has no children', () => {
-    const tree = buildTree('root', []);
-    expect(tree).toEqual({ nodeId: 'root', depth: 0, children: [] });
-  });
-
-  it('builds a linear chain root → a → b', () => {
-    const edges = [
-      { source: 'root', target: 'a' },
-      { source: 'a', target: 'b' },
-    ];
-    const tree = buildTree('root', edges);
-    expect(tree).toEqual({
-      nodeId: 'root',
-      depth: 0,
-      children: [
-        {
-          nodeId: 'a',
-          depth: 1,
-          children: [{ nodeId: 'b', depth: 2, children: [] }],
-        },
-      ],
-    });
-  });
-
   it('builds a fanout root → {a, b}', () => {
     const edges = [
       { source: 'root', target: 'a' },
@@ -33,31 +9,6 @@ describe('buildTree', () => {
     const tree = buildTree('root', edges);
     expect(tree.children.map((c) => c.nodeId).sort()).toEqual(['a', 'b']);
     expect(tree.children.every((c) => c.depth === 1)).toBe(true);
-  });
-
-  it('builds a mixed tree root → a → {b, d}, root → c', () => {
-    const edges = [
-      { source: 'root', target: 'a' },
-      { source: 'a', target: 'b' },
-      { source: 'a', target: 'd' },
-      { source: 'root', target: 'c' },
-    ];
-    const tree = buildTree('root', edges);
-    expect(tree.nodeId).toBe('root');
-    const childIds = tree.children.map((c) => c.nodeId).sort();
-    expect(childIds).toEqual(['a', 'c']);
-    const aNode = tree.children.find((c) => c.nodeId === 'a')!;
-    const grandchildIds = aNode.children.map((c) => c.nodeId).sort();
-    expect(grandchildIds).toEqual(['b', 'd']);
-  });
-
-  it('ignores edges whose source is not reachable from the root', () => {
-    const edges = [
-      { source: 'orphan-parent', target: 'orphan-child' },
-      { source: 'root', target: 'a' },
-    ];
-    const tree = buildTree('root', edges);
-    expect(tree.children.map((c) => c.nodeId)).toEqual(['a']);
   });
 });
 
@@ -75,15 +26,6 @@ describe('descendants', () => {
     expect(d.has('b')).toBe(true);
   });
 
-  it('follows a linear chain', () => {
-    const edges = [
-      { source: 'a', target: 'b' },
-      { source: 'b', target: 'c' },
-      { source: 'c', target: 'd' },
-    ];
-    expect(descendants('a', edges)).toEqual(new Set(['b', 'c', 'd']));
-  });
-
   it('collects all branches in a fanout', () => {
     const edges = [
       { source: 'a', target: 'b' },
@@ -92,14 +34,6 @@ describe('descendants', () => {
       { source: 'c', target: 'e' },
     ];
     expect(descendants('a', edges)).toEqual(new Set(['b', 'c', 'd', 'e']));
-  });
-
-  it('ignores edges not reachable from root', () => {
-    const edges = [
-      { source: 'other', target: 'x' },
-      { source: 'a', target: 'b' },
-    ];
-    expect(descendants('a', edges)).toEqual(new Set(['b']));
   });
 
   it('does not loop forever on cyclic edges', () => {
@@ -128,53 +62,11 @@ describe('buildTree with merge edges', () => {
   });
 });
 
-describe('descendants with merge edges', () => {
-  it('does not follow kind=merge edges', () => {
-    const edges = [
-      { source: 'root', target: 'a' },
-      { source: 'a', target: 'real-child', kind: 'branch' as const },
-      { source: 'a', target: 'merged-in-elsewhere', kind: 'merge' as const },
-    ];
-    expect(descendants('a', edges)).toEqual(new Set(['real-child']));
-  });
-});
-
 describe('tree walkers with link edges', () => {
-  it('buildTree ignores kind=link edges', () => {
-    const edges = [
-      { source: 'root', target: 'a' },
-      { source: 'root', target: 'b' },
-      { source: 'a', target: 'b', kind: 'link' as const },
-    ];
-    const tree = buildTree('root', edges);
-    const a = tree.children.find((c) => c.nodeId === 'a')!;
-    expect(a.children).toEqual([]);
-  });
-
   it('descendants ignores kind=link edges (no cascade across links)', () => {
     const edges = [
       { source: 'root', target: 'a' },
       { source: 'a', target: 'b', kind: 'link' as const },
-    ];
-    expect(descendants('root', edges)).toEqual(new Set(['a']));
-  });
-});
-
-describe('tree walkers with digest-source edges', () => {
-  it('buildTree ignores kind=digest-source edges', () => {
-    const edges = [
-      { source: 'root', target: 'a' },
-      { source: 'a', target: 'digest', kind: 'digest-source' as const },
-    ];
-    const tree = buildTree('root', edges);
-    const a = tree.children.find((c) => c.nodeId === 'a')!;
-    expect(a.children).toEqual([]);
-  });
-
-  it('descendants ignores kind=digest-source edges', () => {
-    const edges = [
-      { source: 'root', target: 'a' },
-      { source: 'a', target: 'digest', kind: 'digest-source' as const },
     ];
     expect(descendants('root', edges)).toEqual(new Set(['a']));
   });

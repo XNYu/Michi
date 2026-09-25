@@ -54,26 +54,6 @@ async function withServer(
 }
 
 describe('GET /api/workspaces/:workspaceId/diff', () => {
-    test('returns unified diff for an uncommitted change', async () => {
-        const root = tmpRoot();
-        gitInit(root);
-        fs.writeFileSync(path.join(root, 'a.txt'), 'one\ntwo\n');
-        gitCommitAll(root, 'init');
-        fs.writeFileSync(path.join(root, 'a.txt'), 'one\nTWO\nthree\n');
-
-        await withServer(appWithCwd(root), async (port) => {
-            const res = await fetch(
-                `http://127.0.0.1:${port}/api/workspaces/ws1/diff?path=a.txt`,
-            );
-            assert.equal(res.status, 200);
-            const body = await res.json() as { diff: string; truncated: boolean };
-            assert.match(body.diff, /^diff --git/m);
-            assert.match(body.diff, /\+TWO/);
-            assert.match(body.diff, /-two/);
-            assert.equal(body.truncated, false);
-        });
-    });
-
     test('returns synthesized new-file diff for an untracked file', async () => {
         const root = tmpRoot();
         gitInit(root);

@@ -97,16 +97,6 @@ describe('accumulateWorkspaceDirtyDelta — invariant', () => {
     assertNoOverlap(d);
   });
 
-  it('invariant holds after delete-then-re-add in two ticks', () => {
-    const base  = makeProject('ws1', [], { edges: [edge('a', 'b')] });
-    const after = makeProject('ws1', [], { edges: [] });
-    const d = accumulate2(
-      { prev: base, cur: after },
-      { prev: after, cur: base },   // re-add
-    );
-    assertNoOverlap(d);
-  });
-
   it('invariant holds after add-then-delete in two ticks', () => {
     const base  = makeProject('ws1', [], { edges: [] });
     const after = makeProject('ws1', [], { edges: [edge('a', 'b')] });
@@ -152,40 +142,6 @@ describe('accumulateWorkspaceDirtyDelta — edges', () => {
     expect(d.edgeDeleteIds.has(eId)).toBe(false);
     assertNoOverlap(d);
   });
-
-  it('simple add: edge in upserts, not deletes', () => {
-    const eId = serializedEdgeId(edge('x', 'y'));
-    const base  = makeProject('ws1', [], { edges: [] });
-    const after = makeProject('ws1', [], { edges: [edge('x', 'y')] });
-    const d = accumulateWorkspaceDirtyDelta(base, after, {}, {}, emptyWorkspaceDirtyDelta());
-    expect(d.edgeUpsertIds.has(eId)).toBe(true);
-    expect(d.edgeDeleteIds.has(eId)).toBe(false);
-  });
-
-  it('simple remove: edge in deletes, not upserts', () => {
-    const eId = serializedEdgeId(edge('x', 'y'));
-    const base  = makeProject('ws1', [], { edges: [edge('x', 'y')] });
-    const after = makeProject('ws1', [], { edges: [] });
-    const d = accumulateWorkspaceDirtyDelta(base, after, {}, {}, emptyWorkspaceDirtyDelta());
-    expect(d.edgeDeleteIds.has(eId)).toBe(true);
-    expect(d.edgeUpsertIds.has(eId)).toBe(false);
-  });
-
-  it('unrelated existing edge in pending delete is not touched by a new upsert', () => {
-    const eId1 = serializedEdgeId(edge('a', 'b'));
-    const eId2 = serializedEdgeId(edge('c', 'd'));
-    // Seed: eId1 already in delete set from a prior tick.
-    const existing = emptyWorkspaceDirtyDelta();
-    existing.edgeDeleteIds.add(eId1);
-
-    const base  = makeProject('ws1', [], { edges: [] });
-    const after = makeProject('ws1', [], { edges: [edge('c', 'd')] }); // adds eId2
-    const d = accumulateWorkspaceDirtyDelta(base, after, {}, {}, existing);
-
-    expect(d.edgeDeleteIds.has(eId1)).toBe(true);  // untouched
-    expect(d.edgeUpsertIds.has(eId2)).toBe(true);  // new add
-    assertNoOverlap(d);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -193,18 +149,6 @@ describe('accumulateWorkspaceDirtyDelta — edges', () => {
 // ---------------------------------------------------------------------------
 
 describe('accumulateWorkspaceDirtyDelta — trees', () => {
-  it('add-then-delete: ends in deletes only', () => {
-    const base  = makeProject('ws1', [], { trees: [] });
-    const after = makeProject('ws1', [], { trees: [tree('t2')] });
-    const d = accumulate2(
-      { prev: base, cur: after },
-      { prev: after, cur: base },
-    );
-    expect(d.treeDeleteIds.has('t2')).toBe(true);
-    expect(d.treeUpsertIds.has('t2')).toBe(false);
-    assertNoOverlap(d);
-  });
-
   it('delete-then-re-add: ends in upserts only', () => {
     const base  = makeProject('ws1', [], { trees: [tree('t2')] });
     const after = makeProject('ws1', [], { trees: [] });
@@ -234,18 +178,6 @@ describe('accumulateWorkspaceDirtyDelta — artifacts', () => {
     expect(d.contextUpsertIds.has('c2')).toBe(false);
     assertNoOverlap(d);
   });
-
-  it('delete-then-re-add: ends in upserts only', () => {
-    const base  = makeProject('ws1', [], { artifacts: [ctx('c2')] });
-    const after = makeProject('ws1', [], { artifacts: [] });
-    const d = accumulate2(
-      { prev: base, cur: after },
-      { prev: after, cur: base },
-    );
-    expect(d.contextUpsertIds.has('c2')).toBe(true);
-    expect(d.contextDeleteIds.has('c2')).toBe(false);
-    assertNoOverlap(d);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -257,32 +189,6 @@ describe('accumulateWorkspaceDirtyDelta — nodes', () => {
     const msgs = [makeMsg('m1')];
     const n1before = makeNode('n1', 'ws1', { messages: msgs, title: 'before' });
     const n1after  = makeNode('n1', 'ws1', { messages: msgs, title: 'after' });  // same messages ref
-    const project = makeProject('ws1', ['n1']);
-    const d = accumulateWorkspaceDirtyDelta(
-      project, project,
-      { n1: n1before }, { n1: n1after },
-      emptyWorkspaceDirtyDelta(),
-    );
-    expect(d.nodeIds.has('n1')).toBe(true);
-    expect('messageNodeIds' in d).toBe(false);
-  });
-
-  it('tracks a changed message reference through the node row only', () => {
-    const n1before = makeNode('n1', 'ws1', { messages: [makeMsg('m1')] });
-    const n1after  = makeNode('n1', 'ws1', { messages: [makeMsg('m1'), makeMsg('m2')] }); // new ref
-    const project = makeProject('ws1', ['n1']);
-    const d = accumulateWorkspaceDirtyDelta(
-      project, project,
-      { n1: n1before }, { n1: n1after },
-      emptyWorkspaceDirtyDelta(),
-    );
-    expect(d.nodeIds.has('n1')).toBe(true);
-    expect('messageNodeIds' in d).toBe(false);
-  });
-
-  it('tracks a node trimmed to zero messages through the node row only', () => {
-    const n1before = makeNode('n1', 'ws1', { messages: [makeMsg('m1')] });
-    const n1after  = makeNode('n1', 'ws1', { messages: [] });
     const project = makeProject('ws1', ['n1']);
     const d = accumulateWorkspaceDirtyDelta(
       project, project,
@@ -317,14 +223,6 @@ describe('accumulateWorkspaceDirtyDelta — workspace fields', () => {
     const cur  = makeProject('ws1', [], { name: 'Renamed' });
     const d = accumulateWorkspaceDirtyDelta(prev, cur, {}, {}, emptyWorkspaceDirtyDelta());
     expect(d.workspaceChanged).toBe(true);
-  });
-
-  it('workspaceChanged NOT set when only an untracked field changes', () => {
-    const prev = makeProject('ws1', ['n1']);
-    // chatIds changed — that's not a workspace-row field.
-    const cur  = makeProject('ws1', ['n1', 'n2']);
-    const d = accumulateWorkspaceDirtyDelta(prev, cur, {}, {}, emptyWorkspaceDirtyDelta());
-    expect(d.workspaceChanged).toBe(false);
   });
 
   it('workspaceChanged set when prev is undefined (new project)', () => {

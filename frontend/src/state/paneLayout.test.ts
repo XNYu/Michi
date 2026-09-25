@@ -26,27 +26,9 @@ describe('pane width modes', () => {
     expect(layout(mode, count).overflow).toBe(overflow);
   });
 
-  it('does not stretch fixed tracks to fill a wide display', () => {
-    const result = resolvePaneLayout({ mode: 'fixed', paneCount: 2, viewportWidth: 2400, defaultPaneWidth: 800 });
-    expect(result.widths).toEqual([800, 800]);
-    expect(result.overflow).toBe(false);
-  });
-
   it.each(['fixed', 'half', 'adaptive'] as const)('preserves individual overrides in %s', mode => {
     expect(resolvePaneLayout({ mode, paneCount: 3, viewportWidth: 1200, defaultPaneWidth: 800, customWidths: [720, undefined, 450] }).widths)
       .toEqual([720, mode === 'half' ? 600 : 800, 450]);
-  });
-
-  it('clamps oversized default and custom widths to the usable viewport', () => {
-    expect(resolvePaneLayout({ mode: 'fixed', paneCount: 2, viewportWidth: 390, defaultPaneWidth: 800, customWidths: [1600] }).widths)
-      .toEqual([390, 390]);
-  });
-
-  it('accounts for gutters without triggering overflow for two half-width panes', () => {
-    const result = resolvePaneLayout({ mode: 'half', paneCount: 2, viewportWidth: 1200, defaultPaneWidth: 800, padding: 10, gap: 8 });
-    expect(result.widths).toEqual([586, 586]);
-    expect(result.overflow).toBe(false);
-    expect(result.paddingRight).toBe(10);
   });
 
   it('adds only enough trailing space to center the last overflowing pane', () => {

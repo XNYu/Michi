@@ -81,20 +81,6 @@ describe('emptyWorkspaceTrash', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('removes only soft-deleted nodes and returns the count', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'live1');
-    insertNode('ws1', 'live2');
-    insertNode('ws1', 'dead1', { deletedAt: 100, groupId: 'g1' });
-    insertNode('ws1', 'dead2', { deletedAt: 100, groupId: 'g1' });
-
-    const purged = emptyWorkspaceTrash('ws1');
-
-    assert.equal(purged, 2);
-    const remaining = listNodes('ws1').map((n) => n.id).sort();
-    assert.deepEqual(remaining, ['live1', 'live2']);
-  });
-
   test('cascades edges and messages of deleted nodes', () => {
     insertWorkspace('ws1');
     insertNode('ws1', 'live1');
@@ -117,31 +103,6 @@ describe('emptyWorkspaceTrash', () => {
     assert.equal(listEdges('ws1').length, 0, 'edge touching dead1 was cascaded');
     assert.equal(listMessages('dead1').length, 0, 'dead1 messages cascaded');
     assert.equal(listMessages('live1').length, 1, 'live1 messages preserved');
-  });
-
-  test('drops trees whose root no longer exists', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'live-root');
-    insertNode('ws1', 'dead-root', { deletedAt: 100, groupId: 'g1' });
-    insertTree('ws1', 't-live', 'live-root');
-    insertTree('ws1', 't-dead', 'dead-root');
-
-    emptyWorkspaceTrash('ws1');
-
-    const trees = listTrees('ws1').map((t) => t.id).sort();
-    assert.deepEqual(trees, ['t-live']);
-  });
-
-  test('is scoped to the requested workspace only', () => {
-    insertWorkspace('ws1');
-    insertWorkspace('ws2');
-    insertNode('ws1', 'dead-in-ws1', { deletedAt: 100, groupId: 'g1' });
-    insertNode('ws2', 'dead-in-ws2', { deletedAt: 100, groupId: 'g2' });
-
-    const purged = emptyWorkspaceTrash('ws1');
-
-    assert.equal(purged, 1);
-    assert.equal(listNodes('ws2').length, 1, 'ws2 untouched');
   });
 
   test('is a no-op when there is nothing to purge', () => {

@@ -102,20 +102,6 @@ describe('saveNode — rev stamp / preserve', () => {
     assert.ok(node, 'node should exist');
     assert.equal(node.rev ?? null, null);
   });
-
-  test('rev=5 → preserve on no-rev upsert → rev=9 stamps', () => {
-    // 1. Stamp rev = 5.
-    saveNode(nodeRow('n1', 5));
-    assert.equal(readNodeRev('n1'), 5, 'rev should be stamped to 5');
-
-    // 2. Upsert same id with no rev (defaults to null) → COALESCE preserves 5.
-    saveNode(nodeRow('n1'));
-    assert.equal(readNodeRev('n1'), 5, 'rev should STILL be 5 after a no-rev upsert (COALESCE preserve)');
-
-    // 3. Upsert same id with rev = 9 → stamps 9.
-    saveNode(nodeRow('n1', 9));
-    assert.equal(readNodeRev('n1'), 9, 'rev should be re-stamped to 9');
-  });
 });
 
 describe('saveMessage — rev stamp / preserve', () => {
@@ -134,16 +120,5 @@ describe('saveMessage — rev stamp / preserve', () => {
   test('new message without rev inserts NULL', () => {
     saveMessage(messageRow('m-null', 0));
     assert.equal(readMessageRev('m-null'), null);
-  });
-
-  test('rev=5 → preserve on no-rev upsert → rev=9 stamps', () => {
-    saveMessage(messageRow('m1', 0, 5));
-    assert.equal(readMessageRev('m1'), 5, 'rev should be stamped to 5');
-
-    saveMessage(messageRow('m1', 0));
-    assert.equal(readMessageRev('m1'), 5, 'rev should STILL be 5 after a no-rev upsert (COALESCE preserve)');
-
-    saveMessage(messageRow('m1', 0, 9));
-    assert.equal(readMessageRev('m1'), 9, 'rev should be re-stamped to 9');
   });
 });

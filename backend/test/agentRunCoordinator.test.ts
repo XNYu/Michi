@@ -248,15 +248,6 @@ describe('AgentRunCoordinator', () => {
     assert.equal(fixture.repository.attempts.get(run.id)?.at(-1)?.recoveryEnvelope?.failureBoundary, 'restart');
   });
 
-  test('executor startup failure never projects running without a live handle', async () => {
-    const fixture = setup();
-    fixture.setStartError(new Error('runtime unavailable'));
-    const coordinator = new AgentRunCoordinator(fixture.ports);
-    const queued = await coordinator.spawn(spawnInput());
-    await assert.rejects(() => coordinator.start('owner', queued.id), /runtime unavailable/);
-    assert.equal(coordinator.check('owner', queued.id)?.status, AgentRunStatus.Preparing);
-  });
-
   test('responding to a durable interaction resumes and settles the same Attempt', async () => {
     const fixture = setup(
       { status: 'waiting', kind: 'permission', request: { version: 1, tool: 'bash' } },

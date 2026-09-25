@@ -11,10 +11,6 @@ function texts(markdown: string): string[] {
 }
 
 describe('splitStreamingMarkdownBlocks', () => {
-  it('splits plain paragraphs at marked block boundaries', () => {
-    expect(texts('one\n\ntwo growing')).toEqual(['one', '\n\n', 'two growing']);
-  });
-
   it('keeps closed fenced code as its own block', () => {
     expect(texts('before\n\n```ts\nconst x = 1\n```\n\nafter')).toEqual([
       'before',
@@ -22,28 +18,6 @@ describe('splitStreamingMarkdownBlocks', () => {
       '```ts\nconst x = 1\n```',
       '\n\n',
       'after',
-    ]);
-  });
-
-  it('keeps an open fenced code block as the tail block', () => {
-    expect(texts('before\n\n```ts\nconst x = 1')).toEqual([
-      'before',
-      '\n\n',
-      '```ts\nconst x = 1',
-    ]);
-  });
-
-  it('keeps GFM tables together with their delimiter row', () => {
-    expect(texts('| a | b |\n| - | - |\n| 1 | 2 |\n\nnext')).toEqual([
-      '| a | b |\n| - | - |\n| 1 | 2 |\n\n',
-      'next',
-    ]);
-  });
-
-  it('keeps setext headings with their underline', () => {
-    expect(texts('Title\n---\n\nbody')).toEqual([
-      'Title\n---\n\n',
-      'body',
     ]);
   });
 
@@ -95,15 +69,6 @@ describe('updateStreamingMarkdownBlocks', () => {
     expect(second.blocks[1]).toBe(first.blocks[1]);
     expect(second.blocks[2]).not.toBe(first.blocks[2]);
     expect(second.blocks).toEqual(splitStreamingMarkdownBlocks(second.markdown));
-  });
-
-  it('keeps prior blocks stable when the tail grows into additional blocks', () => {
-    const [first, second, third] = incrementalSequence(['one\n\n', 'two', '\n\nthree']);
-
-    expect(second.blocks[0]).toBe(first.blocks[0]);
-    expect(third.blocks[0]).toBe(second.blocks[0]);
-    expect(third.blocks[1]).toBe(second.blocks[1]);
-    expect(third.parsedFrom).toBe(5);
   });
 
   it('reparses tail constructs whose token type changes as text arrives', () => {

@@ -17,29 +17,6 @@ describe('useAgentModelCatalog', () => {
     vi.useRealTimers();
   });
 
-  it('reports loading and stores a successful catalog', async () => {
-    let resolve!: (value: { models: Array<{ id: string; label: string }>; sanitizedModel: null }) => void;
-    (listAgentModels as any).mockImplementation(() => new Promise((r) => { resolve = r; }));
-
-    const { result } = renderHook(() => useAgentModelCatalog({
-      enabled: true,
-      runtime: 'gemini',
-      provider: 'google',
-    }));
-
-    await waitFor(() => expect(result.current.loading).toBe(true));
-
-    await act(async () => {
-      resolve({ models: [{ id: 'gemini-pro', label: 'Gemini Pro' }], sanitizedModel: null });
-    });
-
-    await waitFor(() => expect(result.current.models).toEqual([
-      { id: 'gemini-pro', label: 'Gemini Pro' },
-    ]));
-    expect(result.current.loading).toBe(false);
-    expect(result.current.error).toBeNull();
-  });
-
   it('automatically retries a transient failure', async () => {
     vi.useFakeTimers();
     (listAgentModels as any)

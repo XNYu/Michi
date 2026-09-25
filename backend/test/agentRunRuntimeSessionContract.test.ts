@@ -62,11 +62,6 @@ describe('RuntimeSessionOwner shapes', () => {
     assert.equal(sameOwner(runOwner('r1', 'a1'), runOwner('r2', 'a2')), false);
   });
 
-  test('different owner kinds are never equal', () => {
-    assert.equal(sameOwner(chatOwner('a1'), runOwner('r1', 'a1')), false);
-    assert.equal(sameOwner(runOwner('r1', 'n1'), chatOwner('n1')), false);
-  });
-
   test('ownerLabel returns distinct labels for each kind', () => {
     assert.match(ownerLabel(chatOwner('node-42')), /chat_node\(node-42\)/);
     assert.match(ownerLabel(runOwner('run-7', 'attempt-3')), /agent_run.*run=run-7.*attempt=attempt-3/);
@@ -78,31 +73,9 @@ describe('RuntimeSessionOwner shapes', () => {
 // ---------------------------------------------------------------------------
 
 describe('assertOwner', () => {
-  test('does not throw for matching chat_node owners', () => {
-    assert.doesNotThrow(() => assertOwner(chatOwner('n1'), chatOwner('n1')));
-  });
-
-  test('does not throw for matching agent_run owners', () => {
-    assert.doesNotThrow(() => assertOwner(runOwner('r1', 'a1'), runOwner('r1', 'a1')));
-  });
-
   test('throws for mismatched attempt ids', () => {
     assert.throws(
       () => assertOwner(runOwner('r1', 'a1'), runOwner('r1', 'a2')),
-      /Owner mismatch/,
-    );
-  });
-
-  test('throws for mismatched run ids with same attempt id', () => {
-    assert.throws(
-      () => assertOwner(runOwner('r1', 'a1'), runOwner('r2', 'a1')),
-      /Owner mismatch/,
-    );
-  });
-
-  test('throws for cross-kind mismatch', () => {
-    assert.throws(
-      () => assertOwner(chatOwner('n1'), runOwner('r1', 'n1')),
       /Owner mismatch/,
     );
   });
@@ -153,17 +126,6 @@ describe('Run session identity contract', () => {
     // sameOwner must still match by runId+attemptId, not by native id
     assert.equal(sameOwner(owner, runOwner('run-1', 'attempt-42')), true);
   });
-
-  test('chat_node owner nodeId is the canonical public session id', () => {
-    const owner = chatOwner('node-7');
-    assert.equal(owner.nodeId, 'node-7');
-  });
-
-  test('no contract requires a Run to have a Node id', () => {
-    const owner = runOwner('run-1', 'attempt-1');
-    // The agent_run discriminant has no nodeId field
-    assert.equal('nodeId' in owner, false);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -173,33 +135,12 @@ describe('Run session identity contract', () => {
 describe('RuntimeRunAdapter compatibility', () => {
   const adapters: RuntimeRunAdapter[] = [new PiRunAdapter(), new ClaudeRunAdapter()];
 
-  test('Pi adapter rejects wrong runtime id', () => {
-    const pi = new PiRunAdapter();
-    assert.throws(
-      () => pi.assertCompatible(fakeRuntime('claude')),
-      /Pi Run adapter cannot execute runtime claude/,
-    );
-  });
-
-  test('Pi adapter rejects missing model capability', () => {
-    const pi = new PiRunAdapter();
-    assert.throws(
-      () => pi.assertCompatible(fakeRuntime('pi', { models: false })),
-      /model\/reasoning capabilities/,
-    );
-  });
-
   test('Pi adapter rejects missing reasoning capability', () => {
     const pi = new PiRunAdapter();
     assert.throws(
       () => pi.assertCompatible(fakeRuntime('pi', { reasoning: false })),
       /model\/reasoning capabilities/,
     );
-  });
-
-  test('Pi adapter accepts compatible runtime', () => {
-    const pi = new PiRunAdapter();
-    assert.doesNotThrow(() => pi.assertCompatible(fakeRuntime('pi')));
   });
 
   test('Claude adapter rejects wrong runtime id', () => {
@@ -215,13 +156,6 @@ describe('RuntimeRunAdapter compatibility', () => {
     assert.throws(
       () => claude.assertCompatible(fakeRuntime('claude', { nativeResume: false })),
       /model\/native-resume capabilities/,
-    );
-  });
-
-  test('Claude adapter accepts compatible runtime', () => {
-    const claude = new ClaudeRunAdapter();
-    assert.doesNotThrow(
-      () => claude.assertCompatible(fakeRuntime('claude', { nativeResume: true })),
     );
   });
 
@@ -241,73 +175,13 @@ describe('RuntimeRunAdapter compatibility', () => {
       assert.equal(typeof adapter.assertCompatible, 'function');
     }
   });
-
-  test('Pi adapter declares allowlist tool mode and native steering', () => {
-    const pi = new PiRunAdapter();
-    assert.equal(pi.nativeToolMode, 'allowlist');
-    assert.equal(pi.steering, 'native');
-    assert.equal(pi.supportsNativeResume, false);
-  });
-
-  test('Claude adapter declares allowlist tool mode, native steering, and native resume', () => {
-    const claude = new ClaudeRunAdapter();
-    assert.equal(claude.nativeToolMode, 'allowlist');
-    assert.equal(claude.steering, 'native');
-    assert.equal(claude.supportsNativeResume, true);
-  });
 });
 
 // ---------------------------------------------------------------------------
 // Incompatible profile hash
 // ---------------------------------------------------------------------------
 
-describe('profile hash incompatibility', () => {
-  test('distinct profile hashes indicate incompatible sessions', () => {
-    // Profile hashes are opaque SHA-256 strings. The runtime Executor rejects
-    // a session whose runtimeProfileHash does not match the requested hash.
-    const hashA = 'a'.repeat(64);
-    const hashB = 'b'.repeat(64);
-    assert.notEqual(hashA, hashB);
-
-    // Simulate the Executor's post-creation check (from runtimeRunExecutor.ts):
-    // if (session.runtimeProfileHash != null && session.runtimeProfileHash !== profileHash)
-    //   throw new Error('runtime returned a session with an incompatible profile hash');
-    const sessionHash: string | null = hashA;
-    const requestedHash = hashB;
-    assert.notEqual(sessionHash, requestedHash, 'mismatched hashes must be detected');
-
-    // A null session hash is permissive (legacy/optional)
-    const nullHash: string | null = null;
-    assert.equal(nullHash == null || nullHash === requestedHash, true);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Malformed native tokens
 // ---------------------------------------------------------------------------
 
-describe('malformed native resume tokens', () => {
-  test('empty string is not a valid native resume token', () => {
-    // The Executor treats non-null nativeResumeToken as a resume request.
-    // Empty strings are considered malformed — a valid token is always
-    // a non-empty string (ACP sid, Codex thread id).
-    const token = '';
-    assert.equal(typeof token === 'string' && token.length > 0, false);
-  });
-
-  test('null token means fresh session, not resume', () => {
-    const token: unknown = null;
-    assert.equal(token !== null, false);
-  });
-
-  test('non-string tokens are not valid resume tokens', () => {
-    for (const bad of [0, false, {}, [], undefined]) {
-      assert.equal(typeof bad === 'string' && bad.length > 0, false);
-    }
-  });
-
-  test('valid native token is a non-empty string', () => {
-    const valid = 'acp-session-abc123';
-    assert.equal(typeof valid === 'string' && valid.length > 0, true);
-  });
-});

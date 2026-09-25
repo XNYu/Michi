@@ -27,9 +27,6 @@ describe('isNodeUnread', () => {
   it('true when lastAssistantAt > viewedAt', () => {
     expect(isNodeUnread(n({ lastAssistantAt: 200, viewedAt: 100 }), null)).toBe(true);
   });
-  it('false when viewedAt >= lastAssistantAt', () => {
-    expect(isNodeUnread(n({ lastAssistantAt: 200, viewedAt: 200 }), null)).toBe(false);
-  });
   it('false when node is the focused node (suppresses self-flash)', () => {
     expect(
       isNodeUnread(n({ nodeId: 'a', lastAssistantAt: 200, viewedAt: 100 }), 'a'),

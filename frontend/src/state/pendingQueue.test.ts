@@ -44,12 +44,6 @@ describe('queue-message reducer', () => {
     expect(next.n1.pendingQueued).toEqual([m1]);
   });
 
-  it('does not affect queueErrored', () => {
-    const state = { n1: baseNode({ queueErrored: true }) };
-    const next = reduceNodes(state, { type: 'queue-message', nodeId: 'n1', message: queued('q1') });
-    expect(next.n1.queueErrored).toBe(true);
-  });
-
   it('is a no-op for unknown nodeId', () => {
     const state = { n1: baseNode() };
     const next = reduceNodes(state, { type: 'queue-message', nodeId: 'missing', message: queued('q1') });

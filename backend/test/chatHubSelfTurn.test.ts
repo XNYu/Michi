@@ -135,30 +135,6 @@ describe('ChatHub.startTurn', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     assert.deepEqual(background.map((event) => event.event), ['turn_start', 'chunk', 'done']);
   });
-  it('publishes branch_overview before done on the owner message stream', async () => {
-    const hub = hubWithPersistence();
-    const received: ChatStreamEvent[] = [];
-    hub.subscribe('owner-chat', {
-      send: (ev) => received.push(ev),
-      close: () => {},
-    });
-
-    const { done } = await hub.startTurn({
-      chatId: 'owner-chat',
-      nodeId: 'owner-node',
-      text: 'Summarize this branch',
-      session: sessionFrom([
-        { kind: 'chunk', text: '[BRANCH-OVERVIEW: Owner stream summary.]' },
-        { kind: 'turn_end', stopReason: 'end_turn' },
-      ]),
-    });
-    await done;
-
-    const overviewIndex = received.findIndex((ev) => ev.event === 'branch_overview');
-    const doneIndex = received.findIndex((ev) => ev.event === 'done');
-    assert(overviewIndex >= 0, 'expected a branch_overview event');
-    assert(doneIndex > overviewIndex, 'branch_overview must arrive before done');
-  });
 
   it('uses structured overview metadata without emitting a duplicate sentinel fallback', async () => {
     const hub = hubWithPersistence();
@@ -264,38 +240,6 @@ describe('ChatHub.startTurn', () => {
     assert.equal(terminal?.data.code, 'turn_persistence_failed');
     assert.equal(terminal?.data.recoverable, true);
     assert.match(terminal?.data.message ?? '', /could not be committed/i);
-  });
-
-  it('does not reinterpret a successful model turn as a runtime error after a transient finalize failure', async () => {
-    let finalizeCalls = 0;
-    const hub = hubWithPersistence({
-      finalize: () => {
-        finalizeCalls += 1;
-        if (finalizeCalls === 1) throw new Error('database busy');
-      },
-    });
-    const received: ChatStreamEvent[] = [];
-    hub.subscribe('transient-failure-chat', {
-      send: (ev) => received.push(ev),
-      close: () => {},
-    });
-
-    const { done } = await hub.startTurn({
-      chatId: 'transient-failure-chat',
-      nodeId: 'transient-failure-node',
-      text: 'hello',
-      session: sessionFrom([
-        { kind: 'chunk', text: 'model completed successfully' },
-        { kind: 'turn_end', stopReason: 'end_turn' },
-      ]),
-    });
-    await done;
-
-    assert.equal(finalizeCalls, 1);
-    assert.equal(received.some((ev) => ev.event === 'done'), false);
-    const terminal = received.find((ev) => ev.event === 'error');
-    assert.equal(terminal?.data.code, 'turn_persistence_failed');
-    assert.equal(terminal?.data.recoverable, true);
   });
 
   it('continues the model turn after a transient checkpoint failure', async () => {

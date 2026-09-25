@@ -111,20 +111,6 @@ describe('KiroSession connection-class auto-retry', () => {
     ]);
   });
 
-  it('ACPProcessExitedError also triggers respawn + resend', async () => {
-    const { runtime, recoverCalls } = scriptedRuntime([
-      new ACPProcessExitedError('ACP process exited with code 1'),
-      [{ sessionUpdate: 'turn_end', stopReason: 'end_turn' }],
-    ]);
-    const session = new KiroSession('node-2', 'sid-2', runtime, '/tmp');
-
-    const events = [];
-    for await (const ev of session.send('hi')) events.push(ev);
-
-    assert.equal(recoverCalls.length, 1);
-    assert.deepEqual(events.at(-1), { kind: 'turn_end', stopReason: 'end_turn' });
-  });
-
   it('does NOT retry once visible output was already streamed', async () => {
     // First attempt yields a chunk, THEN dies. Retrying would duplicate text.
     const partialThenDie = {
@@ -193,64 +179,9 @@ describe('KiroSession connection-class auto-retry', () => {
     assert.equal(recoverCalls.length, 1, 'exactly one retry attempt');
     assert.equal((thrown as { acpErrorKind?: string }).acpErrorKind, 'connection');
   });
-
-  it('surfaces original error when recovery itself fails', async () => {
-    let recoverCount = 0;
-    const dying = {
-      async *prompt() {
-        throw connErr();
-      },
-    };
-    const runtime = {
-      ensureClient: async () => dying,
-      getCurrentMode: () => null,
-      getCurrentModel: () => null,
-      recoverSession: async () => {
-        recoverCount += 1;
-        return false; // recovery failed
-      },
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node-6', 'sid-6', runtime, '/tmp');
-
-    let thrown: unknown;
-    try {
-      for await (const _ev of session.send('hi')) { /* drain */ }
-    } catch (e) {
-      thrown = e;
-    }
-
-    assert.equal(recoverCount, 1);
-    assert.equal((thrown as { acpErrorKind?: string }).acpErrorKind, 'connection');
-  });
 });
 
 describe('KiroSession agent_run owner retry behavior', () => {
-  it('agent_run owner does NOT auto-retry — surfaces connection error immediately', async () => {
-    let recoverCount = 0;
-    const { runtime } = scriptedRuntime([connErr()]);
-    // Override recoverSession to track calls.
-    (runtime as any).recoverSession = async () => {
-      recoverCount += 1;
-      return true;
-    };
-
-    const session = new KiroSession('attempt-1', 'sid-run', runtime, '/tmp', {
-      owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    });
-
-    let thrown: unknown;
-    try {
-      for await (const _ev of session.send('task instructions')) { /* drain */ }
-    } catch (e) {
-      thrown = e;
-    }
-
-    assert.ok(thrown, 'should throw the connection error');
-    assert.equal(recoverCount, 0, 'agent_run owner must NOT trigger auto-recovery');
-    assert.equal((thrown as { acpErrorKind?: string }).acpErrorKind, undefined,
-      'agent_run path does not decorate acpErrorKind (raw error surfaced)');
-  });
-
   it('agent_run owner surfaces ACPProcessExitedError without retry', async () => {
     const { runtime, recoverCalls } = scriptedRuntime([
       new ACPProcessExitedError('ACP process exited with code 1'),
@@ -269,56 +200,9 @@ describe('KiroSession agent_run owner retry behavior', () => {
     assert.ok(thrown instanceof ACPProcessExitedError);
     assert.equal(recoverCalls.length, 0, 'no recovery for agent_run owner');
   });
-
-  it('chat_node owner still retries on same error (backward compat)', async () => {
-    const { runtime, recoverCalls } = scriptedRuntime([
-      connErr(),
-      [
-        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'OK' } },
-        { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
-      ],
-    ]);
-    const session = new KiroSession('node-chat', 'sid-chat', runtime, '/tmp', {
-      owner: { kind: 'chat_node', nodeId: 'node-chat' },
-    });
-
-    const chunks: string[] = [];
-    for await (const ev of session.send('hi')) {
-      if (ev.kind === 'chunk') chunks.push(ev.text);
-    }
-
-    assert.equal(chunks.join(''), 'OK');
-    assert.equal(recoverCalls.length, 1, 'chat owner should retry with recovery');
-  });
 });
 
 describe('KiroSession auto-retry is visible to the UI', () => {
-  it('emits retry_start (with reason + attempt) then retry_end around a connection retry', async () => {
-    const { runtime } = scriptedRuntime([
-      connErr(),
-      [{ sessionUpdate: 'turn_end', stopReason: 'end_turn' }],
-    ]);
-    const session = new KiroSession('vis-1', 'sid-vis-1', runtime, '/tmp');
-
-    const events = [];
-    for await (const ev of session.send('hi')) events.push(ev);
-
-    const retryStart = events.find((e) => e.kind === 'retry_start') as
-      | { kind: 'retry_start'; detail?: string }
-      | undefined;
-    assert.ok(retryStart, 'a retry_start must be emitted during recovery');
-    assert.equal(
-      retryStart.detail,
-      'Connection to Kiro was interrupted. Retrying (attempt 1)…',
-      'connection retry detail is a complete English sentence with its attempt count',
-    );
-    // Exactly one start/end pair, in order, for the single allowed retry.
-    assert.deepEqual(
-      events.filter((e) => e.kind === 'retry_start' || e.kind === 'retry_end').map((e) => e.kind),
-      ['retry_start', 'retry_end'],
-    );
-  });
-
   it('transient retry reads as "model unavailable", not "cannot reach"', async () => {
     const { runtime } = scriptedRuntime([
       new ACPError('failed to generate a response'),

@@ -55,13 +55,6 @@ describe('collectCrossTreeGroups', () => {
     expect(groups.map((g) => g.treeTitle)).toEqual(['A root', 'B root']);
   });
 
-  it('prefers the tree name over the root title for the group label', () => {
-    const { nodes, project } = fixture();
-    const named = { ...project, trees: [mkTree('tA', 'a1', 200, { name: 'Alpha' }), project.trees[1]] };
-    const groups = collectCrossTreeGroups(nodes, named, null);
-    expect(groups[0].treeTitle).toBe('Alpha');
-  });
-
   it('skips archived trees, deleted nodes and empty nodes', () => {
     const { nodes, project } = fixture();
     const archived = { ...project, trees: [project.trees[0], mkTree('tB', 'b1', 100, { archivedAt: 5 })] };

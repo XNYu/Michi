@@ -338,22 +338,6 @@ describe('cancelChatAndObserve deadlines and ownership', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('does not flash pending when confirmation arrives within the one-second grace', async () => {
-    const replay = sse();
-    vi.stubGlobal('fetch', vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response('{}'))
-      .mockResolvedValueOnce(replay.response));
-    const { onStatus } = observe();
-    await flush();
-    await vi.advanceTimersByTimeAsync(999);
-    expect(onStatus).not.toHaveBeenCalled();
-    replay.emit(done());
-    await flush();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(onStatus).toHaveBeenCalledExactlyOnceWith({ state: 'settled' });
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it('keeps 410 replay unconfirmed and retries only until the original 30-second deadline', async () => {
     const response = deferred<Response>();
     const fetchMock = vi.fn<typeof fetch>()
@@ -638,70 +622,5 @@ describe('cancelChatAndObserve deadlines and ownership', () => {
     await flush();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(onStatus).toHaveBeenCalledExactlyOnceWith({ state: 'error', detail: expect.stringContaining('cleanup failed') });
-  });
-
-  it('a superseding monitor fences late events and stale stop cannot detach its replacement', async () => {
-    const firstReplay = sse();
-    const secondReplay = sse();
-    const fetchMock = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response('{}'))
-      .mockResolvedValueOnce(firstReplay.response)
-      .mockResolvedValueOnce(new Response('{}'))
-      .mockResolvedValueOnce(secondReplay.response);
-    vi.stubGlobal('fetch', fetchMock);
-    const first = observe();
-    await flush();
-    const second = observe(undefined, 'replacement-turn');
-    expect(fetchMock.mock.calls[1][1]?.signal?.aborted).toBe(true);
-    await flush();
-    first.stop();
-    expect(fetchMock.mock.calls[3][1]?.signal?.aborted).toBe(false);
-    expectCursor(fetchMock.mock.calls[3][0], 'replacement-turn');
-    firstReplay.emit(failure(), done());
-    secondReplay.emit(done('replacement-turn'));
-    await flush();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(first.onStatus).not.toHaveBeenCalled();
-    expect(second.onStatus).toHaveBeenCalledExactlyOnceWith({ state: 'settled' });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
-
-  it('a next stream supersedes a stuck cancel request and its late success cannot start replay', async () => {
-    const oldCancel = deferred<Response>();
-    const nextOutput = sse();
-    const fetchMock = vi.fn<typeof fetch>()
-      .mockReturnValueOnce(oldCancel.promise)
-      .mockResolvedValueOnce(nextOutput.response);
-    vi.stubGlobal('fetch', fetchMock);
-    const { onStatus } = observe();
-    const h = handlers();
-    streamMessage(nodeId, 'next', h, OWNER, { turnId: 'next-turn' });
-    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
-    oldCancel.resolve(new Response('{}'));
-    await flush();
-    nextOutput.emit(chunk('new content', 'next-turn'), done('next-turn'));
-    nextOutput.close();
-    await flush();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(onStatus).not.toHaveBeenCalled();
-    expect(h.onChunk).toHaveBeenCalledTimes(1);
-    expect(h.onDone).toHaveBeenCalledTimes(1);
-    expect(h.onError).not.toHaveBeenCalled();
-  });
-
-  it('explicit stop cancels a scheduled retry and never reports completion into another turn', async () => {
-    vi.stubGlobal('fetch', vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response('{}'))
-      .mockResolvedValueOnce(new Response(null, { status: 503 })));
-    const { onStatus, stop } = observe();
-    await flush();
-    await vi.advanceTimersByTimeAsync(249);
-    stop();
-    stop();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(onStatus).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
   });
 });

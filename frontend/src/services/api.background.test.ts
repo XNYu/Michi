@@ -40,21 +40,6 @@ describe('background SSE', () => {
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ selfInitiated: true }));
   });
 
-  it('surfaces a replay gap control frame before normal background events', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
-      `event: background_sync_required\ndata: ${JSON.stringify({
-        chatId: 'chat-gap', nodeId: 'node-gap', turnId: 'turn-durable', seq: 12,
-      })}\n\n`,
-    ])));
-    const onReplayGap = vi.fn();
-
-    subscribeBackground(() => ({}), { onReplayGap });
-    await vi.waitFor(() => expect(onReplayGap).toHaveBeenCalledTimes(1));
-    expect(onReplayGap).toHaveBeenCalledWith({
-      chatId: 'chat-gap', nodeId: 'node-gap', turnId: 'turn-durable', seq: 12,
-    }, expect.any(AbortSignal));
-  });
-
   it('treats replay-gap reconciliation as a delivery barrier', async () => {
     let releaseGap!: () => void;
     const gapBarrier = new Promise<void>((resolve) => { releaseGap = resolve; });

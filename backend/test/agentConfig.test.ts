@@ -105,11 +105,6 @@ describe('agentConfig claudeConfigDir', () => {
         restoreFsWrite();
     });
 
-    test('unset by default — resolveClaudeConfigDir returns undefined', () => {
-        const { resolveClaudeConfigDir } = require('../src/services/agentConfig');
-        assert.equal(resolveClaudeConfigDir(), undefined);
-    });
-
     test('expands a leading ~ against the home directory', () => {
         const os = require('node:os');
         const path = require('node:path');

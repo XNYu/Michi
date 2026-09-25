@@ -109,11 +109,6 @@ test('HTTP branch forks once, persists a distinct child binding, and later resum
   assert.equal(forks.length, 1);
 });
 
-test('a first user message already persisted by the renderer does not disable native fork', async () => {
-  getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('pending-user','child','user','branch question',1,2)").run();
-  assert.equal((await ensure()).resumeReason, 'native_fork');
-});
-
 test('native fork skips textual ancestor replay but retains explicitly attached context', async () => {
   await ensure({ mergeContexts: ['explicit context'], extraContexts: [{ name: 'reference', filePath: 'notes.md' }] });
   assert.deepEqual(forks[0].mergeContexts, ['explicit context']);

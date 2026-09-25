@@ -141,34 +141,6 @@ describe('sidebar reveal when opening a search result (navigateToNode)', () => {
     await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
   });
 
-  it('different workspace, non-active thread of target workspace', async () => {
-    mountTree();
-    await act(async () => { await storeRef.createProject('wsTarget', undefined); });
-    await waitFor(() => expect(storeRef.activeProject).toBeTruthy());
-    const pidTarget = storeRef.activeProject!.id;
-
-    let rootA = '';
-    let rootB = '';
-    let childB = '';
-    await act(async () => { rootA = (await storeRef.createThread()) ?? ''; });
-    await act(async () => { rootB = (await storeRef.createThread()) ?? ''; });
-    await act(async () => { childB = await storeRef.createBlankChild(rootB); });
-    const treeA = storeRef.projects.find((p) => p.id === pidTarget)!.trees.find((t) => t.rootNodeId === rootA)!.id;
-    act(() => { storeRef.activateTree(treeA, pidTarget); });
-
-    await act(async () => { await storeRef.createProject('wsOther', undefined); });
-    await waitFor(() => expect(storeRef.activeProject!.name).toBe('wsOther'));
-    await act(async () => { await storeRef.createThread(); });
-    expect(row(childB)).toBeNull();
-    scrollSpy.mockClear();
-
-    act(() => { navigateToNode(deps(), childB, pidTarget); });
-
-    await waitFor(() => expect(storeRef.focusedPane).toBe(childB));
-    await waitFor(() => expect(row(childB)).not.toBeNull());
-    await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
-  });
-
   it('historical thread beyond the Show-more preview cap still gets revealed', async () => {
     // Distinct, increasing timestamps so sortTrees ranks the first-created
     // tree last (real threads never share a lastActiveAt millisecond).

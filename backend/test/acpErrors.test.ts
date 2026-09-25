@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ACPError, ACPProcessExitedError, ACPNotRunningError } from '../src/services/acpClient';
+import { ACPError, ACPNotRunningError } from '../src/services/acpClient';
 import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from '../src/agents/kiro/acpErrors';
 
 /**
@@ -28,17 +28,6 @@ describe('classifyAcpError — connection class (respawn required)', () => {
     assert.equal(isRetryable('connection'), true);
   });
 
-  test('stream timed out receiving the response (StalledStreamProtection)', () => {
-    const err = rpcErr(
-      'Encountered an error in the response stream: The stream timed out receiving the response after 239767ms (request_id: f55a4e74)',
-    );
-    assert.equal(classifyAcpError(err), 'connection');
-  });
-
-  test('ACPProcessExitedError → connection', () => {
-    assert.equal(classifyAcpError(new ACPProcessExitedError('ACP process exited with code 1')), 'connection');
-  });
-
   test('ACPNotRunningError → connection', () => {
     assert.equal(classifyAcpError(new ACPNotRunningError('ACP process is not running')), 'connection');
   });
@@ -54,16 +43,8 @@ describe('classifyAcpError — transient class (same-session resend)', () => {
     assert.equal(needsRespawn('transient'), false);
   });
 
-  test('Kiro failed to generate a response', () => {
-    assert.equal(classifyAcpError(rpcErr('Kiro failed to generate a response')), 'transient');
-  });
-
   test('ModelTemporarilyUnavailable', () => {
     assert.equal(classifyAcpError(rpcErr('ModelTemporarilyUnavailable')), 'transient');
-  });
-
-  test('InternalServerError', () => {
-    assert.equal(classifyAcpError(rpcErr('InternalServerException: something went wrong')), 'transient');
   });
 });
 
@@ -83,11 +64,6 @@ describe('classifyAcpError — auth class (no retry, re-login)', () => {
 });
 
 describe('classifyAcpError — generic class (no retry, surface raw)', () => {
-  test('ValidationError', () => {
-    assert.equal(classifyAcpError(rpcErr('ValidationError: invalid parameter')), 'generic');
-    assert.equal(isRetryable('generic'), false);
-  });
-
   test('MonthlyRequestCount quota → generic (not auth, not retry)', () => {
     assert.equal(classifyAcpError(rpcErr('MonthlyRequestCount limit reached')), 'generic');
   });

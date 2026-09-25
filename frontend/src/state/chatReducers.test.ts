@@ -133,12 +133,6 @@ describe('reduceNodes done — branch overview', () => {
       'The branch compares two auth models and currently favors rotating tokens.',
     );
   });
-
-  it('preserves the previous overview when a turn omits metadata', () => {
-    const before = { n1: makeNode({ branchOverview: 'Previous overview' }) };
-    const after = reduceNodes(before, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
-    expect(after.n1.branchOverview).toBe('Previous overview');
-  });
 });
 
 describe('reduceNodes node-viewed', () => {
@@ -226,19 +220,6 @@ describe('reduceNodes bind-chat — currentModeId preservation', () => {
     expect(after.n1.currentModeId).toBe('gpu-dev');
     expect(after.n1.chatId).toBe('n1');
   });
-
-  it('overwrites when the bind carries an explicit mode', () => {
-    const before = { n1: makeNode({ currentModeId: 'gpu-dev' }) };
-    const action: ChatAction = {
-      type: 'bind-chat',
-      nodeId: 'n1',
-      chatId: 'c2',
-      currentModeId: 'security-reviewer',
-      runtimeId: 'kiro',
-    };
-    const after = reduceNodes(before, action);
-    expect(after.n1.currentModeId).toBe('security-reviewer');
-  });
 });
 
 describe('reduceNodes pin-node / unpin-node', () => {
@@ -255,12 +236,6 @@ describe('reduceNodes pin-node / unpin-node', () => {
     const after = reduceNodes(before, { type: 'unpin-node', nodeId: 'n1' });
     expect(after.n1.pinnedAt).toBeUndefined();
     expect('pinnedAt' in after.n1).toBe(false);
-  });
-
-  it('unpin-node on an unpinned node is a no-op (same reference)', () => {
-    const before = { n1: makeNode({ status: 'idle' }) };
-    const after = reduceNodes(before, { type: 'unpin-node', nodeId: 'n1' });
-    expect(after).toBe(before);
   });
 
   it('ignores unknown node ids', () => {

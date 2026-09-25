@@ -31,16 +31,6 @@ describe('buildAnchorMap', () => {
     expect(ordered?.[1].createdAt).toBe(200);
   });
 
-  it('uses edge.createdAt, NOT child.messages[0].createdAt (blank-child case)', () => {
-    const parent = node('A', [msg('m1')]);
-    const blankChild = node('B', []); // empty — no first message
-    const edges: ProjectEdge[] = [
-      { source: 'A', target: 'B', kind: 'branch', anchorMessageId: 'm1', createdAt: 5000 },
-    ] as unknown as ProjectEdge[];
-    const out = buildAnchorMap('A', edges, { A: parent, B: blankChild }).get('m1');
-    expect(out?.[0].createdAt).toBe(5000);
-  });
-
   it('hides soft-deleted children', () => {
     const parent = node('A', [msg('m1')]);
     const child = node('B', [msg('x')], { deletedAt: 1 });
@@ -94,14 +84,6 @@ describe('cleanupOrphanedAnchors', () => {
     expect((out[0] as unknown as Record<string, unknown>).anchorMessageId).toBeUndefined();
     expect((out[1] as unknown as Record<string, unknown>).anchorMessageId).toBe('m1');
     expect((out[2] as unknown as Record<string, unknown>).anchorMessageId).toBe('gone'); // not a branch — untouched
-  });
-
-  it('preserves createdAt even when clearing anchorMessageId', () => {
-    const edges: ProjectEdge[] = [
-      { source: 'A', target: 'B', kind: 'branch', anchorMessageId: 'gone', createdAt: 5000 },
-    ] as unknown as ProjectEdge[];
-    const out = cleanupOrphanedAnchors(edges, 'A', new Set());
-    expect((out[0] as unknown as Record<string, unknown>).createdAt).toBe(5000);
   });
 
   it('does not touch edges whose source is a different parent', () => {

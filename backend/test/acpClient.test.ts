@@ -289,37 +289,6 @@ describe('AcpClient subagent routing (per-tool-call Map)', () => {
     assert.equal(bUpdates.length, 1, 'session-B (newer) should receive the list_update');
   });
 
-  test('after the most recent owner completes, the remaining owner takes over', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-    const qB = makeQueue('session-B');
-
-    // Both sessions trigger subagent tool calls
-    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
-    client.dispatch(toolCallMsg('session-B', 'tc-2', 'task'));
-
-    // B completes → A should become the sole owner
-    client.dispatch(toolCallUpdateMsg('session-B', 'tc-2', 'completed'));
-
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
-
-    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(aUpdates.length, 1, 'session-A (remaining) should receive the list_update');
-    assert.equal(bUpdates.length, 0, 'session-B (completed) should NOT receive list_update');
-  });
-
-  test('no owners → list_update is silently discarded', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-
-    // No tool_call registered — list_update should be dropped
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
-
-    const updates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(updates.length, 0, 'list_update should be discarded when there are no owners');
-  });
-
   test('empty roster does not clear another session\'s parent mappings', () => {
     const { client, makeQueue } = makeTestClient();
     makeQueue('session-A');

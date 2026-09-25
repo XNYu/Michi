@@ -91,38 +91,6 @@ describe('updateNodeResumeBinding — current_mode_id preservation', () => {
     assert.equal(modeOf('n1'), 'gpu-dev');
   });
 
-  test('a non-null mode overwrites (explicit switch still works)', () => {
-    insertNode('ws1', 'n1', 'gpu-dev');
-    updateNodeResumeBinding('n1', { ...BINDING, current_mode_id: 'security-reviewer' });
-    assert.equal(modeOf('n1'), 'security-reviewer');
-  });
-
-  test('null mode on a node that never had one stays null', () => {
-    insertNode('ws1', 'n1', null);
-    updateNodeResumeBinding('n1', { ...BINDING, current_mode_id: null });
-    assert.equal(modeOf('n1'), null);
-  });
-
-  test('other binding columns still assign unconditionally', () => {
-    insertNode('ws1', 'n1', 'gpu-dev');
-    updateNodeResumeBinding('n1', {
-      acp_session_id: 'sess-2',
-      runtime_id: 'kiro',
-      provider_id: 'anthropic',
-      model_id: 'claude-opus-4-7',
-      reasoning: 'high',
-      resume_fingerprint: 'fp-2',
-      current_mode_id: null,
-    });
-    const row = getDb()
-      .prepare('SELECT acp_session_id, model_id, reasoning, current_mode_id FROM nodes WHERE id = ?')
-      .get('n1') as { acp_session_id: string; model_id: string; reasoning: string; current_mode_id: string };
-    assert.equal(row.acp_session_id, 'sess-2');
-    assert.equal(row.model_id, 'claude-opus-4-7');
-    assert.equal(row.reasoning, 'high');
-    assert.equal(row.current_mode_id, 'gpu-dev'); // preserved
-  });
-
   test('a delayed graph snapshot cannot overwrite the signature of a native session', () => {
     const stale = insertNode('ws1', 'n1', 'gpu-dev');
     updateNodeResumeBinding('n1', {

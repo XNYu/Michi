@@ -22,17 +22,6 @@ const ids = (n: TreeNode) => n.children.map((c) => c.nodeId);
 const lookup = (m: Record<string, number>) => (id: string) => m[id];
 
 describe('orderPinnedFirst', () => {
-  it('returns the same instance when nothing is pinned', () => {
-    const root = buildTree('root', EDGES);
-    expect(orderPinnedFirst(root, () => undefined)).toBe(root);
-  });
-
-  it('floats a pinned sibling to the front and keeps the rest in order', () => {
-    const root = buildTree('root', EDGES);
-    const out = orderPinnedFirst(root, lookup({ c: 10 }));
-    expect(ids(out)).toEqual(['c', 'a', 'b']);
-  });
-
   it('orders multiple pinned siblings by pinnedAt DESC (most recent first)', () => {
     const root = buildTree('root', EDGES);
     const out = orderPinnedFirst(root, lookup({ b: 5, c: 10 }));

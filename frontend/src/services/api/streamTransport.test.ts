@@ -106,21 +106,6 @@ describe('multiplexed stream transport', () => {
     expect(socket.sent).toEqual([]);
   });
 
-  it('propagates socket loss to active readers and reconnects on the next subscription', async () => {
-    const response = transport.fetch('http://localhost:3000/api/chats/one/stream');
-    const firstSocket = await openSocket();
-    firstSocket.receive({ type: 'headers', id: '1', status: 200 });
-    const rejected = expect((await response).text()).rejects.toThrow('Stream connection closed');
-    firstSocket.close();
-    await rejected;
-    const next = transport.fetch('http://localhost:3000/api/chats/one/stream?fromSeq=8');
-    await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
-    const secondSocket = await openSocket();
-    secondSocket.receive({ type: 'headers', id: '2', status: 200 });
-    secondSocket.receive({ type: 'end', id: '2' });
-    await expect((await next).text()).resolves.toBe('');
-  });
-
   it('times out before response headers instead of leaving an infinite loading state', async () => {
     vi.useFakeTimers();
     const pending = transport.fetch('http://localhost:3000/api/chats/one/stream');

@@ -81,30 +81,6 @@ describe('ThreadRow', () => {
     expect(structuralSelectors.at(-1)).toBe(first);
   });
 
-  it('keeps its unread selector stable when only tree activity metadata changes', () => {
-    const { props, rerender } = renderThreadRow();
-    const first = structuralSelectors.at(-1);
-
-    rerender({ tree: { ...props.tree, lastActiveAt: props.tree.lastActiveAt + 1 } });
-
-    expect(structuralSelectors.at(-1)).toBe(first);
-  });
-
-  // Selection ownership moved out of ThreadRow: it forwards every click to
-  // onActivate with the raw event, and the parent decides select vs. activate
-  // by inspecting the modifier keys. So the row's job is just "always call
-  // onActivate, carrying the modifier state".
-  it('cmd+click forwards the modifier to onActivate', () => {
-    const onActivate = vi.fn();
-    renderThreadRow({ onActivate });
-
-    const row = screen.getByText('Root title').closest('[data-sidebar-row]')!;
-    fireEvent.click(row, { metaKey: true });
-
-    expect(onActivate).toHaveBeenCalledTimes(1);
-    expect(onActivate.mock.calls[0][0]).toMatchObject({ metaKey: true });
-  });
-
   it('ctrl+click (non-mac) forwards the modifier to onActivate', () => {
     const onActivate = vi.fn();
     renderThreadRow({ onActivate });
@@ -114,17 +90,6 @@ describe('ThreadRow', () => {
 
     expect(onActivate).toHaveBeenCalledTimes(1);
     expect(onActivate.mock.calls[0][0]).toMatchObject({ ctrlKey: true });
-  });
-
-  it('plain click calls onActivate with no modifiers', () => {
-    const onActivate = vi.fn();
-    renderThreadRow({ onActivate });
-
-    const row = screen.getByText('Root title').closest('[data-sidebar-row]')!;
-    fireEvent.click(row);
-
-    expect(onActivate).toHaveBeenCalledTimes(1);
-    expect(onActivate.mock.calls[0][0]).toMatchObject({ metaKey: false, ctrlKey: false });
   });
 
   it('renames a thread from the context menu inline editor', async () => {

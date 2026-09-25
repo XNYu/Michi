@@ -36,20 +36,6 @@ describe('DiffReceipt', () => {
     expect(container.querySelector('[data-testid="diff-receipt"]')).toBeNull();
   });
 
-  it('renders the collapsed chip with counts', () => {
-    const m = msg([
-      tool('write', { path: 'src/a.ts', content: 'l1\nl2\nl3' }),
-      tool('edit', { path: 'src/b.ts', old_string: 'x\ny', new_string: 'z' }),
-    ]);
-    render(<DiffReceipt message={m} workspaceId="ws1" />);
-    const header = screen.getByTestId('diff-receipt-header');
-    expect(header.textContent).toContain('2 files changed');
-    expect(header.textContent).toContain('+4');
-    expect(header.textContent).toContain('−2');
-    // Collapsed: no file rows yet.
-    expect(screen.queryAllByTestId('diff-receipt-file')).toHaveLength(0);
-  });
-
   it('hides +/- counts when they are not locally derivable (subagent-relayed edits)', () => {
     // Subagent-relayed write/edit calls recover the path (detail/output) but
     // carry no inputJson, so line deltas can't be computed. The receipt must

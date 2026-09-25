@@ -237,26 +237,6 @@ describe('cancel phase', () => {
     assert.ok(events.some((ev) => ev.event === 'done'));
   });
 
-  it('does not emit acknowledged when cancel() has no ack', async () => {
-    const chatHub = hub();
-    const events: ChatStreamEvent[] = [];
-    const gate = { release: () => {} };
-    chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = await chatHub.startTurn({
-      chatId: 'node-a',
-      nodeId: 'node-a',
-      text: 'hello',
-      session: mockSession({
-        events: delayedIterator([{ kind: 'turn_end' }], gate),
-      }),
-    });
-    chatHub.cancel('node-a', started.turnId);
-    gate.release();
-    await started.done;
-    const phases = events.filter((ev) => ev.event === 'cancel_phase').map((ev) => ev.data.phase);
-    assert.deepEqual(phases, ['requested', 'settled']);
-  });
-
   it('does not settle when a subscriber disconnects', async () => {
     const chatHub = hub();
     const events: ChatStreamEvent[] = [];

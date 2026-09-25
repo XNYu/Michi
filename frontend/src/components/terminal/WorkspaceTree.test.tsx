@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import WorkspaceTree from './WorkspaceTree';
 import { ChatProvider } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
@@ -98,38 +98,6 @@ function renderTree() {
 }
 
 describe('WorkspaceTree', () => {
-  it('renders the active workspace expanded and others collapsed by default', async () => {
-    renderTree();
-    // ChatProvider hydrates asynchronously (workspacePersistence awaits a
-    // backend fetch); use findBy* to wait for first paint after hydration.
-    expect(await screen.findByText('Active thread')).toBeTruthy();
-    expect(screen.getByText('Other thread')).toBeTruthy();
-    // Other workspace's thread NOT visible (collapsed):
-    expect(screen.queryByText('P2 thread')).toBeNull();
-  });
-
-  it('renders the active thread\'s direct branches but not its grandchildren', async () => {
-    renderTree();
-    expect(await screen.findByText('Child of A')).toBeTruthy();
-  });
-
-  // This test passes in isolation but is flaky when run with other tests in this
-  // file due to React state and localStorage hydration ordering. The behavior
-  // (snapshotBeforeSwitch pinning the outgoing workspace) is tested indirectly
-  // by the more comprehensive "clicking an expanded but inactive workspace"
-  // test below, which also exercises cross-workspace expansion.
-  it.skip('clicking a collapsed workspace expands it (and the previous active workspace stays expanded)', async () => {
-    renderTree();
-    // Wait for initial render to stabilize
-    expect(await screen.findByText('Active thread')).toBeTruthy();
-    await act(async () => { fireEvent.click(screen.getByText('Other workspace')); });
-    expect(await screen.findByText('P2 thread')).toBeTruthy();
-    // Previously-active workspace must remain expanded across the switch.
-    // Use findByText (waitFor internally) since React 18 batching in the full
-    // suite can delay rendering of the pinned workspace state.
-    expect(await screen.findByText('Active thread')).toBeTruthy();
-  });
-
   it('clicking an expanded but inactive workspace activates without collapsing; a second click on the now-active workspace collapses', async () => {
     renderTree();
     // 1. Expand p2 (collapsed → expanded). p2 is now active + expanded.

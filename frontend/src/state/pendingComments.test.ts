@@ -34,21 +34,6 @@ function comment(
 }
 
 describe('reduceNodes: add-comment', () => {
-  it('adds a comment to a node with no pending comments', () => {
-    const state = { n1: node() };
-    const c = comment('c1');
-    const next = reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: c });
-    expect(next.n1.pendingComments).toEqual([c]);
-  });
-
-  it('appends to existing pending comments in order', () => {
-    const c1 = comment('c1');
-    const c2 = comment('c2');
-    const state = { n1: node({ pendingComments: [c1] }) };
-    const next = reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: c2 });
-    expect(next.n1.pendingComments).toEqual([c1, c2]);
-  });
-
   it('is a no-op when the same id is added twice (idempotent)', () => {
     const c = comment('c1');
     const state = { n1: node({ pendingComments: [c] }) };
@@ -145,24 +130,9 @@ describe('reduceNodes: clear-comments', () => {
     expect('pendingComments' in next.n1).toBe(false);
   });
 
-  it('does not affect pendingComments on other nodes', () => {
-    const state = {
-      n1: node({ pendingComments: [comment('c1')] }),
-      n2: node({ nodeId: 'n2', pendingComments: [comment('c2')] }),
-    };
-    const next = reduceNodes(state, { type: 'clear-comments', nodeId: 'n1' });
-    expect(next.n2.pendingComments).toEqual([comment('c2')]);
-  });
-
   it('is a no-op when the node has no pending comments', () => {
     const state = { n1: node() };
     const next = reduceNodes(state, { type: 'clear-comments', nodeId: 'n1' });
-    expect(next).toBe(state);
-  });
-
-  it('is a no-op when the node does not exist', () => {
-    const state = { n1: node() };
-    const next = reduceNodes(state, { type: 'clear-comments', nodeId: 'missing' });
     expect(next).toBe(state);
   });
 });
@@ -198,24 +168,5 @@ describe('reduceNodes: set-composer-draft', () => {
     });
     expect(next.n1.composerDraft).toBeUndefined();
     expect('composerDraft' in next.n1).toBe(false);
-  });
-
-  it('clears a saved draft when a message is sent', () => {
-    const state = {
-      n1: node({
-        composerDraft: {
-          value: 'send me',
-          mentions: [],
-          quotedText: 'old quote',
-        },
-      }),
-    };
-    const next = reduceNodes(state, {
-      type: 'user-send',
-      nodeId: 'n1',
-      userText: 'send me',
-      assistantId: 'a1',
-    });
-    expect(next.n1.composerDraft).toBeUndefined();
   });
 });

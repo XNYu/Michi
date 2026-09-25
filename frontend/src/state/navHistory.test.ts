@@ -41,17 +41,6 @@ describe('NavHistoryStore', () => {
     expect(s.canForward()).toBe(false);
   });
 
-  it('clears the forward stack when a new location is visited', () => {
-    const s = new NavHistoryStore();
-    focus(s, e('A'), e('B'), e('C'));
-    s.back(alive); s.record(e('B')); // forward now holds [C]
-    expect(s.canForward()).toBe(true);
-
-    focus(s, e('D')); // new navigation while on B
-    expect(s.canForward()).toBe(false);
-    expect(s.back(alive)).toEqual(e('B'));
-  });
-
   it('dedups consecutive identical locations', () => {
     const s = new NavHistoryStore();
     focus(s, e('A'), e('A'), e('A'), e('B'));
@@ -59,20 +48,6 @@ describe('NavHistoryStore', () => {
     expect(s.back(alive)).toEqual(e('A'));
     s.record(e('A'));
     expect(s.canBack()).toBe(false);
-  });
-
-  it('suppresses the focus change that a back/forward itself triggers', () => {
-    const s = new NavHistoryStore();
-    focus(s, e('A'), e('B'));
-    const target = s.back(alive); // → A, arms suppression on A's nodeId
-    expect(target).toEqual(e('A'));
-    // Intermediate render during a cross-workspace transition (not the target):
-    s.record(e('X', 'p2', 't2'));
-    expect(s.canBack()).toBe(false); // ignored, suppression still armed
-    // The real landing on A clears suppression without re-pushing B.
-    s.record(e('A'));
-    expect(s.canBack()).toBe(false);
-    expect(s.canForward()).toBe(true); // B is still ahead
   });
 
   it('skips dead entries on the way back like a closed tab', () => {

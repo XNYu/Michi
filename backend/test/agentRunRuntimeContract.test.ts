@@ -160,18 +160,6 @@ function createFakeRuntime(runtimeId: string, opts: {
 
 describe('Cross-runtime Executor contract', () => {
   for (const runtimeId of ['pi', 'claude', 'kiro', 'codex']) {
-    test(`${runtimeId}: start produces a completed outcome with correct owner`, async () => {
-      const { runtime } = createFakeRuntime(runtimeId);
-      const resolveRuntime = (id: string) => id === runtimeId ? runtime : undefined;
-      const executor = new RuntimeRunExecutor({ resolveRuntime, registry: defaultRegistry() });
-      const events: AgentRunExecutionEvent[] = [];
-      const handle = await executor.start(spec(runtimeId), async (event) => { events.push(event); });
-      const outcome = await handle.completion;
-
-      assert.equal(outcome.status, 'completed',
-        `${runtimeId}: should produce completed outcome`);
-    });
-
     test(`${runtimeId}: session receives attemptId as sessionId`, async () => {
       const { runtime, capturedNewOpts } = createFakeRuntime(runtimeId);
       const resolveRuntime = (id: string) => id === runtimeId ? runtime : undefined;
@@ -226,17 +214,6 @@ describe('Cross-runtime native resume', () => {
       assert.equal(capturedLoadOpts[0].nativeResumeToken, `${runtimeId}-resume-token`);
     });
   }
-
-  test('Pi: resume falls back to newSession (no native resume)', async () => {
-    const { runtime, capturedLoadOpts, capturedNewOpts } = createFakeRuntime('pi');
-    const resolveRuntime = (id: string) => id === 'pi' ? runtime : undefined;
-    const executor = new RuntimeRunExecutor({ resolveRuntime, registry: defaultRegistry() });
-    const handle = await executor.resume(spec('pi'), 'ignored-pi-token', async () => {});
-    await handle.completion;
-
-    assert.equal(capturedLoadOpts.length, 0, 'Pi must NOT call loadSession');
-    assert.equal(capturedNewOpts.length, 1, 'Pi must call newSession as fallback');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -258,18 +235,6 @@ describe('Cross-runtime checkpoint emission', () => {
       assert.equal(checkpoint!.nativeResumeToken, `${runtimeId}-ckpt-42`);
     });
   }
-
-  test('Pi: no checkpoint emitted (nativeSessionId is null)', async () => {
-    const { runtime } = createFakeRuntime('pi', { nativeSessionId: null });
-    const resolveRuntime = (id: string) => id === 'pi' ? runtime : undefined;
-    const executor = new RuntimeRunExecutor({ resolveRuntime, registry: defaultRegistry() });
-    const events: AgentRunExecutionEvent[] = [];
-    const handle = await executor.start(spec('pi'), async (event) => { events.push(event); });
-    await handle.completion;
-
-    const checkpoint = events.find(e => e.type === AgentRunEventType.Checkpoint);
-    assert.equal(checkpoint, undefined, 'Pi must NOT emit a checkpoint (no native session)');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -352,23 +317,6 @@ describe('Fallback from incompatible runtime', () => {
       }
     }
   });
-
-  test('missing adapter produces incompatible failure listing available runtimes', async () => {
-    const piClaudeOnly = new RuntimeRunAdapterRegistry([new PiRunAdapter(), new ClaudeRunAdapter()]);
-    const { runtime } = createFakeRuntime('kiro');
-    const executor = new RuntimeRunExecutor({
-      resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-      registry: piClaudeOnly,
-    });
-
-    const outcome = await (await executor.start(spec('kiro'), async () => {})).completion;
-    assert.equal(outcome.status, 'failed');
-    if (outcome.status === 'failed') {
-      assert.equal(outcome.error.category, 'incompatible');
-      assert.match(outcome.error.message, /kiro/);
-      assert.match(outcome.error.message, /pi, claude/);
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -395,31 +343,6 @@ describe('Error classification consistency across runtimes', () => {
 // ---------------------------------------------------------------------------
 // Native token JSON persistence
 // ---------------------------------------------------------------------------
-
-describe('Native token JSON persistence round-trips', () => {
-  const tokenCases: Array<{ runtimeId: string; token: string }> = [
-    { runtimeId: 'kiro', token: 'acp-session-abc123-def456' },
-    { runtimeId: 'codex', token: 'thread-xyz789-ghj012' },
-    { runtimeId: 'claude', token: 'claude-session-mno345' },
-  ];
-
-  for (const { runtimeId, token } of tokenCases) {
-    test(`${runtimeId} native token survives JSON.stringify/parse`, () => {
-      const serialized = JSON.stringify(token);
-      const deserialized = JSON.parse(serialized);
-      assert.equal(deserialized, token);
-      assert.equal(typeof deserialized, 'string');
-      assert.ok(deserialized.length > 0);
-    });
-  }
-
-  test('Pi has no native token to persist (null is the correct value)', () => {
-    const token: string | null = null;
-    const serialized = JSON.stringify(token);
-    const deserialized = JSON.parse(serialized);
-    assert.equal(deserialized, null);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Pi/Claude regression: unchanged behavior

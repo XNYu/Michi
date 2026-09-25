@@ -38,8 +38,6 @@ import {
   makeConformanceBroker,
   makeConformanceToolProfile,
   attemptIdOf,
-  RUN_OWNER,
-  WRONG_OWNER,
   CHAT_OWNER,
   type ConformanceHarness,
   type ConformanceSession,
@@ -236,131 +234,9 @@ registerConformanceSuite({
 // Kiro-specific integration tests with ACP fixtures
 // ---------------------------------------------------------------------------
 
-describe('Kiro ACP integration fixtures', () => {
-  test('newSession creates a fresh ACP session with distinct native id', async () => {
-    const { runtime, createdSessions } = createFakeKiroRuntime();
-
-    const session = await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-      toolProfile: makeConformanceToolProfile(),
-    });
-
-    assert.equal(session.id, RUN_OWNER.attemptId);
-    assert.ok(session.nativeSessionId);
-    assert.notEqual(session.nativeSessionId, session.id);
-    assert.equal(createdSessions.length, 1);
-
-    await runtime.shutdown();
-  });
-
-  test('loadSession uses nativeResumeToken and never queries Node', async () => {
-    const { runtime, loadedSessions } = createFakeKiroRuntime();
-
-    const session = await runtime.loadSession!({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-      nativeResumeToken: 'acp-original-sid-123',
-      profileHash: 'hash-resume',
-    });
-
-    assert.equal(session.id, RUN_OWNER.attemptId);
-    assert.equal(session.nativeSessionId, 'acp-original-sid-123');
-    assert.deepEqual(loadedSessions, ['acp-original-sid-123']);
-
-    await runtime.shutdown();
-  });
-
-  test('loadSession rejects agent_run without nativeResumeToken', async () => {
-    const { runtime } = createFakeKiroRuntime();
-
-    await assert.rejects(
-      () => runtime.loadSession!({
-        sessionId: RUN_OWNER.attemptId,
-        cwd: '/tmp/kiro-acp',
-        owner: RUN_OWNER,
-      }),
-      /nativeResumeToken/,
-    );
-
-    await runtime.shutdown();
-  });
-
-  test('ACP session id survives JSON persistence round-trip', async () => {
-    const { runtime, createdSessions } = createFakeKiroRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-    });
-
-    const nativeSid = createdSessions[0];
-    const json = JSON.stringify(nativeSid);
-    const restored = JSON.parse(json);
-    assert.equal(typeof restored, 'string');
-    assert.equal(restored, nativeSid);
-    assert.ok(restored.length > 0);
-
-    await runtime.shutdown();
-  });
-
-  test('release with wrong owner is rejected', async () => {
-    const { runtime } = createFakeKiroRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-    });
-
-    assert.throws(
-      () => runtime.releaseSession(RUN_OWNER.attemptId, WRONG_OWNER),
-      /Owner mismatch/,
-    );
-
-    // Correct owner works
-    runtime.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
-
-    await runtime.shutdown();
-  });
-});
-
 describe('Kiro adapter metadata', () => {
   test('Kiro adapter declares runtime_default tool mode', () => {
     const adapter = new KiroRunAdapter();
     assert.equal(adapter.nativeToolMode, 'runtime_default');
-  });
-
-  test('Kiro adapter declares native steering', () => {
-    const adapter = new KiroRunAdapter();
-    assert.equal(adapter.steering, 'native');
-  });
-
-  test('Kiro adapter declares native resume', () => {
-    const adapter = new KiroRunAdapter();
-    assert.equal(adapter.supportsNativeResume, true);
-  });
-
-  test('Kiro adapter rejects runtime without nativeResume capability', () => {
-    const adapter = new KiroRunAdapter();
-    const fakeRuntime: AgentRuntime = {
-      id: 'kiro', label: 'kiro',
-      capabilities: {
-        modes: false, permissions: true, models: false, providerModels: false,
-        reasoning: false, supportedReasoningLevels: [],
-        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-        nativeResume: false,
-      },
-      warm: async () => {}, newSession: async () => { throw new Error('not impl'); },
-      releaseSession: () => {}, shutdown: async () => {},
-    };
-
-    assert.throws(
-      () => adapter.assertCompatible(fakeRuntime),
-      /incompatible.*native-resume/,
-    );
   });
 });

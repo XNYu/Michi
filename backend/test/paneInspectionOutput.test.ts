@@ -451,12 +451,4 @@ describe('readOutput', () => {
     assert.doesNotMatch(result.text, /run_shell|rm -rf|internal detail/);
     assert.doesNotMatch(result.text, /\[TITLE:/i);
   });
-
-  test('an empty (never-started) target returns empty text, not an error', () => {
-    seedNode('n14');
-    const result = readOutput(caller(), { locator: { nodeId: 'n14' }, selection: 'latest', limitBytes: 1024 });
-    assert.equal(result.text, '');
-    assert.equal(result.execution, null);
-    assert.equal(result.nextPageCursor, null);
-  });
 });

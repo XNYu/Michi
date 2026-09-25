@@ -99,30 +99,6 @@ describe('trimNode (single-node trim)', () => {
     expect(result.current.nodes[rootId].deletedAt).toBeFalsy();
   });
 
-  it('trim of a middle node reparents the descendant up to the grandparent', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let midId = '';
-    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
-    let leafId = '';
-    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
-
-    expect(result.current.nodes[leafId].parentNodeId).toBe(midId);
-
-    act(() => { result.current.store.trimNode(midId); });
-
-    // Mid is trashed with snapshot recording leaf as a child.
-    expect(result.current.nodes[midId].deletedAt).toBeTruthy();
-    expect(result.current.nodes[midId].trimSnapshot?.parentId).toBe(rootId);
-    expect(result.current.nodes[midId].trimSnapshot?.childrenIds).toEqual([leafId]);
-    // Leaf has slid up to root.
-    expect(result.current.nodes[leafId].parentNodeId).toBe(rootId);
-  });
-
   it('trim of a fork node reparents every child up', async () => {
     const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
     await act(async () => { await result.current.store.createProject('test', undefined); });

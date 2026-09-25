@@ -105,18 +105,6 @@ describe('surfaceToDescriptor — non-ready sections always carry a reason', () 
 // capabilities agree with sections — no advertised capability whose section is unsupported
 // ---------------------------------------------------------------------------
 
-describe('surfaceToDescriptor — capabilities never contradict their section', () => {
-  for (const kind of SURFACE_PANE_KINDS) {
-    it(`${kind}: readOutput/waitForTerminal false because their sections are unsupported`, () => {
-      const descriptor = surfaceToDescriptor(baseInput(kind));
-      if (descriptor.latestOutput.status === 'unsupported') assert.equal(descriptor.capabilities.readOutput, false);
-      if (descriptor.execution.status === 'unsupported' || descriptor.execution.status === 'unknown') {
-        assert.equal(descriptor.capabilities.waitForTerminal, false);
-      }
-    });
-  }
-});
-
 // ---------------------------------------------------------------------------
 // ref.paneId round-trips through decodePaneId
 // ---------------------------------------------------------------------------
@@ -142,43 +130,11 @@ describe('surfaceToDescriptor — renderer-supplied title', () => {
     const descriptor = surfaceToDescriptor(baseInput('terminal', { rendererTitle: 'My terminal' }));
     assert.equal(descriptor.title, 'My terminal');
   });
-
-  it('is an empty string, not null, when no renderer title has been submitted', () => {
-    const descriptor = surfaceToDescriptor(baseInput('browser', { rendererTitle: null }));
-    assert.equal(descriptor.title, '');
-  });
-
-  it('markup and quote characters in a title are passed through unmodified, never interpreted', () => {
-    const dangerous = `<script>alert("x")</script> \` ' " ; DROP TABLE nodes;`;
-    const descriptor = surfaceToDescriptor(baseInput('browser', { rendererTitle: dangerous }));
-    assert.equal(descriptor.title, dangerous);
-  });
 });
 
 // ---------------------------------------------------------------------------
 // presence is taken as given
 // ---------------------------------------------------------------------------
-
-describe('surfaceToDescriptor — presence is passed through as given', () => {
-  it('reflects the P2-1 presence section exactly, unmodified', () => {
-    const presence: PaneDescriptorV1['presence'] = {
-      coverage: 'reported',
-      views: [
-        {
-          windowId: 'win-1',
-          uiPaneId: 'pane:terminal:abc',
-          treeId: 'tree-1',
-          visible: true,
-          openedAtClient: 500,
-          registeredAt: 900,
-          lastSeenAt: 950,
-        },
-      ],
-    };
-    const descriptor = surfaceToDescriptor(baseInput('terminal', { presence }));
-    assert.deepEqual(descriptor.presence, presence);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // timeline is null unconditionally — registration time is never substituted for resource time

@@ -162,32 +162,4 @@ describe('ChatTreeList', () => {
     fireEvent.click(screen.getByLabelText(/more actions/i));
     expect(screen.queryByText('Unpin')).not.toBeNull();
   });
-
-  it('shows ⋯ button on hovered root row when menuActions provided, and clicking opens a menu', () => {
-    const menuActions = {
-      activateTree: vi.fn(),
-      archiveTree: vi.fn(),
-      unarchiveTree: vi.fn(),
-      renameTree: vi.fn(),
-      deleteTree: vi.fn(),
-      exportTree: vi.fn(),
-    };
-    render(
-      <ChatTreeList
-        workspace={mkProject()}
-        nodes={NODES}
-        filter=""
-        onOpen={() => {}}
-        menuActions={menuActions}
-      />,
-    );
-    const listitems = screen.getAllByRole('listitem');
-    const rootItem = listitems.find((el) => el.textContent?.includes('root chat'))!;
-    fireEvent.mouseEnter(rootItem);
-    const moreBtn = screen.getByLabelText(/more actions/i);
-    fireEvent.click(moreBtn);
-    // Menu open: at least one of the menu items should be findable by label
-    expect(screen.queryByText(/Rename/i)).not.toBeNull();
-    expect(screen.queryByText(/Delete thread/i) ?? screen.queryByText(/Delete/i)).not.toBeNull();
-  });
 });

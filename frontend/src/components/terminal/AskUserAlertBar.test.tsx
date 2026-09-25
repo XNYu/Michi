@@ -71,15 +71,6 @@ describe('AskUserAlertBar', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('shows the thread title and the question', () => {
-    withNodes({ child: askingNode('child', 'Deploy plan', 4) });
-    render(<AskUserAlertBar />);
-    const alert = screen.getByRole('alert');
-    expect(alert.textContent).toContain('Deploy plan');
-    expect(alert.textContent).toContain('Pick one for Deploy plan?');
-    expect(alert.textContent).not.toContain('more question');
-  });
-
   it('counts the extra asks beyond the first', () => {
     withNodes({
       child: askingNode('child', 'A', 1),

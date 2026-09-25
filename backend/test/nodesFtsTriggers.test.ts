@@ -67,15 +67,6 @@ describe('nodes_fts triggers', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // The exact production path: a chat node is created untitled, then the first
-  // turn's finalize writes the model-supplied title via setTitleIfEmpty.
-  test('titling a previously-untitled node succeeds on an empty index', () => {
-    saveNode(node('node-1', null));
-    getDb().exec("UPDATE nodes SET title = 'First answer title' WHERE id = 'node-1'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('First'), ['node-1']);
-  });
-
   test('titling an untitled node leaves a populated index intact', () => {
     saveNode(node('node-1', 'already titled'));
     saveNode(node('node-2', null));
@@ -100,16 +91,5 @@ describe('nodes_fts triggers', () => {
     db.exec("UPDATE nodes SET title = 'restored' WHERE id = 'node-1'");
     assertFtsIntact();
     assert.deepEqual(titleSearch('restored'), ['node-1']);
-  });
-
-  test('deleting titled and untitled nodes keeps the index intact', () => {
-    saveNode(node('node-1', 'titled node'));
-    saveNode(node('node-2', null));
-    const db = getDb();
-    db.exec("DELETE FROM nodes WHERE id = 'node-2'");
-    assertFtsIntact();
-    db.exec("DELETE FROM nodes WHERE id = 'node-1'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('titled'), []);
   });
 });

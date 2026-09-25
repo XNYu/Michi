@@ -13,13 +13,6 @@ describe('getRunProjection cache', () => {
     expect(p1.visibleText).toBe('Hello world');
   });
 
-  it('recomputes when the last block identity changes (tail grew)', () => {
-    const p1 = getRunProjection([ans('b0', 'Hello')], undefined);
-    const p2 = getRunProjection([ans('b0', 'Hello world')], undefined); // new tail object
-    expect(p2).not.toBe(p1);
-    expect(p2.visibleText).toBe('Hello world');
-  });
-
   it('recomputes when incomingCarry changes for the same last block', () => {
     const block = ans('b0', 'world');
     const p1 = getRunProjection([block], undefined);

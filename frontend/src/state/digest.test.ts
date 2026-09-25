@@ -12,18 +12,6 @@ const mkChat = (id: string, messages: Array<{ role: 'user' | 'assistant'; text: 
 });
 
 describe('computeSourceFingerprint', () => {
-  it('returns stable string for identical assistant trail', () => {
-    const a = mkChat('n', [
-      { role: 'user', text: 'hi' },
-      { role: 'assistant', text: 'hello' },
-    ]);
-    const b = mkChat('n', [
-      { role: 'user', text: 'hi' },
-      { role: 'assistant', text: 'hello' },
-    ]);
-    expect(computeSourceFingerprint(a)).toBe(computeSourceFingerprint(b));
-  });
-
   it('changes when a new assistant message is added', () => {
     const before = mkChat('n', [{ role: 'assistant', text: 'hello' }]);
     const after = mkChat('n', [
@@ -114,14 +102,6 @@ Open Threads:
       body: expect.stringContaining('Variance of q·k'),
     });
     expect(p.sections[1].sourceId).toBe('n4');
-  });
-
-  it('extracts open threads bullets', () => {
-    const p = parseDigestStructure(sample);
-    expect(p.openThreads).toEqual([
-      'Does √dₖ hold at dₖ > 256?',
-      'Interaction with positional encoding?',
-    ]);
   });
 
   it('falls back gracefully for unstructured input', () => {

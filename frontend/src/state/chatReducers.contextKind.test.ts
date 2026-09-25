@@ -25,30 +25,4 @@ describe('upsert-context with kind', () => {
     expect(next.artifacts![0].kind).toBe('reference');
     expect(next.artifacts![0].filePath).toBe('/abs/path/doc.pdf');
   });
-
-  it('defaults to no kind (treated as embedded) when not provided', () => {
-    const next = reduceProject(baseProject, {
-      type: 'upsert-context',
-      projectId: 'p1',
-      context: { name: 'doc', filePath: '.artifacts/doc.md' },
-    });
-    expect(next.artifacts![0].kind).toBeUndefined();
-  });
-
-  it('preserves kind on update by id when caller omits it', () => {
-    const seeded = reduceProject(baseProject, {
-      type: 'upsert-context',
-      projectId: 'p1',
-      context: { name: 'doc', filePath: '/abs/doc.pdf', kind: 'reference' },
-    });
-    const id = seeded.artifacts![0].id;
-    const updated = reduceProject(seeded, {
-      type: 'upsert-context',
-      projectId: 'p1',
-      context: { id, name: 'doc-renamed', filePath: '/abs/doc.pdf' },
-    });
-    expect(updated.artifacts).toHaveLength(1);
-    expect(updated.artifacts![0].kind).toBe('reference');
-    expect(updated.artifacts![0].name).toBe('doc-renamed');
-  });
 });

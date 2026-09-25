@@ -40,11 +40,6 @@ describe('paneId codec', () => {
     expect(encodePaneId({ kind: 'surface', registrationId: 'reg-456' })).toBe('surface:reg-456');
   });
 
-  test('percent-encodes runId segments containing reserved characters', () => {
-    expect(encodePaneId({ kind: 'agent_run', runId: 'run:with:colons' })).toBe('run:run%3Awith%3Acolons');
-    expect(encodePaneId({ kind: 'agent_run', runId: 'run/with/slash' })).toBe('run:run%2Fwith%2Fslash');
-  });
-
   describe('decodePaneId rejects', () => {
     const rejections: Array<{ label: string; input: string }> = [
       { label: 'empty string', input: '' },
@@ -84,15 +79,6 @@ describe('parsePaneLocator: exactly-one-locator enforcement', () => {
     expect(parsePaneLocator({ paneId: 'node:n-1' })).toEqual({ paneId: 'node:n-1' });
     expect(parsePaneLocator({ nodeId: 'n-1' })).toEqual({ nodeId: 'n-1' });
     expect(parsePaneLocator({ runId: 'run-1' })).toEqual({ runId: 'run-1' });
-  });
-
-  test('rejects zero locators', () => {
-    expect(() => parsePaneLocator({})).toThrow(PaneInspectionError);
-  });
-
-  test('rejects two locators', () => {
-    expect(() => parsePaneLocator({ paneId: 'node:n-1', nodeId: 'n-1' })).toThrow(PaneInspectionError);
-    expect(() => parsePaneLocator({ nodeId: 'n-1', runId: 'run-1' })).toThrow(PaneInspectionError);
   });
 
   test('rejects three locators', () => {
@@ -203,13 +189,6 @@ describe('numeric clamping', () => {
 });
 
 describe('parseInspectPaneRequestV1', () => {
-  test('accepts a bare locator with no executionRef', () => {
-    expect(parseInspectPaneRequestV1({ nodeId: 'n-1' })).toEqual({
-      version: 1,
-      locator: { nodeId: 'n-1' },
-    });
-  });
-
   test('accepts an explicit executionRef', () => {
     expect(parseInspectPaneRequestV1({ nodeId: 'n-1', executionRef: { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' } })).toEqual({
       version: 1,

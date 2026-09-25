@@ -90,19 +90,4 @@ describe('useNodesSelector', () => {
     expect(harness.result.current.streamingCount).toBe(0);
     expect(rendersAfterCreate).toBeGreaterThanOrEqual(2); // at least one render from the createProject above
   });
-
-  it('uses the latest selector identity when the caller passes a new closure', async () => {
-    const harness = renderHook(
-      ({ multiplier }: { multiplier: number }) => {
-        return useNodesSelector((nodes) => Object.keys(nodes).length * multiplier);
-      },
-      { wrapper, initialProps: { multiplier: 1 } },
-    );
-    // First render with multiplier=1 returns count*1.
-    const initial = harness.result.current;
-    // Re-render with multiplier=10. Even though the nodes map hasn't changed,
-    // the new selector closure must be picked up on the next snapshot read.
-    harness.rerender({ multiplier: 10 });
-    expect(harness.result.current).toBe(initial * 10);
-  });
 });

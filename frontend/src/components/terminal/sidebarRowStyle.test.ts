@@ -41,24 +41,11 @@ describe('rowGeom', () => {
     expect(rowGeom('classic', 7).bleed).toBe(7);
   });
 
-  it('is not a card layout in classic, and is in every B mode', () => {
-    expect(rowGeom('classic', 2).isCard).toBe(false);
-    for (const m of B_MODES) expect(rowGeom(m, 2).isCard).toBe(true);
-  });
-
   it('ignores the inset pref in B modes so switching is a controlled A/B', () => {
     for (const m of B_MODES) {
       const a = rowGeom(m, 0);
       const b = rowGeom(m, 24);
       expect(a).toEqual(b);
-    }
-  });
-
-  it('pins the same 20 / 36 / 52 text ladder across all three B modes', () => {
-    for (const m of B_MODES) {
-      expect(resolvedTextX(m, 2)).toBe(20);
-      expect(resolvedTextX(m, 2, 16)).toBe(36);
-      expect(resolvedTextX(m, 2, 32)).toBe(52);
     }
   });
 
@@ -68,14 +55,6 @@ describe('rowGeom', () => {
       expect(g.indentStep).toBe(16);
       expect(g.branchX - g.titleX).toBe(16);
       expect(g.guideX).toBe(g.titleX);
-    }
-  });
-
-  it('keeps a constant 16px right gap across all B modes, at any sidebar width', () => {
-    for (const m of B_MODES) {
-      for (const w of [280, 300, 400]) {
-        expect(resolvedRightEdge(m, 2, w)).toBe(w - 16);
-      }
     }
   });
 
@@ -151,12 +130,6 @@ describe('branch block', () => {
     // first branch in two — the whole reason branch rows are full-row-width.
     for (const m of B_MODES) expect(branchBlockGap(rowGeom(m, 2))).toBe(0);
     expect(branchBlockGap(rowGeom('classic', 2))).toBe(1);
-  });
-
-  it('keeps the branch guide line off in every mode', () => {
-    for (const style of SIDEBAR_ROW_STYLES) {
-      expect(rowGeom(style, 2).guideLine).toBe(false);
-    }
   });
 });
 

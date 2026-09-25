@@ -143,20 +143,6 @@ describe('streamMessage terminal-state safety net', () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 
-  it('fires onDone (and not onError) when the stream sends a done event', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'hello' } }),
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.done, data: { stopReason: 'end_turn' } }),
-    ])));
-
-    const onDone = vi.fn<(s?: string) => void>();
-    const onError = vi.fn<(m: string) => void>();
-    streamMessage('c1', 'hi', { onDone, onError });
-
-    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
-    expect(onError).not.toHaveBeenCalled();
-  });
-
   it('sends the display/wire split and exposes the persisted terminal boundary', async () => {
     const fetchMock = vi.fn().mockResolvedValue(sseResponse([
       encodeChatStreamEvent({

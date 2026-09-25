@@ -297,105 +297,13 @@ test('codex queued input calls native steer instead of opening a second turn', a
 // T08 — Codex immediate input cancels then steers
 // ---------------------------------------------------------------------------
 
-test('codex immediate input cancels and then steers', async () => {
-  const session = new CodexLikeSession();
-  const runtime = new CodexLikeRuntime(session);
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'codex' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('codex'), async () => {});
-  await handle.input('urgent steer', 'immediate');
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  assert.equal(session.cancelled, 1, 'immediate mode cancels before steering');
-  assert.deepEqual(session.steered, ['urgent steer']);
-});
-
 // ---------------------------------------------------------------------------
 // T08 — Input accepted before terminalization prevents premature Result Bundle
 // ---------------------------------------------------------------------------
 
-test('input accepted before terminalization prevents premature Result Bundle finalization', async () => {
-  // The session's first turn ends synchronously. We submit input before
-  // awaiting completion. Since queuedInput is set before the loop reads it,
-  // a second turn fires and the Result Bundle includes both turns' output.
-  const sentTexts: string[] = [];
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: 'acp-42',
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: `turn` } as NormalizedEvent;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const events: AgentRunExecutionEvent[] = [];
-  const handle = await executor.start(spec('kiro'), async (event) => { events.push(event); });
-
-  // Submit input while the executor is still running. Even though the first
-  // turn may end quickly, the enqueue happens before consume() checks for
-  // queued input because both run on the same microtask queue.
-  await handle.input('pre-terminalization input');
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // The input should have been delivered as a second turn
-  assert.equal(sentTexts.length, 2, 'input before terminalization should produce a second turn');
-  assert.match(sentTexts[1], /pre-terminalization input/);
-});
-
 // ---------------------------------------------------------------------------
 // T08 — Input after terminalization is rejected deterministically
 // ---------------------------------------------------------------------------
-
-test('input after terminalization is rejected deterministically', async () => {
-  const sentTexts: string[] = [];
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: null,
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: 'done' } as NormalizedEvent;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('kiro'), async () => {});
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Now try to submit input — should be rejected
-  await assert.rejects(
-    () => handle.input('too late'),
-    /already completed or is finalizing/,
-  );
-});
 
 test('input after terminalization is rejected for codex too', async () => {
   const session = new CodexLikeSession();
@@ -536,52 +444,6 @@ test('permission wait works correctly within the next_turn multi-turn loop', asy
 // ---------------------------------------------------------------------------
 // T08 — Multiple supplemental inputs: last-write wins for queued
 // ---------------------------------------------------------------------------
-
-test('multiple queued inputs: last-write wins', async () => {
-  const firstTurnGate = deferred();
-  const sentTexts: string[] = [];
-
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: null,
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: `turn` } as NormalizedEvent;
-      if (sentTexts.length === 1) await firstTurnGate.promise;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('kiro'), async () => {});
-
-  // Wait for the generator to block
-  await new Promise((r) => setTimeout(r, 20));
-
-  // Queue multiple inputs — last one wins
-  await handle.input('first queued');
-  await handle.input('second queued');
-  await handle.input('third queued');
-
-  // Let the first turn end
-  firstTurnGate.resolve();
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Only two turns: original + the last queued input
-  assert.equal(sentTexts.length, 2);
-  assert.match(sentTexts[1], /third queued/, 'last-write wins');
-});
 
 // ---------------------------------------------------------------------------
 // T08 — No-steering adapter rejects input

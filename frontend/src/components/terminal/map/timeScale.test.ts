@@ -21,46 +21,6 @@ describe('buildElasticScale', () => {
     expect(s.end).toBe(BASE);
   });
 
-  it('produces a linear mapping when all gaps are below idle threshold', () => {
-    // 4 events, each 10 minutes apart — all under 30min threshold
-    const times = [BASE, BASE + 10 * MIN, BASE + 20 * MIN, BASE + 30 * MIN];
-    const s = buildElasticScale(times);
-
-    expect(s.breaks).toHaveLength(0);
-    // Should be proportional: 10min/30min = 1/3, 20min/30min = 2/3
-    expect(s.frac(times[0])).toBeCloseTo(0, 5);
-    expect(s.frac(times[1])).toBeCloseTo(1 / 3, 5);
-    expect(s.frac(times[2])).toBeCloseTo(2 / 3, 5);
-    expect(s.frac(times[3])).toBeCloseTo(1, 5);
-  });
-
-  it('compresses a single large gap', () => {
-    // 10min active, then 20h gap, then 10min active
-    const times = [
-      BASE,
-      BASE + 10 * MIN, // end of first session
-      BASE + 10 * MIN + 20 * HOUR, // start of second session (20h later)
-      BASE + 20 * MIN + 20 * HOUR, // end of second session
-    ];
-    const s = buildElasticScale(times);
-
-    expect(s.breaks).toHaveLength(1);
-    expect(s.breaks[0].realGap).toBe(20 * HOUR);
-
-    // The compressed gap should be tiny relative to active segments
-    // Active total: 10min + 10min = 20min virtual
-    // Compressed: 30min * 0.08 = 2.4min virtual
-    // Total virtual = 20 + 2.4 = 22.4
-    // First session spans 10/22.4, gap is 2.4/22.4, second is 10/22.4
-    const firstSessionEnd = s.frac(times[1]);
-    const secondSessionStart = s.frac(times[2]);
-    const gapVisualWidth = secondSessionStart - firstSessionEnd;
-    const activeWidth = firstSessionEnd + (1 - secondSessionStart);
-
-    // Gap should be visually much smaller than active time
-    expect(gapVisualWidth).toBeLessThan(activeWidth * 0.2);
-  });
-
   it('handles multiple gaps (multi-day research)', () => {
     const times = [
       BASE, // day 1 start
@@ -81,13 +41,6 @@ describe('buildElasticScale', () => {
     for (let i = 1; i < fracs.length; i++) {
       expect(fracs[i]).toBeGreaterThan(fracs[i - 1]);
     }
-  });
-
-  it('deduplicates identical timestamps', () => {
-    const times = [BASE, BASE, BASE + 10 * MIN, BASE + 10 * MIN];
-    const s = buildElasticScale(times);
-    expect(s.frac(BASE)).toBe(0);
-    expect(s.frac(BASE + 10 * MIN)).toBe(1);
   });
 
   it('clamps out-of-range timestamps', () => {

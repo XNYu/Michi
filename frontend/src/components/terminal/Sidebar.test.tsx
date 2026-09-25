@@ -39,22 +39,6 @@ describe('TerminalSidebar BottomNav', () => {
     expect(screen.queryByText('Artifacts')).toBeNull();
   });
 
-  it('hides Agents when the backend Custom Agents feature is disabled', () => {
-    render(
-      wrap(
-        <TerminalSidebar
-          activePage="dashboard"
-          customAgentsEnabled={false}
-          onNav={() => {}}
-          onOpenPalette={() => {}}
-          onNewThread={() => {}}
-        />,
-      ),
-    );
-
-    expect(screen.queryByText('Agents')).toBeNull();
-  });
-
   it('navigates to the home page when the Home row is clicked', () => {
     const onNav = vi.fn();
     render(

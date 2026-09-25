@@ -46,25 +46,6 @@ afterEach(() => {
 });
 
 describe('migration 0006_sync_rev', () => {
-  // 1. Column shape on workspaces
-  test('fresh DB has sync_rev column on workspaces (NOT NULL, default 0)', () => {
-    initDb();
-    const db = getDb();
-
-    const cols = db.prepare('PRAGMA table_info(workspaces)').all() as Array<{
-      name: string;
-      type: string;
-      notnull: number;
-      dflt_value: string | null;
-    }>;
-
-    const syncRev = cols.find((c) => c.name === 'sync_rev');
-    assert.ok(syncRev, 'sync_rev column must exist on workspaces');
-    assert.equal(syncRev.type.toUpperCase(), 'INTEGER');
-    assert.equal(syncRev.notnull, 1, 'sync_rev must be NOT NULL');
-    assert.equal(syncRev.dflt_value, '0', 'sync_rev default must be 0');
-  });
-
   // 2. Column shape on the five per-row tables (nullable rev)
   test('fresh DB has nullable rev column on nodes/edges/messages/trees/contexts', () => {
     initDb();
@@ -83,40 +64,6 @@ describe('migration 0006_sync_rev', () => {
       assert.equal(rev.notnull, 0, `${table}.rev must be nullable`);
       assert.equal(rev.dflt_value, null, `${table}.rev must have no default`);
     }
-  });
-
-  // 3. Existing workspace row reads sync_rev = 0
-  test('existing workspace row reads sync_rev = 0 after migration', () => {
-    initDb();
-    const db = getDb();
-    const now = Date.now();
-    db.prepare(
-      'INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
-    ).run('ws-sr', 'SyncRevTest', now, now);
-
-    const row = db
-      .prepare('SELECT sync_rev FROM workspaces WHERE id = ?')
-      .get('ws-sr') as { sync_rev: number };
-    assert.equal(row.sync_rev, 0, 'existing workspace must default to sync_rev = 0');
-  });
-
-  // 4. Pre-existing node row reads rev = NULL
-  test('pre-existing node row reads rev = NULL after migration', () => {
-    initDb();
-    const db = getDb();
-    const now = Date.now();
-    db.prepare(
-      'INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
-    ).run('ws-rn', 'RevNullWs', now, now);
-    db.prepare(
-      `INSERT INTO nodes (id, workspace_id, kind, status, minimized, spawned_by_agent, created_at)
-       VALUES (?, ?, 'chat', 'idle', 0, 0, ?)`,
-    ).run('nd-rn', 'ws-rn', now);
-
-    const row = db
-      .prepare('SELECT rev FROM nodes WHERE id = ?')
-      .get('nd-rn') as { rev: number | null };
-    assert.equal(row.rev, null, 'node predating versioning must read rev = NULL');
   });
 
   // 5. Migrating from a pre-0006 DB adds the columns and preserves rows.

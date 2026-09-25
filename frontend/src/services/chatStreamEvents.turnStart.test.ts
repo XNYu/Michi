@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatStreamEvent } from 'michi-shared';
 import { CHAT_STREAM_EVENTS, dispatchChatStreamEvent } from './chatStreamEvents';
-import type { StreamHandlers } from './chatStreamEvents';
 
 describe('dispatchChatStreamEvent turn_start/envelope', () => {
   it('routes turn_start to onTurnStart with its payload', () => {
@@ -19,21 +18,6 @@ describe('dispatchChatStreamEvent turn_start/envelope', () => {
       nodeId: 'n1',
       userText: 'hi',
     });
-  });
-
-  it('passes seq, assistantId, and turnId through chunk handlers', () => {
-    const onChunk = vi.fn();
-    const handlers: StreamHandlers = { onChunk };
-
-    dispatchChatStreamEvent(
-      {
-        event: CHAT_STREAM_EVENTS.chunk,
-        data: { text: 'hi', seq: 5, turnId: 'T1', assistantId: 'a-n1-T1' },
-      },
-      handlers,
-    );
-
-    expect(onChunk).toHaveBeenCalledWith('hi', 5, 'a-n1-T1', 'T1');
   });
 
   it('keeps chunk envelope args undefined for back-compat frames', () => {

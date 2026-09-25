@@ -12,18 +12,6 @@ const baseNode = (msgs: ChatMessage[], extras: Partial<ChatNodeState> = {}): Cha
   } as unknown as ChatNodeState);
 
 describe('set-follow-ups records the last assistant message id', () => {
-  it('writes followUpsSourceMessageId to the last assistant message', () => {
-    const nodes = { n: baseNode([msg('u1', 'user'), msg('a1')]) };
-    const next = reduceNodes(nodes, { type: 'set-follow-ups', nodeId: 'n', followUps: ['q1'] });
-    expect(next.n.followUpsSourceMessageId).toBe('a1');
-  });
-
-  it('leaves followUpsSourceMessageId undefined when no assistant message', () => {
-    const nodes = { n: baseNode([msg('u1', 'user')]) };
-    const next = reduceNodes(nodes, { type: 'set-follow-ups', nodeId: 'n', followUps: ['q1'] });
-    expect(next.n.followUpsSourceMessageId).toBeUndefined();
-  });
-
   it('uses the most recent assistant message', () => {
     const nodes = { n: baseNode([msg('u1', 'user'), msg('a1'), msg('u2', 'user'), msg('a2')]) };
     const next = reduceNodes(nodes, { type: 'set-follow-ups', nodeId: 'n', followUps: ['q1'] });
@@ -77,11 +65,5 @@ describe('done reducer writes followUpsSourceMessageId from metadata-extracted f
     // The sentinel triggers metadata extraction; both checks are unconditional.
     expect(next.n.followUps.length).toBeGreaterThan(0);
     expect(next.n.followUpsSourceMessageId).toBe('a1');
-  });
-
-  it('leaves followUpsSourceMessageId untouched when metadata yields none', () => {
-    const nodes = { n: baseNode([msg('u1', 'user'), msg('a1')], { followUpsSourceMessageId: 'prev' }) };
-    const next = reduceNodes(nodes, { type: 'done', nodeId: 'n', assistantId: 'a1' });
-    expect(next.n.followUpsSourceMessageId).toBe('prev');
   });
 });

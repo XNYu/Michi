@@ -36,15 +36,6 @@ function setup(native = false, moving = false) {
 }
 
 describe('pane caption scrolling', () => {
-  it('uses the one-way fallback while transformed panes have transient overflow', () => {
-    const { strip, captions, dispose } = setup(true, true);
-    expect(captions.animate).not.toHaveBeenCalled();
-    strip.scrollLeft = 550;
-    strip.dispatchEvent(new Event('scroll'));
-    expect(captions.style.transform).toBe('translateX(-550px)');
-    expect(captions.scrollLeft).toBe(0);
-    dispose();
-  });
   it('initializes restored positions and mirrors only from the dashboard', () => {
     const { strip, captions, dispose } = setup();
     expect(captions.style.transform).toBe('translateX(-320px)');

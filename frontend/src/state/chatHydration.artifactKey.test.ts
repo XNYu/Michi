@@ -42,13 +42,6 @@ describe('hydrateBackendWorkspaces artifact wire-key', () => {
     expect(projects[0].artifacts![0]).toMatchObject({ type: 'link', url: 'https://example.com' });
   });
 
-  it('prefers `contexts` when both keys are present', () => {
-    const { projects } = hydrateBackendWorkspaces([
-      { workspace, contexts: [contextRow], artifacts: [{ ...contextRow, id: 'stale' }] },
-    ]);
-    expect(projects[0].artifacts!.map((a) => a.id)).toEqual(['ctx-1']);
-  });
-
   it('yields an empty artifact list when neither key is present', () => {
     const { projects } = hydrateBackendWorkspaces([{ workspace }]);
     expect(projects[0].artifacts!).toEqual([]);

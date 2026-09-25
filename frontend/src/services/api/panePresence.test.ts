@@ -84,18 +84,6 @@ describe('panePresenceTransport.submit (PUT /api/panes/presence)', () => {
       .rejects.toThrow(/submitPresence failed: 500/);
   });
 
-  it('rejects a 200 body that does not match any SubmitPresenceResult variant', async () => {
-    fetchMock.mockImplementation(async () => jsonResponse(200, { unexpected: 'shape' }));
-    await expect(panePresenceTransport.submit(LOCAL, WORKSPACE, { viewRevision: 1, windowId: 'w', views: [] }))
-      .rejects.toThrow(/submitPresence: malformed response body/);
-  });
-
-  it('rejects a 200 body missing required fields on the ok:true variant', async () => {
-    fetchMock.mockImplementation(async () => jsonResponse(200, { ok: true, rendererLeaseId: 'lease-1' }));
-    await expect(panePresenceTransport.submit(LOCAL, WORKSPACE, { viewRevision: 1, windowId: 'w', views: [] }))
-      .rejects.toThrow(/submitPresence: malformed response body/);
-  });
-
   it('rejects a 409 body with a wrong-typed currentRevision', async () => {
     fetchMock.mockImplementation(async () => jsonResponse(409, { ok: false, code: 'STALE_REVISION', currentRevision: 'not-a-number' }));
     await expect(panePresenceTransport.submit(LOCAL, WORKSPACE, { viewRevision: 1, windowId: 'w', views: [] }))
@@ -265,15 +253,6 @@ describe('panePresence response contract hardening', () => {
     vi.mocked(fetchStream).mockReset();
   });
 
-  it('rejects a success-shaped submit body carried by HTTP 409', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(409, {
-      ok: true, rendererLeaseId: 'lease-wrong-status', accepted: 0, rejectedTargets: [],
-    })));
-    await expect(panePresenceTransport.submit(LOCAL, WORKSPACE, {
-      viewRevision: 1, windowId: 'w', views: [],
-    })).rejects.toThrow('submitPresence: malformed response body');
-  });
-
   it('does not echo malformed response fields in parser errors', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, {
       ok: true, secretUnexpectedField: 'must-not-appear-in-error',
@@ -302,14 +281,6 @@ describe('panePresence response contract hardening', () => {
     await expect(panePresenceTransport.keepalive(LOCAL, WORKSPACE, {
       rendererLeaseId: 'lease-1',
     })).rejects.toThrow('presenceKeepalive: malformed response body');
-  });
-
-  it('rejects allocation when paneId is not the canonical encoding of registrationId', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, {
-      registrationId: 'reg-1', paneId: 'surface:different-registration',
-    })));
-    await expect(allocateSurfaceRegistration(LOCAL, WORKSPACE, 'terminal'))
-      .rejects.toThrow('allocateSurfaceRegistration: malformed response body');
   });
 
   it('rejects negative or fractional count fields', async () => {

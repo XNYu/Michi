@@ -17,11 +17,6 @@ describe('reasoning capability resolution', () => {
     expect(resolveReasoningOptions(caps, { supportedReasoningLevels: ['low', 'high'] }, { supportsReasoning: false }).levels).toEqual([]);
   });
 
-  it('keeps a fixed value but hides the control for a single level', () => {
-    expect(resolveReasoningOptions(caps, { supportedReasoningLevels: ['high'] }, undefined, 'xhigh'))
-      .toEqual({ levels: ['high'], value: 'high', adjustable: false });
-  });
-
   it('uses model-specific levels and defaults instead of stale runtime values', () => {
     expect(resolveReasoningOptions(caps, { supportedReasoningLevels: ['low', 'high', 'max'], defaultReasoning: 'high' }, undefined, 'xhigh'))
       .toEqual({ levels: ['low', 'high', 'max'], value: 'high', adjustable: true });

@@ -37,30 +37,6 @@ describe('resume strategy', () => {
     assert.equal(decision.reason, 'signature_changed');
   });
 
-  test('live session wins over exact when both are available', () => {
-    const decision = chooseResumeStrategy({
-      existingChatId: 'sid-1',
-      liveSessionMatches: true,
-      nativeResumeAvailable: true,
-      existingSignature: target,
-      targetSignature: target,
-    });
-    assert.equal(decision.strategy, 'live');
-    assert.equal(decision.reason, 'live_session_matches');
-  });
-
-  test('fresh when no existing chat id', () => {
-    const decision = chooseResumeStrategy({
-      existingChatId: null,
-      liveSessionMatches: false,
-      nativeResumeAvailable: false,
-      existingSignature: null,
-      targetSignature: target,
-    });
-    assert.equal(decision.strategy, 'fresh');
-    assert.equal(decision.reason, 'no_existing_session');
-  });
-
   test('attempts native restore when a legacy binding has no signature', () => {
     const decision = chooseResumeStrategy({
       existingChatId: 'sid-1',

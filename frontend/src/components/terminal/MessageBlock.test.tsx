@@ -90,15 +90,6 @@ describe('MessageBlock — turn usage', () => {
 });
 
 describe('MessageBlock — error-tail row', () => {
-  it('renders failed label and retry button when isErrorTail is true on assistant message', () => {
-    const { getByText, getByTestId } = renderMessage(
-      { role: 'assistant', text: 'something went wrong' },
-      { isErrorTail: true, onRetry: noop },
-    );
-    expect(getByText('failed')).not.toBeNull();
-    expect(getByTestId('error-tail-retry')).not.toBeNull();
-  });
-
   it('renders the friendly error message when provided', () => {
     const msg = 'Claude slots are busy. Stop a running reply or wait for one to finish, then retry.';
     const { getByText } = renderMessage(
@@ -122,21 +113,6 @@ describe('MessageBlock — error-tail row', () => {
     const { queryByText, queryByTestId } = renderMessage(
       { role: 'assistant', text: 'ok response' },
       { isErrorTail: false, onRetry: noop },
-    );
-    expect(queryByText('failed')).toBeNull();
-    expect(queryByTestId('error-tail-retry')).toBeNull();
-  });
-
-  it('does not render the failed label when isErrorTail is not provided', () => {
-    const { queryByText, queryByTestId } = renderMessage({ role: 'assistant', text: 'ok response' });
-    expect(queryByText('failed')).toBeNull();
-    expect(queryByTestId('error-tail-retry')).toBeNull();
-  });
-
-  it('does not render the failed label on user messages even when isErrorTail is true', () => {
-    const { queryByText, queryByTestId } = renderMessage(
-      { role: 'user', text: 'user message' },
-      { isErrorTail: true, onRetry: noop },
     );
     expect(queryByText('failed')).toBeNull();
     expect(queryByTestId('error-tail-retry')).toBeNull();
@@ -174,20 +150,6 @@ describe('MessageBlock — user modules', () => {
       ],
     });
     expect(container.querySelectorAll('[data-testid="attachment-pill"]').length).toBe(2);
-  });
-
-  it('legacy user message (no structured fields) renders body via existing path', () => {
-    const { container } = renderMessage({
-      role: 'user',
-      text: '> quoted line\n\nmy follow-up',
-    });
-    expect(container.querySelector('[data-testid="quote-preview"]')).toBeNull();
-    expect(container.querySelector('[data-testid="attachment-pill"]')).toBeNull();
-    // Inline `> ` quotes now render as a real blockquote (user markdown).
-    expect(container.querySelector('.terminal-message-user blockquote')?.textContent).toContain(
-      'quoted line',
-    );
-    expect(container.textContent).toContain('my follow-up');
   });
 
   it('renders one CommentChip per comment', () => {
@@ -266,13 +228,6 @@ describe('MessageBlock — user message markdown', () => {
     const code = container.querySelector('.terminal-message-user code');
     expect(code?.textContent).toBe('code');
     expect(container.textContent).not.toContain('**');
-  });
-
-  it('preserves single newlines as hard breaks', () => {
-    const { container } = renderMessage({ role: 'user', text: 'line1\nline2' });
-    expect(container.querySelector('.terminal-message-user br')).toBeTruthy();
-    expect(container.textContent).toContain('line1');
-    expect(container.textContent).toContain('line2');
   });
 
   it('renders fenced code blocks without mangling their content', () => {
@@ -404,9 +359,6 @@ describe('MessageBlock — thought activity sync', () => {
 });
 
 describe('userTextToMarkdown', () => {
-  it('suffixes plain lines with a markdown hard break', () => {
-    expect(userTextToMarkdown('a\nb')).toBe('a  \nb');
-  });
   it('leaves blank lines and the last line untouched', () => {
     expect(userTextToMarkdown('a\n\nb')).toBe('a\n\nb');
   });

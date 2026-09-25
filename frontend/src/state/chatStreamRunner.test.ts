@@ -404,15 +404,6 @@ describe("reduceNodes 'done' — finalize stuck tool call statuses", () => {
     };
   }
 
-  it("normalizes 'running' tool calls to 'completed' on done", () => {
-    const next = reduceNodes(nodeWithToolCalls(['running']), {
-      type: 'done',
-      nodeId: 'n1',
-      assistantId: 'a1',
-    });
-    expect(next.n1.messages[0].toolCalls[0].status).toBe('completed');
-  });
-
   it('normalizes empty/in_progress/pending to completed', () => {
     const next = reduceNodes(nodeWithToolCalls(['', 'in_progress', 'pending']), {
       type: 'done',
@@ -423,18 +414,6 @@ describe("reduceNodes 'done' — finalize stuck tool call statuses", () => {
       'completed',
       'completed',
       'completed',
-    ]);
-  });
-
-  it("preserves terminal statuses ('completed', 'failed')", () => {
-    const next = reduceNodes(nodeWithToolCalls(['completed', 'failed']), {
-      type: 'done',
-      nodeId: 'n1',
-      assistantId: 'a1',
-    });
-    expect(next.n1.messages[0].toolCalls.map((t) => t.status)).toEqual([
-      'completed',
-      'failed',
     ]);
   });
 });

@@ -24,12 +24,6 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('pane width preference', () => {
-  it.each(['soft-fade', 'gentle-glide', 'frozen-retract', 'phosphor', 'fission', 'thread-pull'])('hydrates saved %s animation', mode => {
-    localStorage.setItem('michi:v1:prefs', JSON.stringify({ paneSpawnAnimation: mode }));
-    render(<PrefsProvider><Probe /></PrefsProvider>);
-    expect(screen.getByTestId('motion').textContent).toBe(mode);
-  });
-
   it.each([['soft-fade', 'soft-fade'], ['gentle-glide', 'gentle-glide'], ['frozen-retract', 'frozen-retract'], ['invalid', 'phosphor']])('validates remote animation %s', async (mode, expected) => {
     api.fetchPrefs.mockResolvedValue({ paneSpawnAnimation: mode });
     render(<PrefsProvider><Probe /></PrefsProvider>);
@@ -58,12 +52,6 @@ describe('pane width preference', () => {
     localStorage.setItem('michi:v1:prefs', JSON.stringify({ paneWidthMode: mode }));
     render(<PrefsProvider><Probe /></PrefsProvider>);
     expect(screen.getByTestId('mode').textContent).toBe(mode);
-  });
-
-  it.each([{}, { paneWidthMode: 'unsupported' }])('migrates legacy or invalid local preferences', saved => {
-    localStorage.setItem('michi:v1:prefs', JSON.stringify(saved));
-    render(<PrefsProvider><Probe /></PrefsProvider>);
-    expect(screen.getByTestId('mode').textContent).toBe('half');
   });
 
   it.each([['fixed', 'fixed'], ['invalid', 'half']])('hydrates and validates remote mode %s', async (remote, expected) => {

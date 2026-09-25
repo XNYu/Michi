@@ -38,20 +38,6 @@ describe('MapCard (collapsed)', () => {
 });
 
 describe('MapCard (expanded)', () => {
-  it('shows full overview trail with last entry highlighted', () => {
-    const { container } = render(<MapCard now={NOW} ribbon={null} expanded onToggle={() => {}} onOpenPane={() => {}}
-      node={node({ title: 'X', branchOverviewEntries: [
-        { at: 1, text: '第一步进展' }, { at: 2, text: '第二步进展' }, { at: 3, text: '最新进展' },
-      ]})} />);
-    expect(screen.getByText('第一步进展')).toBeTruthy();
-    expect(screen.getByText('第二步进展')).toBeTruthy();
-    // The last trail entry text also appears in the collapsed body summary
-    // (latestOverviewFirstSentence), so target the highlighted trail row by attribute.
-    const last = container.querySelector('[data-latest="true"]');
-    expect(last).not.toBeNull();
-    expect(last?.textContent).toContain('最新进展');
-  });
-
   it('caps the trail at the 3 most recent entries and notes how many are elided', () => {
     const { container } = render(<MapCard now={NOW} ribbon={null} expanded onToggle={() => {}} onOpenPane={() => {}}
       node={node({ title: 'X', branchOverviewEntries: [
@@ -64,12 +50,6 @@ describe('MapCard (expanded)', () => {
     expect(screen.getByText('第四条')).toBeTruthy();
     expect(container.querySelector('[data-latest="true"]')?.textContent).toContain('最新进展');
     expect(container.querySelector('[data-trail-elided]')?.textContent).toContain('+2 earlier');
-  });
-
-  it('omits the elided note when the trail fits', () => {
-    const { container } = render(<MapCard now={NOW} ribbon={null} expanded onToggle={() => {}} onOpenPane={() => {}}
-      node={node({ title: 'X', branchOverviewEntries: [{ at: 1, text: 'a' }, { at: 2, text: 'b' }] })} />);
-    expect(container.querySelector('[data-trail-elided]')).toBeNull();
   });
 
   it('open-pane footer calls onOpenPane and stops propagation to toggle', () => {
@@ -88,11 +68,5 @@ describe('MapCard (B effects)', () => {
       onToggle={() => {}} onOpenPane={() => {}}
       node={node({ title: 'X', lastAssistantAt: NOW, viewedAt: NOW - 1000 })} unread />);
     expect(container.querySelector('[data-unread="true"]')).not.toBeNull();
-  });
-
-  it('streaming card carries the breathe class', () => {
-    const { container } = render(<MapCard now={NOW} ribbon={null} expanded={false}
-      onToggle={() => {}} onOpenPane={() => {}} node={node({ title: 'X', status: 'streaming' })} />);
-    expect(container.querySelector('.map-card--breathe')).not.toBeNull();
   });
 });

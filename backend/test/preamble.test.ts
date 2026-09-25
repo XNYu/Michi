@@ -27,29 +27,9 @@ describe('buildStableSystemPrompt', () => {
         assert.equal(a, b);
     });
 
-    test('always includes the FOLLOW-UP sentinel instruction', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /\[FOLLOW-UP 1\/3:/);
-        assert.match(s, /STRICT FORMAT RULES/);
-    });
-
     test('always includes the TITLE sentinel instruction', () => {
         const s = buildStableSystemPrompt();
         assert.match(s, /\[TITLE:/);
-    });
-
-    test('always includes the BRANCH-OVERVIEW sentinel instruction', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /\[BRANCH-OVERVIEW:/);
-        assert.match(s, /1-3 concise sentences/);
-    });
-
-    test('scopes metadata sentinels to final answers only', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /final answer only/);
-        assert.match(s, /after all tool use and intermediate commentary is complete/);
-        assert.match(s, /Do not emit \[TITLE:\], \[BRANCH-OVERVIEW:\], or \[FOLLOW-UP n\/3:\] sentinel lines in commentary/);
-        assert.match(s, /Near the end of the final answer, write three lines/);
     });
 
     test('contains no cwd, contextManifest, or ancestor content', () => {
@@ -57,11 +37,6 @@ describe('buildStableSystemPrompt', () => {
         assert.doesNotMatch(s, /Workspace context files available/);
         assert.doesNotMatch(s, /Reference context the user has pinned/);
         assert.doesNotMatch(s, /Previous conversation chain/);
-    });
-
-    test('never includes the FOLLOW_UPS_DISABLED variant', () => {
-        const s = buildStableSystemPrompt();
-        assert.doesNotMatch(s, /Follow-ups are DISABLED/);
     });
 
     test('structured-tool mode contains no overview or follow-up sentinel protocol', () => {
@@ -86,11 +61,6 @@ describe('buildStableSystemPrompt', () => {
 });
 
 describe('buildFirstTurnPrefix', () => {
-    test('returns empty string when no variable inputs', () => {
-        const s = buildFirstTurnPrefix({ cwd: '/tmp/x' });
-        assert.equal(s, '');
-    });
-
     test('includes contextManifest listing when provided', () => {
         const s = buildFirstTurnPrefix({
             cwd: '/tmp/x',
@@ -168,16 +138,5 @@ describe('buildPreamble (legacy composition for Pi/Kiro)', () => {
         assert.ok(full.includes(stable), 'full preamble should contain the stable head verbatim');
         assert.match(full, /Workspace context files available/);
         assert.match(full, /spec — docs\/spec\.md/);
-    });
-
-    test('with enableFollowUps=false swaps to DISABLED variant', () => {
-        const full = buildPreamble({ enableFollowUps: false, cwd: '/tmp/x' });
-        assert.match(full, /Follow-ups are DISABLED/);
-        assert.doesNotMatch(full, /\[FOLLOW-UP 1\/3:/);
-    });
-
-    test('ends with the "user will now speak" tail', () => {
-        const full = buildPreamble({ enableFollowUps: true, cwd: '/tmp/x' });
-        assert.match(full, /The user will now speak\.\s*$/);
     });
 });

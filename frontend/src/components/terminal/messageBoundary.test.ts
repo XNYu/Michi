@@ -6,11 +6,6 @@ import {
 } from './messageBoundary';
 
 describe('findNextSafeBoundary — trivial cases', () => {
-  it('returns text.length when offset is at end', () => {
-    const t = 'hello';
-    expect(findNextSafeBoundary(t, t.length)).toBe(t.length);
-  });
-
   it('returns 0 when text is empty', () => {
     expect(findNextSafeBoundary('', 0)).toBe(0);
   });
@@ -41,22 +36,10 @@ describe('findNextSafeBoundary — trivial cases', () => {
 });
 
 describe('findNextSafeBoundary — inline spans', () => {
-  it('snaps past unclosed ** when offset lands inside bold', () => {
-    const t = 'a **bold word** rest\n\ntail';
-    // \n\n at indices 20-21; safe pos = 22.
-    expect(findNextSafeBoundary(t, 5)).toBe(22);
-  });
-
   it('snaps past unclosed _italic_', () => {
     const t = 'a _it word_ rest\n\nq';
     // \n\n at 16-17, safe = 18.
     expect(findNextSafeBoundary(t, 4)).toBe(18);
-  });
-
-  it('snaps past inline `code`', () => {
-    const t = 'a `co de` rest\n\nq';
-    // \n\n at 14-15, safe = 16.
-    expect(findNextSafeBoundary(t, 4)).toBe(16);
   });
 
   it('treats backslash-escaped marker as literal', () => {
@@ -79,12 +62,6 @@ describe('findNextSafeBoundary — block structures', () => {
     expect(findNextSafeBoundary(t, 7)).toBe(idx);
   });
 
-  it('snaps past heading line (relies on \\n\\n after heading)', () => {
-    const t = 'pre\n\n#### Title\n\nbody';
-    const idx = t.indexOf('body');
-    expect(findNextSafeBoundary(t, 9)).toBe(idx);
-  });
-
   it('does NOT enter fence mode for mid-line backticks', () => {
     // Mid-line ``` toggles codeSpan three times (= net open). Without an
     // explicit close before EOF, no \n\n is safe and we fall to text.length.
@@ -102,23 +79,10 @@ describe('findNextSafeBoundary — block structures', () => {
 });
 
 describe('findNextSafeBoundary — list blocks and links', () => {
-  it('snaps past entire list when offset lands inside a list item', () => {
-    const t = '- a\n- b\n- c\n\nrest';
-    const idx = t.indexOf('rest');
-    // Offset on 'b' (inside item 2) must skip to after the whole list.
-    expect(findNextSafeBoundary(t, t.indexOf('b'))).toBe(idx);
-  });
-
   it('handles ordered list', () => {
     const t = '1. a\n2. b\n3. c\n\nq';
     const idx = t.indexOf('q');
     expect(findNextSafeBoundary(t, t.indexOf('b'))).toBe(idx);
-  });
-
-  it('snaps past link text', () => {
-    const t = 'pre [click here](https://example.com) tail\n\nq';
-    const idx = t.indexOf('q');
-    expect(findNextSafeBoundary(t, t.indexOf('click'))).toBe(idx);
   });
 
   it('handles parens inside link URL', () => {

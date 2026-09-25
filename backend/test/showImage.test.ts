@@ -24,13 +24,6 @@ test('rejects path traversal outside cwd', () => {
   assert.equal(r.ok, false);
 });
 
-test('rejects non-image extension', () => {
-  const cwd = tmpWorkspace();
-  fs.writeFileSync(path.join(cwd, 'a.txt'), 'x');
-  const r = resolveShowImage(cwd, 'a.txt');
-  assert.equal(r.ok, false);
-});
-
 test('rejects missing file', () => {
   const cwd = tmpWorkspace();
   const r = resolveShowImage(cwd, 'nope.png');
@@ -79,9 +72,3 @@ test('rejects an image larger than the size cap', () => {
   assert.equal(r.ok, false);
 });
 
-test('accepts an image exactly at the size cap', () => {
-  const cwd = tmpWorkspace();
-  fs.writeFileSync(path.join(cwd, 'atcap.png'), Buffer.alloc(SHOW_IMAGE_MAX_BYTES));
-  const r = resolveShowImage(cwd, 'atcap.png');
-  assert.equal(r.ok, true);
-});

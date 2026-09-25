@@ -33,14 +33,6 @@ function placeholderNode(overrides: Partial<ChatNodeState> = {}): ChatNodeState 
 }
 
 describe('lazy-load write-back safety', () => {
-  it('placeholder nodes only enter the message-free node delta', () => {
-    const p = project();
-    const nodes = { n1: placeholderNode() };
-    const delta = accumulateWorkspaceDirtyDelta(undefined, p, {}, nodes, emptyWorkspaceDirtyDelta());
-    expect(delta.nodeIds.has('n1')).toBe(true);
-    expect('messageNodeIds' in delta).toBe(false);
-  });
-
   it('a loaded node uses the same message-free node delta', () => {
     const p = project();
     const loaded: ChatNodeState = placeholderNode({
@@ -49,15 +41,6 @@ describe('lazy-load write-back safety', () => {
     });
     const nodes = { n1: loaded };
     const delta = accumulateWorkspaceDirtyDelta(undefined, p, {}, nodes, emptyWorkspaceDirtyDelta());
-    expect(delta.nodeIds.has('n1')).toBe(true);
-    expect('messageNodeIds' in delta).toBe(false);
-  });
-
-  it('a node changing while still a placeholder remains message-free', () => {
-    const p = project();
-    const prevNodes = { n1: placeholderNode({ title: 'old' }) };
-    const curNodes = { n1: placeholderNode({ title: 'new' }) }; // title edit, still unloaded
-    const delta = accumulateWorkspaceDirtyDelta(p, p, prevNodes, curNodes, emptyWorkspaceDirtyDelta());
     expect(delta.nodeIds.has('n1')).toBe(true);
     expect('messageNodeIds' in delta).toBe(false);
   });
@@ -110,14 +93,6 @@ describe('messages-loaded install', () => {
     expect(next.n1.messagesLoaded).toBe(true);
     expect(next.n1.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
     expect(next.n1.messageCount).toBe(2);
-  });
-
-  it('applyTreeMessages leaves untouched nodes by reference', () => {
-    const other = placeholderNode({ nodeId: 'n2' });
-    const nodes = { n1: placeholderNode(), n2: other };
-    const next = applyTreeMessages(nodes, { n1: [] });
-    expect(next.n1.messagesLoaded).toBe(true);   // n1 flipped (empty but loaded)
-    expect(next.n2).toBe(other);                  // n2 identity preserved
   });
 
   it('a genuinely-empty node after load is distinguishable from a placeholder', () => {

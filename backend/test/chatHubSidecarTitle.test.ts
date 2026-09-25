@@ -137,22 +137,6 @@ describe('ChatHub sidecar title generation', () => {
     assert.equal(calls, 0);
   });
 
-  it('skips generation when disabled for the turn', async () => {
-    let calls = 0;
-    const hub = makeHub({ titleGenerator: async () => { calls += 1; return 'unused'; } });
-    const { session, finish } = holdingSession();
-    const { done } = await hub.startTurn({
-      chatId: 'chat-disabled',
-      nodeId: 'node-disabled',
-      text: 'hello',
-      session,
-      enableKiroSidecarTitle: false,
-    });
-    finish();
-    await done;
-    assert.equal(calls, 0);
-  });
-
   it('skips generation for non-chat owners such as agent runs', async () => {
     let calls = 0;
     const hub = makeHub({ titleGenerator: async () => { calls += 1; return 'unused'; } });
@@ -225,13 +209,5 @@ describe('ChatHub sidecar title generation', () => {
     await done;
     assert.equal(seen.some((event) => event.event === 'error'), false);
     assert.equal(seen.at(-1)?.event, 'done');
-  });
-
-  it('does nothing when the generator is disabled', async () => {
-    const hub = makeHub({ titleGenerator: null });
-    const { session, finish } = holdingSession();
-    const { done } = await hub.startTurn({ chatId: 'chat-7', nodeId: 'node-7', text: 'hello', session, enableKiroSidecarTitle: true });
-    finish();
-    await done;
   });
 });

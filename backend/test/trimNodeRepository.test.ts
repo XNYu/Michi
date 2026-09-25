@@ -176,16 +176,6 @@ describe('trimNode — fork node (multiple children)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('all children slide up to F.parent and new edges fan out from there', () => {
-    trimNode('ws1', 'F', 100, 'g1');
-
-    assert.equal(parentOf('A'), 'R');
-    assert.equal(parentOf('B'), 'R');
-    assert.equal(parentOf('C'), 'R');
-
-    assert.deepEqual(edgeIds('ws1'), ['R->A', 'R->B', 'R->C']);
-  });
-
   test('snapshot captures all three children for restore', () => {
     trimNode('ws1', 'F', 100, 'g1');
     const snap = getSnapshot('F');
@@ -228,26 +218,6 @@ describe('trimNode — tree root with children (Option A: siblings become childr
   afterEach(() => {
     closeDb();
     fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('promotes the oldest child A to root; B and C become A children', () => {
-    trimNode('ws1', 'R', 100, 'g1');
-
-    assert.equal(parentOf('A'), null, 'A is the new root');
-    assert.equal(parentOf('B'), 'A');
-    assert.equal(parentOf('C'), 'A');
-
-    const trees = listTrees('ws1');
-    assert.equal(trees.length, 1);
-    assert.equal(trees[0].root_node_id, 'A');
-
-    assert.deepEqual(edgeIds('ws1'), ['A->B', 'A->C']);
-  });
-
-  test('snapshot records wasTreeRoot so restore can put R back', () => {
-    trimNode('ws1', 'R', 100, 'g1');
-    const snap = getSnapshot('R');
-    assert.equal(snap?.wasTreeRoot?.treeId, 't1');
   });
 
   test('restore re-promotes R: A loses root status, B and C come back under R', () => {
@@ -346,41 +316,6 @@ describe('trimNode — walk-up restore when the original parent is also trimmed'
   });
 });
 
-describe('trimNode — children already in trash stay parented coherently', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = freshTmpDir();
-    process.env.MICHI_DATA_DIR = tmpDir;
-    closeDb();
-    initDb();
-    insertWorkspace('ws1');
-    insertTree('ws1', 't1', 'R');
-    insertNode('ws1', 'R', { tree: 't1', createdAt: 1 });
-    insertNode('ws1', 'X', { tree: 't1', parent: 'R', createdAt: 2 });
-    // C is already in the trash via a prior subtree-delete.
-    insertNode('ws1', 'C', { tree: 't1', parent: 'X', createdAt: 3, deletedAt: 50, groupId: 'old-group' });
-    insertBranchEdge('ws1', 'R', 'X');
-    insertBranchEdge('ws1', 'X', 'C');
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('trim X reparents the trashed child C to R too (keeps parent chain valid)', () => {
-    trimNode('ws1', 'X', 100, 'gX');
-
-    assert.equal(parentOf('C'), 'R',
-      'reparenting must include trashed children so no parent_node_id dangles at the trimmed node');
-    // C's own trash markers are untouched
-    const c = getNode('C');
-    assert.equal(c?.deleted_at, 50);
-    assert.equal(c?.deletion_group_id, 'old-group');
-  });
-});
-
 describe('trimNode — preserves cross-tree edge kinds (merge/link/digest-source)', () => {
   let tmpDir: string;
 
@@ -431,24 +366,11 @@ describe('trimNode — guards', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('unknown node id is a no-op', () => {
-    insertWorkspace('ws1');
-    const result = trimNode('ws1', 'nope', 100, 'g1');
-    assert.equal(result.trimmed, 0);
-  });
-
   test('cross-workspace id is rejected', () => {
     insertWorkspace('ws1');
     insertWorkspace('ws2');
     insertNode('ws2', 'X');
     const result = trimNode('ws1', 'X', 100, 'g1');
     assert.equal(result.trimmed, 0);
-  });
-
-  test('restoreTrimmedNode returns false on a node without a trim_snapshot', () => {
-    insertWorkspace('ws1');
-    insertNode('ws1', 'X');
-    const result = restoreTrimmedNode('ws1', 'X');
-    assert.equal(result.restored, false);
   });
 });

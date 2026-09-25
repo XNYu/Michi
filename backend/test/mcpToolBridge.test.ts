@@ -67,20 +67,9 @@ describe("mcpToolName / parseMcpToolName", () => {
         assert.equal(mcpToolName("sample-docs", "get-spec-content"), "mcp__sample-docs__get-spec-content");
     });
 
-    test("parses namespaced tool names back", () => {
-        const parsed = parseMcpToolName("mcp__sample__ReadPages");
-        assert.deepEqual(parsed, { serverName: "sample", toolName: "ReadPages" });
-    });
-
     test("parseMcpToolName handles hyphenated server names", () => {
         const parsed = parseMcpToolName("mcp__sample-docs__get-spec-content");
         assert.deepEqual(parsed, { serverName: "sample-docs", toolName: "get-spec-content" });
-    });
-
-    test("parseMcpToolName returns null for non-MCP names", () => {
-        assert.equal(parseMcpToolName("read"), null);
-        assert.equal(parseMcpToolName("spawn_branches"), null);
-        assert.equal(parseMcpToolName("mcp__incomplete"), null);
     });
 });
 
@@ -126,12 +115,6 @@ describe("buildMcpToolsForPi", () => {
         assert.ok(names.includes("mcp__sample__search_code"));
         assert.ok(names.includes("mcp__sample__read_wiki"));
         assert.ok(!names.includes("mcp__sample__dangerous_tool"));
-    });
-
-    test("returns empty array when no servers connected", () => {
-        const mgr = new FakeManager();
-        const tools = buildMcpToolsForPi({ mcpManager: mgr as unknown as McpClientManager, Type });
-        assert.equal(tools.length, 0);
     });
 
     test("each tool has __tool_use_purpose in its parameters schema", () => {

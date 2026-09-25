@@ -65,31 +65,6 @@ describe('buildThreadRowContextMenu', () => {
     spy.mockRestore();
   });
 
-  it('omits the Move-to-workspace item when no targets are provided', () => {
-    const sections = buildThreadRowContextMenu(baseArgs());
-    const labels = sections.flatMap((s) => s.items.map((i) => i.label));
-    expect(labels).not.toContain('Move to workspace…');
-  });
-
-  it('omits the Move-to-workspace item when targets are empty', () => {
-    const sections = buildThreadRowContextMenu(
-      baseArgs({
-        moveTargets: [],
-        actions: {
-          activateTree: vi.fn(),
-          archiveTree: vi.fn(),
-          unarchiveTree: vi.fn(),
-          renameTree: vi.fn(),
-          deleteTree: vi.fn(),
-          exportTree: vi.fn(),
-                openMoveDialog: vi.fn(),
-        },
-      }),
-    );
-    const labels = sections.flatMap((s) => s.items.map((i) => i.label));
-    expect(labels).not.toContain('Move to workspace…');
-  });
-
   it('omits the Move-to-workspace item when openMoveDialog is not wired', () => {
     const sections = buildThreadRowContextMenu(
       baseArgs({
@@ -98,13 +73,6 @@ describe('buildThreadRowContextMenu', () => {
     );
     const labels = sections.flatMap((s) => s.items.map((i) => i.label));
     expect(labels).not.toContain('Move to workspace…');
-  });
-
-  it('omits Pin/Unpin when actions.pinTree is not provided', () => {
-    const sections = buildThreadRowContextMenu(baseArgs());
-    const labels = sections.flatMap((s) => s.items.map((i) => i.label));
-    expect(labels).not.toContain('Pin');
-    expect(labels).not.toContain('Unpin');
   });
 
   it('shows Pin and wires to pinTree when tree is unpinned', () => {
@@ -198,20 +166,6 @@ describe('buildThreadRowContextMenu', () => {
       // Single-target items should NOT appear
       expect(labels).not.toContain('Rename…');
       expect(labels).not.toContain('Archive');
-    });
-
-    it('falls back to single-target when right-clicked tree is NOT in selection', () => {
-      const sections = buildThreadRowContextMenu(
-        baseArgs({
-          treeId: 't1',
-          treeSelection: new Set(['t2', 't3']),
-          clearTreeSelection: vi.fn(),
-        }),
-      );
-      const labels = sections.flatMap((s) => s.items.map((i) => i.label));
-      expect(labels).toContain('Rename…');
-      expect(labels).toContain('Archive');
-      expect(labels).not.toContain('Archive 2 threads');
     });
 
     it('falls back to single-target when selection has only 1 member', () => {

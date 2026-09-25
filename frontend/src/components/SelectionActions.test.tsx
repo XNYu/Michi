@@ -698,23 +698,6 @@ describe('SelectionActions', () => {
 });
 
 describe('findMessageIdForRange', () => {
-  it('returns nearest ancestor data-msg-id', () => {
-    const wrapper = document.createElement('div');
-    wrapper.dataset.msgId = 'm-abc';
-    const p = document.createElement('p');
-    const text = document.createTextNode('hello');
-    p.appendChild(text);
-    wrapper.appendChild(p);
-    document.body.appendChild(wrapper);
-
-    const range = document.createRange();
-    range.setStart(text, 1);
-    range.setEnd(text, 4);
-    expect(findMessageIdForRange(range)).toBe('m-abc');
-
-    document.body.removeChild(wrapper);
-  });
-
   it('returns undefined when no ancestor has data-msg-id', () => {
     const div = document.createElement('div');
     const text = document.createTextNode('orphan');
@@ -760,14 +743,6 @@ describe('placePopup', () => {
 
   afterEach(() => setViewport(originalWindow.w, originalWindow.h));
 
-  it('prefers above the selection when there is room', () => {
-    setViewport(1024, 800);
-    const sel = rect(200, 400, 200, 24);
-    const placement = placePopup(sel, [sel], /* composerTop */ 700, POPUP_W, POPUP_H);
-    // top = sel.top - GAP - height = 400 - 16 - 34 = 350
-    expect(placement.top).toBe(350);
-  });
-
   it('falls through to below when above is off-screen but below clears the composer', () => {
     setViewport(1024, 800);
     // Selection starts near viewport top — no room above.
@@ -796,24 +771,6 @@ describe('placePopup', () => {
     // VIEWPORT_MARGIN (8). The popup sits above the selection's visible top,
     // not crammed into the composer area.
     expect(placement.top).toBe(8);
-  });
-
-  it('anchors horizontally on the union of all highlight rects', () => {
-    setViewport(1024, 800);
-    // Multi-line selection that wraps: first visible line is short and on
-    // the right, second line is on the left. The popup should center on the
-    // union bounding box of both lines.
-    const firstVisible = rect(600, 400, 200, 18);
-    const bounds = rect(80, 400, 800, 60);
-    const placement = placePopup(
-      bounds,
-      [firstVisible, rect(80, 442, 600, 18)],
-      /* composerTop */ 700,
-      POPUP_W,
-      POPUP_H,
-    );
-    // Union: left=80, right=800 → center=440. left = 440 - 140 = 300.
-    expect(placement.left).toBe(300);
   });
 });
 

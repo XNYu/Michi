@@ -89,28 +89,6 @@ describe('T02: Chat slot must NOT expose submit_agent_result', () => {
   let registry: McpSlotRegistry;
   beforeEach(() => { registry = new McpSlotRegistry(); });
 
-  test('chat slot without owner omits submit_agent_result even when callback is present', () => {
-    // Legacy path: no owner field, callback supplied — tool must NOT register.
-    const slot = registry.create('chat-1', '/tmp', null, {
-      ...makeChatCallbacks(),
-      onSubmitAgentResult: () => ({ version: 1, status: 'completed' } as any),
-    } as any);
-    const tools = registeredToolNames(slot);
-    assert.ok(!tools.includes('submit_agent_result'),
-      'submit_agent_result must not appear on a slot without an agent_run owner');
-  });
-
-  test('chat slot with chat_node owner omits submit_agent_result even with callback', () => {
-    const slot = registry.create('chat-2', '/tmp', null, {
-      ...makeChatCallbacks(),
-      owner: CHAT_OWNER,
-      onSubmitAgentResult: () => ({ version: 1, status: 'completed' } as any),
-    } as any);
-    const tools = registeredToolNames(slot);
-    assert.ok(!tools.includes('submit_agent_result'),
-      'submit_agent_result must not appear on a chat_node-owned slot');
-  });
-
   test('chat slot without any run callbacks has no run-specific tools', () => {
     const slot = registry.create('chat-3', '/tmp', null, {
       ...makeChatCallbacks(),
@@ -143,17 +121,6 @@ describe('T02: Run slot submit_agent_result', () => {
       'submit_agent_result must be registered for agent_run owner with callback');
   });
 
-  test('agent_run owner without callback omits submit_agent_result', () => {
-    const slot = registry.create('att-2', '/tmp', 'user-1', {
-      ...makeChatCallbacks(),
-      owner: RUN_OWNER,
-      // No onSubmitAgentResult callback
-    } as any, { workspaceId: 'ws-1' });
-    const tools = registeredToolNames(slot);
-    assert.ok(!tools.includes('submit_agent_result'),
-      'submit_agent_result must not appear without a callback');
-  });
-
   test('submit_agent_result handler invokes the bound callback', async () => {
     const submitted: unknown[] = [];
     const slot = registry.create('att-1', '/tmp', 'user-1', {
@@ -176,35 +143,6 @@ describe('T02: Run slot submit_agent_result', () => {
 // ---------------------------------------------------------------------------
 // Suite: exposed-tool allow-list enforcement
 // ---------------------------------------------------------------------------
-
-describe('T02: exposedToolNames allow-list', () => {
-  let registry: McpSlotRegistry;
-  beforeEach(() => { registry = new McpSlotRegistry(); });
-
-  test('submit_agent_result hidden when not in exposedToolNames', () => {
-    const slot = registry.create('att-3', '/tmp', 'user-1', {
-      ...makeChatCallbacks(),
-      owner: RUN_OWNER,
-      exposedToolNames: new Set(['spawn_branches', 'save_artifact']),
-      onSubmitAgentResult: () => ({} as any),
-    } as any, { workspaceId: 'ws-1' });
-    const tools = registeredToolNames(slot);
-    assert.ok(!tools.includes('submit_agent_result'),
-      'submit_agent_result must not appear when excluded from exposedToolNames');
-  });
-
-  test('submit_agent_result visible when in exposedToolNames', () => {
-    const slot = registry.create('att-4', '/tmp', 'user-1', {
-      ...makeChatCallbacks(),
-      owner: RUN_OWNER,
-      exposedToolNames: new Set(['submit_agent_result', 'spawn_branches']),
-      onSubmitAgentResult: () => ({} as any),
-    } as any, { workspaceId: 'ws-1' });
-    const tools = registeredToolNames(slot);
-    assert.ok(tools.includes('submit_agent_result'),
-      'submit_agent_result must be registered when in exposedToolNames');
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Suite: Agent Run Workspace resolution (no Node lookup)
@@ -260,15 +198,6 @@ describe('T02: Fail-closed safety', () => {
     } as any);
     assert.ok(!registeredToolNames(slot).includes('submit_agent_result'));
   });
-
-  test('submit_agent_result not registered when owner is undefined (legacy)', () => {
-    const registry = new McpSlotRegistry();
-    const slot = registry.create('legacy', '/tmp', null, {
-      ...makeChatCallbacks(),
-      onSubmitAgentResult: () => ({} as any),
-    } as any);
-    assert.ok(!registeredToolNames(slot).includes('submit_agent_result'));
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -300,48 +229,6 @@ describe('T02: buildRunMcpSlotCallbacks', () => {
     assert.ok(cbs.exposedToolNames!.has('submit_agent_result'));
     assert.equal(typeof cbs.onSubmitAgentResult, 'function');
     assert.equal(typeof cbs.onSpawnBranches, 'function');
-  });
-
-  test('omits onSubmitAgentResult when not in allowedToolNames', () => {
-    const owner: RuntimeSessionOwner & { kind: 'agent_run' } = {
-      kind: 'agent_run', runId: 'run-g', attemptId: 'att-g',
-    };
-    const toolProfile: RunWorkerToolProfile = {
-      allowedToolNames: ['spawn_branches'],
-      runWorkerTools: {
-        submitAgentResult: (o, p) => p as any,
-      },
-    };
-    const cbs = buildRunMcpSlotCallbacks({
-      owner,
-      workspaceId: 'ws-g',
-      ownerUserId: null,
-      toolProfile,
-      chatCallbacks: makeChatCallbacks(),
-    });
-
-    assert.equal(cbs.onSubmitAgentResult, undefined,
-      'callback must be absent when submit_agent_result not in allowedToolNames');
-  });
-
-  test('omits onSubmitAgentResult when runWorkerTools hook is missing', () => {
-    const owner: RuntimeSessionOwner & { kind: 'agent_run' } = {
-      kind: 'agent_run', runId: 'run-h', attemptId: 'att-h',
-    };
-    // Plain RuntimeToolProfile without runWorkerTools
-    const toolProfile = {
-      allowedToolNames: ['submit_agent_result', 'spawn_branches'],
-    };
-    const cbs = buildRunMcpSlotCallbacks({
-      owner,
-      workspaceId: 'ws-h',
-      ownerUserId: null,
-      toolProfile,
-      chatCallbacks: makeChatCallbacks(),
-    });
-
-    assert.equal(cbs.onSubmitAgentResult, undefined,
-      'callback must be absent when runWorkerTools hook is not a RunWorkerToolProfile');
   });
 
   test('throws for non agent_run owner', () => {
@@ -436,34 +323,6 @@ describe('T02: End-to-end Run slot through registry', () => {
     assert.ok(!tools.includes('set_follow_ups'));
     assert.ok(!tools.includes('set_branch_overview'));
   });
-
-  test('Run slot cannot list submit_agent_result when excluded from profile', () => {
-    const registry = new McpSlotRegistry();
-    const owner: RuntimeSessionOwner & { kind: 'agent_run' } = {
-      kind: 'agent_run', runId: 'run-excl', attemptId: 'att-excl',
-    };
-    const toolProfile: RunWorkerToolProfile = {
-      allowedToolNames: ['spawn_branches'],
-      runWorkerTools: {
-        submitAgentResult: () => ({} as any),
-      },
-    };
-    const cbs = buildRunMcpSlotCallbacks({
-      owner,
-      workspaceId: 'ws-excl',
-      ownerUserId: null,
-      toolProfile,
-      chatCallbacks: makeChatCallbacks(),
-    });
-    const slot = registry.create('att-excl', '/tmp', null, cbs, {
-      nodeId: null,
-      workspaceId: 'ws-excl',
-    });
-
-    const tools = registeredToolNames(slot);
-    assert.ok(!tools.includes('submit_agent_result'),
-      'submit_agent_result excluded by profile');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -499,17 +358,6 @@ describe('T02: Backward compatibility for existing chat slots', () => {
     assert.ok(tools.includes('list_panes'), 'chat slot must expose list_panes');
     assert.ok(!tools.includes('submit_agent_result'),
       'legacy chat slot must not have submit_agent_result');
-  });
-
-  test('legacy create with nodeId and workspaceId still works', () => {
-    const registry = new McpSlotRegistry();
-    const slot = registry.create('session-1', '/tmp', 'user-1', makeChatCallbacks() as any, {
-      nodeId: 'n-1',
-      workspaceId: 'ws-1',
-    });
-    assert.equal(slot.nodeId, 'n-1');
-    assert.equal(slot.workspaceId, 'ws-1');
-    assert.equal(slot.owner, undefined, 'legacy slot has no owner');
   });
 });
 

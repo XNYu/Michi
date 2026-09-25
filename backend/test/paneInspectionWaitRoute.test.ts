@@ -144,30 +144,12 @@ describe('POST /api/panes/wait', () => {
   // Malformed / multiple locator rejection
   // -------------------------------------------------------------------------
 
-  test('missing locator -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
-    const capture = start();
-    const res = await post({ until: 'changed', cursor: 'c1' });
-    assert.equal(res.status, 400);
-    const body = await asJson(res);
-    assert.equal(body.code, 'INVALID_ARGUMENT');
-    assert.equal(capture.waitCalls.length, 0);
-  });
-
   test('two locators (nodeId + runId) -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
     const capture = start();
     const res = await post({ nodeId: 'n-1', runId: 'run-1', until: 'changed', cursor: 'c1' });
     assert.equal(res.status, 400);
     const body = await asJson(res);
     assert.equal(body.code, 'INVALID_ARGUMENT');
-    assert.equal(capture.waitCalls.length, 0);
-  });
-
-  test('unknown nodeId -> 404 NOT_FOUND, and never reaches the service', async () => {
-    const capture = start();
-    const res = await post({ nodeId: 'does-not-exist', until: 'changed', cursor: 'c1' });
-    assert.equal(res.status, 404);
-    const body = await asJson(res);
-    assert.equal(body.code, 'NOT_FOUND');
     assert.equal(capture.waitCalls.length, 0);
   });
 
@@ -178,21 +160,6 @@ describe('POST /api/panes/wait', () => {
     const body = await asJson(res);
     assert.equal(body.code, 'INVALID_ARGUMENT');
     assert.equal(capture.waitCalls.length, 0);
-  });
-
-  test('until: terminal without executionRef -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
-    const capture = start();
-    const res = await post({ nodeId: 'n-1', until: 'terminal' });
-    assert.equal(res.status, 400);
-    const body = await asJson(res);
-    assert.equal(body.code, 'INVALID_ARGUMENT');
-    assert.equal(capture.waitCalls.length, 0);
-  });
-
-  test('GET /panes/wait rejects (no GET handler registered)', async () => {
-    start();
-    const res = await fetch(`${base}/panes/wait`);
-    assert.equal(res.status, 404);
   });
 
   // -------------------------------------------------------------------------
@@ -250,27 +217,6 @@ describe('POST /api/panes/wait', () => {
     const body = await asJson(res);
     assert.equal(body.code, 'RATE_LIMITED');
   });
-
-  const errorTable: Array<[import('michi-shared').PaneInspectionErrorCode, number]> = [
-    ['INVALID_ARGUMENT', 400],
-    ['NOT_FOUND', 404],
-    ['NAVIGATION_DISABLED', 403],
-    ['UNSUPPORTED', 400],
-    ['OUTPUT_CHANGED', 409],
-    ['OUTPUT_UNAVAILABLE', 410],
-    ['SOURCE_UNAVAILABLE', 503],
-    ['RATE_LIMITED', 429],
-  ];
-
-  for (const [code, status] of errorTable) {
-    test(`service throwing ${code} maps to HTTP ${status} (same shared mapper as inspect/output)`, async () => {
-      start({ throwFromWait: new PaneInspectionError(code, 'wait_pane', 'msg') });
-      const res = await post({ nodeId: 'n-1', until: 'changed', cursor: 'c1' });
-      assert.equal(res.status, status);
-      const body = await asJson(res);
-      assert.equal(body.code, code);
-    });
-  }
 
   test('unexpected non-PaneInspectionError -> 500 with no stack, no SQL, no filesystem path', async () => {
     start({

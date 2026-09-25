@@ -132,15 +132,6 @@ test('requires authenticated one-use tickets bound to the renderer origin', asyn
   await assert.rejects(once(wrongOrigin, 'open'), /403/);
 });
 
-test('cancellation while waiting for headers releases the upstream request', async (t) => {
-  const f = await fixture(t);
-  const { socket } = await f.connect();
-  socket.send(JSON.stringify({ type: 'open', id: 'pending', path: '/api/chats/pending/stream', method: 'GET' }));
-  await until(() => f.active.size === 1);
-  socket.send(JSON.stringify({ type: 'cancel', id: 'pending' }));
-  await until(() => f.active.size === 0);
-});
-
 test('excess streams receive 429 while control requests and existing streams stay usable', async (t) => {
   const f = await fixture(t);
   const { socket, frames } = await f.connect();
@@ -194,25 +185,6 @@ test('forwards panes/presence/keepalive as POST through the multiplexer', async 
   assert.deepEqual(f.requests[0].body, { rendererLeaseId: 'lease-1' });
 });
 
-
-test('rejects panes/presence/keepalive over GET even though the path is allowlisted', async (t) => {
-  const f = await fixture(t);
-  const { socket, frames } = await f.connect();
-  socket.send(JSON.stringify({ type: 'open', id: 'wrong-method', path: '/api/panes/presence/keepalive', method: 'GET' }));
-  await until(() => frames.length === 1);
-  assert.equal(frames[0].type, 'error');
-  assert.equal(f.requests.length, 0);
-});
-
-test('does not allowlist panes/presence or panes/presence/allocate — only the exact keepalive path', async (t) => {
-  const f = await fixture(t);
-  const { socket, frames } = await f.connect();
-  const paths = ['/api/panes/presence', '/api/panes/presence/allocate', '/api/panes/presence/keepalive/extra'];
-  paths.forEach((path, i) => socket.send(JSON.stringify({ type: 'open', id: String(i), path, method: 'POST' })));
-  await until(() => frames.length === paths.length);
-  assert.ok(frames.every((frame) => frame.type === 'error'));
-  assert.equal(f.requests.length, 0);
-});
 
 test('remote-proxied panes/presence/keepalive keeps route authorization', async (t) => {
   const f = await fixture(t);

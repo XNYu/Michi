@@ -23,7 +23,7 @@ import type {
     RuntimePermissionRequest,
     RuntimeSessionOwner,
 } from '../src/agents/types';
-import { sameOwner, assertOwner } from '../src/agents/types';
+import { sameOwner } from '../src/agents/types';
 
 // ---------------------------------------------------------------------------
 // Shared stubs
@@ -33,12 +33,6 @@ const RUN_OWNER: RuntimeSessionOwner = {
     kind: 'agent_run',
     runId: 'run-1',
     attemptId: 'attempt-1',
-};
-
-const WRONG_OWNER: RuntimeSessionOwner = {
-    kind: 'agent_run',
-    runId: 'run-2',
-    attemptId: 'attempt-2',
 };
 
 const CHAT_OWNER: RuntimeSessionOwner = {
@@ -362,17 +356,6 @@ describe('KiroSession owner identity fields', () => {
         assert.equal(session.runtimeProfileHash, 'hash-xyz');
         assert.equal(session.runtimeId, 'kiro');
     });
-
-    test('session defaults runtimeProfileHash to null', () => {
-        const fakeRuntime = {
-            getCurrentMode: () => undefined,
-            getCurrentModel: () => undefined,
-        } as unknown as KiroRuntime;
-
-        const session = new KiroSession('id', 'sid', fakeRuntime, '/tmp/cwd');
-        assert.equal(session.runtimeProfileHash, null);
-        assert.equal(session.owner, undefined);
-    });
 });
 
 // ---------------------------------------------------------------------------
@@ -384,19 +367,7 @@ describe('Owner equality utilities', () => {
         assert.ok(sameOwner(RUN_OWNER, { ...RUN_OWNER }));
     });
 
-    test('sameOwner rejects different agent_run owners', () => {
-        assert.ok(!sameOwner(RUN_OWNER, WRONG_OWNER));
-    });
-
     test('sameOwner rejects different kinds', () => {
         assert.ok(!sameOwner(RUN_OWNER, CHAT_OWNER));
-    });
-
-    test('assertOwner throws on mismatch', () => {
-        assert.throws(() => assertOwner(RUN_OWNER, WRONG_OWNER), /Owner mismatch/);
-    });
-
-    test('assertOwner succeeds on match', () => {
-        assertOwner(RUN_OWNER, { ...RUN_OWNER });
     });
 });

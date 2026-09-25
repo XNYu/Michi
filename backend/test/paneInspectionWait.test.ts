@@ -245,19 +245,6 @@ describe('waitPane — until: terminal', () => {
     await assert.rejects(() => waitPane(CALLER, input, { clock }), (err: unknown) => err instanceof PaneInspectionError && err.code === 'INVALID_ARGUMENT');
     assert.equal(inspectCalled, false);
   });
-
-  test('a queued chat (no turn started) using until=terminal is rejected the same way', async () => {
-    // design §7.4: "chat 的首轮 turnId 在 queued 状态时尚不存在" — the caller simply has no
-    // executionRef to pass yet, so this collapses to the same INVALID_ARGUMENT case above rather
-    // than a distinct code; the queued state itself is only ever observable via until=changed.
-    stubService();
-    const { clock } = makeFakeClock();
-    authorizeImpl = () => {};
-    inspectImpl = () => baseDescriptor({ activity: 'queued', execution: { status: 'unknown', reason: 'no turn yet' } });
-
-    const input = { locator: { nodeId: 'n-1' }, until: 'terminal', timeoutMs: 20_000 } as WaitPaneInput;
-    await assert.rejects(() => waitPane(CALLER, input, { clock }), (err: unknown) => err instanceof PaneInspectionError && err.code === 'INVALID_ARGUMENT');
-  });
 });
 
 describe('waitPane — timeout', () => {

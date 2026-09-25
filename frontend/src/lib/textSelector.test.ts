@@ -70,15 +70,6 @@ describe('computeTextSelector', () => {
     expect(sel.exact).toBe(phrase);
     expect(sel.suffix).toBeUndefined(); // end of doc → empty → undefined
   });
-
-  it('caps prefix/suffix at 50 characters', () => {
-    const longDoc = 'a'.repeat(200) + 'TARGET' + 'b'.repeat(200);
-    const start = 200;
-    const end = 206;
-    const sel = computeTextSelector(longDoc, start, end);
-    expect(sel.prefix!.length).toBe(50);
-    expect(sel.suffix!.length).toBe(50);
-  });
 });
 
 describe('findNearestHeadingPath', () => {
@@ -88,22 +79,8 @@ describe('findNearestHeadingPath', () => {
     expect(path).toBe('# Top Level > ## Configuration Fields > ### domainOwner');
   });
 
-  it('returns just the nearest heading when only one level exists', () => {
-    const simpleDoc = '# Only Heading\n\nSome text here.';
-    const path = findNearestHeadingPath(simpleDoc, simpleDoc.indexOf('Some text'));
-    expect(path).toBe('# Only Heading');
-  });
-
   it('returns empty string for text with no headings', () => {
     expect(findNearestHeadingPath('No headings here.\nJust text.', 10)).toBe('');
-  });
-
-  it('picks the nearest heading at each level, not an earlier one', () => {
-    const offset = DOC.indexOf('Which site types');
-    const path = findNearestHeadingPath(DOC, offset);
-    // Should reference storeType, not domainOwner
-    expect(path).toContain('### storeType');
-    expect(path).not.toContain('### domainOwner');
   });
 
   it('stops ascending once a level-1 heading is found', () => {

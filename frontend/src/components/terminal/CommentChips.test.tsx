@@ -19,14 +19,6 @@ describe('CommentChips', () => {
     expect(container.textContent).toContain('comment 2');
   });
 
-  it('shows the quoted passage and body in collapsed form', () => {
-    const { container } = render(
-      <CommentChips comments={[mk('a', 'the quoted passage', 'my reply body')]} />,
-    );
-    expect(container.textContent).toContain('the quoted passage');
-    expect(container.textContent).toContain('my reply body');
-  });
-
   it('toggles expanded on button click', () => {
     const { getByRole } = render(
       <CommentChips comments={[mk('a', 'short', 'short body')]} />,

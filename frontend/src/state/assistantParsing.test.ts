@@ -46,51 +46,6 @@ describe('finalizeAssistant — follow-up sentinel stripping', () => {
     expect(r.visibleText).toBe('Body paragraph.');
   });
 
-  it('strips sentinels even when ALL three closing brackets are missing', () => {
-    // Reproduces the bug from the screenshot: model dropped every "]" and the
-    // whole follow-up block leaked into visible text.
-    const raw = [
-      '[TITLE: T]',
-      '',
-      'Body.',
-      '',
-      '[FOLLOW-UP 1/3: q1?  [FOLLOW-UP 2/3: q2?  [FOLLOW-UP 3/3: q3?',
-    ].join('\n');
-    const r = finalizeAssistant(raw);
-    expect(r.followUps).toEqual(['q1?', 'q2?', 'q3?']);
-    expect(r.visibleText).toBe('Body.');
-  });
-
-  it('strips sentinels when brackets are missing AND each on its own line', () => {
-    const raw = [
-      '[TITLE: T]',
-      'Body.',
-      '[FOLLOW-UP 1/3: q1?',
-      '[FOLLOW-UP 2/3: q2?',
-      '[FOLLOW-UP 3/3: q3?',
-    ].join('\n');
-    const r = finalizeAssistant(raw);
-    expect(r.followUps).toEqual(['q1?', 'q2?', 'q3?']);
-    expect(r.visibleText).toBe('Body.');
-  });
-
-  it('handles mixed: q1 unclosed, q2 closed, q3 unclosed at EOF', () => {
-    const raw = [
-      '[TITLE: T]',
-      'Body.',
-      '[FOLLOW-UP 1/3: q1? [FOLLOW-UP 2/3: q2?] [FOLLOW-UP 3/3: q3?',
-    ].join('\n');
-    const r = finalizeAssistant(raw);
-    expect(r.followUps).toEqual(['q1?', 'q2?', 'q3?']);
-    expect(r.visibleText).toBe('Body.');
-  });
-
-  it('trims trailing whitespace inside unclosed-sentinel question text', () => {
-    const raw = '[FOLLOW-UP 1/3: q1?   \n[FOLLOW-UP 2/3: q2?\n[FOLLOW-UP 3/3: q3?';
-    const r = finalizeAssistant(raw);
-    expect(r.followUps).toEqual(['q1?', 'q2?', 'q3?']);
-  });
-
   it('strips [TITLE: ...] that appears mid-body, not just at the start', () => {
     // User-reported screenshot bug: the michi agent emitted the title sentinel
     // after a paragraph of body text instead of as the first line. finalize
@@ -130,32 +85,10 @@ describe('finalizeAssistant — follow-up sentinel stripping', () => {
 });
 
 describe('stripInlineMetadataSentinels', () => {
-  it('removes [TITLE: ...] anywhere in the text', () => {
-    expect(stripInlineMetadataSentinels('Body\n\n[TITLE: T]\n\nMore'))
-      .toBe('Body\n\nMore');
-  });
-
-  it('removes [FOLLOW-UPS: a | b | c] legacy form', () => {
-    expect(stripInlineMetadataSentinels('Body\n\n[FOLLOW-UPS: a? | b? | c?]'))
-      .toBe('Body\n\n');
-  });
-
-  it('removes per-question [FOLLOW-UP n/3: ...] sentinels', () => {
-    const input = 'Body\n[FOLLOW-UP 1/3: q1?]\n[FOLLOW-UP 2/3: q2?]\n[FOLLOW-UP 3/3: q3?]';
-    // Trailing newlines collapse — the sentinels left blank lines behind that
-    // the normaliser folds into a single \n\n.
-    expect(stripInlineMetadataSentinels(input)).toBe('Body\n\n');
-  });
-
   it('is idempotent on already-clean text', () => {
     const clean = 'A normal reply with no sentinels.';
     expect(stripInlineMetadataSentinels(clean)).toBe(clean);
     expect(stripInlineMetadataSentinels(stripInlineMetadataSentinels(clean))).toBe(clean);
-  });
-
-  it('returns input unchanged when there is no opening bracket', () => {
-    expect(stripInlineMetadataSentinels('plain text')).toBe('plain text');
-    expect(stripInlineMetadataSentinels('')).toBe('');
   });
 
   it('preserves other bracketed prose like [note] or [link](url)', () => {

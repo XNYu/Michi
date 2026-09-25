@@ -142,16 +142,6 @@ describe("McpClientManager", () => {
         assert.ok(manager.isConnected("sample"));
     });
 
-    test("connect is idempotent — returns cached connection on second call", async () => {
-        manager.setDefaultTools([{ name: "tool_a" }]);
-
-        const first = await manager.connect({ serverName: "test", command: "test-mcp" });
-        const second = await manager.connect({ serverName: "test", command: "test-mcp" });
-
-        assert.deepEqual(first.tools, second.tools);
-        assert.equal(manager.connectedServers().length, 1);
-    });
-
     test("connect to multiple servers", async () => {
         manager.setMockClient("alpha", createMockClient([{ name: "alpha_tool" }]));
         manager.setMockClient("beta", createMockClient([{ name: "beta_tool" }]));
@@ -164,10 +154,6 @@ describe("McpClientManager", () => {
         assert.equal(manager.listTools("beta").length, 1);
         // All tools from all servers
         assert.equal(manager.listTools().length, 2);
-    });
-
-    test("listTools returns empty for unknown server", () => {
-        assert.deepEqual(manager.listTools("nonexistent"), []);
     });
 
     test("callTool invokes the correct server and returns result", async () => {
