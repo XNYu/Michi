@@ -187,7 +187,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
         <BorderBtn onClick={() => { setDraft({ ...EMPTY_DRAFT }); setQuickConnect(false); setMessage(null); }}>+ add remote backend (advanced)</BorderBtn>
       </div>
       {quickConnect && <div style={{ marginTop: 12 }}><RemoteDesktopConnect onConnected={() => {
-        void refresh();
+        void refresh().catch(err => setMessage({ kind: 'error', text: (err as Error).message }));
         window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
       }} /></div>}
 

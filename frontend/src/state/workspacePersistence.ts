@@ -1086,7 +1086,7 @@ export function useWorkspacePersistence({
     }
     prevProjectsRef.current = projects;
     prevNodesRef.current = nodes;
-  }, [projects, structureVersion]); // eslint-disable-line react-hooks/exhaustive-deps -- nodes are read at the structural boundary; hydrated intentionally excluded to avoid marking dirty on hydration
+  }, [projects, structureVersion, hydrated]); // eslint-disable-line react-hooks/exhaustive-deps -- nodes are read at the structural boundary; the hydration transition initializes the clean baseline before the first workspace is created
 
   const collectDirtyDrafts = () => {
     for (const nodeId of dirtyDraftNodeIdsRef?.current ?? []) {

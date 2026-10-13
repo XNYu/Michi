@@ -127,6 +127,56 @@ WantedBy=multi-user.target
 
 ## Connect the desktop app
 
+### Connect by host (experimental)
+
+In **New workspace → machine → Connect remote SSH…**, enter an SSH alias
+such as `build+`, a hostname, or `user@hostname`, then choose **Connect**. Pasting
+`ssh build+` works too. The same flow is available in **Settings → Connections →
+Connect remote SSH**. Existing manual SSH and Direct URL settings remain
+available under the advanced connection form.
+
+If Michi is already healthy, the local gateway retrieves its connection token
+over SSH, verifies the forwarded API and saves the connection. Otherwise,
+**Install and connect** fetches source from the public Michi GitHub repository's
+`main` branch, installs only backend/shared dependencies, builds on the remote
+machine and starts the existing background launcher. It prepares Node.js 22
+when needed, with a checksum verified against the official Node distribution.
+Repeated connections reuse the installation; connecting does not upgrade it.
+
+The managed checkout and private setup log are in
+`~/.local/share/michi/devdesktop/`; its data and token are in `~/.michi-remote/`.
+The service listens on loopback and chooses an unused port on first launch.
+The renderer receives progress and redacted connection metadata only, never
+the SSH response containing the token. Existing healthy installations using
+`~/.michi/remote.env` are also detected.
+
+After connecting, browse remote folders, choose **Use this folder**, then
+create the workspace. Paths are resolved on the remote machine, including
+symlinks and `~`. Existing remote workspaces are imported without reloading the
+app; late imports preserve newly created workspaces and current focus.
+
+This prototype uses Linux, Bash, Python 3, git, curl, tar and working
+noninteractive SSH. It retains strict host-key checks: first-login/host-key or
+expired SSH authentication still requires a terminal login. On older Linux
+machines with `/opt/vsc-sysroot`, a private Node wrapper uses that
+existing loader and a preload to preserve Node subprocess startup. It does not
+replace system libraries or export a library path to agent CLIs. Without a
+compatible Node/sysroot, setup reports a compatibility error.
+
+The launcher uses detached background mode here. Automatic systemd supervision,
+interactive authentication in the app, host discovery, runtime installation
+and automatic updates are not part of this experiment. Agent runtime readiness
+and authentication must still be configured on the remote machine. Setup checks
+Kiro's login status separately and reports a warning when its CLI is installed
+but not signed in. A successful connection is not a successful model-response test.
+
+For development, the local gateway can override its trusted source with
+`MICHI_REMOTE_SOURCE_URL` and `MICHI_REMOTE_SOURCE_REF`. To test an unpushed
+worktree, `MICHI_REMOTE_EXPERIMENT_BUNDLE` names a Git bundle already placed on
+the remote host: after cloning `main`, setup fetches its
+`codex/remote-devdesktop-connect` ref and checks out that commit before building.
+These settings are gateway environment variables, not renderer inputs.
+
 ### Built-in SSH tunnel (recommended)
 
 1. In Terminal on the desktop machine, run `ssh HOST` once. Complete any

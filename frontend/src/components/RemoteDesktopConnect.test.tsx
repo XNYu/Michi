@@ -21,7 +21,7 @@ it('connects with only a host and requests installation explicitly', async () =>
   expect(connected).not.toHaveBeenCalled();
   expect(mocks.connect.mock.calls[0].slice(0, 2)).toEqual(['build+', false]);
   fireEvent.click(install);
-  await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u'));
+  await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', []));
   expect(mocks.connect.mock.calls[1].slice(0, 2)).toEqual(['build+', true]);
   expect(screen.queryByPlaceholderText('MICHI_REMOTE_TOKEN')).toBeNull();
 });
@@ -46,6 +46,16 @@ it('aborts its setup request on dismissal', async () => {
   fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
   const signal = mocks.connect.mock.calls[0][3] as AbortSignal;
   unmount(); expect(signal.aborted).toBe(true);
+});
+
+it('reports runtime authentication separately from a successful machine connection', async () => {
+  const warning = 'Kiro is installed but not signed in. Run kiro-cli login on the remote machine before starting a chat.';
+  mocks.connect.mockResolvedValue({ kind: 'connected', connection: { id: 'remote-c', name: 'build+' }, home: '/home/u', runtimes: ['kiro'], runtimeWarnings: [warning] });
+  const connected = vi.fn(); render(<RemoteDesktopConnect onConnected={connected} />);
+  fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  expect(await screen.findByText(warning)).toBeTruthy();
+  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [warning]);
 });
 
 it('browses directories then selects the canonical remote path', async () => {

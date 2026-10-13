@@ -101,6 +101,19 @@ describe('cold-start hydration barrier', () => {
 
   afterEach(() => vi.useRealTimers());
 
+  it('persists the first workspace created after an empty hydration', async () => {
+    apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([]);
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.hydrated).toBe(true);
+    const created: Project = { id: 'first', name: 'First remote project', cwd: '/home/u/project', backendConnectionId: 'new-remote', chatIds: [], edges: [], trees: [], activeTreeId: null, artifacts: [], createdAt: 1 };
+    await act(async () => { result.current.setProjects([created]); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+    expect(apiMocks.applyWorkspaceCommands).toHaveBeenCalledWith('first', expect.any(String), expect.arrayContaining([
+      expect.objectContaining({ type: 'workspace.upsert', payload: expect.objectContaining({ cwd: '/home/u/project' }) }),
+    ]));
+  });
+
   it('imports a newly connected machine without reloading or changing foreground workspace', async () => {
     const remote = { id: 'new-remote', name: 'build+', transport: 'ssh' as const, sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 };
     const remoteRow = { ...backendWorkspaceRow, workspace: { id: 'remote-ws', name: 'Remote', created_at: 1 }, nodes: [{ id: 'remote-node', created_at: 1 }] };

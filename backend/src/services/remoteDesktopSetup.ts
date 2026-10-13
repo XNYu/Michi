@@ -21,7 +21,7 @@ export function parseRemoteHost(raw: string): { sshHost: string; sshUser?: strin
 
 export function shellQuote(value: string): string { return `'${value.replace(/'/g, `'"'"'`)}'`; }
 
-type SshTarget = ReturnType<typeof parseRemoteHost>;
+type SshTarget = ReturnType<typeof parseRemoteHost> & { sshPort?: number };
 type Progress = (stage: string, message: string) => void;
 type RunSsh = (target: SshTarget, script: string, signal?: AbortSignal, progress?: Progress) => Promise<string>;
 
@@ -29,6 +29,7 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress) => new Pr
   const child = spawn(process.env.MICHI_SSH_BIN?.trim() || 'ssh', [
     '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
+    ...(target.sshPort ? ['-p', String(target.sshPort)] : []),
     target.sshUser ? `${target.sshUser}@${target.sshHost}` : target.sshHost, 'bash -s',
   ], { stdio: ['pipe', 'pipe', 'pipe'], signal });
   let output = '', errors = '', pending = '';
@@ -67,11 +68,13 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress) => new Pr
     const messages: Record<string, string> = {
       prerequisites: 'The remote machine needs Linux, Python 3, git, curl and tar.',
       node_download: 'Node.js could not be downloaded or verified on the remote machine.',
+      node_compatibility: 'Node.js cannot run on this Linux version. A compatible user sysroot or newer Linux image is required.',
       source: 'Could not fetch Michi source. Check repository access on the remote machine.',
       build: 'Remote build failed. Check the private setup log in ~/.local/share/michi/devdesktop/setup.log.',
       start: 'Michi could not start. Check the remote service log.',
       busy: 'Another Michi setup is running on this machine. Wait for it to finish, then reconnect.',
       modified_source: 'The managed remote checkout has local changes. Preserve them before rebuilding.',
+      path: 'The remote folder does not exist or cannot be read.',
     };
     reject(new RemoteDesktopError(known ?? 'ssh_failed', messages[known ?? ''] ?? 'Could not reach the remote machine. Check SSH access and try again.'));
   });
@@ -82,17 +85,24 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress) => new Pr
 // stdout to the renderer: it contains the remote bearer token.
 interface RemoteInfo {
   home: string; path: string; repo: string | null; token?: string; port?: number;
-  healthy: boolean; serverId?: string; runtimes: string[];
+  healthy: boolean; serverId?: string; runtimes: string[]; runtimeWarnings?: string[];
 }
 
 const INSPECT_PYTHON = `
-import os, json, pathlib, urllib.request, shutil
+import os, json, pathlib, urllib.request, shutil, subprocess
 home = pathlib.Path.home()
 managed = home / '.local/share/michi/devdesktop/source'
 candidates = [home / '.michi-remote/remote.env', home / '.michi/remote.env']
-result = dict(home=str(home), path=str(home), repo=None, healthy=False, runtimes=[])
+result = dict(home=str(home), path=str(home), repo=None, healthy=False, runtimes=[], runtimeWarnings=[])
 for runtime, binary in [('kiro', 'kiro-cli'), ('claude', 'claude'), ('codex', 'codex')]:
     if shutil.which(binary): result['runtimes'].append(runtime)
+if 'kiro' in result['runtimes']:
+    try:
+        identity = subprocess.run(['kiro-cli', 'whoami'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        if identity.returncode != 0:
+            result['runtimeWarnings'].append('Kiro is installed but not signed in. Run kiro-cli login on the remote machine before starting a chat.')
+    except Exception:
+        result['runtimeWarnings'].append('Kiro login could not be verified. Check kiro-cli whoami on the remote machine.')
 for repo in [managed, home / '.michi', home / 'michi']:
     if (repo / 'scripts/remote-control.mjs').is_file():
         result['repo'] = str(repo)
@@ -161,6 +171,26 @@ if [ -z "$node_bin" ]; then
   ) >>"$log" 2>&1; then echo MICHI_ERROR:node_download; exit 1; fi
   node_bin="$root/node/bin/node"
 fi
+# Older Linux machines can provide the isolated VS Code sysroot. Keep the
+# downloaded ELF unchanged and use its loader only for Michi's Node processes.
+# The preload makes process.execPath point at the wrapper, so npm, the launcher
+# and Node subprocesses use it too, without exporting LD_LIBRARY_PATH to CLIs.
+if ! "$node_bin" --version >>"$log" 2>&1; then
+  case "$(uname -m)" in aarch64|arm64) loader=/opt/vsc-sysroot/lib/ld-linux-aarch64.so.1;; x86_64) loader=/opt/vsc-sysroot/lib/ld-linux-x86-64.so.2;; *) loader="";; esac
+  if [ "$node_bin" = "$root/node/bin/node" ] && [ -n "$loader" ] && [ -x "$loader" ]; then
+    "$loader" --library-path /opt/vsc-sysroot/lib "$node_bin" --version >>"$log" 2>&1 || { echo MICHI_ERROR:node_compatibility; exit 1; }
+    mv "$node_bin" "$root/node/bin/node.elf"
+    cat > "$root/node/compat.cjs" <<'MICHI_COMPAT'
+process.execPath = require('node:path').join(__dirname, 'bin', 'node');
+MICHI_COMPAT
+    cat > "$node_bin" <<MICHI_NODE
+#!/bin/sh
+exec "$loader" --library-path /opt/vsc-sysroot/lib "$root/node/bin/node.elf" --require "$root/node/compat.cjs" "\\$@"
+MICHI_NODE
+    chmod 700 "$node_bin"
+  fi
+  "$node_bin" --version >>"$log" 2>&1 || { echo MICHI_ERROR:node_compatibility; exit 1; }
+fi
 export PATH="$(dirname "$node_bin"):$PATH"
 export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10'
 repo="$root/source"
@@ -171,7 +201,7 @@ if [ ! -d "$repo/.git" ]; then
   ${experimentBundle ? `if ! (git -C "$staging" fetch ${shellQuote(experimentBundle)} 'refs/heads/codex/remote-devdesktop-connect' && git -C "$staging" checkout --detach FETCH_HEAD) >>"$log" 2>&1; then echo MICHI_ERROR:source; exit 1; fi` : ''}
   mv "$staging" "$repo"
 else
-  [ -z "$(git -C "$repo" status --porcelain --untracked-files=no)" ] || { echo MICHI_ERROR:modified_source; exit 1; }
+  [ -z "$(git -C "$repo" status --porcelain --untracked-files=no -- . ':!package-lock.json')" ] || { echo MICHI_ERROR:modified_source; exit 1; }
 fi
 echo MICHI_PROGRESS:build
 export MICHI_DATA_DIR="$data" MICHI_CONFIG_DIR="$data" MICHI_LOG_DIR="$data/logs"
@@ -191,7 +221,7 @@ ${pythonScript(INSPECT_PYTHON)}`;
 
 export type RemoteSetupResult =
   | { kind: 'install_required'; host: string }
-  | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[] };
+  | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[]; runtimeWarnings: string[] };
 
 export class RemoteDesktopSetup {
   constructor(private readonly deps: { runSsh?: RunSsh; tunnelManager?: SshTunnelManager; sourceUrl?: string; ref?: string } = {}) {}
@@ -226,7 +256,7 @@ export class RemoteDesktopSetup {
       const connection = saveBackendConnection({
         id: existing?.id, name: candidate.name, transport: 'ssh', ...target, remotePort: info.port, token: info.token,
       });
-      return { kind: 'connected', connection, home: info.home, runtimes: info.runtimes };
+      return { kind: 'connected', connection, home: info.home, runtimes: info.runtimes, runtimeWarnings: info.runtimeWarnings ?? [] };
     } finally { tunnels.stop(candidate.id); }
   }
 
@@ -254,7 +284,7 @@ except OSError: raise SystemExit('MICHI_ERROR:path')
 print('MICHI_SETUP_JSON:' + json.dumps(dict(path=str(folder), parent=str(folder.parent) if folder.parent != folder else None, entries=entries)))
 `;
     return readRemoteJson<RemoteDirectory>(await (this.deps.runSsh ?? runRemoteSsh)(
-      { sshHost: connection.sshHost, sshUser: connection.sshUser }, pythonScript(source), signal));
+      { sshHost: connection.sshHost, sshUser: connection.sshUser, sshPort: connection.sshPort }, pythonScript(source), signal));
   }
 }
 

@@ -23,7 +23,7 @@ export function RemoteFolderPicker({ connectionId, onSelect }: {
 
   return <div style={{ padding: '10px 14px', background: 'var(--term-surface)', borderBottom: '1px solid var(--term-line)' }}>
     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-      <input aria-label="Browse remote folder" value={path} onChange={event => setPath(event.target.value)}
+      <input aria-label="Browse remote folder" value={path} disabled={loading} onChange={event => setPath(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); setLocation(path); } }}
         style={{ minWidth: 0, flex: 1, padding: '6px 8px', background: 'var(--term-alt)', color: 'var(--term-fg)', border: '1px solid var(--term-line)' }} />
       <Button onClick={() => setLocation(path)} disabled={loading}>Go</Button>

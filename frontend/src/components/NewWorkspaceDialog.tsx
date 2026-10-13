@@ -87,6 +87,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [remoteCwd, setRemoteCwd] = useState('');
   const [addingRemote, setAddingRemote] = useState(false);
   const [browsingRemote, setBrowsingRemote] = useState(false);
+  const [remoteWarnings, setRemoteWarnings] = useState<string[]>([]);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -99,6 +100,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       setRemoteCwd('');
       setAddingRemote(false);
       setBrowsingRemote(false);
+      setRemoteWarnings([]);
     } else {
       void listBackendConnections().then((remote) => {
         setKnownBackendConnections(remote);
@@ -287,6 +289,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
             setConnectionId(e.target.value);
             setRemoteCwd('');
             setBrowsingRemote(false);
+            setRemoteWarnings([]);
             setError(null);
             setFolderNotice(null);
           }}
@@ -306,13 +309,16 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
         </select>
       </div>
 
-      {addingRemote && <RemoteDesktopConnect onConnected={(connection) => {
+      {addingRemote && <RemoteDesktopConnect onConnected={(connection, _home, warnings) => {
         const remotes = [...getKnownBackendConnections().filter(c => c.id !== LOCAL_BACKEND_CONNECTION_ID && c.id !== connection.id), connection];
         setKnownBackendConnections(remotes);
         setConnections(getKnownBackendConnections());
         setConnectionId(connection.id); setAddingRemote(false); setBrowsingRemote(true); setRemoteCwd('');
+        setRemoteWarnings(warnings);
         window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
       }} />}
+      {!addingRemote && remoteWarnings.map(warning => <p key={warning} role="status"
+        style={{ padding: '0 14px', color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5 }}>{warning}</p>)}
 
       {/* Folders section */}
       {!addingRemote && (isRemote ? (

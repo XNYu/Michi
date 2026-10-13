@@ -58,7 +58,7 @@ export async function deleteBackendConnection(id: string): Promise<void> {
 
 export type RemoteSetupResult =
   | { kind: 'install_required'; host: string }
-  | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[] };
+  | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[]; runtimeWarnings?: string[] };
 
 export async function connectRemoteDesktop(
   host: string, install: boolean, onProgress: (message: string) => void, signal?: AbortSignal,

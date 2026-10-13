@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
+import { execFileSync } from 'node:child_process';
 import { buildRemoteInstallScript, parseRemoteHost, RemoteDesktopSetup, shellQuote } from '../src/services/remoteDesktopSetup';
 import { getBackendConnection, listBackendConnections, saveBackendConnection } from '../src/services/backendConnections';
 import { SshTunnelManager } from '../src/services/sshTunnelManager';
@@ -38,6 +39,9 @@ test('installation builds source remotely without resetting a user checkout', ()
   assert.match(script, /sha256sum -c/);
   assert.match(script, /setup.lock/);
   assert.doesNotMatch(script, /reset --hard|StrictHostKeyChecking=no|sudo /);
+  assert.match(script, /process.execPath =/);
+  assert.match(script, /node\.elf.*"\\\$@"/);
+  execFileSync('bash', ['-n'], { input: script });
 });
 
 const json = (value: unknown) => 'banner\nMICHI_SETUP_JSON:' + JSON.stringify(value) + '\n';
@@ -86,6 +90,17 @@ test('directory browsing quotes paths and only accepts a stored SSH connection',
   assert.match(script, /requested = json.loads/);
   await assert.rejects(service.browse('unknown'), /Select an SSH/);
   await assert.rejects(service.browse(saved.id, '/home/a\n'), /Invalid folder/);
+});
+
+test('does not persist the credential when the forwarded API fails verification', async () => {
+  class WrongTunnel extends SshTunnelManager {
+    override async apiUrl() { return 'http://127.0.0.1:1/api'; }
+    override stop() {}
+  }
+  const service = new RemoteDesktopSetup({ tunnelManager: new WrongTunnel(),
+    runSsh: async () => json({ healthy: true, home: '/home/u', token: 'secret-never-persisted', port: 4444, runtimes: [] }) });
+  await assert.rejects(service.connect('build+', false, () => {}));
+  assert.deepEqual(listBackendConnections(), []);
 });
 
 test('setup route streams progress and sanitized result under the local-control boundary', async () => {
