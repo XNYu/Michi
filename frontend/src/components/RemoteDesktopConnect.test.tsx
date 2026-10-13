@@ -75,5 +75,21 @@ it('does not allow selecting a stale directory after a failed navigation', async
   fireEvent.change(screen.getByLabelText('Browse remote folder'), { target: { value: '/missing' } });
   fireEvent.click(screen.getByRole('button', { name: 'Go' }));
   await screen.findByRole('alert');
-  expect((screen.getByRole('button', { name: 'Use this folder' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Use this folder' })).toBeNull();
+});
+
+it('does not select the previous directory while a new navigation is pending', async () => {
+  let resolve!: (value: unknown) => void;
+  const next = new Promise(value => { resolve = value; });
+  mocks.browse.mockResolvedValueOnce({ path: '/home/u', parent: '/home', entries: [] }).mockReturnValueOnce(next);
+  const select = vi.fn(); render(<RemoteFolderPicker connectionId="remote-c" onSelect={select} />);
+  await screen.findByRole('button', { name: 'Use this folder' });
+  fireEvent.change(screen.getByLabelText('Browse remote folder'), { target: { value: '/home/u/project' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+  expect(screen.queryByRole('button', { name: 'Use this folder' })).toBeNull();
+  expect(select).not.toHaveBeenCalled();
+  resolve({ path: '/local/home/u/project', parent: '/local/home/u', entries: [] });
+  await screen.findByRole('button', { name: 'Use this folder' });
+  fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
+  expect(select).toHaveBeenCalledWith('/local/home/u/project');
 });
