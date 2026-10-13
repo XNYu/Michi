@@ -1373,13 +1373,13 @@ export function useWorkspacePersistence({
     // remote merges wait on this barrier.
     let resolveLocalInstalled: () => void = () => {};
     const localInstalled = new Promise<void>((resolve) => { resolveLocalInstalled = resolve; });
-    const applyRemoteSnapshot = (connection: BackendConnectionSummary, snapshot: BackendSnapshot): void => {
+    const applyRemoteSnapshot = (connection: BackendConnectionSummary, snapshot: BackendSnapshot, replace = true): void => {
       const nextState: HydratedState = {
         projects: [...projectsRef.current],
         activeProjectId: activeProjectIdRef.current,
         nodes: { ...nodesRef.current },
       };
-      const changedProjects = replaceBackendSnapshot(nextState, snapshot);
+      const changedProjects = replace ? replaceBackendSnapshot(nextState, snapshot) : appendBackendSnapshot(nextState, snapshot);
       if (changedProjects > 0) {
         const activeStillExists = nextState.projects.some(
           (project) => project.id === nextState.activeProjectId,
@@ -1406,7 +1406,7 @@ export function useWorkspacePersistence({
       }
       console.info(`remote backend hydrated (${connection.name}); reconciled ${changedProjects} workspace(s)`);
     };
-    const retryRemoteHydration = async (connection: BackendConnectionSummary): Promise<void> => {
+    const retryRemoteHydration = async (connection: BackendConnectionSummary, replace = true): Promise<void> => {
       let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
       while (!cancelled) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelay));
@@ -1418,22 +1418,46 @@ export function useWorkspacePersistence({
           retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
           continue;
         }
-        applyRemoteSnapshot(connection, snapshot);
+        applyRemoteSnapshot(connection, snapshot, replace);
         return;
       }
     };
-    const mergeRemoteWhenReady = async (fetch: Promise<RemoteFetchResult>): Promise<void> => {
+    const mergeRemoteWhenReady = async (fetch: Promise<RemoteFetchResult>, replace = true): Promise<void> => {
       const { connection, snapshot } = await fetch;
       await localInstalled;
       if (cancelled) return;
-      if (snapshot) applyRemoteSnapshot(connection, snapshot);
-      else void retryRemoteHydration(connection);
+      if (snapshot) applyRemoteSnapshot(connection, snapshot, replace);
+      else void retryRemoteHydration(connection, replace);
     };
+    // A newly connected machine should appear immediately, without restarting
+    // the renderer. Only import new connection IDs: refreshing an existing
+    // machine here could replace live nodes/drafts with a metadata snapshot.
+    const knownConnectionIds = new Set<string>();
+    let refreshingConnections = false;
+    const onConnectionsChanged = async () => {
+      if (refreshingConnections) return;
+      refreshingConnections = true;
+      try {
+        await localInstalled;
+        if (cancelled) return;
+        const connections = await listBackendConnections();
+        if (cancelled) return;
+        setKnownBackendConnections(connections);
+        for (const connection of connections) {
+          if (knownConnectionIds.has(connection.id)) continue;
+          knownConnectionIds.add(connection.id);
+          void mergeRemoteWhenReady((async () => ({ connection, snapshot: await fetchRemoteSnapshot(connection) }))(), false);
+        }
+      } catch { /* keep current workspaces when a connection refresh fails */ }
+      finally { refreshingConnections = false; }
+    };
+    window.addEventListener('michi:backend-connections-changed', onConnectionsChanged);
     (async () => {
       try {
         const localResult = await awaitLocalSnapshot();
         if (cancelled || localResult === null) return;
         const { localWorkspaces, connections, remoteFetches } = localResult;
+        for (const connection of connections) knownConnectionIds.add(connection.id);
         const snapshots: BackendSnapshot[] = [
           { connectionId: LOCAL_BACKEND_CONNECTION_ID, workspaces: localWorkspaces },
         ];
@@ -1546,6 +1570,7 @@ export function useWorkspacePersistence({
     })();
     return () => {
       cancelled = true;
+      window.removeEventListener('michi:backend-connections-changed', onConnectionsChanged);
     };
   }, [nodesRef, setActiveProjectId, setHydrated, setNodes, setProjects, userId]);
 }

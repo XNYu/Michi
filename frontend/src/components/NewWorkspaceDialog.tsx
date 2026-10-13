@@ -3,6 +3,8 @@ import { getElectron } from '../lib/electronBridge';
 import type { FolderEntry } from '../state/chatTypes';
 import { ModalShell } from './ui/ModalShell';
 import { Button } from './ui/controls';
+import { RemoteDesktopConnect } from './RemoteDesktopConnect';
+import { RemoteFolderPicker } from './RemoteFolderPicker';
 import { listBackendConnections } from '../services/api';
 import {
   getKnownBackendConnections,
@@ -83,6 +85,8 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [connections, setConnections] = useState<BackendConnectionSummary[]>(getKnownBackendConnections());
   const [connectionId, setConnectionId] = useState(LOCAL_BACKEND_CONNECTION_ID);
   const [remoteCwd, setRemoteCwd] = useState('');
+  const [addingRemote, setAddingRemote] = useState(false);
+  const [browsingRemote, setBrowsingRemote] = useState(false);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -93,6 +97,8 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       setFolderNotice(null);
       setConnectionId(LOCAL_BACKEND_CONNECTION_ID);
       setRemoteCwd('');
+      setAddingRemote(false);
+      setBrowsingRemote(false);
     } else {
       void listBackendConnections().then((remote) => {
         setKnownBackendConnections(remote);
@@ -233,7 +239,8 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const hasFolders = folders.length > 0;
 
   const handleCreate = () => {
-    if (isRemote && !remotePath) {
+    if (addingRemote) return;
+    if (isRemote && (!remotePath || !remotePath.startsWith('/'))) {
       setError('Enter an absolute working directory on the remote server');
       return;
     }
@@ -270,12 +277,16 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
 
       <div style={PROMPT_ROW}>
         <span style={PROMPT_GLYPH} aria-hidden>›_</span>
-        <span style={PROMPT_LABEL}>backend</span>
+        <span style={PROMPT_LABEL}>machine</span>
         <select
           aria-label="Backend connection"
-          value={connectionId}
+          value={addingRemote ? '__add_remote__' : connectionId}
           onChange={(e) => {
+            if (e.target.value === '__add_remote__') { setAddingRemote(true); setBrowsingRemote(false); return; }
+            setAddingRemote(false);
             setConnectionId(e.target.value);
+            setRemoteCwd('');
+            setBrowsingRemote(false);
             setError(null);
             setFolderNotice(null);
           }}
@@ -287,19 +298,28 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
           {connections.map((connection) => (
             <option key={connection.id} value={connection.id}>
               {connection.id === LOCAL_BACKEND_CONNECTION_ID
-                ? 'Local backend'
-                : `${connection.name} · ${connection.transport === 'ssh' ? 'SSH' : 'remote'}`}
+                ? 'This computer'
+                : connection.name}
             </option>
           ))}
+          <option value="__add_remote__">Connect remote SSH…</option>
         </select>
       </div>
 
+      {addingRemote && <RemoteDesktopConnect onConnected={(connection) => {
+        const remotes = [...getKnownBackendConnections().filter(c => c.id !== LOCAL_BACKEND_CONNECTION_ID && c.id !== connection.id), connection];
+        setKnownBackendConnections(remotes);
+        setConnections(getKnownBackendConnections());
+        setConnectionId(connection.id); setAddingRemote(false); setBrowsingRemote(true); setRemoteCwd('');
+        window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
+      }} />}
+
       {/* Folders section */}
-      {isRemote ? (
+      {!addingRemote && (isRemote ? (
         <div style={{ borderBottom: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
           <div style={PROMPT_ROW}>
             <span style={PROMPT_GLYPH} aria-hidden>›_</span>
-            <span style={PROMPT_LABEL}>server cwd</span>
+            <span style={PROMPT_LABEL}>folder</span>
             <input
               type="text"
               value={remoteCwd}
@@ -307,10 +327,11 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
               placeholder="/home/you/project"
               style={{ ...PROMPT_INPUT, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-lg)' }}
             />
+            {connections.find(c => c.id === connectionId)?.transport === 'ssh' && <Button variant="ghost"
+              onClick={() => setBrowsingRemote(value => !value)}>Browse</Button>}
           </div>
-          <div style={{ padding: '9px 14px 12px', color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.45 }}>
-            This path is resolved on the remote server. Local folder picking and symlink attachments are unavailable for this workspace.
-          </div>
+          {browsingRemote && <RemoteFolderPicker key={connectionId} connectionId={connectionId}
+            onSelect={path => { setRemoteCwd(path); setBrowsingRemote(false); setError(null); }} />}
         </div>
       ) : <div style={{ borderBottom: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
         <div style={{ padding: '10px 14px 6px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -387,7 +408,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
             )}
           </div>
         )}
-      </div>}
+      </div>)}
 
       {error && (
         <div
@@ -431,7 +452,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       <div style={{ padding: '14px 14px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
         <Button variant="ghost" onClick={onClose}>cancel</Button>
         {!isRemote && <Button variant="secondary" onClick={onSkip}>open quick chat</Button>}
-        <Button variant="primary" onClick={handleCreate}>create</Button>
+        <Button variant="primary" disabled={addingRemote} onClick={handleCreate}>create</Button>
       </div>
     </ModalShell>
   );

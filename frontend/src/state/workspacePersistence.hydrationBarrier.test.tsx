@@ -84,7 +84,7 @@ function useHarness(initialActiveProjectId: string | null = null) {
     projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
   });
-  return { hydrated, projects, projectsCount: projects.length, activeProjectId, nodes };
+  return { hydrated, projects, projectsCount: projects.length, activeProjectId, nodes, setProjects, setNodes };
 }
 
 describe('cold-start hydration barrier', () => {
@@ -100,6 +100,36 @@ describe('cold-start hydration barrier', () => {
   });
 
   afterEach(() => vi.useRealTimers());
+
+  it('imports a newly connected machine without reloading or changing foreground workspace', async () => {
+    const remote = { id: 'new-remote', name: 'build+', transport: 'ssh' as const, sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 };
+    const remoteRow = { ...backendWorkspaceRow, workspace: { id: 'remote-ws', name: 'Remote', created_at: 1 }, nodes: [{ id: 'remote-node', created_at: 1 }] };
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (id: string) => id === 'new-remote' ? [remoteRow] : [backendWorkspaceRow]);
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.hydrated).toBe(true);
+    const active = result.current.activeProjectId;
+    apiMocks.listBackendConnections.mockResolvedValue([remote]);
+    await act(async () => { window.dispatchEvent(new CustomEvent('michi:backend-connections-changed')); });
+    expect(result.current.projects.find(project => project.id === 'remote-ws')?.backendConnectionId).toBe('new-remote');
+    expect(result.current.activeProjectId).toBe(active);
+    const count = apiMocks.fetchAllWorkspacesMeta.mock.calls.filter(([id]) => id === 'new-remote').length;
+    await act(async () => { window.dispatchEvent(new CustomEvent('michi:backend-connections-changed')); });
+    expect(apiMocks.fetchAllWorkspacesMeta.mock.calls.filter(([id]) => id === 'new-remote').length).toBe(count);
+  });
+
+  it('preserves a workspace created while the new machine snapshot was in flight', async () => {
+    const delayed = deferred<unknown[]>();
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation((id: string) => id === 'new-remote' ? delayed.promise : Promise.resolve([backendWorkspaceRow]));
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    apiMocks.listBackendConnections.mockResolvedValue([{ id: 'new-remote', name: 'build+', transport: 'ssh', hasToken: true, createdAt: 1, updatedAt: 1 }]);
+    await act(async () => { window.dispatchEvent(new CustomEvent('michi:backend-connections-changed')); });
+    const created = { ...result.current.projects[0], id: 'just-created', name: 'Draft', chatIds: [], backendConnectionId: 'new-remote' };
+    await act(async () => { result.current.setProjects(projects => [...projects, created]); });
+    await act(async () => { delayed.resolve([]); });
+    expect(result.current.projects.find(project => project.id === 'just-created')?.name).toBe('Draft');
+  });
 
   it('never finalizes hydration while the backend is unreachable (no false-empty)', async () => {
     // Backend is down for the whole window: every probe rejects like ECONNREFUSED.

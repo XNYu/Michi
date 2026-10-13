@@ -12,6 +12,7 @@ import {
 } from '../services/backendConnections';
 import { sshTunnelManager, type SshTunnelManager } from '../services/sshTunnelManager';
 import { requireLocalControlRequest } from './middleware/localControl';
+import { RemoteDesktopError, RemoteDesktopSetup } from '../services/remoteDesktopSetup';
 
 const FORWARDED_REQUEST_HEADERS = ['accept', 'content-type', 'range', 'last-event-id'] as const;
 const SKIPPED_RESPONSE_HEADERS = new Set([
@@ -47,13 +48,46 @@ function connectionInput(body: Record<string, unknown> | undefined, fallbackName
   };
 }
 
-export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunnelManager } = {}): express.Router {
+export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunnelManager; remoteSetup?: RemoteDesktopSetup } = {}): express.Router {
   const router = express.Router();
   const tunnelManager = options.tunnelManager ?? sshTunnelManager;
+  const remoteSetup = options.remoteSetup ?? new RemoteDesktopSetup({ tunnelManager });
 
   // These routes can replay a stored remote credential. Apply the same strict
   // local-control boundary used by the Custom Agents backend toggle.
   router.use('/backend-connections', requireLocalControlRequest);
+
+  router.post('/backend-connections/connect-ssh', async (req, res) => {
+    if (typeof req.body?.host !== 'string') return res.status(400).json({ error: 'SSH host is required' });
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-store');
+    res.flushHeaders();
+    const emit = (value: unknown) => {
+      if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(value) + '\n');
+    };
+    try {
+      const result = await remoteSetup.connect(req.body.host, req.body.install === true,
+        (stage, message) => emit({ type: 'progress', stage, message }), controller.signal);
+      emit({ type: 'result', result });
+    } catch (error) {
+      emit({ type: 'error', code: error instanceof RemoteDesktopError ? error.code : 'setup_failed',
+        message: error instanceof RemoteDesktopError ? error.message : 'Remote setup failed. Check SSH access and try again.' });
+    } finally { res.end(); }
+  });
+
+  router.get('/backend-connections/:id/directories', async (req, res) => {
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    try {
+      const directory = await remoteSetup.browse(req.params.id,
+        typeof req.query.path === 'string' ? req.query.path : '~', controller.signal);
+      res.json(directory);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof RemoteDesktopError ? error.message : 'Could not read the remote folder.' });
+    }
+  });
 
   router.get('/backend-connections', (_req, res) => {
     res.json({

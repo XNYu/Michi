@@ -20,6 +20,7 @@ import {
 import type { Project } from '../../../../state/chatTypes';
 import { BorderBtn } from '../../primitives';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
+import { RemoteDesktopConnect } from '../../../RemoteDesktopConnect';
 
 type ConnectionDraft = {
   id?: string;
@@ -68,6 +69,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
   const [connections, setConnections] = useState<BackendConnectionSummary[]>([]);
   const [draft, setDraft] = useState<ConnectionDraft | null>(null);
   const [busy, setBusy] = useState(false);
+  const [quickConnect, setQuickConnect] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const refresh = async () => {
@@ -117,7 +119,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
       await saveBackendConnection(input);
       await refresh();
       setDraft(null);
-      setMessage({ kind: 'ok', text: 'Connection saved. Reload to import its existing workspaces.' });
+      setMessage({ kind: 'ok', text: 'Connection saved. Its workspaces will appear automatically.' });
       window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
     } catch (err) {
       setMessage({ kind: 'error', text: (err as Error).message });
@@ -149,7 +151,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
 
   return (
     <div style={{ fontFamily: 'var(--ui-font)', color: 'var(--term-fg)' }}>
-      <h1 style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700, margin: 0 }}>Backend connections</h1>
+      <h1 style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700, margin: 0 }}>Connected machines</h1>
       <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5, margin: '8px 0 16px' }}>
         Each workspace stays attached to one backend. Local and remote sessions can stream side by side in the same app.
       </p>
@@ -181,11 +183,13 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <BorderBtn onClick={() => { setDraft({ ...EMPTY_DRAFT }); setMessage(null); }}>+ add remote backend</BorderBtn>
-        {connections.length > 0 && (
-          <BorderBtn onClick={() => window.location.reload()}>reload workspaces</BorderBtn>
-        )}
+        <BorderBtn onClick={() => { setQuickConnect(value => !value); setDraft(null); }}>Connect remote SSH</BorderBtn>
+        <BorderBtn onClick={() => { setDraft({ ...EMPTY_DRAFT }); setQuickConnect(false); setMessage(null); }}>+ add remote backend (advanced)</BorderBtn>
       </div>
+      {quickConnect && <div style={{ marginTop: 12 }}><RemoteDesktopConnect onConnected={() => {
+        void refresh();
+        window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
+      }} /></div>}
 
       {draft && (
         <div style={{ border: '1px solid var(--term-line)', marginTop: 14, padding: 12, background: 'var(--term-surface)' }}>
