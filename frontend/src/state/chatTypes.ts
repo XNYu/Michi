@@ -1,4 +1,4 @@
-import type { AgentSessionState } from 'michi-shared';
+import type { AgentSessionState, ChatStreamEnvelope, ChatStreamPayloads, SteerMessageOptions } from 'michi-shared';
 import type { AgentCommand, AgentReasoning, PlanEntry, RuntimeId, SessionMode } from '../services/api';
 import type { AgentStatus } from '../services/api';
 import type { MentionRecord } from '../components/mentions';
@@ -151,6 +151,7 @@ export interface ChatMessage {
   /** Block-first assistant content. Hydration migrates assistant messages into this shape. */
   blocks?: AssistantBlock[];
   steeringReports?: SteeringReport[];
+  steered?: boolean;
   streaming?: boolean;
   /** Legacy aggregate reasoning text for assistant messages created before blocks. */
   thought?: string;
@@ -540,6 +541,8 @@ export interface PendingComment {
  * entry to the composer draft).
  */
 export interface PendingQueuedMessage {
+  /** A steer request owns this entry until it settles; do not auto-flush it. */
+  steering?: boolean;
   /** Stable id used for dequeue lookups. */
   id: string;
   /** User's literal text, including @chip labels (not wire tokens). */
@@ -704,6 +707,8 @@ export type ChatAction =
     }
   | { type: 'chunk'; nodeId: string; assistantId: string; text: string }
   | { type: 'steering-report'; nodeId: string; assistantId: string; reports: SteeringReport[] }
+  | { type: 'steer-accepted'; nodeId: string; data: ChatStreamPayloads['steer_accepted'] & ChatStreamEnvelope }
+  | { type: 'queue-steering'; nodeId: string; queueId: string; steering: boolean }
   | { type: 'thought'; nodeId: string; assistantId: string; text: string }
   | { type: 'plan'; nodeId: string; assistantId: string; entries: PlanEntry[] }
   | { type: 'tool-call'; nodeId: string; assistantId: string; tool: ToolCallState }
@@ -1169,7 +1174,7 @@ export interface ChatContextValue {
   /** Drop every pending comment on the node. Called by the composer on send. */
   clearPendingComments: (nodeId: string) => void;
   /** Same-turn native steer. Returns accepted=false when the runtime is invisible. */
-  steerMessage: (nodeId: string, text: string) => Promise<boolean>;
+  steerMessage: (nodeId: string, text: string, options?: SteerMessageOptions) => Promise<boolean>;
   compactContext: (nodeId: string, instructions?: string) => Promise<{ started: boolean; detail?: string }>;
   /** Push a queued message onto the node (used while streaming). */
   queueMessage: (nodeId: string, message: PendingQueuedMessage) => void;

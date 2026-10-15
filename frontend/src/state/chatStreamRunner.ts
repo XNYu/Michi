@@ -204,6 +204,10 @@ export function runChatStream({
       trackSeq(seq, turnId);
       dispatch({ type: 'thought', nodeId, assistantId: currentAssistantId, text });
     },
+    onSteerAccepted: (data) => {
+      trackSeq(data.seq, data.turnId);
+      dispatch({ type: 'steer-accepted', nodeId, data: { ...data, assistantId: data.assistantId ?? currentAssistantId } });
+    },
     onSteeringReport: (data) => {
       trackSeq(data.seq, data.turnId);
       dispatch({ type: 'steering-report', nodeId, assistantId: currentAssistantId, reports: data.reports });

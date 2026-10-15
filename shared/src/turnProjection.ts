@@ -25,6 +25,8 @@ export type DurableAssistantBlock =
   | { id: string; kind: 'image'; workspaceId: string; path: string; caption?: string; mimeType: string; size: number };
 
 export interface DurableMessageMetadata {
+  /** The runtime accepted this user message as input to an existing turn. */
+  steered?: boolean;
   steeringReports?: SteeringReport[];
   quotedText?: string;
   attachments?: Array<{ name: string; absPath: string }>;
@@ -51,6 +53,7 @@ export interface DurableTurnSnapshot {
   workspaceId: string;
   assistantId: string;
   userMessage: DurableMessage | null;
+  steeredMessages?: DurableMessage[];
   assistantMessage: DurableMessage;
   nodeMetadata: {
     title?: string;
@@ -77,6 +80,18 @@ export interface CreateDurableTurnInput {
    * message keeps one so the receiving thread shows what it was asked. */
   keepUserMessage?: boolean;
   startedAt: number;
+}
+
+/** Stable across HTTP acknowledgement, live delivery and replay. */
+export function steeredUserMessage(data: Extract<ChatStreamEvent, { event: 'steer_accepted' }>['data']): DurableMessage | null {
+  const id = data.messageId ?? (data.assistantId && typeof data.seq === 'number'
+    ? `u-steer-${data.assistantId}-${data.seq}` : undefined);
+  if (!id) return null;
+  return {
+    id, role: 'user', content: data.text, blocks: [], toolCalls: [],
+    metadata: { ...data.userMetadata, steered: true },
+    createdAt: data.createdAt ?? 0,
+  };
 }
 
 const SENTINEL_PREFIXES = ['[TITLE:', '[BRANCH-OVERVIEW:', '[FOLLOW-UP'] as const;
@@ -422,6 +437,13 @@ export function applyTurnEvent(
     lastAppliedSeq: typeof seq === 'number' ? seq : snapshot.lastAppliedSeq,
   };
   switch (streamEvent.event) {
+    case 'steer_accepted': {
+      const message = steeredUserMessage({ ...streamEvent.data, assistantId: snapshot.assistantId });
+      if (message && !next.steeredMessages?.some((existing) => existing.id === message.id)) {
+        next = { ...next, steeredMessages: [...(next.steeredMessages ?? []), message] };
+      }
+      break;
+    }
     case 'chunk': {
       const blocks = appendText(next, 'answer', streamEvent.data.text);
       next = {

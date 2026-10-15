@@ -1665,6 +1665,7 @@ function MessageBlockInner({
                 ) : (m.threadMessage.fromTitle ?? 'another thread')}
               </div>
             )}
+            {m.steered && <div className="terminal-message-steered" title="Sent to the active turn">Steered</div>}
             {m.comments && m.comments.length > 0 && <CommentChips comments={m.comments} />}
             {m.quotedText && <QuoteChip text={m.quotedText} />}
             {m.attachments && m.attachments.length > 0 && (

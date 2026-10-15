@@ -86,15 +86,16 @@ export function PaneComposerPreBlocks({
                 <button
                   type="button"
                   className="t-pre-block-steer"
-                  disabled={steeringQueueId !== null}
+                  disabled={steeringQueueId !== null || (node.pendingQueued ?? []).some((entry) => entry.steering)}
                   onClick={() => onSteerQueued(q.id)}
                 >
-                  {steeringQueueId === q.id ? 'Steering…' : 'Steer now'}
+                  {steeringQueueId === q.id || q.steering ? 'Steering…' : 'Steer now'}
                 </button>
               )}
               <button
                 type="button"
                 aria-label="Dequeue message"
+                disabled={steeringQueueId === q.id || q.steering}
                 className="t-pre-block-x"
                 onClick={() => onRestoreQueued(q.id)}
               >

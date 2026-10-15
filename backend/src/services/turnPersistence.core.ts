@@ -119,6 +119,23 @@ function writeAssistantSnapshot(
   }
 }
 
+/** Group accepted steering inputs immediately before their existing reply. */
+function writeSteeredMessages(db: DbPrimitives, snapshot: DurableTurnSnapshot): void {
+  for (const message of snapshot.steeredMessages ?? []) {
+    if (db.get('SELECT id FROM messages WHERE id = ?', message.id)) continue;
+    const assistant = db.get<{ seq: number }>(
+      'SELECT seq FROM messages WHERE id = ? AND node_id = ?', snapshot.assistantId, snapshot.nodeId,
+    );
+    if (!assistant) throw new Error(`assistant message ${snapshot.assistantId} is missing`);
+    db.run('UPDATE messages SET seq = seq + 1 WHERE node_id = ? AND seq >= ?', snapshot.nodeId, assistant.seq);
+    saveMessageRow(db, {
+      id: message.id, node_id: snapshot.nodeId, role: 'user', content: message.content,
+      blocks: null, tool_calls: null, metadata: durableMessageMetadata(message),
+      seq: assistant.seq, created_at: message.createdAt,
+    });
+  }
+}
+
 export function appendBranchOverviewJournal(db: DbPrimitives, nodeId: string, text: string): void {
   const row = db.get<{ branch_overview?: string | null }>(NODE_SQL.getBranchOverview, nodeId);
   if (!row) return;
@@ -241,6 +258,7 @@ export function coreCheckpointTurn(db: DbPrimitives, snapshot: DurableTurnSnapsh
     );
     if (row.status !== 'active' || snapshot.lastAppliedSeq < (row.last_seq as number)) return row;
 
+    writeSteeredMessages(db, snapshot);
     writeAssistantSnapshot(db, snapshot, checkpointTurnContent(snapshot));
     writeTurnNodeProjection(db, snapshot, false);
 
@@ -272,6 +290,7 @@ export function coreFinalizeTurn(db: DbPrimitives, snapshot: DurableTurnSnapshot
       return row;
     }
 
+    writeSteeredMessages(db, snapshot);
     writeAssistantSnapshot(db, snapshot);
     writeTurnNodeProjection(db, snapshot, true);
 

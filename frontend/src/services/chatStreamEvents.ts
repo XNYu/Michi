@@ -62,7 +62,7 @@ export interface StreamHandlers {
   onUsageSummary?: (data: ChatStreamPayloads['usage_summary']) => void;
   onCancelPhase?: (data: ChatStreamPayloads['cancel_phase']) => void;
   onQueueUpdate?: (data: ChatStreamPayloads['queue_update']) => void;
-  onSteerAccepted?: (data: ChatStreamPayloads['steer_accepted']) => void;
+  onSteerAccepted?: (data: ChatStreamPayloads['steer_accepted'] & ChatStreamEnvelope) => void;
   onSteeringReport?: (data: ChatStreamPayloads['steering_report'] & ChatStreamEnvelope) => void;
   onCompactionStart?: (data: ChatStreamPayloads['compaction_start']) => void;
   onCompactionEnd?: (data: ChatStreamPayloads['compaction_end']) => void;

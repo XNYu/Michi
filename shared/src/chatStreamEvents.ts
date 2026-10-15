@@ -2,6 +2,12 @@ import { parseSessionState, type AgentSessionState } from './sessionState';
 import { parseSteeringReports, type SteeringReport } from './kiroSteering';
 import type { DurableMessageMetadata } from './turnProjection';
 
+export interface SteerMessageOptions {
+  displayText?: string;
+  userMetadata?: DurableMessageMetadata;
+  queueId?: string;
+}
+
 export interface PlanEntry {
   content: string;
   priority: "high" | "medium" | "low";
@@ -159,7 +165,14 @@ export interface ChatStreamPayloads {
   };
   cancel_phase: { phase: "requested" | "acknowledged" | "settled" };
   queue_update: { steering: string[]; followUp: string[] };
-  steer_accepted: { text: string; pending?: boolean };
+  steer_accepted: {
+    text: string;
+    pending?: boolean;
+    messageId?: string;
+    createdAt?: number;
+    userMetadata?: DurableMessageMetadata;
+    queueId?: string;
+  };
   steering_report: { reports: SteeringReport[] };
   compaction_start: { detail?: string };
   compaction_end: { detail?: string };
@@ -449,6 +462,11 @@ const parsers = {
   steer_accepted: (data) => ({
     text: stringOrEmpty(data.text),
     ...(data.pending === true ? { pending: true } : {}),
+    messageId: optionalString(data.messageId),
+    createdAt: optionalFiniteNumber(data.createdAt),
+    queueId: optionalString(data.queueId),
+    userMetadata: data.userMetadata && typeof data.userMetadata === 'object' && !Array.isArray(data.userMetadata)
+      ? data.userMetadata as DurableMessageMetadata : undefined,
   }),
   steering_report: (data) => ({ reports: parseSteeringReports(data.reports) }),
   compaction_start: (data) => ({ detail: optionalString(data.detail) }),

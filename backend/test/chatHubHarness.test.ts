@@ -308,11 +308,39 @@ describe('ChatHub optional session methods', () => {
         steer: async (text) => ({ accepted: true, pending: true, turnId: 'native-1' }),
       }),
     });
-    const result = await chatHub.steer('node-a', 'inject this turn');
+    const result = await chatHub.steer('node-a', 'wire input', { displayText: 'inject this turn', queueId: 'q1', userMetadata: { quotedText: 'quote' } });
     assert.equal(result.accepted, true);
     assert.equal(result.pending, true);
     assert.ok(events.some((ev) => ev.event === 'steer_accepted'));
+    const accepted = events.find((ev) => ev.event === 'steer_accepted')!;
+    assert.equal(accepted.data.text, 'inject this turn');
+    assert.equal(accepted.data.messageId, result.message?.messageId);
+    assert.equal(result.message?.assistantId, started.assistantId);
+    assert.equal(result.message?.queueId, 'q1');
     gate.release();
     await started.done;
+  });
+
+  it('settles an in-flight steer before committing and broadcasting the terminal event', async () => {
+    const snapshots: DurableTurnSnapshot[] = [];
+    const chatHub = new ChatHub({ retentionMs: 10, workspaceIdForNode: () => 'workspace-a',
+      persistence: { begin() {}, checkpoint() {}, finalize(snapshot) { snapshots.push(snapshot); } } });
+    const events: ChatStreamEvent[] = [];
+    chatHub.subscribe('node-a', { send: (event) => events.push(event), close() {} });
+    const gate = { release() {} };
+    let accept!: (result: SteerResult) => void;
+    const started = await chatHub.startTurn({ chatId: 'node-a', nodeId: 'node-a', text: 'hello',
+      session: mockSession({ events: delayedIterator([{ kind: 'turn_end' }], gate), steer: () => new Promise((resolve) => { accept = resolve; }) }) });
+    const steering = chatHub.steer('node-a', 'Use cobalt');
+    gate.release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(snapshots.length, 0);
+    assert.equal((await chatHub.steer('node-a', 'too late')).accepted, false);
+    accept({ accepted: true, pending: true });
+    const result = await steering;
+    await started.done;
+    assert.equal(snapshots.length, 1);
+    assert.equal(snapshots[0].steeredMessages?.[0].id, result.message?.messageId);
+    assert.deepEqual(events.filter((e) => ['steer_accepted', 'done'].includes(e.event)).map((e) => e.event), ['steer_accepted', 'done']);
   });
 });

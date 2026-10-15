@@ -403,6 +403,7 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
     role,
     text: threadMessage ? threadMessageBody(rawContent) : rawContent,
     ...(threadMessage ? { threadMessage } : {}),
+    ...(role === 'user' && metadata.steered === true ? { steered: true } : {}),
     toolCalls: parseToolCalls(row.tool_calls),
     blocks: role === 'assistant' ? parseAssistantBlocks(row.blocks) : undefined,
     streaming: false,

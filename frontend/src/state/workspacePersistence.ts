@@ -414,8 +414,9 @@ export function serializeMessageRowsForNode(
     const metadata = m.role === 'assistant'
       ? (m.plan?.length || persisted.steeringReports?.length
           ? { plan: m.plan, steeringReports: persisted.steeringReports } : null)
-      : (m.quotedText || m.attachments?.length || m.comments?.length
+      : (m.steered || m.quotedText || m.attachments?.length || m.comments?.length
           ? {
+              ...(m.steered ? { steered: true } : {}),
               quotedText: m.quotedText,
               attachments: m.attachments,
               comments: m.comments,

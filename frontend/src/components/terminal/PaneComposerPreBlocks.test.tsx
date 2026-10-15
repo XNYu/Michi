@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatNodeState } from '../../state/chatTypes';
 import { PaneComposerPreBlocks } from './PaneComposerPreBlocks';
@@ -60,5 +60,13 @@ describe('PaneComposerPreBlocks queued steer', () => {
   it('shows progress while a queued message is being steered', () => {
     renderQueue({ steeringQueueId: 'q1' });
     expect((screen.getByRole('button', { name: 'Steering…' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('keeps progress visible when a pane remounts during a steer request', () => {
+    const props = renderQueue();
+    props.node.pendingQueued![0].steering = true;
+    cleanup();
+    render(<PaneComposerPreBlocks {...props} />);
+    expect((screen.getByRole('button', { name: 'Steering…' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Dequeue message' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

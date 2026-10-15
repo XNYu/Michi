@@ -44,6 +44,7 @@ vi.mock('../services/api', () => ({
   bindPendingPrimaryAgent: vi.fn(),
   ensureSession: vi.fn(),
   streamMessage: vi.fn(),
+  steerChat: vi.fn(),
 }));
 
 vi.mock('../services/notifications', () => ({ notify: vi.fn() }));
@@ -103,6 +104,7 @@ describe('auto-branch behavior (real provider)', () => {
   beforeEach(() => {
     mockEnsureSession.mockReset();
     mockStreamMessage.mockReset();
+    vi.mocked(api.steerChat).mockReset();
     mockNotify.mockReset();
     vi.mocked(api.cancelChatAndObserve).mockReset().mockImplementation(() => () => {});
     vi.mocked(api.subscribeChat).mockReset().mockImplementation(() => () => {});
@@ -115,6 +117,34 @@ describe('auto-branch behavior (real provider)', () => {
     // our guard test we only need it to be callable and return a no-op cancel.
     mockStreamMessage.mockImplementation(() => () => {});
     localStorage.clear();
+  });
+
+  it.each([true, false])('keeps a steer request out of queue auto-send and records only accepted input (%s)', async (accepted) => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test', undefined); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    await act(async () => { result.current.store.sendMessage(nodeId, 'hello'); });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    const assistantId = result.current.nodes[nodeId].messages.at(-1)!.id;
+    act(() => { result.current.store.queueMessage(nodeId, { id: 'q1', value: 'Use cobalt', mentions: [], attachments: [], queuedAt: 1 }); });
+    let finish!: (response: Awaited<ReturnType<typeof api.steerChat>>) => void;
+    vi.mocked(api.steerChat).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let steering!: Promise<boolean>;
+    act(() => { steering = result.current.store.steerMessage(nodeId, 'Use cobalt', { queueId: 'q1', displayText: 'Use cobalt' }); });
+    expect(result.current.nodes[nodeId].pendingQueued?.[0].steering).toBe(true);
+    const message = { messageId: 's1', text: 'Use cobalt', assistantId, createdAt: 2, queueId: 'q1' };
+    const handlers = mockStreamMessage.mock.calls[0][2];
+    await act(async () => {
+      if (accepted) dispatchChatStreamEvent({ event: 'steer_accepted', data: message }, handlers);
+      handlers.onDone();
+    });
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ accepted, ...(accepted ? { message } : {}) }); await steering; });
+    expect(result.current.nodes[nodeId].messages.filter((m) => m.steered)).toHaveLength(accepted ? 1 : 0);
+    expect(result.current.nodes[nodeId].pendingQueued?.length ?? 0).toBe(accepted ? 0 : 1);
+    expect(result.current.nodes[nodeId].pendingQueued?.[0]?.steering).not.toBe(true);
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 
   it('includes a newly created tree in an immediate first-turn prerequisite', async () => {

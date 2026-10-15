@@ -8,6 +8,7 @@ import { startupMark } from '../startupTrace';
 import { backendApiBase, nodeBackendApiBase } from '../../config/backendConnections';
 import { SseHttpError, readSseStream } from './sseParser';
 import { fetchStream } from './streamTransport';
+import type { ChatStreamEnvelope, ChatStreamPayloads, SteerMessageOptions } from 'michi-shared';
 
 let cachedStreamProbeEnabled: boolean | null = null;
 
@@ -314,19 +315,23 @@ export function streamMessage(
 export async function steerChat(
   chatId: string,
   text: string,
-): Promise<{ accepted: boolean; pending?: boolean; reason?: string }> {
+  options?: SteerMessageOptions,
+): Promise<{ accepted: boolean; pending?: boolean; reason?: string; message?: ChatStreamPayloads['steer_accepted'] & ChatStreamEnvelope }> {
   const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/steer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text,
+      ...options,
     }),
   });
   const body = await res.json().catch(() => ({ accepted: false }));
+  const event = body.message ? parseChatStreamEvent('steer_accepted', JSON.stringify(body.message)) : null;
   return {
     accepted: body.accepted === true,
     pending: body.pending === true,
     reason: typeof body.reason === 'string' ? body.reason : undefined,
+    message: event?.event === 'steer_accepted' ? event.data : undefined,
   };
 }
 

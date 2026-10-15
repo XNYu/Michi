@@ -1705,7 +1705,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.status(400).json({ error: "text is required", accepted: false });
         }
         try {
-            const result = await chatHub.steer(nodeId, text);
+            const result = await chatHub.steer(nodeId, text, {
+                displayText: typeof req.body?.displayText === 'string' ? req.body.displayText : undefined,
+                queueId: typeof req.body?.queueId === 'string' ? req.body.queueId : undefined,
+                userMetadata: req.body?.userMetadata && typeof req.body.userMetadata === 'object'
+                    && !Array.isArray(req.body.userMetadata) ? req.body.userMetadata : undefined,
+            });
             res.status(result.accepted ? 200 : 409).json(result);
         } catch (err) {
             res.status(500).json({ error: (err as Error).message, accepted: false });

@@ -746,6 +746,7 @@
 .terminal-message-user[data-density='dense'] { padding: 6px 13px 7px; }
 .terminal-message-user[data-density='compact'] { padding: 8px 15px 9px; }
 
+.terminal-message-steered,
 .terminal-message-thread-source {
   margin-bottom: 4px;
   color: var(--term-muted);

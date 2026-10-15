@@ -9,7 +9,7 @@ import {
   projectAssistantStreamEvent,
   nextToolBlockPlacement,
 } from './assistantBlocks';
-import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS } from 'michi-shared';
+import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS, steeredUserMessage } from 'michi-shared';
 
 /**
  * Replace raw transient database errors with a user-friendly message.
@@ -26,6 +26,7 @@ function humanizeDbError(message: string | undefined): string | undefined {
 
 export const NODE_ACTIVITY_ACTIONS = new Set<ChatAction['type']>([
   'user-send',
+  'steer-accepted',
   'done',
   'error',
   'set-title',
@@ -344,6 +345,27 @@ export function reduceNodes(
           ],
         },
       };
+    }
+    case 'steer-accepted': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      const assistantIndex = n.messages.findIndex((m) => m.id === action.data.assistantId && m.role === 'assistant');
+      const durable = steeredUserMessage(action.data);
+      if (assistantIndex < 0 || !durable) return nodes;
+      const exists = n.messages.some((m) => m.id === durable.id);
+      const pendingQueued = n.pendingQueued?.filter((q) => q.id !== action.data.queueId);
+      if (exists && pendingQueued?.length === n.pendingQueued?.length) return nodes;
+      const message = mapMessageRow({
+        id: durable.id, role: 'user', content: durable.content,
+        metadata: durable.metadata, created_at: durable.createdAt,
+      });
+      return { ...nodes, [action.nodeId]: {
+        ...n,
+        pendingQueued: pendingQueued?.length ? pendingQueued : undefined,
+        messages: exists ? n.messages : [
+          ...n.messages.slice(0, assistantIndex), message, ...n.messages.slice(assistantIndex),
+        ],
+      } };
     }
     case 'observer-turn-start': {
       const n = nodes[action.nodeId];
@@ -1339,6 +1361,13 @@ export function reduceNodes(
         ...nodes,
         [action.nodeId]: { ...n, pendingQueued: [...existing, action.message] },
       };
+    }
+    case 'queue-steering': {
+      const n = nodes[action.nodeId];
+      if (!n?.pendingQueued?.some((q) => q.id === action.queueId)) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, pendingQueued: n.pendingQueued.map((q) =>
+        q.id === action.queueId ? { ...q, steering: action.steering } : q,
+      ) } };
     }
     case 'dequeue-message': {
       const n = nodes[action.nodeId];

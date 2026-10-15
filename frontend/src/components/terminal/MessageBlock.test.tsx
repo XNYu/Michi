@@ -74,6 +74,13 @@ describe('MessageBlock — role styling', () => {
     expect(onMentionClick).toHaveBeenCalledWith('Research notes', 'node', 'n-a');
   });
 
+  it('labels accepted steering in the user bubble without changing the message text', () => {
+    const { container } = renderMessage({ role: 'user', text: 'Use cobalt', steered: true });
+    const bubble = container.querySelector('.terminal-message-user')!;
+    expect(bubble.querySelector('.terminal-message-steered')?.textContent).toBe('Steered');
+    expect(bubble.textContent).toContain('Use cobalt');
+    expect(container.querySelector('.terminal-message-assistant')).toBeNull();
+  });
   it('user message carries no role/time label inside or above the card', () => {
     const { container } = renderMessage({ role: 'user', text: 'q?' });
     const block = container.querySelector('.terminal-message-user') as HTMLElement;

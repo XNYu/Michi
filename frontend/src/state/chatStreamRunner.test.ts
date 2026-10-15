@@ -31,6 +31,22 @@ function makeNode(): ChatNodeState {
 }
 
 describe('chatStreamRunner — chunk/tool-call ordering', () => {
+  it('adds accepted steering as one user message while keeping the current reply streaming', () => {
+    mockStream.mockClear();
+    let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1',
+      dispatch: (action) => { nodes = reduceNodes(nodes, action); },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    const handlers = mockStream.mock.calls[0][2];
+    const event = { event: 'steer_accepted' as const, data: { text: 'Focus on tests', messageId: 's1', assistantId: 'a1', turnId: 't1', seq: 2 } };
+    dispatchChatStreamEvent(event, handlers);
+    dispatchChatStreamEvent(event, handlers);
+    expect(nodes.n1.messages).toHaveLength(2);
+    expect(nodes.n1.messages[0]).toMatchObject({ id: 's1', role: 'user', text: 'Focus on tests', steered: true });
+    expect(nodes.n1.messages[1].streaming).toBe(true);
+    expect(nodes.n1.lastAppliedSeq).toBe(2);
+  });
   it('restores literal input and mentions when another window wins a send race', () => {
     let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
     const rejectedDraft = { value: 'ask Guide', mentions: [{ kind: 'context' as const, refId: 'guide', label: 'Guide', start: 4, end: 9 }], quotedText: 'quoted passage' };

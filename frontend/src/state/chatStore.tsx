@@ -1,4 +1,5 @@
 import { parseChatCommand, nextQueuedBatch, executeComposerCommand } from './chatCommands';
+import type { SteerMessageOptions } from 'michi-shared';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus } from '../services/api';
@@ -1309,7 +1310,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     if (reason === 'error') {
       boundSessionsRef.current.delete(endedNodeId);
     }
-    const queue = nextQueuedBatch(ended.pendingQueued ?? [], ended.runtimeId ?? agentStatusRef.current?.runtime, ended.sessionState?.nativeEngine);
+    const queue = nextQueuedBatch((ended.pendingQueued ?? []).filter((entry) => !entry.steering), ended.runtimeId ?? agentStatusRef.current?.runtime, ended.sessionState?.nativeEngine);
     if (queue.length === 0) return;
     if (reason === 'error') {
       dispatch({ type: 'mark-queue-errored', nodeId: endedNodeId });
@@ -2098,12 +2099,18 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     [dispatch],
   );
 
-  const steerMessage = useCallback(async (nodeId: string, text: string): Promise<boolean> => {
+  const steerMessage = useCallback(async (nodeId: string, text: string, options?: SteerMessageOptions): Promise<boolean> => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId) return false;
-    const result = await steerChat(node.chatId, text);
-    return result.accepted;
-  }, []);
+    if (options?.queueId) dispatch({ type: 'queue-steering', nodeId, queueId: options.queueId, steering: true });
+    try {
+      const result = await steerChat(node.chatId, text, options);
+      if (result.accepted && result.message) dispatch({ type: 'steer-accepted', nodeId, data: result.message });
+      return result.accepted;
+    } finally {
+      if (options?.queueId) dispatch({ type: 'queue-steering', nodeId, queueId: options.queueId, steering: false });
+    }
+  }, [dispatch]);
 
   const compactContext = useCallback(async (nodeId: string, instructions?: string) => {
     const node = nodesRef.current[nodeId];

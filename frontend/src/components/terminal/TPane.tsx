@@ -1782,7 +1782,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   const steerQueuedEntry = async (queueId: string) => {
     const entry = (nLatestRef.current?.pendingQueued ?? []).find((queued) => queued.id === queueId);
-    if (!entry || steeringQueueId !== null) return;
+    if (!entry || entry.steering || steeringQueueId !== null) return;
     setSteeringQueueId(queueId);
     const expandedValue = expandMentions(entry.value, entry.mentions);
     const finalText = appendAttachmentsSentinel(
@@ -1790,7 +1790,14 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       entry.attachments,
     );
     try {
-      const accepted = await steerMessage(nodeId, finalText);
+      const accepted = await steerMessage(nodeId, finalText, {
+        queueId,
+        displayText: joinMessageParts(entry.commentBlock ?? null, null, expandedValue),
+        userMetadata: {
+          quotedText: entry.quotedText,
+          attachments: entry.attachments.length ? entry.attachments.map((attachment) => ({ ...attachment })) : undefined,
+        },
+      });
       if (accepted) {
         dequeueMessage(nodeId, queueId);
       } else {

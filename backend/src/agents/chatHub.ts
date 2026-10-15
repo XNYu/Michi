@@ -5,6 +5,7 @@ import {
   createDurableTurn,
   isActiveToolStatus,
   type ChatStreamEvent,
+  type SteerMessageOptions,
   type DurableMessageMetadata,
   type DurableTurnSnapshot,
 } from "michi-shared";
@@ -72,6 +73,8 @@ interface TurnLog {
    * reconciliation can restore it after installing the SQLite projection. */
   pendingPermission?: ChatStreamEvent;
   pendingUserInput?: ChatStreamEvent;
+  /** Commit accepted input before done/error so queue flushing cannot resend it. */
+  pendingSteers?: Set<Promise<unknown>>;
   /** Runtime completion and the cancel timeout share one durability boundary. */
   finalization?: Promise<void>;
   /**
@@ -266,6 +269,7 @@ const STRUCTURAL_EVENTS = new Set<ChatStreamEvent['event']>([
   CHAT_STREAM_EVENTS.title,
   CHAT_STREAM_EVENTS.followUps,
   CHAT_STREAM_EVENTS.branchOverview,
+  CHAT_STREAM_EVENTS.steerAccepted,
 ]);
 
 export class ChatHub {
@@ -823,24 +827,44 @@ export class ChatHub {
     }
   }
 
-  async steer(chatId: string, text: string): Promise<SteerResult> {
-    return this.callOptionalControl(chatId, "steer", async (session, log) => {
-      if (!session.steer) return { accepted: false, reason: "invisible" };
-      const result = await session.steer(text);
+  async steer(chatId: string, text: string, options: SteerMessageOptions = {}): Promise<SteerResult & {
+    message?: Extract<ChatStreamEvent, { event: 'steer_accepted' }>['data'];
+  }> {
+    const session = this.activeSessions.get(chatId);
+    const log = this.turns.get(chatId);
+    if (!session?.steer || !log || log.status !== 'active' || log.finalization) {
+      return { accepted: false, reason: 'invisible' };
+    }
+    const steer = session.steer.bind(session);
+    const operation = (async () => {
+      const result = await steer(text);
       if (result.accepted) {
+        const message = {
+          text: options.displayText ?? text,
+          pending: result.pending ?? true,
+          messageId: `u-steer-${randomUUID()}`,
+          createdAt: Date.now(),
+          userMetadata: options.userMetadata,
+          queueId: options.queueId,
+          assistantId: log.assistantId,
+          turnId: log.turnId,
+        };
         this.append(chatId, log, {
           event: CHAT_STREAM_EVENTS.steerAccepted,
           data: {
-            text,
-            pending: result.pending ?? true,
+            ...message,
             source: "native",
             confidence: "native",
             nativeMethod: "steer",
           },
         });
+        return { ...result, message };
       }
       return result;
-    }, { accepted: false, reason: "invisible" });
+    })();
+    (log.pendingSteers ??= new Set()).add(operation);
+    try { return await operation; }
+    finally { log.pendingSteers.delete(operation); }
   }
 
   async followUp(chatId: string, text: string): Promise<SteerResult> {
@@ -1406,6 +1430,7 @@ export class ChatHub {
   }
 
   private async persistDone(chatId: string, log: TurnLog, stopReason?: string): Promise<void> {
+    await Promise.allSettled(log.pendingSteers ?? []);
     this.emitCancelSettled(chatId, log);
     const stamped = this.stamp(log, {
       event: CHAT_STREAM_EVENTS.done,
@@ -1439,6 +1464,7 @@ export class ChatHub {
   }
 
   private async persistError(chatId: string, log: TurnLog, err: unknown): Promise<void> {
+    await Promise.allSettled(log.pendingSteers ?? []);
     let message = err instanceof Error ? err.message : String(err);
     // Surface the rpcData detail so the user sees the real reason (e.g.
     // "The model you've selected is temporarily unavailable") instead of the

@@ -59,6 +59,29 @@ describe('turn persistence repository', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test('accepted steering persists once before the same assistant through checkpoint and finalization', () => {
+    let snapshot = createDurableTurn({ turnId: 't-steer', assistantId: 'a-steer', nodeId: 'node-1', workspaceId: 'ws-1', displayUserText: 'Pick a color', startedAt: 1 });
+    beginTurn(snapshot);
+    snapshot = applyTurnEvent(snapshot, event('steer_accepted', { seq: 1, messageId: 's1', text: 'Use cobalt', createdAt: 2,
+      userMetadata: { quotedText: 'Color choice', attachments: [{ name: 'p.txt', absPath: '/tmp/p.txt' }] } }));
+    checkpointTurn(snapshot);
+    checkpointTurn(snapshot);
+    snapshot = applyTurnEvent(snapshot, event('steer_accepted', { seq: 2, messageId: 's2', text: 'Keep it short', createdAt: 3 }));
+    snapshot = applyTurnEvent(snapshot, event('chunk', { seq: 3, text: 'Cobalt.' }));
+    snapshot = applyTurnEvent(snapshot, event('done', { seq: 4, stopReason: 'end_turn' }));
+    finalizeTurn(snapshot);
+    finalizeTurn(snapshot);
+    const rows = listMessages('node-1');
+    assert.deepEqual(rows.map((row) => row.id), ['u-a-steer', 's1', 's2', 'a-steer']);
+    assert.deepEqual(rows.map((row) => row.seq), [0, 1, 2, 3]);
+    assert.deepEqual(JSON.parse(rows[1].metadata!), { steered: true, quotedText: 'Color choice', attachments: [{ name: 'p.txt', absPath: '/tmp/p.txt' }] });
+    assert.equal(rows[1].content, 'Use cobalt');
+    assert.equal(rows[3].content, 'Cobalt.');
+    closeDb();
+    initDb();
+    assert.deepEqual(listMessages('node-1'), rows, 'accepted inputs survive reopening SQLite');
+  });
+
   test('begin/checkpoint/finalize stores one canonical turn idempotently', () => {
     let snapshot = createDurableTurn({
       turnId: 'turn-1',
