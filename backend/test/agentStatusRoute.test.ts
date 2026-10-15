@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { setupAgentRoutes } from '../src/routes/agent';
+import { chooseSanitizedModel, setupAgentRoutes } from '../src/routes/agent';
 import type { ModelInfo } from '../src/agents/types';
 
 // We can't easily mock the registry from outside without a refactor, so
@@ -129,5 +129,33 @@ describe('ModelInfo.isDefault', () => {
     const ids = models.map((m) => m.id);
     const sanitizedModel = models.find((m) => m.isDefault)?.id ?? ids[0];
     assert.equal(sanitizedModel, 'model-x');
+  });
+});
+
+describe('chooseSanitizedModel', () => {
+  const models: ModelInfo[] = [
+    { id: 'claude-opus-5-5[1m]', isDefault: true },
+    { id: 'claude-opus-5[1m]' },
+    { id: 'claude-sonnet-5' },
+  ];
+  const aliases: Record<string, string> = { opus: 'claude-opus-5[1m]', haiku: 'claude-haiku-4-5' };
+  const canonicalize = (id: string) => aliases[id] ?? id;
+
+  test('keeps a persisted id the catalog lists', () => {
+    assert.equal(chooseSanitizedModel(models, 'claude-sonnet-5', canonicalize), null);
+  });
+
+  test('maps a legacy alias onto the same model instead of the default', () => {
+    assert.equal(chooseSanitizedModel(models, 'opus', canonicalize), 'claude-opus-5[1m]');
+  });
+
+  test('falls back to the default when the canonical id is not listed either', () => {
+    assert.equal(chooseSanitizedModel(models, 'haiku', canonicalize), 'claude-opus-5-5[1m]');
+    assert.equal(chooseSanitizedModel(models, 'gone', undefined), 'claude-opus-5-5[1m]');
+    assert.equal(chooseSanitizedModel(models, null, canonicalize), 'claude-opus-5-5[1m]');
+  });
+
+  test('leaves the persisted id alone when the catalog is empty', () => {
+    assert.equal(chooseSanitizedModel([], 'opus', canonicalize), null);
   });
 });

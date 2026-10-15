@@ -566,6 +566,90 @@ describe('ClaudeRuntime', () => {
     }
   });
 
+  // ── Case 8b: live catalog (cache + CLI probe) ──────────────────────────────
+
+  function memoryCache(initial: any[] | null = null) {
+    const saved: any[][] = [];
+    return {
+      saved,
+      load: () => initial,
+      save: (_id: string, models: any[]) => { saved.push(models); },
+    };
+  }
+  const probed = [
+    { id: 'claude-fable-5', label: 'Fable', supportsReasoning: true, supportedReasoningLevels: ['low', 'high'], defaultReasoning: 'high' },
+    { id: 'claude-opus-5[1m]', label: 'Opus 5 (1M context)', supportsReasoning: true, supportedReasoningLevels: ['low', 'max'], defaultReasoning: 'max' },
+  ];
+
+  test('listModels() serves the cached snapshot without probing', async () => {
+    let probes = 0;
+    const cached = [{ id: 'claude-sonnet-5-5', label: 'Sonnet' }];
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
+      cache: memoryCache(cached) as any,
+      probe: async () => { probes++; return probed as any; },
+    });
+    assert.deepEqual(await rt.listModels(), cached);
+    assert.equal(probes, 0);
+    await rt.shutdown();
+  });
+
+  test('refreshModels() probes, persists, and updates listModels()', async () => {
+    const { getClaudeReasoningCapabilities, setDiscoveredClaudeModels } = require('../src/agents/claude/claudeModelCatalog');
+    const cache = memoryCache([{ id: 'claude-sonnet-5-5' }]);
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
+      cache: cache as any,
+      probe: async () => probed as any,
+    });
+    try {
+      assert.deepEqual(await rt.refreshModels(), probed);
+      assert.deepEqual(cache.saved, [probed]);
+      assert.deepEqual(await rt.listModels(), probed);
+      // The probed capabilities drive effort resolution, including for the
+      // legacy alias that canonicalises onto a probed id.
+      assert.deepEqual(getClaudeReasoningCapabilities('opus').supportedReasoningLevels, ['low', 'max']);
+    } finally {
+      setDiscoveredClaudeModels([]);
+      await rt.shutdown();
+    }
+  });
+
+  test('a failed or empty probe keeps the previous snapshot', async () => {
+    const cached = [{ id: 'claude-sonnet-5-5' }];
+    const cache = memoryCache(cached);
+    let result: any = [];
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
+      cache: cache as any,
+      probe: async () => { if (result instanceof Error) throw result; return result; },
+    });
+    assert.deepEqual(await rt.refreshModels(), cached);
+    result = new Error('credentials expired');
+    await assert.rejects(rt.refreshModels(), /credentials expired/);
+    assert.deepEqual(await rt.listModels(), cached);
+    assert.equal(cache.saved.length, 0);
+    await rt.shutdown();
+  });
+
+  test('listModels() without a snapshot probes once, else falls back to the static catalog', async () => {
+    const { CLAUDE_MODEL_CATALOG } = require('../src/agents/claude/claudeModelCatalog');
+    let probes = 0;
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
+      cache: memoryCache() as any,
+      probe: async () => { probes++; throw new Error('no claude'); },
+    });
+    const models = await rt.listModels();
+    assert.deepEqual(models.map((m) => m.id), Object.keys(CLAUDE_MODEL_CATALOG));
+    await rt.listModels();
+    assert.equal(probes, 1, 'a failing probe is not retried on every listModels call');
+    await rt.shutdown();
+  });
+
+  test('canonicalModelId() maps legacy aliases onto concrete ids', async () => {
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    assert.equal(rt.canonicalModelId('opus'), 'claude-opus-5[1m]');
+    assert.equal(rt.canonicalModelId('claude-sonnet-4-6'), 'claude-sonnet-4-6');
+    await rt.shutdown();
+  });
+
   // ── Case 9: shutdown() disposes all sessions ─────────────────────────────────
 
   test('shutdown() calls dispose on every active session', async () => {

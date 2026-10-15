@@ -377,6 +377,13 @@ export interface AgentRuntime {
   /** Refresh a dynamic model catalog from the underlying runtime. */
   refreshModels?(): Promise<ModelInfo[]>;
   /**
+   * Map a persisted model id onto the id this runtime's catalog uses for the
+   * same model (for example a legacy alias onto its concrete id). Lets the
+   * model sanitizer keep a user's choice instead of resetting it when a
+   * catalog switches id scheme. Returns the input unchanged when unknown.
+   */
+  canonicalModelId?(modelId: string): string;
+  /**
    * Force a fresh connectivity check for a cwd, tearing down any stale
    * process/connection first. Powers the "Test Connection" affordance the UI
    * shows after a connection-class turn failure. Resolves `{ ok }` when the

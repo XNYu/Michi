@@ -38,7 +38,7 @@ import {
   getWebSearchProviderStatuses,
   setWebSearchApiKey,
 } from "../services/webSearch";
-import type { AgentStatus, AgentRuntimeOption, AgentReasoning, RuntimeAvailability } from "../agents/types";
+import type { AgentStatus, AgentRuntimeOption, AgentReasoning, RuntimeAvailability, ModelInfo } from "../agents/types";
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
 import type { CustomAgentsFeatureControl } from '../services/customAgentsFeatureGate';
@@ -49,6 +49,26 @@ export interface AgentRouteOptions {
   catalogCache?: RuntimeCatalogCache;
   customAgentsEnabled?: boolean;
   customAgents?: CustomAgentsFeatureControl;
+}
+
+/**
+ * Decide whether the persisted model id needs replacing given the runtime's
+ * current catalog. Returns null when it is valid (or the catalog is empty).
+ * An id the catalog does not list is first mapped through the runtime's
+ * canonicalizer, so a legacy alias keeps the same model instead of being
+ * reset to the catalog default.
+ */
+export function chooseSanitizedModel(
+  models: readonly ModelInfo[],
+  persisted: string | null | undefined,
+  canonicalize?: (modelId: string) => string,
+): string | null {
+  const ids = models.map((m) => m.id);
+  if (ids.length === 0) return null;
+  if (persisted && ids.includes(persisted)) return null;
+  const canonical = persisted ? canonicalize?.(persisted) : undefined;
+  if (canonical && ids.includes(canonical)) return canonical;
+  return models.find((m) => m.isDefault)?.id ?? ids[0];
 }
 
 export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
@@ -368,14 +388,14 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
     // present in the freshly-fetched list, fall back to the runtime's
     // first reported model and write it back so disk self-heals. Moved
     // here from /agent/status so /agent/status can stay sync-fast.
-    const ids = models.map((m) => m.id);
     let sanitizedModel: string | null = null;
-    const persisted = resolveModel(cfg.runtime, userId);
-    if (active.capabilities.models && ids.length > 0 && provider === effectiveProvider) {
-      if (!persisted || !ids.includes(persisted)) {
-        sanitizedModel = models.find((m) => m.isDefault)?.id ?? ids[0];
-        updateAgentModelForRuntime(cfg.runtime, sanitizedModel, userId);
-      }
+    if (active.capabilities.models && provider === effectiveProvider) {
+      sanitizedModel = chooseSanitizedModel(
+        models,
+        resolveModel(cfg.runtime, userId),
+        active.canonicalModelId?.bind(active),
+      );
+      if (sanitizedModel) updateAgentModelForRuntime(cfg.runtime, sanitizedModel, userId);
     }
     res.json({ models, sanitizedModel });
   });

@@ -73,6 +73,7 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
             deps.bridge,
             deps.mcpRegistry!,
             deps.mcpPort ?? 3000,
+            { cache: deps.modelCache },
         ),
     },
     {

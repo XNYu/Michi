@@ -29,7 +29,26 @@ export const CLAUDE_MODEL_CATALOG: Record<string, ClaudeModelEntry> = {
   haiku:  { contextWindow: CONTEXT_200K, rates: ZERO_RATES, supportedReasoningLevels: [] },
 };
 
+// Reasoning capabilities reported by the CLI's own model list (see
+// claudeModelProbe.ts), keyed by lowercased model id. Takes precedence over
+// the static table so models the CLI adds later get correct effort levels
+// without a code change.
+let discoveredReasoning = new Map<string, ModelReasoningCapabilities>();
+
+/** Replace the CLI-reported capabilities. Called whenever ClaudeRuntime's catalog changes. */
+export function setDiscoveredClaudeModels(
+  models: readonly ({ id: string } & ModelReasoningCapabilities)[],
+): void {
+  discoveredReasoning = new Map(models.map((m) => [m.id.toLowerCase(), {
+    supportsReasoning: m.supportsReasoning,
+    supportedReasoningLevels: m.supportedReasoningLevels,
+    defaultReasoning: m.defaultReasoning,
+  }]));
+}
+
 export function getClaudeReasoningCapabilities(model: string): ModelReasoningCapabilities {
+  const discovered = discoveredReasoning.get(resolveClaudeCliModelId(model).toLowerCase());
+  if (discovered) return discovered;
   const normalized = model.toLowerCase().replace(/\[\d+m\]$/, '');
   const entry = CLAUDE_MODEL_CATALOG[normalized];
   if (entry) return entry;
@@ -68,6 +87,9 @@ function aliasForConcreteModel(modelName: string): string {
 
 // Short aliases → concrete model IDs accepted by the CLI. Some CLI distributions do not resolve short aliases (it silently falls back to the
 // system default). Michi must pass the full model ID.
+// The picker now lists concrete ids from the CLI (claudeModelProbe.ts); these
+// aliases remain for bindings persisted before that, and for the static
+// fallback catalog used when the CLI cannot be probed.
 const ALIAS_TO_CONCRETE_MODEL: Record<string, string> = {
   fable:  'claude-fable-5',
   opus:   'claude-opus-5[1m]',

@@ -17,7 +17,9 @@ import type {
 } from '../types';
 import type { AgentToolBridge } from '../toolBridge';
 import type { McpSlotRegistry } from '../../services/mcpServer';
-import { CLAUDE_MODEL_CATALOG } from './claudeModelCatalog';
+import { CLAUDE_MODEL_CATALOG, resolveClaudeCliModelId, setDiscoveredClaudeModels } from './claudeModelCatalog';
+import { probeClaudeModels, type ClaudeModelProbe } from './claudeModelProbe';
+import type { RuntimeModelCache } from '../runtimeModelCache';
 import { generateClaudeTitle } from './claudeTitleGenerator';
 import { titleModelConfig } from '../../services/titleGeneration';
 import { log } from '../../services/logger';
@@ -65,6 +67,17 @@ const CLAUDE_CAPABILITIES: AgentCapabilities = {
 
 // ---- ClaudeRuntime -----------------------------------------------------------
 
+/**
+ * Live model catalog wiring. Omitted (tests, legacy callers) → listModels()
+ * serves the static CLAUDE_MODEL_CATALOG and never spawns the CLI.
+ */
+export interface ClaudeModelCatalogOptions {
+  /** Persistent snapshot store shared with the other CLI runtimes. */
+  cache?: RuntimeModelCache;
+  /** Defaults to asking the installed CLI via `initialize`. */
+  probe?: ClaudeModelProbe;
+}
+
 export class ClaudeRuntime implements AgentRuntime {
   public readonly id: RuntimeId = 'claude';
   public readonly label = 'Claude';
@@ -75,6 +88,12 @@ export class ClaudeRuntime implements AgentRuntime {
   private readonly modelChangedHandler: (evt: ModelChangedEvent) => void;
   /** Auth pre-flight failure from construction, surfaced by checkAvailability. */
   private authError: string | undefined;
+  private readonly modelCacheStore?: RuntimeModelCache;
+  private readonly modelProbe?: ClaudeModelProbe;
+  /** Last CLI-reported catalog (disk snapshot until the first refresh lands). */
+  private modelCache: ModelInfo[] | null = null;
+  private modelRefreshLock: Promise<ModelInfo[]> | null = null;
+  private listProbeFailed = false;
 
   /**
    * Both halves of Claude's readiness were already computed and then discarded:
@@ -96,7 +115,14 @@ export class ClaudeRuntime implements AgentRuntime {
     bridge: AgentToolBridge,
     mcpRegistry: McpSlotRegistry,
     mcpPort: number,
+    modelCatalog?: ClaudeModelCatalogOptions,
   ) {
+    if (modelCatalog) {
+      this.modelCacheStore = modelCatalog.cache;
+      this.modelProbe = modelCatalog.probe ?? (() => probeClaudeModels());
+      this.modelCache = this.modelCacheStore?.load(this.id) ?? null;
+      if (this.modelCache) setDiscoveredClaudeModels(this.modelCache);
+    }
     const concurrencyCap = parseInt(process.env.MICHI_CLAUDE_MAX_CONCURRENT ?? '15', 10);
     const sessionsPerSlot = parseInt(process.env.MICHI_CLAUDE_POOL_SESSIONS_PER_CWD ?? '2', 10);
     const waitForWarmFlag = (process.env.MICHI_CLAUDE_WAIT_FOR_WARM ?? '').trim().toLowerCase();
@@ -270,20 +296,67 @@ export class ClaudeRuntime implements AgentRuntime {
   }
 
   async listModels(): Promise<ModelInfo[]> {
-    return Object.entries(CLAUDE_MODEL_CATALOG).map(([id, entry]) => ({
-      id,
-      label: id,
-      description: `Context: ${(entry.contextWindow / 1000).toFixed(0)}K tokens`,
-      supportsReasoning: entry.supportsReasoning,
-      supportedReasoningLevels: entry.supportedReasoningLevels,
-      defaultReasoning: entry.defaultReasoning,
-    }));
+    // Serve the snapshot without re-probing: a probe is a full CLI start-up,
+    // and listModels runs on every picker open. server.ts calls
+    // refreshModels() once per backend start to update the snapshot.
+    if (this.modelCache) return this.modelCache;
+    if (this.modelProbe && !this.listProbeFailed) {
+      try {
+        return await this.refreshModels();
+      } catch (err) {
+        // Don't re-spawn the CLI on every picker open while it keeps
+        // failing; the next backend start (or an explicit refresh) retries.
+        this.listProbeFailed = true;
+        log.warn('chat', 'claude model probe failed; using static catalog', { error: (err as Error).message });
+      }
+    }
+    return staticClaudeModels();
+  }
+
+  /**
+   * Ask the CLI for the account's current model list and persist it. A failed
+   * or empty probe keeps the previous snapshot. No-op (static list) when the
+   * runtime was built without live catalog wiring.
+   */
+  async refreshModels(): Promise<ModelInfo[]> {
+    const probe = this.modelProbe;
+    if (!probe) return staticClaudeModels();
+    if (this.modelRefreshLock) return this.modelRefreshLock;
+
+    this.modelRefreshLock = (async () => {
+      const models = await probe();
+      if (models.length > 0) {
+        this.modelCache = models;
+        setDiscoveredClaudeModels(models);
+        this.modelCacheStore?.save(this.id, models);
+      }
+      return this.modelCache ?? staticClaudeModels();
+    })().finally(() => {
+      this.modelRefreshLock = null;
+    });
+    return this.modelRefreshLock;
+  }
+
+  /** Legacy aliases (`opus`, `sonnet`, …) map onto the concrete ids the CLI lists. */
+  canonicalModelId(modelId: string): string {
+    return resolveClaudeCliModelId(modelId);
   }
 
   async shutdown(): Promise<void> {
     agentConfigEvents.off('model_changed', this.modelChangedHandler);
     await this.manager.shutdown();
   }
+}
+
+function staticClaudeModels(): ModelInfo[] {
+  return Object.entries(CLAUDE_MODEL_CATALOG).map(([id, entry]) => ({
+    id,
+    label: id,
+    description: `Context: ${(entry.contextWindow / 1000).toFixed(0)}K tokens`,
+    supportsReasoning: entry.supportsReasoning,
+    supportedReasoningLevels: entry.supportedReasoningLevels,
+    defaultReasoning: entry.defaultReasoning,
+  }));
 }
 
 function resolveSessionOwner(owner: RuntimeSessionOwner | undefined, sessionId?: string): RuntimeSessionOwner {
