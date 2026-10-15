@@ -176,6 +176,34 @@ test('Native Resume setting is per-runtime, preserves active sessions, and does 
   assert.equal(loads.length, 1);
 });
 
+test('Native Fork off uses parent transcript and leaves Native Resume independent', async () => {
+  assert.equal((await post('/agent/options', { nativeForkByRuntime: { codex: false } })).status, 200);
+  assert.equal((await post('/agent/options', { nativeForkByRuntime: { claude: false } })).status, 200);
+  assert.deepEqual(getAgentConfig().nativeForkByRuntime, { codex: false, claude: false });
+  const status = await (await fetch(`${base}/agent/status`)).json() as any;
+  assert.deepEqual(status.nativeForkByRuntime, { codex: false, claude: false });
+  assert.deepEqual(status.nativeResumeByRuntime, {});
+  assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
+  await ensure();
+  assert.equal(forks.length, 0);
+  assert.equal(fresh.length, 1);
+  assert.match(fresh[0].mergeContexts!.join('\n'), /Parent answer/);
+  assert.equal(getNode('parent')?.external_session_id, 'native-parent');
+  clearAllSessions();
+  assert.equal((await ensure()).resumeStrategy, 'exact');
+  assert.deepEqual(loads, ['child']);
+});
+
+test('Native Fork can be re-enabled without changing Native Resume', async () => {
+  updateAgentConfig({ nativeForkByRuntime: { codex: false }, nativeResumeByRuntime: { codex: false } });
+  assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
+  assert.equal((await post('/agent/options', { nativeForkByRuntime: { codex: true } })).status, 200);
+  assert.deepEqual(getAgentConfig().nativeResumeByRuntime, { codex: false });
+  assert.equal((await ensure()).resumeReason, 'native_fork');
+  assert.equal(forks.length, 1);
+  assert.equal(fresh.length, 0);
+});
+
 test('explicit load and background parent recovery also respect Native Resume off', async () => {
   updateAgentConfig({ nativeResumeByRuntime: { codex: false } });
   const response = await post('/chats/parent/load', { nodeId: 'parent', cwd: directory, workspaceId: 'ws' });
@@ -192,6 +220,8 @@ test('explicit load and background parent recovery also respect Native Resume of
 test('invalid setting maps are rejected without mutating saved preferences', async () => {
   for (const value of [null, [], true, { codex: 'false' }, { unknown: false }]) {
     assert.equal((await post('/agent/options', { nativeResumeByRuntime: value })).status, 400);
+    assert.equal((await post('/agent/options', { nativeForkByRuntime: value })).status, 400);
   }
   assert.deepEqual(getAgentConfig().nativeResumeByRuntime, {});
+  assert.deepEqual(getAgentConfig().nativeForkByRuntime, {});
 });

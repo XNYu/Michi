@@ -101,7 +101,11 @@ export function ModelPane({
       )}
 
       {agentStatus?.capabilities.nativeResume && agentStatus.nativeResumeByRuntime && (
-        <NativeResumeToggle key={agentStatus.runtime} status={agentStatus} onChanged={refreshAgentStatus} />
+        <NativeSessionToggle key={`${agentStatus.runtime}-resume`} status={agentStatus} preference="nativeResumeByRuntime" label="Native Resume" onChanged={refreshAgentStatus} />
+      )}
+
+      {agentStatus?.capabilityDescriptor?.sessionFork.availability === 'native' && agentStatus.nativeForkByRuntime && (
+        <NativeSessionToggle key={`${agentStatus.runtime}-fork`} status={agentStatus} preference="nativeForkByRuntime" label="Native Fork" onChanged={refreshAgentStatus} />
       )}
 
       {showApiKeys && agentStatus && (() => {
@@ -135,31 +139,38 @@ export function ModelPane({
   );
 }
 
-function NativeResumeToggle({ status, onChanged }: { status: AgentStatus; onChanged: () => void }) {
+function NativeSessionToggle({ status, preference, label, onChanged }: {
+  status: AgentStatus;
+  preference: 'nativeResumeByRuntime' | 'nativeForkByRuntime';
+  label: string;
+  onChanged: () => void;
+}) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [enabled, setEnabled] = useState(status.nativeResumeByRuntime?.[status.runtime] !== false);
-  useEffect(() => { setEnabled(status.nativeResumeByRuntime?.[status.runtime] !== false); }, [status.nativeResumeByRuntime, status.runtime]);
+  const [enabled, setEnabled] = useState(status[preference]?.[status.runtime] !== false);
+  useEffect(() => { setEnabled(status[preference]?.[status.runtime] !== false); }, [status, preference]);
 
   const save = async (value: boolean) => {
     if (saving) return;
     setSaving(true);
     setError(null);
     try {
-      const result = await saveAgentOptions({ nativeResumeByRuntime: { [status.runtime]: value } });
+      const result = await saveAgentOptions(preference === 'nativeResumeByRuntime'
+        ? { nativeResumeByRuntime: { [status.runtime]: value } }
+        : { nativeForkByRuntime: { [status.runtime]: value } });
       if (!result.ok) { setError(result.error); return; }
       setEnabled(value);
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save Native Resume');
+      setError(err instanceof Error ? err.message : `Unable to save ${label}`);
     } finally { setSaving(false); }
   };
 
   return (
     <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 12.5, color: 'var(--term-fg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`Native Resume for ${status.label}`} />
-        <span>Native Resume <span style={{ color: 'var(--term-muted)' }}>({status.label})</span></span>
+        <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`${label} for ${status.label}`} />
+        <span>{label} <span style={{ color: 'var(--term-muted)' }}>({status.label})</span></span>
       </div>
       {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 11, marginTop: 6 }}>{error}</div>}
     </div>

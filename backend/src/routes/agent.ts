@@ -133,6 +133,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
         reasoning: resolveReasoning(cfg.runtime, userId),
         reasoningByRuntime: cfg.reasoningByRuntime,
         nativeResumeByRuntime: cfg.nativeResumeByRuntime ?? {},
+        nativeForkByRuntime: cfg.nativeForkByRuntime ?? {},
         hasRequiredKey: true,
       };
       res.json(status);
@@ -191,6 +192,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       reasoning: resolveReasoning(cfg.runtime, userId),
       reasoningByRuntime: cfg.reasoningByRuntime,
       nativeResumeByRuntime: cfg.nativeResumeByRuntime ?? {},
+      nativeForkByRuntime: cfg.nativeForkByRuntime ?? {},
       hasRequiredKey,
     };
     res.json(status);
@@ -210,6 +212,16 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
         return;
       }
       patch.nativeResumeByRuntime = { ...value };
+    }
+
+    if (req.body?.nativeForkByRuntime !== undefined) {
+      const value = req.body.nativeForkByRuntime;
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.entries(value).some(([id, enabled]) => !getRuntime(id) || typeof enabled !== 'boolean')) {
+        res.status(400).json({ ok: false, error: 'nativeForkByRuntime must map registered runtimes to booleans' });
+        return;
+      }
+      patch.nativeForkByRuntime = { ...value };
     }
 
     if (req.body?.runtime !== undefined) {

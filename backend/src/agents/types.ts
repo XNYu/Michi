@@ -256,6 +256,7 @@ export interface AgentStatus {
   /** Per-runtime reasoning overrides set by the user. */
   reasoningByRuntime?: Record<string, AgentReasoning>;
   nativeResumeByRuntime?: Record<string, boolean>;
+  nativeForkByRuntime?: Record<string, boolean>;
   hasRequiredKey: boolean;
   capabilityDescriptor?: CapabilityDescriptor;
 }

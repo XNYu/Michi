@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { runMigrations } from '../src/services/migrate';
 import { getUserAgentConfig, upsertUserAgentConfig } from '../src/services/dbRepository';
-import { getAgentConfig, isNativeResumeEnabled, recordLastUsedProviderModel, resolveModel, resolveProvider, updateAgentConfig } from '../src/services/agentConfig';
+import { getAgentConfig, isNativeForkEnabled, isNativeResumeEnabled, recordLastUsedProviderModel, resolveModel, resolveProvider, updateAgentConfig } from '../src/services/agentConfig';
 import { OPENROUTER_FREE_PRIMARY_MODEL } from '../src/agents/pi/piProviders';
 
 let directory: string;
@@ -53,6 +53,21 @@ test('native resume defaults on and persists independently per runtime and per u
   assert.equal(isNativeResumeEnabled('claude', 'bob'), true);
   updateAgentConfig({ modelByRuntime: { claude: 'sonnet' } }, 'alice');
   assert.equal(isNativeResumeEnabled('claude', 'alice'), false);
+});
+
+test('native fork defaults on and persists independently of resume, per runtime and user', () => {
+  assert.equal(isNativeForkEnabled('kiro', 'alice'), true);
+  updateAgentConfig({ nativeForkByRuntime: { codex: false } }, 'alice');
+  updateAgentConfig({ nativeForkByRuntime: { kiro: false } }, 'alice');
+  updateAgentConfig({ nativeForkByRuntime: { codex: true } }, 'alice');
+  updateAgentConfig({ nativeResumeByRuntime: { kiro: false } }, 'alice');
+  closeDb(); initDb();
+  assert.deepEqual(getAgentConfig('alice').nativeForkByRuntime, { codex: true, kiro: false });
+  assert.equal(isNativeForkEnabled('kiro', 'alice'), false);
+  assert.equal(isNativeForkEnabled('kiro', 'bob'), true);
+  updateAgentConfig({ modelByRuntime: { kiro: 'test-model' } }, 'alice');
+  assert.equal(isNativeForkEnabled('kiro', 'alice'), false);
+  assert.equal(isNativeResumeEnabled('codex', 'alice'), true);
 });
 
 test('cloud config merges runtime memories and repository updates preserve an omitted provider map', () => {

@@ -89,6 +89,32 @@ describe('desktop native resume preferences', () => {
     });
 });
 
+describe('desktop native fork preferences', () => {
+    beforeEach(stubFsWrite);
+    afterEach(restoreFsWrite);
+    test('defaults on, filters malformed values, and merges per-runtime updates', () => {
+        const fsCjs = require('fs');
+        const originalRead = fsCjs.readFileSync;
+        const { loadAgentConfig, getAgentConfig, updateAgentConfig, isNativeForkEnabled } = require('../src/services/agentConfig');
+        try {
+            fsCjs.readFileSync = () => JSON.stringify({ agent: { nativeForkByRuntime: { codex: false, claude: 'false', kiro: null } } });
+            loadAgentConfig();
+            assert.deepEqual(getAgentConfig().nativeForkByRuntime, { codex: false });
+            assert.equal(isNativeForkEnabled('codex'), false);
+            assert.equal(isNativeForkEnabled('claude'), true);
+            updateAgentConfig({ nativeForkByRuntime: { kiro: false } });
+            updateAgentConfig({ nativeResumeByRuntime: { codex: false } });
+            assert.deepEqual(getAgentConfig().nativeForkByRuntime, { codex: false, kiro: false });
+            updateAgentConfig({ nativeForkByRuntime: { codex: true } });
+            assert.equal(isNativeForkEnabled('codex'), true);
+        } finally {
+            fsCjs.readFileSync = () => '{}';
+            loadAgentConfig();
+            fsCjs.readFileSync = originalRead;
+        }
+    });
+});
+
 describe('agentConfig runtime defaults', () => {
     test('Codex defaults to extra-high reasoning effort', () => {
         const { getBuiltinDefaultReasoning } = require('../src/services/agentConfig');

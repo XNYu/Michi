@@ -80,6 +80,7 @@ export interface AgentStatus {
   /** Per-runtime reasoning overrides set by the user. */
   reasoningByRuntime?: Record<string, AgentReasoning>;
   nativeResumeByRuntime?: Record<string, boolean>;
+  nativeForkByRuntime?: Record<string, boolean>;
   hasRequiredKey: boolean;
   capabilityDescriptor?: CapabilityDescriptor;
 }
@@ -151,6 +152,7 @@ export async function fetchReady(): Promise<ReadyResponse> {
 
 export interface AgentOptionsPatch {
   nativeResumeByRuntime?: Record<string, boolean>;
+  nativeForkByRuntime?: Record<string, boolean>;
   runtime?: RuntimeId;
   provider?: string;
   /** null disables web search. */

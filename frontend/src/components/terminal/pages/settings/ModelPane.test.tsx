@@ -41,8 +41,55 @@ describe('ModelPane Kiro sidecar title setting', () => {
   function nativeResumeStatus(runtime = 'codex') {
     return { runtime, label: runtime === 'codex' ? 'Codex' : 'Claude',
       capabilities: { nativeResume: true }, availableRuntimes: [], hasRequiredKey: true,
-      nativeResumeByRuntime: { codex: true, claude: false } };
+      capabilityDescriptor: { sessionFork: { availability: 'native' } },
+      nativeResumeByRuntime: { codex: true, claude: false },
+      nativeForkByRuntime: { codex: true, claude: false } };
   }
+
+  it('saves Native Fork per runtime without changing Native Resume', async () => {
+    agentStatus = nativeResumeStatus();
+    const { rerender } = render(<ModelPane activeProjectId={null} />);
+    const fork = screen.getByRole('switch', { name: 'Native Fork for Codex' });
+    expect(fork.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(fork);
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ nativeForkByRuntime: { codex: false } }));
+    await waitFor(() => expect(fork.getAttribute('aria-checked')).toBe('false'));
+    expect(screen.getByRole('switch', { name: 'Native Resume for Codex' }).getAttribute('aria-checked')).toBe('true');
+    agentStatus = nativeResumeStatus('claude');
+    rerender(<ModelPane activeProjectId={null} />);
+    const claudeFork = screen.getByRole('switch', { name: 'Native Fork for Claude' });
+    expect(claudeFork.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(claudeFork);
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenLastCalledWith({ nativeForkByRuntime: { claude: true } }));
+  });
+
+  it('keeps the Native Fork preference on failure and supports retry', async () => {
+    agentStatus = nativeResumeStatus();
+    saveAgentOptions.mockResolvedValueOnce({ ok: false, error: 'Unable to persist fork preference' });
+    render(<ModelPane activeProjectId={null} />);
+    const fork = screen.getByRole('switch', { name: 'Native Fork for Codex' });
+    fireEvent.click(fork);
+    expect((await screen.findByRole('alert')).textContent).toContain('Unable to persist fork preference');
+    expect(fork.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(fork);
+    await waitFor(() => expect(fork.getAttribute('aria-checked')).toBe('false'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('hides Native Fork on replay-only runtimes and older backends', () => {
+    agentStatus = { ...nativeResumeStatus('pi'), capabilityDescriptor: { sessionFork: { availability: 'michi_simulated' } } };
+    const { rerender } = render(<ModelPane activeProjectId={null} />);
+    expect(screen.queryByRole('switch', { name: /Native Fork/ })).toBeNull();
+    agentStatus = { ...nativeResumeStatus(), nativeForkByRuntime: undefined };
+    rerender(<ModelPane activeProjectId={null} />);
+    expect(screen.queryByRole('switch', { name: /Native Fork/ })).toBeNull();
+  });
+
+  it('shows an enabled Native Fork switch for Kiro by default', () => {
+    agentStatus = { ...nativeResumeStatus('kiro'), label: 'Kiro', nativeForkByRuntime: {} };
+    render(<ModelPane activeProjectId={null} />);
+    expect(screen.getByRole('switch', { name: 'Native Fork for Kiro' }).getAttribute('aria-checked')).toBe('true');
+  });
 
   it('saves Native Resume for only the selected runtime and restores each runtime value', async () => {
     agentStatus = nativeResumeStatus();

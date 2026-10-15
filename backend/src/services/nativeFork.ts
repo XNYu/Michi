@@ -5,6 +5,7 @@ import { getNode, getWorkspace, listMessages } from './dbRepository';
 import { LOCAL_AGENT_OWNER_ID, workspaceOwnerMatches } from './agentOwner';
 import { nativeResumeId, NativeResumeUnavailableError } from './nativeResume';
 import { normalizeWorkspaceCwd } from '../agents/tools/pathSandbox';
+import { isNativeForkEnabled } from './agentConfig';
 
 /** Only new, ordinary chat children may inherit a native parent. Persisted graph
  * ownership, not a client-supplied native token, determines the fork source. */
@@ -12,7 +13,8 @@ export async function tryForkChatSession(
   runtime: AgentRuntime,
   opts: NewAgentSessionOptions,
 ): Promise<AgentSession | null> {
-  if (!runtime.forkSession || !opts.sessionId || opts.owner?.kind === 'agent_run'
+  if (!runtime.forkSession || !isNativeForkEnabled(runtime.id, opts.ownerUserId)
+    || !opts.sessionId || opts.owner?.kind === 'agent_run'
     || opts.profileHash || opts.replayHistory?.length) return null;
   const child = getNode(opts.sessionId);
   if (!child?.parent_node_id || child.acp_session_id || child.external_session_id

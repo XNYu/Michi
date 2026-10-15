@@ -24,6 +24,8 @@ export interface AgentConfig {
   reasoningByRuntime: Record<string, AgentReasoning>;
   /** Omitted runtimes keep native resume enabled. Live sessions are unaffected. */
   nativeResumeByRuntime?: Record<string, boolean>;
+  /** Omitted runtimes keep native fork enabled. Existing branches are unaffected. */
+  nativeForkByRuntime?: Record<string, boolean>;
   /**
    * Claude config dir override (CLAUDE_CONFIG_DIR for spawned claude
    * processes). Unset = claude's own default (~/.claude). Desktop-only,
@@ -72,6 +74,7 @@ const DEFAULTS: AgentConfig = {
   modelByRuntime: {},
   reasoningByRuntime: {},
   nativeResumeByRuntime: {},
+  nativeForkByRuntime: {},
 };
 
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
@@ -83,6 +86,10 @@ function booleanRuntimeMap(value: unknown): Record<string, boolean> {
 
 export function isNativeResumeEnabled(runtimeId: string, userId?: string | null): boolean {
   return getAgentConfig(userId ?? undefined).nativeResumeByRuntime?.[runtimeId] !== false;
+}
+
+export function isNativeForkEnabled(runtimeId: string, userId?: string | null): boolean {
+  return getAgentConfig(userId ?? undefined).nativeForkByRuntime?.[runtimeId] !== false;
 }
 
 let current: AgentConfig = {
@@ -189,6 +196,7 @@ export function loadAgentConfig(): AgentConfig {
         }
       }
       next.nativeResumeByRuntime = booleanRuntimeMap(a.nativeResumeByRuntime);
+      next.nativeForkByRuntime = booleanRuntimeMap(a.nativeForkByRuntime);
       // Migrate legacy `agent.model` (single string) into modelByRuntime[<current runtime>]
       if (typeof a.model === "string" && a.model && !next.modelByRuntime[next.runtime]) {
         next.modelByRuntime[next.runtime] = a.model;
@@ -276,6 +284,9 @@ export function getAgentConfig(userId?: string): AgentConfig {
       nativeResumeByRuntime: (() => {
         try { return booleanRuntimeMap(JSON.parse(row.native_resume_by_runtime)); } catch { return {}; }
       })(),
+      nativeForkByRuntime: (() => {
+        try { return booleanRuntimeMap(JSON.parse(row.native_fork_by_runtime)); } catch { return {}; }
+      })(),
     };
   }
   // Desktop / no userId: return the in-memory singleton.
@@ -303,6 +314,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       ? { ...existing.reasoningByRuntime, ...patch.reasoningByRuntime }
       : { ...existing.reasoningByRuntime };
     const nativeResumeByRuntime = { ...existing.nativeResumeByRuntime, ...booleanRuntimeMap(patch.nativeResumeByRuntime) };
+    const nativeForkByRuntime = { ...existing.nativeForkByRuntime, ...booleanRuntimeMap(patch.nativeForkByRuntime) };
     upsertUserAgentConfig(userId, {
       runtime: (patch.runtime ?? existing.runtime) as string,
       provider: patch.provider ?? existing.provider,
@@ -311,6 +323,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       model_by_runtime: JSON.stringify(mergedModelByRuntime),
       reasoning_by_runtime: JSON.stringify(mergedReasoningByRuntime),
       native_resume_by_runtime: JSON.stringify(nativeResumeByRuntime),
+      native_fork_by_runtime: JSON.stringify(nativeForkByRuntime),
     });
     return {
       ...existing,
@@ -320,6 +333,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       modelByRuntime: mergedModelByRuntime,
       reasoningByRuntime: mergedReasoningByRuntime,
       nativeResumeByRuntime,
+      nativeForkByRuntime,
     };
   }
   // Desktop: mutate in-memory singleton + persist to disk.
@@ -336,6 +350,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
     ? { ...current.reasoningByRuntime, ...patch.reasoningByRuntime }
     : { ...current.reasoningByRuntime };
   merged.nativeResumeByRuntime = { ...current.nativeResumeByRuntime, ...booleanRuntimeMap(patch.nativeResumeByRuntime) };
+  merged.nativeForkByRuntime = { ...current.nativeForkByRuntime, ...booleanRuntimeMap(patch.nativeForkByRuntime) };
   current = merged;
   persist();
   return current;

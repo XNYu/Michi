@@ -66,8 +66,7 @@ function aliasForConcreteModel(modelName: string): string {
   return '';
 }
 
-// Short aliases → concrete model IDs accepted by the CLI. The ASBX build of
-// Claude Code does not resolve short aliases (it silently falls back to the
+// Short aliases → concrete model IDs accepted by the CLI. Some CLI distributions do not resolve short aliases (it silently falls back to the
 // system default). Michi must pass the full model ID.
 const ALIAS_TO_CONCRETE_MODEL: Record<string, string> = {
   fable:  'claude-fable-5',
