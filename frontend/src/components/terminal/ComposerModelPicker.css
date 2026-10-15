@@ -67,11 +67,6 @@
 .composer-picker-range::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; margin-top: -6px; border: 1px solid var(--term-line-s); border-radius: 50%; background: var(--term-surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--term-fg) 18%, transparent); }
 .composer-picker-range::-moz-range-thumb { width: 16px; height: 16px; border: 1px solid var(--term-line-s); border-radius: 50%; background: var(--term-surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--term-fg) 18%, transparent); }
 .composer-picker-range:disabled { opacity: .5; cursor: default; }
-/* Disabled inputs swallow hover in some engines; let the row carry the tooltip. */
-.composer-picker-effort[data-unavailable='true'] { cursor: not-allowed; }
-.composer-picker-effort[data-unavailable='true'] .composer-picker-range { pointer-events: none; }
-.composer-picker-effort[data-unavailable='true'] .composer-picker-effort-stops,
-.composer-picker-effort[data-unavailable='true'] .composer-picker-effort-extents { opacity: .5; }
 .composer-picker-effort-stops { display: flex; align-items: center; justify-content: space-between; margin: -1px 8px 0; height: 4px; }
 .composer-picker-effort-stops span { width: 3px; height: 3px; border-radius: 50%; background: var(--term-line-s); }
 .composer-picker-effort-stops span[data-selected='true'] { background: var(--term-fg); }

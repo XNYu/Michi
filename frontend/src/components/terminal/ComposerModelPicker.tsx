@@ -280,11 +280,6 @@ export function ComposerModelPicker({
               {hasModels && summaryRow('model', 'Model', modelLabel)}
               {effort.adjustable && <EffortControl key={JSON.stringify([resolvedBinding.runtime, resolvedBinding.provider, resolvedBinding.model, effort.levels])} levels={effort.levels} value={effort.value} disabled={saving}
                 onSelect={(value) => select(() => onSaveReasoning(value))} />}
-              {!effort.adjustable && effort.unsupportedByModel && (
-                <EffortControl levels={caps?.supportedReasoningLevels?.length ? caps.supportedReasoningLevels : ['low', 'high']} disabled
-                  unavailable={`${resolvedBinding.model ? modelLabel : `Default model${effort.effectiveModelId ? ` (${effort.effectiveModelId})` : ''}`} doesn't support thinking effort. Choose a specific model to configure it.`}
-                  onSelect={async () => {}} />
-              )}
               {!caps && catalogStatus}
             </>
           ) : page === 'model' ? (
@@ -314,33 +309,31 @@ export function ComposerModelPicker({
   );
 }
 
-function EffortControl({ levels, value, disabled, unavailable, onSelect }: {
+function EffortControl({ levels, value, disabled, onSelect }: {
   levels: AgentReasoning[]; value?: AgentReasoning; disabled: boolean;
-  /** Explains why the model has no effort control; renders the slider inert. */
-  unavailable?: string;
   onSelect: (value: AgentReasoning) => Promise<void>;
 }) {
   const [preview, setPreview] = useState<AgentReasoning | null>(null);
   const dragging = useRef(false);
-  const current = unavailable ? undefined : preview ?? value;
+  const current = preview ?? value;
   const index = Math.max(0, levels.findIndex((level) => level === current));
-  const label = unavailable ? 'Not available' : current ? REASONING_LABELS[current] ?? current : 'Default';
+  const label = current ? REASONING_LABELS[current] ?? current : 'Default';
   const commit = (next: AgentReasoning) => {
     if (next === value) { setPreview(null); return; }
     setPreview(next);
     void onSelect(next).finally(() => setPreview(null));
   };
   return (
-    <div className="composer-picker-effort" data-unavailable={unavailable ? 'true' : undefined} title={unavailable}>
+    <div className="composer-picker-effort">
       <div className="composer-picker-effort-heading"><span>Thinking effort</span><span aria-live="polite">{label}</span></div>
       <input type="range" className="composer-picker-range" aria-label="Thinking effort" aria-valuetext={label} min={0} max={levels.length - 1} step={1} value={index}
-        disabled={disabled || levels.length < 2} style={{ '--effort-progress': `${!unavailable && levels.length > 1 ? index / (levels.length - 1) * 100 : 0}%` } as React.CSSProperties}
+        disabled={disabled || levels.length < 2} style={{ '--effort-progress': `${levels.length > 1 ? index / (levels.length - 1) * 100 : 0}%` } as React.CSSProperties}
         onPointerDown={(event) => { dragging.current = true; event.currentTarget.setPointerCapture?.(event.pointerId); }}
         onChange={(event) => { const next = levels[Number(event.target.value)]; setPreview(next); if (!dragging.current) commit(next); }}
         onPointerUp={(event) => { dragging.current = false; commit(levels[Number(event.currentTarget.value)]); }}
         onPointerCancel={() => { dragging.current = false; setPreview(null); }} />
       <div className="composer-picker-effort-stops" aria-hidden="true">
-        {levels.map((level) => <span key={level} data-selected={current === level || undefined} />)}
+        {levels.map((level) => <span key={level} title={REASONING_LABELS[level] ?? level} data-selected={current === level || undefined} />)}
       </div>
       <div className="composer-picker-effort-extents"><span>{REASONING_LABELS[levels[0]] ?? levels[0]}</span><span>{REASONING_LABELS[levels[levels.length - 1]] ?? levels[levels.length - 1]}</span></div>
     </div>

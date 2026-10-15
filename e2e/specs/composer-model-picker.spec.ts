@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, sseBody } from '../fixtures/mockApi';
 import { installComposerModels } from '../fixtures/composerModels';
 
-test('selects Google Gemini 4 Argon with its three effort levels and saves Home defaults', async ({ page }) => {
+test('selects Google Gemini 4 Argon with its three effort levels and saves Home defaults', async ({ page }, testInfo) => {
   const { status, ensures } = await installComposerModels(page);
   const providers = [{ id: 'google', label: 'Google AI', keyLabel: 'Gemini API key', envVars: ['GEMINI_API_KEY'], defaultModel: 'gemini-4-argon', supportsReasoning: true, hasKey: true }];
   Object.assign(status, { runtime: 'pi', label: 'Pi', provider: 'google', model: 'gemini-4-argon', reasoning: 'medium', providers,
@@ -25,11 +25,17 @@ test('selects Google Gemini 4 Argon with its three effort levels and saves Home 
   await picker.getByRole('menuitemradio', { name: /^Gemini 4 Argon/ }).click();
   const effort = picker.getByRole('slider', { name: 'Thinking effort' });
   await expect(effort).toHaveAttribute('max', '2');
+  await expect(picker.locator('.composer-picker-effort-stops span')).toHaveCount(3);
+  await expect(picker.locator('.composer-picker-effort-extents')).toHaveText('LowHigh');
+  await expect(picker.getByText('Minimal', { exact: true })).toHaveCount(0);
+  await expect(picker.getByText('Max', { exact: true })).toHaveCount(0);
   await effort.focus();
   await effort.press('Home');
   await expect(trigger).toContainText('Low');
   await effort.press('End');
   await expect(trigger).toContainText('High');
+  await expect(effort).toHaveValue('2');
+  await picker.screenshot({ path: testInfo.outputPath('argon-adaptive-effort.png') });
   await effort.press('ArrowLeft');
   await expect(trigger).toContainText('Medium');
   await page.keyboard.press('Escape');
@@ -182,9 +188,13 @@ test('stays inside a narrow viewport and supports reduced motion', async ({ page
   const trigger = page.getByRole('button', { name: /^Model settings:/ });
   await trigger.click();
   const picker = page.getByRole('dialog', { name: 'Model settings' });
-  const runtimeBox = await picker.getByRole('button', { name: /Select runtime:/ }).boundingBox();
-  const modelBox = await picker.getByRole('button', { name: /Select model:/ }).boundingBox();
-  expect(runtimeBox!.y + runtimeBox!.height).toBeLessThanOrEqual(modelBox!.y);
+  // Catalog hydration can reveal effort and reposition the popover. Compare
+  // both rows in one layout snapshot rather than across that transition.
+  await expect.poll(() => picker.evaluate((surface) => {
+    const runtimeBox = surface.querySelector('[data-picker-page="runtime"]')!.getBoundingClientRect();
+    const modelBox = surface.querySelector('[data-picker-page="model"]')!.getBoundingClientRect();
+    return runtimeBox.bottom - modelBox.top;
+  })).toBeLessThanOrEqual(0);
   const box = await picker.boundingBox();
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(8);
@@ -227,10 +237,10 @@ test('adapts effort to model capabilities and sends a valid pane override', asyn
   await expect(effort).toHaveCount(0);
   await expect(trigger).not.toContainText('High');
   await selectModel('Instant model');
-  await expect(effort).toBeDisabled();
-  await expect(effort).toHaveAttribute('aria-valuetext', 'Not available');
+  await expect(effort).toHaveCount(0);
+  await expect(picker.getByText('Thinking effort', { exact: true })).toHaveCount(0);
   await expect(trigger).not.toContainText('High');
-  await picker.screenshot({ path: testInfo.outputPath('effort-unavailable.png') });
+  await picker.screenshot({ path: testInfo.outputPath('effort-hidden.png') });
   await page.keyboard.press('Escape');
   await editor.fill('Continue without adjustable effort');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();

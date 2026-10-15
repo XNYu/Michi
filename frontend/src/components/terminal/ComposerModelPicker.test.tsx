@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComposerModelPicker, type ComposerModelPickerProps } from './ComposerModelPicker';
+import { resolveComposerReasoning } from './composerReasoning';
 
 const baseProps: ComposerModelPickerProps = {
   anchor: { x: 100, y: 650, anchorBottom: 610 },
@@ -61,7 +62,7 @@ describe('ComposerModelPicker', () => {
     expect(screen.getByRole('slider')).toBeTruthy();
   });
 
-  it('updates effort when the selected model changes, hides fixed effort and disables unsupported effort', () => {
+  it('shows only the selected model’s effort levels and hides fixed or unsupported effort', () => {
     const view = render(<ComposerModelPicker {...baseProps} />);
     const binding = { ...baseProps.resolvedBinding, reasoning: 'max' as const };
     view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding}
@@ -69,30 +70,57 @@ describe('ComposerModelPicker', () => {
     const slider = screen.getByRole('slider');
     expect(slider.getAttribute('max')).toBe('2');
     expect(slider.getAttribute('aria-valuetext')).toBe('High');
+    const stops = () => [...document.querySelectorAll('.composer-picker-effort-stops span')].map((stop) => stop.getAttribute('title'));
+    expect(stops()).toEqual(['Low', 'Medium', 'High']);
+    expect(document.querySelector('.composer-picker-effort-extents')?.textContent).toBe('LowHigh');
     view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding}
       providerModels={[{ id: 'fast', supportedReasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }]} />);
     expect(screen.getByRole('slider').getAttribute('max')).toBe('5');
     expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Max');
+    expect(stops()).toEqual(['Minimal', 'Low', 'Medium', 'High', 'Extra high', 'Max']);
     screen.getByRole('slider').focus();
     view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', supportedReasoningLevels: ['high'] }]} />);
     expect(screen.queryByText('Thinking effort')).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Select runtime: Codex' }));
     view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', label: 'Fast', supportsReasoning: false }]} />);
-    const disabled = screen.getByRole('slider');
-    expect((disabled as HTMLInputElement).disabled).toBe(true);
-    expect(disabled.getAttribute('aria-valuetext')).toBe('Not available');
-    expect(disabled.closest('[title]')?.getAttribute('title')).toBe("Fast doesn't support thinking effort. Choose a specific model to configure it.");
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByText('Thinking effort')).toBeNull();
   });
 
-  it('greys out effort for an unset binding whose default model has none', () => {
+  it('hides effort for an unset binding whose default model has none', () => {
     const onSaveReasoning = vi.fn();
     render(<ComposerModelPicker {...baseProps} onSaveReasoning={onSaveReasoning} resolvedBinding={{ ...baseProps.resolvedBinding, model: undefined }}
       providerModels={[{ id: 'auto', label: 'auto', supportsReasoning: false, supportedReasoningLevels: [] }, { id: 'deep' }]} />);
-    const slider = screen.getByRole('slider') as HTMLInputElement;
-    expect(slider.disabled).toBe(true);
-    expect(slider.closest('[title]')?.getAttribute('title')).toBe("Default model (auto) doesn't support thinking effort. Choose a specific model to configure it.");
-    fireEvent.change(slider, { target: { value: '1' } });
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByText('Thinking effort')).toBeNull();
     expect(onSaveReasoning).not.toHaveBeenCalled();
+  });
+
+  it('waits for the selected model’s capabilities instead of exposing generic runtime levels', () => {
+    const binding = { ...baseProps.resolvedBinding, model: 'gemini-4-argon', reasoning: 'high' as const };
+    expect(resolveComposerReasoning(binding, baseProps.agentStatus, null, [])).toMatchObject({
+      levels: [], adjustable: false, value: 'high', known: true,
+    });
+    const view = render(<ComposerModelPicker {...baseProps} resolvedBinding={binding} providerModels={[]} modelsLoading />);
+    expect(screen.queryByRole('slider')).toBeNull();
+    view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding} providerModels={baseProps.providerModels} modelsError="Catalog unavailable" />);
+    expect(screen.queryByRole('slider')).toBeNull();
+    view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding} providerModels={[
+      { id: 'gemini-4-argon', supportedReasoningLevels: ['low', 'medium', 'high'] },
+    ]} />);
+    expect(screen.getByRole('slider').getAttribute('max')).toBe('2');
+    expect(screen.getByRole('slider').getAttribute('value')).toBe('2');
+    expect(document.querySelector('.composer-picker-effort-extents')?.textContent).toBe('LowHigh');
+  });
+
+  it('keeps sparse model levels selectable without inserting intermediate levels', () => {
+    const onSaveReasoning = vi.fn();
+    render(<ComposerModelPicker {...baseProps} onSaveReasoning={onSaveReasoning}
+      providerModels={[{ id: 'fast', supportedReasoningLevels: ['low', 'high'] }]} />);
+    const slider = screen.getByRole('slider');
+    expect(slider.getAttribute('max')).toBe('1');
+    fireEvent.change(slider, { target: { value: '1' } });
+    expect(onSaveReasoning).toHaveBeenCalledExactlyOnceWith('high');
   });
 
   it('respects the selected provider even when its models advertise effort', () => {
