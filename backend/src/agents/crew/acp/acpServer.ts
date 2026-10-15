@@ -550,12 +550,13 @@ class CrewAcpServerImpl {
         if (turn.cancelled) return;
         turn.releaseMcp = await (turn.controlWork = this.mcpBindings.bind(sessionId, session.mcpServers ?? []));
         if (turn.cancelled) return;
-        const prepareApprovals = async () => {
+        const prepareIntegration = async () => {
             const available = await this.gateway.approvalsAvailable?.() === true;
-            if (available && !turn.cancelled) await this.gateway.prepareApprovals?.(sessionId);
-            return available;
+            if (!available) throw new RpcError(ERR_INTERNAL, 'Crew setup incomplete: complete sessionApproval consent for the Michi App in Crew Apps and confirm Enabled. Approvals must be handled in Michi.');
+            if (await this.gateway.mcpAvailable?.() !== true) throw new RpcError(ERR_INTERNAL, 'Crew setup incomplete: update the prepared Michi App, enable and approve Michi MCP Stub / Routed in Crew Developer > MCP Management, then restart the Gateway.');
+            if (!turn.cancelled) await this.gateway.prepareApprovals?.(sessionId);
         };
-        const inAppApprovals = await (turn.controlWork = prepareApprovals());
+        await (turn.controlWork = prepareIntegration());
         if (turn.cancelled) return;
         const projection = new CrewTurn(sessionId, this.gateway, (update) => this.notifyUpdate(sessionId, update), () => `${++this.toolSeq}`);
         turn.projection = projection;
@@ -564,14 +565,14 @@ class CrewAcpServerImpl {
         const approvalController = new AbortController();
         const abortApprovals = () => approvalController.abort();
         turn.controller.signal.addEventListener('abort', abortApprovals, { once: true });
-        const approvals = inAppApprovals ? watchCrewApprovals({ gateway: this.gateway, sessionId,
+        const approvals = watchCrewApprovals({ gateway: this.gateway, sessionId,
             signal: approvalController.signal,
             request: (approval, signal) => this.requestPermission(sessionId, approval, signal),
             report: (error) => {
                 this.log(`Crew approval bridge: ${errorMessage(error)}`);
                 this.notifyUpdate(sessionId, messageNotice(`\nCrew approval could not be completed: ${sanitizeErrorMessage(errorMessage(error))}\n`));
             },
-        }) : Promise.resolve();
+        });
         turn.controlWork = approvals;
         let failed = true;
         let streamError = false;
@@ -580,7 +581,7 @@ class CrewAcpServerImpl {
             const events = this.gateway.streamChat(sessionId, message, turn.controller.signal);
             for await (const event of events) {
                 if (turn.cancelled) break;
-                if (event.kind === 'frame' && event.frame.type === 'permission' && inAppApprovals) continue;
+                if (event.kind === 'frame' && event.frame.type === 'permission') continue;
                 if (event.kind === 'frame' && event.frame.type === 'error') streamError = true;
                 if (event.kind === 'frame' && event.frame.type === 'tool') {
                     await projection.tool(event.frame);

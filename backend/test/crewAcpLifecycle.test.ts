@@ -16,6 +16,9 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
         const bindings = path.join(home, 'mcp');
         fs.mkdirSync(appDir, { recursive: true });
         fs.writeFileSync(path.join(appDir, '.app_secret'), 'test-only-secret');
+        fs.writeFileSync(path.join(appDir, 'app.json'), JSON.stringify({ permissions: { sessionApproval: true }, mcpServers: { michi: {} } }));
+        fs.writeFileSync(path.join(appDir, 'installed.json'), JSON.stringify({ enabled: true }));
+        fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: ['michi-crew-runtime:michi'] } }));
         let slot = '', running = false, stopCompleted = false;
         const requests: string[] = [];
         let streaming!: () => void;
@@ -33,6 +36,8 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
                 if (route.endsWith('/token')) return json({ token: 'test-only-token' });
                 if (route === '/api/models') return json([]);
                 if (route === '/api/agents/catalog') return json({ agents: [] });
+                if (route === '/api/chat/slots' && req.method === 'GET') return json([{ key: slot, app: 'michi-crew-runtime' }]);
+                if (route === '/api/chat/mode') return json({});
                 if (route === '/api/chat/slots' && req.method === 'POST') {
                     slot = JSON.parse(body).name;
                     return json({ key: slot });
@@ -61,7 +66,8 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
         const child = spawn(process.execPath, ['--require', require.resolve('ts-node/register'),
             path.join(__dirname, '../src/agents/crew/acp/main.ts')], {
             cwd: path.join(__dirname, '..'),
-            env: { ...process.env, KIROCREW_HOME: home, MICHI_CREW_APP: 'michi-crew-runtime',
+            env: { ...process.env, TS_NODE_PROJECT: path.join(__dirname, '../tsconfig.json'),
+                KIROCREW_HOME: home, MICHI_CREW_APP: 'michi-crew-runtime',
                 CREW_GATEWAY_URL: `http://127.0.0.1:${port}`, MICHI_CREW_AGENT: '', MICHI_CREW_MCP_DIR: bindings },
             stdio: ['pipe', 'pipe', 'pipe'],
         });
@@ -74,6 +80,10 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
         });
         let seq = 0, buffer = '', stderr = '';
         const pending = new Map<number, (value: any) => void>();
+        child.on('exit', (code, signal) => {
+            for (const resolve of pending.values()) resolve({ error: { message: `Adapter exited: ${code ?? signal}; ${stderr}` } });
+            pending.clear();
+        });
         child.stderr.on('data', bytes => { stderr += bytes; });
         child.stdout.on('data', bytes => {
             buffer += bytes;
@@ -92,8 +102,8 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
             { name: 'michi', type: 'http', url: `http://127.0.0.1:${port}/api/mcp/test-capability`, headers: [] },
         ] });
         assert.ok(created.result?.sessionId, stderr);
-        void rpc('session/prompt', { sessionId: created.result.sessionId, prompt: [{ type: 'text', text: 'test' }] });
-        await started;
+        const prompt = rpc('session/prompt', { sessionId: created.result.sessionId, prompt: [{ type: 'text', text: 'test' }] });
+        await Promise.race([started, prompt.then(reply => { throw new Error(`Prompt ended before streaming: ${JSON.stringify(reply)}; ${stderr}`); })]);
         assert.ok(fs.readdirSync(bindings).some(name => name.startsWith('lease-')));
         const exited = once(child, 'exit');
         child.kill(signal);

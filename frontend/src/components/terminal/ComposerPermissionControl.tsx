@@ -29,7 +29,13 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
   const [saving, setSaving] = useState(false);
   const crewOnly = runtimeIds.length === 1 && runtimeIds[0] === 'crew';
   const crewStatus = useCrewIntegration(apiBase, crewOnly);
-  if (crewOnly && !crewStatus?.approvals) return <span className="t-toolbar-chip" title="Approvals are handled in Kiro Crew. Enable the optional sessionApproval grant for Michi Ask / Trust.">Crew approvals</span>;
+  if (crewOnly && (!crewStatus?.approvals || !crewStatus.mcpDeclared || !crewStatus.mcpRouted)) {
+    const label = !crewStatus ? 'Checking Crew setup…' : crewStatus.unavailable ? 'Crew setup unavailable' : 'Crew setup required';
+    const detail = !crewStatus ? 'Checking required Michi MCP and approval setup.' : crewStatus.unavailable
+      ? 'Could not verify Crew setup. Check the Michi backend connection and retry.'
+      : 'Complete the required Michi integration in Crew: update the prepared App, grant sessionApproval, enable and approve Michi MCP Stub / Routed, then restart the Gateway. Chats and approvals stay in Michi.';
+    return <span className="t-toolbar-chip" role="status" title={detail}>{label}</span>;
+  }
   const supportsYolo = runtimeIds.some(supportsChatYolo);
   const displayedMode = mode === 'yolo' && !supportsYolo ? 'trust' : mode;
   const choices = PERMISSION_CHOICES.filter((choice) => supportsYolo || choice.mode !== 'yolo');

@@ -1,8 +1,8 @@
 {
   "name": "michi-crew-runtime",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "displayName": "Michi Crew Runtime",
-  "description": "Michi ACP runtime adapter for official Kiro Crew. Native sessions, Memory, tools and optional Michi MCP relay.",
+  "description": "Michi ACP runtime adapter for official Kiro Crew. Native sessions, Memory, Michi MCP and approvals in Michi. Install using the Michi setup helper.",
   "author": "yonghuyu",
   "agents": ["agents/michi.json"],
   "permissions": {
@@ -11,6 +11,7 @@
       "/api/models",
       "/api/agents/catalog"
     ],
-    "events": []
+    "events": [],
+    "sessionApproval": true
   }
 }

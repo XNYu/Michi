@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { crewTurnFormat, MICHI_CREW_AGENT_TEMPLATE } from '../src/agents/crew/crewPrompt';
@@ -26,11 +27,24 @@ test('Crew sends variable context without repeating the stable Michi instruction
     assert.doesNotMatch(crewTurnFormat(false), /FOLLOW-UP 1\/3/);
 });
 
-test('official App preparation copies the concise template without requesting additional access', () => {
-    const result = execFileSync(process.execPath, [path.join(__dirname, '../scripts/crew-setup.cjs')], { encoding: 'utf8' });
-    const dir = result.match(/^Prepared App: (.+)$/m)?.[1];
-    assert.ok(dir);
+function setupFixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crew-setup-test-'));
+    const backend = path.join(root, '.michi/backend');
+    fs.mkdirSync(path.join(backend, 'scripts'), { recursive: true });
+    fs.copyFileSync(path.join(__dirname, '../scripts/crew-setup.cjs'), path.join(backend, 'scripts/crew-setup.cjs'));
+    fs.cpSync(path.join(__dirname, '../src/agents/crew/app'), path.join(backend, 'src/agents/crew/app'), { recursive: true });
+    fs.mkdirSync(path.join(backend, 'dist'));
+    fs.writeFileSync(path.join(backend, 'dist/crewMcp.js'), '// fixture: never executed\n');
+    return { root, backend, script: path.join(backend, 'scripts/crew-setup.cjs') };
+}
+
+test('default App preparation includes Michi MCP and approvals with the concise template', () => {
+    const fixture = setupFixture();
+    let dir: string | undefined;
     try {
+        const result = execFileSync(process.execPath, [fixture.script], { encoding: 'utf8' });
+        dir = result.match(/^Prepared App: (.+)$/m)?.[1];
+        assert.ok(dir);
         const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
         const agent = JSON.parse(fs.readFileSync(path.join(dir, manifest.agents[0]), 'utf8'));
         assert.equal(agent.name, MICHI_CREW_AGENT_TEMPLATE);
@@ -39,8 +53,40 @@ test('official App preparation copies the concise template without requesting ad
         assert.match(agent.prompt, /Incognito reads without learning/);
         assert.match(agent.prompt, /Do not discover or call tools solely/);
         assert.ok(agent.tools.includes('@kirocrew-core'));
-        assert.equal(agent.tools.includes('@michi-crew-runtime:michi'), false);
-        assert.equal(manifest.permissions.sessionApproval, undefined);
-        assert.equal(manifest.mcpServers, undefined);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+        assert.ok(agent.tools.includes('@michi-crew-runtime:michi'));
+        assert.equal(manifest.permissions.sessionApproval, true);
+        assert.equal(manifest.mcpServers.michi.command, process.execPath);
+        assert.deepEqual(manifest.mcpServers.michi.args, [path.join(fs.realpathSync(fixture.backend), 'dist/crewMcp.js')]);
+        assert.match(result, /complete sessionApproval consent/);
+        assert.match(result, /enable Stub\/Routed/);
+        assert.match(result, /use Michi for chats, Ask\/Trust and approval cards/);
+    } finally {
+        if (dir) fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+});
+
+test('legacy setup flags also prepare both required capabilities', () => {
+    const fixture = setupFixture();
+    try {
+        for (const args of [['--mcp'], ['--approvals'], ['--mcp', '--approvals']]) {
+            const result = execFileSync(process.execPath, [fixture.script, ...args], { encoding: 'utf8' });
+            const dir = result.match(/^Prepared App: (.+)$/m)?.[1];
+            assert.ok(dir);
+            try {
+                const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'app.json'), 'utf8'));
+                assert.equal(manifest.permissions.sessionApproval, true);
+                assert.ok(manifest.mcpServers.michi);
+            } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+        }
+    } finally { fs.rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('missing MCP build fails instead of preparing a partial App', () => {
+    const fixture = setupFixture();
+    fs.rmSync(path.join(fixture.backend, 'dist/crewMcp.js'));
+    try {
+        assert.throws(() => execFileSync(process.execPath, [fixture.script], { encoding: 'utf8', stdio: 'pipe' }),
+            /Michi Crew MCP build is missing/);
+    } finally { fs.rmSync(fixture.root, { recursive: true, force: true }); }
 });

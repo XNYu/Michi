@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-interface CrewStatus { approvals: boolean; mcpDeclared: boolean; mcpRouted: boolean }
+interface CrewStatus { approvals: boolean; mcpDeclared: boolean; mcpRouted: boolean; unavailable?: boolean }
 
 export function useCrewIntegration(apiBase: string, enabled: boolean) {
   const [status, setStatus] = useState<{ apiBase: string; value: CrewStatus } | null>(null);
@@ -14,7 +14,9 @@ export function useCrewIntegration(apiBase: string, enabled: boolean) {
         if (!controller.signal.aborted) setStatus({ apiBase, value: {
           approvals: body.approvals === true, mcpDeclared: body.mcpDeclared === true, mcpRouted: body.mcpRouted === true,
         } });
-      }).catch(() => { if (!controller.signal.aborted) setStatus(null); });
+      }).catch(() => { if (!controller.signal.aborted) setStatus({ apiBase, value: {
+        approvals: false, mcpDeclared: false, mcpRouted: false, unavailable: true,
+      } }); });
     };
     refresh();
     window.addEventListener('focus', refresh);

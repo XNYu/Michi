@@ -12,6 +12,20 @@ import { CrewGatewayError, type CrewChatEvent, type CrewGatewayConfig } from '..
 const APP = 'michi-crew-runtime';
 const BANNED = /timed out|response stream|connection reset|ECONNRESET/i;
 
+test('MCP readiness rereads the configured App and Stub route without Gateway calls', async (t) => {
+    const home = tempHome(t, null);
+    const dir = path.join(home, 'apps', APP);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ mcpServers: { michi: {} } }));
+    fs.writeFileSync(path.join(dir, 'installed.json'), JSON.stringify({ enabled: true }));
+    const client = new CrewGatewayClient({ baseUrl: 'http://127.0.0.1:5476', appName: APP, kirocrewHome: home });
+    assert.equal(await client.mcpAvailable(), false);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: [`${APP}:michi`] } }));
+    assert.equal(await client.mcpAvailable(), true);
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: [`${APP}:michi`], stub_overrides: { [`${APP}:michi`]: false } } }));
+    assert.equal(await client.mcpAvailable(), false);
+});
+
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse, body: string) => void;
 
 interface RecordedRequest {

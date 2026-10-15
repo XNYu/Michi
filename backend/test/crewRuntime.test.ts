@@ -53,6 +53,8 @@ function crewHomeWithSecret(app = 'michi-crew-runtime', enabled = true): string 
   fs.mkdirSync(path.join(home, 'apps', app), { recursive: true });
   fs.writeFileSync(path.join(home, 'apps', app, '.app_secret'), '');
   fs.writeFileSync(path.join(home, 'apps', app, 'installed.json'), JSON.stringify({ name: app, enabled }));
+  fs.writeFileSync(path.join(home, 'apps', app, 'app.json'), JSON.stringify({ permissions: { sessionApproval: true }, mcpServers: { michi: {} } }));
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: [`${app}:michi`] } }));
   return home;
 }
 
@@ -199,9 +201,36 @@ describe('crewAvailability', () => {
     assert.match(result.detail ?? '', /Install and enable the Kiro Crew app michi-crew-runtime/);
   });
 
-  test('available with an empty secret file', () => {
+  test('available with complete MCP and approval setup without reading the secret', () => {
     const bin = executable(tempDir());
     assert.deepEqual(crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: crewHomeWithSecret() } }), { available: true });
+  });
+
+  test('missing or pending sessionApproval consent is incomplete setup', () => {
+    const bin = executable(tempDir());
+    for (const pending of [false, true]) {
+      const home = crewHomeWithSecret();
+      const dir = path.join(home, 'apps/michi-crew-runtime');
+      if (pending) fs.writeFileSync(path.join(dir, 'installed.json'), JSON.stringify({ enabled: true, sessionApprovalConsentPending: true }));
+      else fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ mcpServers: { michi: {} } }));
+      const result = crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: home } });
+      assert.equal(result.available, false);
+      assert.match(result.detail ?? '', /setup incomplete.*sessionApproval consent/);
+    }
+  });
+
+  test('missing MCP or a disabled Stub override is incomplete setup', () => {
+    const bin = executable(tempDir());
+    for (const missing of ['declaration', 'route', 'override']) {
+      const home = crewHomeWithSecret();
+      if (missing === 'declaration') fs.writeFileSync(path.join(home, 'apps/michi-crew-runtime/app.json'), JSON.stringify({ permissions: { sessionApproval: true } }));
+      else fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: missing === 'route' ? {} : {
+        stub_servers: ['michi-crew-runtime:michi'], stub_overrides: { 'michi-crew-runtime:michi': false },
+      } }));
+      const result = crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: home } });
+      assert.equal(result.available, false);
+      assert.match(result.detail ?? '', /setup incomplete.*Stub \/ Routed/);
+    }
   });
 
   test('unavailable while the app is installed but disabled', () => {

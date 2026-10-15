@@ -83,6 +83,8 @@ export type CrewChatEvent =
 
 export interface CrewGateway {
     approvalsAvailable?(): Promise<boolean>;
+    /** Required installed MCP configuration; does not prove a live tool call. */
+    mcpAvailable?(): Promise<boolean>;
     prepareApprovals?(slot: string): Promise<void>;
     pendingApprovals?(slot: string): Promise<CrewPendingApproval[]>;
     approve?(slot: string, request: CrewPendingApproval, allow: boolean, signal?: AbortSignal): Promise<void>;

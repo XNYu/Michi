@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { crewIntegrationStatus } from '../crewLaunch';
 import { CrewEventStream } from './gatewayEvents';
 import {
     CrewGatewayError,
@@ -105,6 +106,11 @@ export class CrewGatewayClient implements CrewGateway {
             return manifest.permissions?.sessionApproval === true && installed.enabled === true
                 && installed.sessionApprovalConsentPending !== true;
         } catch { return false; }
+    }
+
+    async mcpAvailable(): Promise<boolean> {
+        const status = crewIntegrationStatus({ KIROCREW_HOME: this.config.kirocrewHome, MICHI_CREW_APP: this.config.appName });
+        return status.mcpDeclared && status.mcpRouted;
     }
 
     private async requireOwnSlot(slot: string): Promise<void> {

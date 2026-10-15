@@ -135,7 +135,8 @@ function crewAppEnabled(env: NodeJS.ProcessEnv): boolean {
 
 /**
  * Synchronous, offline readiness check: the adapter resolves, the app secret
- * file exists and the app is enabled. Never reads the secret's content.
+ * file exists, the App is enabled, and required MCP/approval configuration is
+ * present. Never reads the secret's content or claims the MCP route is live.
  */
 export function crewAvailability(locations: CrewLaunchLocations = {}): RuntimeAvailability {
     const env = locations.env ?? process.env;
@@ -152,6 +153,13 @@ export function crewAvailability(locations: CrewLaunchLocations = {}): RuntimeAv
             available: false,
             detail: `Enable the Kiro Crew app ${crewAppName(env)} in the Kiro Crew dashboard (Apps)`,
         };
+    }
+    const integration = crewIntegrationStatus(env);
+    if (!integration.approvals) {
+        return { available: false, detail: `Kiro Crew setup incomplete: update ${crewAppName(env)} using node backend/scripts/crew-setup.cjs, complete sessionApproval consent in Crew Apps, and confirm Enabled. Approvals must be handled in Michi.` };
+    }
+    if (!integration.mcpDeclared || !integration.mcpRouted) {
+        return { available: false, detail: `Kiro Crew setup incomplete: prepare and update ${crewAppName(env)} using node backend/scripts/crew-setup.cjs, then enable and approve ${crewAppName(env)}:michi Stub / Routed in Crew Developer > MCP Management and restart the Gateway.` };
     }
     return { available: true };
 }

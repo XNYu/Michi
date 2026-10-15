@@ -41,7 +41,8 @@ function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => voi
 }
 
 class FakeGateway implements CrewGateway {
-    approvalsAvailable?: CrewGateway['approvalsAvailable'];
+    approvalsAvailable: CrewGateway['approvalsAvailable'] = async () => true;
+    mcpAvailable: CrewGateway['mcpAvailable'] = async () => true;
     prepareApprovals?: CrewGateway['prepareApprovals'];
     pendingApprovals?: CrewGateway['pendingApprovals'];
     approve?: CrewGateway['approve'];
@@ -512,20 +513,12 @@ describe('Crew ACP server: frames', () => {
         assert.match(textOf(updates[0]), /Kiro Crew dashboard/);
     });
 
-    test('a permission frame becomes a dashboard notice naming the tool', async () => {
+    test('native permission frames are handled only by the Michi approval bridge', async () => {
         const updates = await runFrames([
             frame('permission', 'ignored body', { meta: { tool_title: 'Run shell: rm build', request_id: 'r1' } }),
             frame('permission', 'Write file a.txt\nmore detail'),
         ]);
-        assert.equal(updates.length, 2);
-        for (const u of updates) {
-            assert.equal(u.sessionUpdate, 'agent_message_chunk');
-            assert.match(textOf(u), /Kiro Crew dashboard/);
-            assert.match(textOf(u), /about 3 minutes/);
-        }
-        assert.match(textOf(updates[0]), /Run shell: rm build/);
-        assert.match(textOf(updates[1]), /Write file a\.txt/);
-        assert.doesNotMatch(textOf(updates[1]), /more detail/);
+        assert.equal(updates.length, 0);
     });
 
     test('an error frame becomes a Crew error chunk', async () => {
@@ -1035,20 +1028,47 @@ describe('Crew ACP server: Gateway capabilities', () => {
         await s.close();
     });
 
-    test('approval fallback links to its own slot without token credentials', async () => {
+    test('missing consent refuses a turn instead of redirecting approvals to Crew', async () => {
         const gw = new FakeGateway();
+        gw.approvalsAvailable = async () => false;
         gw.streams.push(scripted([frame('permission', 'Read file')]));
         const s = startServer(gw, { dashboardBaseUrl: 'http://127.0.0.1:5476' });
         const sessionId = await s.newSession();
-        await s.prompt(sessionId, 'go');
-        assert.match(s.updates(sessionId)[0].content.text, new RegExp(`/chat/${sessionId}\\?sid=${sessionId}`));
-        assert.doesNotMatch(s.updates(sessionId)[0].content.text, /token=/);
+        assert.match((await s.prompt(sessionId, 'go')).error.message, /setup incomplete.*sessionApproval consent/);
+        assert.deepEqual(gw.callsTo('streamChat'), []);
+        assert.deepEqual(s.updates(sessionId), []);
         assert.equal(s.messages.some((m) => m.method === 'session/request_permission'), false);
         await s.close();
     });
 });
 
 describe('Official Crew approvals', () => {
+    test('removing the MCP route blocks the next turn on an already loaded session', async () => {
+        const gw = new FakeGateway();
+        gw.streams.push(scripted([frame('assistant', 'first')]));
+        const s = startServer(gw);
+        const sessionId = await s.newSession();
+        assert.ok((await s.prompt(sessionId, 'first')).result);
+        gw.mcpAvailable = async () => false;
+        assert.match((await s.prompt(sessionId, 'second')).error.message, /setup incomplete.*Michi MCP/);
+        assert.equal(gw.callsTo('streamChat').length, 1);
+        await s.close();
+    });
+    test('revoking consent blocks the next turn on an already loaded session', async () => {
+        const gw = new FakeGateway();
+        gw.streams.push(scripted([frame('assistant', 'first')]));
+        const s = startServer(gw);
+        const sessionId = await s.newSession();
+        assert.ok((await s.prompt(sessionId, 'first')).result);
+        gw.approvalsAvailable = async () => false;
+        assert.match((await s.prompt(sessionId, 'second')).error.message, /setup incomplete/);
+        assert.equal(gw.callsTo('streamChat').length, 1);
+        gw.approvalsAvailable = async () => true;
+        gw.streams.push(scripted([frame('assistant', 'resumed')]));
+        assert.ok((await s.prompt(sessionId, 'retry')).result);
+        assert.equal(gw.callsTo('streamChat').length, 2);
+        await s.close();
+    });
     test('cancel drains an unfinished MCP publication before admitting a successor', async (t) => {
         const publishing = deferred(), release = deferred();
         let binds = 0, cleaned = 0;
