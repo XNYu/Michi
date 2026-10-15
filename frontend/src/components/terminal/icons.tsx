@@ -1,4 +1,5 @@
 import React from 'react';
+import { Split } from 'lucide-react';
 
 interface IconProps {
   size?: number;
@@ -129,14 +130,13 @@ export function EditIcon({ size = 14, className }: IconProps) {
 }
 
 export function BranchIcon({ size = 14, className }: IconProps) {
-  // Git-branch fork — trunk with a child splitting off.
   return (
-    <svg {...base(size)} className={className}>
-      <circle cx="4" cy="12" r="2" />
-      <circle cx="12" cy="4" r="2" />
-      <path d="M4 2v8" />
-      <path d="M12 6a6 6 0 0 1-6 6" />
-    </svg>
+    <Split
+      size={size}
+      strokeWidth={2.4}
+      className={className ? `rotate-90 ${className}` : 'rotate-90'}
+      aria-hidden="true"
+    />
   );
 }
 

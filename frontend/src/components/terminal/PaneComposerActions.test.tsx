@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { PaneComposerActions } from './PaneComposerActions';
+import { FollowUpRow } from '../FollowUpRow';
 
 function renderActions(
   overrides: Partial<React.ComponentProps<typeof PaneComposerActions>> = {},
@@ -38,7 +39,26 @@ describe('PaneComposerActions', () => {
   });
 
   it('keeps an explicit Branch action separate from Send next', () => {
-    renderActions({ draftHasText: true, streaming: true });
-    expect(screen.getByRole('button', { name: /^Branch/ })).toBeTruthy();
+    const { onBranch, onSend } = renderActions({ draftHasText: true, streaming: true });
+    fireEvent.click(screen.getByRole('button', { name: /^Branch/ }));
+    expect(onBranch).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('shares the right-facing split icon with follow-up branches', () => {
+    renderActions({ draftHasText: true });
+    render(
+      <FollowUpRow index={0} question="Another approach?" onContinue={vi.fn()} onBranch={vi.fn()} />,
+    );
+
+    const composerIcon = screen.getByRole('button', { name: /^Branch \(/ }).querySelector('svg')!;
+    const followUpIcon = screen.getByRole('button', { name: /^Branch follow-up/ }).querySelector('svg')!;
+    for (const icon of [composerIcon, followUpIcon]) {
+      expect(icon.classList.contains('lucide-split')).toBe(true);
+      expect(icon.classList.contains('rotate-90')).toBe(true);
+      expect(icon.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(composerIcon.innerHTML).toBe(followUpIcon.innerHTML);
+    expect(composerIcon.getAttribute('width')).toBe('16');
   });
 });

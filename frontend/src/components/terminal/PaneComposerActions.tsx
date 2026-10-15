@@ -1,6 +1,7 @@
 import React from 'react';
 import { kbd } from '../../lib/platform';
 import { ContextRing, type ContextRingProps } from './ContextRing';
+import { BranchIcon } from './icons';
 
 export type PaneComposerSendMode = 'send' | 'stop' | 'retry';
 
@@ -41,24 +42,7 @@ export function PaneComposerActions({
           onClick={onBranch}
           aria-label={`Branch (${kbd('mod', 'enter')})`}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M8 14V9" />
-            <path d="M8 9 L4 5" />
-            <path d="M8 9 L12 5" />
-            <circle cx="4" cy="4" r="1.4" />
-            <circle cx="12" cy="4" r="1.4" />
-            <circle cx="8" cy="14" r="1.4" />
-          </svg>
+          <BranchIcon size={16} />
           <span className="t-action-kbd">
             Branch <span className="t-action-kbd-key">{kbd('mod', 'enter')}</span>
           </span>
