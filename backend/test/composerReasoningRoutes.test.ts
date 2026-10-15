@@ -1,3 +1,5 @@
+// Must stay first: agentConfig would otherwise persist these fixtures to ~/.michi/config.json.
+import './isolatedConfigDir';
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

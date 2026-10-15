@@ -1,3 +1,5 @@
+// Must stay first: /agent/options would otherwise persist runtime/model to ~/.michi/config.json.
+import "./isolatedConfigDir";
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -231,6 +233,8 @@ describe("OpenRouter free trial provider", () => {
         ...process.env,
         HOME: "/tmp/michi-openrouter-free-default-test",
         MICHI_DATA_DIR: "/tmp/michi-openrouter-free-default-test/data",
+        // A fresh config under the fake HOME, not this suite's isolated dir.
+        MICHI_CONFIG_DIR: "/tmp/michi-openrouter-free-default-test/.michi",
       },
       encoding: "utf8",
     });
