@@ -3552,7 +3552,9 @@ html[data-vibrancy="on"],
   line-height: 1.2;
   padding: 6px 12px;
   border: 1px solid var(--term-line);
-  border-radius: var(--ui-radius-sm);
+  /* The composer controls' corners (.t-toolbar-chip / .t-action-btn), so a
+     text Button and Send are the same shape as well as the same fill. */
+  border-radius: var(--ui-radius);
   background: transparent;
   color: var(--term-fg);
   cursor: pointer;
