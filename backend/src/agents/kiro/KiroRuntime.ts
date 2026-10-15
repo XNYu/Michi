@@ -56,6 +56,21 @@ const DEFAULT_PROCESS_CAP = parseInt(process.env.MICHI_KIRO_MAX_PROCESSES ?? "20
 const DEFAULT_IDLE_TTL_MS = parseInt(process.env.MICHI_KIRO_IDLE_TTL_MS ?? "300000", 10);
 
 /**
+ * kiro-cli v2 publishes no per-model effort metadata, but its `auto` router
+ * rejects `/effort` ("Effort configuration is currently not available on
+ * auto"). Mark it explicitly so the composer disables the control and session
+ * setup skips applying effort instead of failing the turn. v3 reports this
+ * through `_meta.kiro.hasEffort`, so it never needs the override.
+ */
+const KIRO_V2_MODELS_WITHOUT_EFFORT = new Set(["auto"]);
+
+export function markKiroV2EffortSupport(models: ModelInfo[]): ModelInfo[] {
+    return models.map((model) => KIRO_V2_MODELS_WITHOUT_EFFORT.has(model.id) && model.supportsReasoning === undefined
+        ? { ...model, supportsReasoning: false, supportedReasoningLevels: [] }
+        : model);
+}
+
+/**
  * Number of pre-warmed ACP sessions to keep per cwd. When a warmed session is
  * consumed, the pool replenishes in the background up to this depth. Higher
  * values reduce cold-start latency when many threads open concurrently at the
@@ -320,7 +335,9 @@ export class KiroRuntime implements AgentRuntime {
         this.mcpBaseUrl = `http://127.0.0.1:${mcpPort}/api`;
         this.defaultCwd = defaultCwd;
         this.modelCacheStore = modelCache;
-        this.modelCache = modelCache?.load(this.modelCacheKey) ?? null;
+        const cachedModels = modelCache?.load(this.modelCacheKey) ?? null;
+        // Snapshots written before the v2 effort override still lack it.
+        this.modelCache = cachedModels && this.engine === 'v2' ? markKiroV2EffortSupport(cachedModels) : cachedModels;
         this.concurrencyCap = parseInt(process.env.MICHI_KIRO_MAX_CONCURRENT ?? "100", 10);
         this.processCap = DEFAULT_PROCESS_CAP;
         this.idleTtlMs = DEFAULT_IDLE_TTL_MS;
@@ -1090,7 +1107,7 @@ export class KiroRuntime implements AgentRuntime {
     }
 
     private normalizeModels(list: any[]): ModelInfo[] {
-        return list
+        const models = list
             .map((m: any): ModelInfo => ({
                 id: String(m?.modelId ?? ""),
                 label: typeof m?.name === "string" ? m.name : undefined,
@@ -1103,6 +1120,7 @@ export class KiroRuntime implements AgentRuntime {
                 } : {}),
             }))
             .filter((m) => m.id);
+        return this.engine === 'v2' ? markKiroV2EffortSupport(models) : models;
     }
 
     private storeAvailableModels(list: any[]): void {

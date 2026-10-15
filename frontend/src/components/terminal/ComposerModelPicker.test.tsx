@@ -47,7 +47,7 @@ describe('ComposerModelPicker', () => {
     expect(screen.getByRole('slider')).toBeTruthy();
   });
 
-  it('updates effort when the selected model changes and hides fixed or unsupported effort', () => {
+  it('updates effort when the selected model changes, hides fixed effort and disables unsupported effort', () => {
     const view = render(<ComposerModelPicker {...baseProps} />);
     const binding = { ...baseProps.resolvedBinding, reasoning: 'max' as const };
     view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding}
@@ -63,8 +63,22 @@ describe('ComposerModelPicker', () => {
     view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', supportedReasoningLevels: ['high'] }]} />);
     expect(screen.queryByText('Thinking effort')).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Select runtime: Codex' }));
-    view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', supportsReasoning: false }]} />);
-    expect(screen.queryByRole('slider')).toBeNull();
+    view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', label: 'Fast', supportsReasoning: false }]} />);
+    const disabled = screen.getByRole('slider');
+    expect((disabled as HTMLInputElement).disabled).toBe(true);
+    expect(disabled.getAttribute('aria-valuetext')).toBe('Not available');
+    expect(disabled.closest('[title]')?.getAttribute('title')).toBe("Fast doesn't support thinking effort. Choose a specific model to configure it.");
+  });
+
+  it('greys out effort for an unset binding whose default model has none', () => {
+    const onSaveReasoning = vi.fn();
+    render(<ComposerModelPicker {...baseProps} onSaveReasoning={onSaveReasoning} resolvedBinding={{ ...baseProps.resolvedBinding, model: undefined }}
+      providerModels={[{ id: 'auto', label: 'auto', supportsReasoning: false, supportedReasoningLevels: [] }, { id: 'deep' }]} />);
+    const slider = screen.getByRole('slider') as HTMLInputElement;
+    expect(slider.disabled).toBe(true);
+    expect(slider.closest('[title]')?.getAttribute('title')).toBe("Default model (auto) doesn't support thinking effort. Choose a specific model to configure it.");
+    fireEvent.change(slider, { target: { value: '1' } });
+    expect(onSaveReasoning).not.toHaveBeenCalled();
   });
 
   it('respects the selected provider even when its models advertise effort', () => {

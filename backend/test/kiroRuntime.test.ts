@@ -144,6 +144,24 @@ describe('KiroRuntime model catalog cache', () => {
   assert.deepEqual(fresh.map((m) => m.id), ['fresh-kiro']);
   assert.deepEqual(saved, fresh);
   });
+
+  test('v2 marks the auto router as not supporting effort, including stale snapshots', async () => {
+    const cache: RuntimeModelCache = {
+      load: () => [{ id: 'auto', label: 'auto' }, { id: 'claude-opus-5.5', label: 'claude-opus-5.5' }],
+      save: () => {},
+    };
+    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default', cache, { engine: 'v2' });
+    const rt = runtime as any;
+    rt.getAvailableModels = async () => [{ modelId: 'auto', name: 'auto' }, { modelId: 'claude-opus-5.5', name: 'claude-opus-5.5' }];
+
+    for (const models of [await runtime.listModels(), await runtime.refreshModels()]) {
+      const auto = models.find((m) => m.id === 'auto');
+      assert.equal(auto?.supportsReasoning, false);
+      assert.deepEqual(auto?.supportedReasoningLevels, []);
+      const opus = models.find((m) => m.id === 'claude-opus-5.5');
+      assert.equal(opus?.supportsReasoning, undefined, 'other v2 models stay unknown and keep runtime levels');
+    }
+  });
 });
 
 describe('KiroRuntime node/native identity', () => {
