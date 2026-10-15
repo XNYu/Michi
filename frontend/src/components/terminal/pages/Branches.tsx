@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import MarkdownContent from '../../MarkdownContent';
 import {
   activeTreeRootNodeId,
@@ -72,7 +72,9 @@ const BRANCHES_LAYOUT_CSS = `
     /* Pin below the floating switcher so a scrolled outline never slides under it. */
     top: 48px;
     align-self: start;
-    max-height: calc(100dvh - 48px);
+    /* The shell's topbar makes the actual scroller shorter than the window.
+       Reserve the initial 52px inset as well as the sticky 48px inset. */
+    max-height: calc(var(--branches-viewport-height, 100dvh) - 52px);
     overflow-y: auto;
     /* Wheeling past the outline's end must not scroll the document: that
        would move the current section and yank the outline back to it. */
@@ -214,6 +216,16 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
   // State, not a ref: the scroller mounts only after a thread is available,
   // and the spy must re-subscribe when it does.
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (!scroller) return;
+    const measure = () => {
+      scroller.style.setProperty('--branches-viewport-height', `${scroller.clientHeight}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [scroller]);
   const { activeId: currentDirectoryNodeId, pin: pinDirectoryNode } =
     useScrollSpy(scroller, directoryNodeIds, branchAnchorElement);
 
@@ -330,10 +342,14 @@ function BranchDirectory({
     const nav = navRef.current;
     const item = currentNodeId ? itemRefs.current.get(currentNodeId) : undefined;
     if (!nav || !item) return;
-    revealInScroller(nav, item, {
+    const reveal = () => revealInScroller(nav, item, {
       padding: OUTLINE_REVEAL_PADDING,
       behavior: smoothScroll ? 'smooth' : 'auto',
     });
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(nav);
+    return () => observer.disconnect();
   }, [currentNodeId, smoothScroll]);
 
   return (

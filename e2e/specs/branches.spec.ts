@@ -187,6 +187,9 @@ test('Branches outline follows the section being read and keeps it in view', asy
   const item = (index: number) => directory.getByRole('treeitem', { name: longSectionTitle(index) });
 
   await expect(directory.getByRole('treeitem', { name: 'Long read' })).toHaveAttribute('aria-current', 'location');
+  await expect.poll(() => directory.evaluate(element =>
+    element.getBoundingClientRect().bottom <= element.closest('main')!.getBoundingClientRect().bottom,
+  )).toBe(true);
   expect(await outlineItemVisible(item(24))).toBe(false);
 
   // Bring section 24's heading just below the top edge, as a reader would.
@@ -195,6 +198,11 @@ test('Branches outline follows the section being read and keeps it in view', asy
     scroller.scrollTop += heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 40;
   }, longSectionId(24));
 
+  await expect(item(24)).toHaveAttribute('aria-current', 'location');
+  await expect.poll(() => outlineItemVisible(item(24))).toBe(true);
+
+  // A shorter shell viewport must also keep the current outline item visible.
+  await page.setViewportSize({ width: 1280, height: 560 });
   await expect(item(24)).toHaveAttribute('aria-current', 'location');
   await expect.poll(() => outlineItemVisible(item(24))).toBe(true);
 
@@ -214,8 +222,13 @@ test('Branches outline click holds its section until the reader scrolls again', 
   await expect(item(3)).toHaveAttribute('aria-current', 'location');
 
   const article = await page.locator('.branches-document').boundingBox();
-  await page.mouse.move(article!.x + article!.width / 2, article!.y + 200);
+  const scroller = page.getByRole('main', { name: 'Branch overview' });
+  const viewport = await scroller.boundingBox();
+  const previousScrollTop = await scroller.evaluate(element => element.scrollTop);
+  // The article's top has scrolled off-screen; target its visible portion.
+  await page.mouse.move(article!.x + article!.width / 2, viewport!.y + viewport!.height / 2);
   await page.mouse.wheel(0, 1600);
+  await expect.poll(() => scroller.evaluate(element => element.scrollTop)).toBeGreaterThan(previousScrollTop);
 
   await expect(item(3)).not.toHaveAttribute('aria-current', 'location');
   await expect(directory.locator('[aria-current="location"]')).toHaveCount(1);
