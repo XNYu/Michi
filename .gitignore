@@ -150,6 +150,8 @@ mocks/
 /arch-shoot.mjs
 
 # Exploration, audit, and reference material
+/formal/
+/output/
 /ux-workflow-review/
 /michi-audit/
 /stripe-audit/
