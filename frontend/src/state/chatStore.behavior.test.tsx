@@ -291,8 +291,8 @@ describe('auto-branch behavior (real provider)', () => {
     ]);
   });
 
-  it('shows connection status only for a sustained setup wait and clears it on Stop', async () => {
-    const { result, rerender } = renderHook(() => useStoreAndNodes(), { wrapper });
+  it('keeps a sustained setup wait loading without a separate activity label and allows Stop', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
     await act(async () => { await result.current.store.createProject('test', undefined); });
     let nodeId = '';
     await act(async () => { nodeId = result.current.store.createThread()!; });
@@ -300,11 +300,13 @@ describe('auto-branch behavior (real provider)', () => {
     vi.useFakeTimers();
     try {
       act(() => { result.current.store.sendMessage(nodeId, 'hello'); });
-      act(() => { vi.advanceTimersByTime(2_999); });
+      act(() => { vi.advanceTimersByTime(10_000); });
+      expect(result.current.nodes[nodeId].status).toBe('streaming');
       expect(result.current.nodes[nodeId].runtimeActivity).toBeUndefined();
-      act(() => { vi.advanceTimersByTime(1); });
-      rerender();
-      expect(result.current.nodes[nodeId].runtimeActivity).toBe('Connecting to session');
+      const assistant = result.current.nodes[nodeId].messages.at(-1);
+      expect(assistant?.role).toBe('assistant');
+      expect(assistant?.streaming).toBe(true);
+      expect(assistant?.text).toBe('');
       act(() => { result.current.store.cancelStream(nodeId); });
       expect(result.current.nodes[nodeId].status).toBe('idle');
       expect(result.current.nodes[nodeId].runtimeActivity).toBeUndefined();

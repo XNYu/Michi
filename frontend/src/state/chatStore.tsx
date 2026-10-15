@@ -1493,19 +1493,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       let chatId = n.chatId;
       let outgoingText = text;
       const tEnsureStart = perf.now();
-      let connectionStatusShown = false;
-      // Empty-assistant dots cover brief setup; reserve the connection label
-      // for a wait long enough to explain to the user.
-      const connectionStatusTimer = setTimeout(() => {
-        connectionStatusShown = true;
-        dispatch({ type: 'runtime-activity', nodeId, assistantId, detail: 'Connecting to session' });
-      }, 3_000);
+      // The empty assistant's loading dots cover session setup as well.
       const setupController = new AbortController();
       let setupCancelled = false;
       const cancelSetup = () => {
         if (setupCancelled) return;
         setupCancelled = true;
-        clearTimeout(connectionStatusTimer);
         setupController.abort();
         delete assistantTextBufs.current[assistantId];
         if (cancelFns.current[nodeId] === cancelSetup) delete cancelFns.current[nodeId];
@@ -1591,8 +1584,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         return;
       } finally {
         if (cancelFns.current[nodeId] === cancelSetup) delete cancelFns.current[nodeId];
-        clearTimeout(connectionStatusTimer);
-        if (connectionStatusShown) dispatch({ type: 'runtime-activity', nodeId, assistantId });
       }
 
       // Mark these peers consumed so we don't re-inject on the next turn.
