@@ -49,7 +49,8 @@ PORT=3010 MICHI_DATA_DIR="$HOME/.michi-crew-preview" NODE_ENV=development npm st
 App 的 `agents/michi.json` 声明 **michi-crew**，包含简洁的固定指令、原生文件/研究
 工具、Memory 和 Crew 控制工具。工作区指令、引用资料和分支历史仍按会话传入。
 摘要、标题和追问随最终回答返回，简单消息不会为元数据触发 MCP 工具发现。
-自定义模板可在 Crew Agent Capabilities 中添加额外 MCP、技能或其他原生能力。
+自定义模板可在 Crew Agent Capabilities 中添加额外 MCP、技能或其他原生能力，但需保留
+Michi 指令和 namespaced MCP 引用；切换模板后应验证 `michi_list_tools`。
 
 Crew 会把模板提示词放入自己的会话上下文；kiro-cli/KAS 也有原生 Agent 指令通道。
 其他 Crew 后端可能只通过上下文投影，不能保证每个后端都使用真正的 system role。
@@ -75,13 +76,16 @@ For source development, build the backend and run the same helper from that chec
 The helper always includes **Michi MCP and sessionApproval**. Legacy `--mcp` and
 `--approvals` arguments remain accepted, but also prepare both features.
 
-1. Install the printed directory in official **Crew Apps**, or use Update / Sync
-   for an existing App, preserving its secret and sessions.
+1. For first installation, copy the prepared files into a persistent source such as
+   `~/.michi/crew-app`, then use **Apps / Discover → Manage app sources → Install from path**.
+   For updates, copy the prepared files into the existing App’s registered source
+   before **Sync**. Sync does not select a new source. Do not overwrite a code checkout;
+   see the getting-started guide for existing temporary sources and source-change limits.
 2. Review and consent to **sessionApproval**, then confirm the App is **Enabled**.
 3. In **Developer → MCP Management**, find `michi-crew-runtime:michi`, inspect
    its Node command and relay path, enable **Stub / Routed**, and approve the launch.
 4. Finish or stop active work, then restart the **Gateway**:
-   `kirocrew restart --port 5476` (use the configured port).
+   `kirocrew restart` (service-aware). Use `--port` only for an independently managed Gateway.
 
 The helper prepares files; the official Crew flow records consent and launch approval.
 The generated relay points into the installation used to run the helper; retain that
