@@ -16,6 +16,7 @@ import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
 import type { AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
+import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "../nodeSummaryExperiment";
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../attachments";
 import { classifyAcpError, isRetryable, needsRespawn, retryReason, toErrorKind } from "./acpErrors";
 
@@ -135,6 +136,10 @@ const BRANCH_OVERVIEW_TOOL_REMINDER = `
 
 [After any other tool calls and before writing your final answer, call the MCP tool set_branch_overview exactly once with {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered. It appends to the branch's journal; do not restate earlier turns. Match the user's language. Then write your final answer after the tool result. If you call it after your final answer instead, reply with exactly ${KIRO_METADATA_DONE_SENTINEL} once the tool returns; Michi removes that marker when it ends the reply. Keep the existing [BRANCH-OVERVIEW: ...] sentinel as a fallback.]`;
 
+const FULL_BRANCH_OVERVIEW_TOOL_REMINDER = `
+
+[After any other tool calls and before writing your final answer, call the MCP tool set_branch_overview exactly once with {"overview":"..."}. ${FULL_NODE_SUMMARY_INSTRUCTION} Then write your final answer after the tool result. If you call it after your final answer instead, reply with exactly ${KIRO_METADATA_DONE_SENTINEL} once the tool returns; Michi removes that marker when it ends the reply. Do not duplicate the overview in visible text.]`;
+
 /**
  * KiroSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
  * generator. Each instance corresponds to one ACP sessionId on a specific
@@ -232,7 +237,10 @@ export class KiroSession implements AgentSession {
         // Non-image attachments have no ACP block type, so name them by path
         // instead of dropping them silently; kiro-cli can read them itself.
         const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
-        const textForModel = text + promptNote + (reminder || "") + BRANCH_OVERVIEW_TOOL_REMINDER;
+        const textForModel = text + promptNote + (reminder || "")
+            + (fullNodeSummaryExperimentEnabled()
+                ? FULL_BRANCH_OVERVIEW_TOOL_REMINDER
+                : BRANCH_OVERVIEW_TOOL_REMINDER);
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`

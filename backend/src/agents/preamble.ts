@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { AgentSession, ChatMessage, ExtraContext } from "./types";
+import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "./nodeSummaryExperiment";
 
 const TOOL_CAPABILITIES_SECTION = `
 Capabilities — you have these tools available and should use them proactively:
@@ -39,6 +40,16 @@ const BRANCH_OVERVIEW_SENTINEL_INSTRUCTION = `- After the follow-up sentinels, a
   useful when read later without the conversation. Match the user's language.
   Use inline Markdown if helpful, but no headings, lists, or closing square bracket.
   The UI strips this line and appends it to the branch's journal in the Branches document.`;
+
+const FULL_BRANCH_OVERVIEW_SENTINEL_INSTRUCTION = `- As the very last line of the final answer,
+  write one single-line overview of this node's conversation in this form:
+      [BRANCH-OVERVIEW: ...]
+  ${FULL_NODE_SUMMARY_INSTRUCTION}
+  The UI strips this line. Do not place it in commentary.`;
+
+const FULL_BRANCH_OVERVIEW_TOOL_INSTRUCTION = `- Provide this node's current-state overview through the runtime's structured metadata tool.
+  ${FULL_NODE_SUMMARY_INSTRUCTION}
+  Do not duplicate the overview in the visible answer.`;
 
 const SENTINEL_METADATA_SCOPE_INSTRUCTION = `- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,
   progress/status updates, tool plans, or any message before you are ready to
@@ -162,9 +173,11 @@ function renderHead(
 ): string {
     const structured = metadataOutputMode === 'structured-tool';
     const toolOverview = metadataOutputMode !== 'sentinel';
-    const branchOverviewLine = toolOverview
-        ? STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION
-        : BRANCH_OVERVIEW_SENTINEL_INSTRUCTION;
+    const branchOverviewLine = fullNodeSummaryExperimentEnabled()
+        ? toolOverview ? FULL_BRANCH_OVERVIEW_TOOL_INSTRUCTION : FULL_BRANCH_OVERVIEW_SENTINEL_INSTRUCTION
+        : toolOverview
+            ? STRUCTURED_BRANCH_OVERVIEW_INSTRUCTION
+            : BRANCH_OVERVIEW_SENTINEL_INSTRUCTION;
     const metadataScopeLine = structured
         ? STRUCTURED_METADATA_SCOPE_INSTRUCTION
         : toolOverview

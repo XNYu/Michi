@@ -21,6 +21,24 @@ import {
 } from '../src/agents/preamble';
 
 describe('buildStableSystemPrompt', () => {
+    test('full-summary experiment changes overview wording only when enabled', () => {
+        const previous = process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE;
+        try {
+            delete process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE;
+            const normal = buildPreamble({ enableFollowUps: false, cwd: '/tmp/x' });
+            assert.match(normal, /journal entry for this turn/);
+            process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE = 'full';
+            const experimental = buildPreamble({ enableFollowUps: false, cwd: '/tmp/x' });
+            assert.match(experimental, /full conversation as its CURRENT state/);
+            assert.doesNotMatch(experimental, /journal entry for this turn/);
+            const structured = buildStableSystemPrompt('structured-tool', false);
+            assert.match(structured, /runtime's structured metadata tool/);
+            assert.doesNotMatch(structured, /\[BRANCH-OVERVIEW:/);
+        } finally {
+            if (previous === undefined) delete process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE;
+            else process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE = previous;
+        }
+    });
     test('returns identical string on every call (pure constant)', () => {
         const a = buildStableSystemPrompt();
         const b = buildStableSystemPrompt();

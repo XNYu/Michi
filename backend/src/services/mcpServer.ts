@@ -28,6 +28,7 @@ import type { RuntimeSessionOwner } from "../agents/types";
 import { log } from "./logger";
 import { isLoopbackAddress } from "./remoteAccess";
 import type { ResultBundleV1 } from "michi-shared";
+import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "../agents/nodeSummaryExperiment";
 
 function paramToZod(spec: ParamSpec): z.ZodTypeAny {
     if (spec === "string") return z.string();
@@ -419,7 +420,9 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             "set_branch_overview",
             {
                 description:
-                    "Append this turn's entry to the branch's durable journal. Summarize what this turn did — what was explored, decided, or discovered — in 1-3 concise sentences, matching the user's language. Do not restate earlier turns. Call near the end of every reply.",
+                    fullNodeSummaryExperimentEnabled()
+                        ? `Record the experimental current-state node overview. ${FULL_NODE_SUMMARY_INSTRUCTION} Call near the end of every reply.`
+                        : "Append this turn's entry to the branch's durable journal. Summarize what this turn did — what was explored, decided, or discovered — in 1-3 concise sentences, matching the user's language. Do not restate earlier turns. Call near the end of every reply.",
                 inputSchema: {
                     overview: z.string().min(1).max(4000),
                 },
