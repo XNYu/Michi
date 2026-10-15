@@ -76,13 +76,15 @@ for (const width of [1280, 390]) {
     // Fewer than 1500 answer characters can still fill the entire viewport.
     await emit([{ event: 'chunk', data: { text: Array.from({ length: 32 }, (_, i) => `Reply paragraph ${i}.`).join('\n\n') } }]);
     await expect.poll(() => spacer.evaluate(el => el.getBoundingClientRect().height)).toBe(0);
+    // A zero spacer can precede the final paced text frame. Measure the
+    // settled reply after all paragraphs have rendered.
+    await expect(scroller.getByText('Reply paragraph 31.', { exact: true })).toBeVisible();
     await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
-    const tailGap = await spacer.evaluate(el => {
+    await expect.poll(() => spacer.evaluate(el => {
       const scroll = el.closest('.term-scrollbar') as HTMLElement;
       const contentBottom = el.getBoundingClientRect().top;
-      return scroll.getBoundingClientRect().bottom - contentBottom - parseFloat(getComputedStyle(scroll).paddingBottom);
-    });
-    expect(Math.abs(tailGap)).toBeLessThan(3);
+      return Math.abs(scroll.getBoundingClientRect().bottom - contentBottom - parseFloat(getComputedStyle(scroll).paddingBottom));
+    })).toBeLessThan(3);
 
     await emit([{ event: 'done', data: { stopReason: 'end_turn' } }], true);
     await expect(spacer).toHaveCount(0);
