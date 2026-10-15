@@ -46,7 +46,7 @@
     "metrics:analyze": "node scripts/analyze-metrics.mjs",
     "perf:pane": "node scripts/run-pane-perf.mjs",
     "perf:compare": "node scripts/compare-pane-perf.mjs",
-    "test:electron-setup": "node --test scripts/prepare-electron-binary.test.mjs",
+    "test:electron-setup": "node --test scripts/prepare-electron-binary.test.mjs scripts/rebuild-electron-natives.test.mjs",
     "test:remote-setup": "node --test scripts/remote-setup.test.mjs",
     "test:remote-control": "node --test scripts/remote-control.test.mjs",
     "test:electron-shortcuts": "npm run electron:build-main && node --test scripts/electron-pane-shortcut.test.mjs && node scripts/run-electron-shortcut-smoke.mjs",
