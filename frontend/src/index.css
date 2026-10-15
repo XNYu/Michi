@@ -2588,6 +2588,15 @@ html[data-vibrancy="on"],
 .t-action-btn.is-primary:hover {
   background: color-mix(in srgb, var(--term-accent) 88%, black);
 }
+/* A disabled primary says "nothing to send yet", not "a paler Send": neutral
+   fill and ink at full opacity instead of the accent faded to 40%, which read
+   as an enabled secondary button and left the arrow at under 2:1. */
+.t-action-btn.is-primary:disabled,
+.t-action-btn.is-primary[aria-disabled="true"] {
+  opacity: 1;
+  background: var(--term-alt2);
+  color: var(--term-muted);
+}
 .t-action-btn.is-queue {
   background: var(--term-surface);
   color: var(--term-accent);
