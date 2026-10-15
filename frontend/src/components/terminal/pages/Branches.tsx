@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownContent from '../../MarkdownContent';
 import {
   activeTreeRootNodeId,
@@ -12,10 +12,16 @@ import type { ChatNodeState } from '../../../state/chatTypes';
 import type { BranchOverviewEntry } from 'michi-shared';
 import { buildTree, type TreeNode } from '../../../state/tree';
 import type { PageId } from '../../../state/commands';
-import { prefersReducedMotion } from '../../../hooks/useReducedMotion';
+import { useReducedMotion } from '../../../hooks/useReducedMotion';
+import { revealInScroller, useScrollSpy } from '../../../hooks/useScrollSpy';
 import { usePrefs } from '../../../state/prefs';
 
 const OVERVIEW_MAX_CHARS = 720;
+/** Keeps the current outline item clear of the card's top and bottom edges. */
+const OUTLINE_REVEAL_PADDING = 24;
+
+const branchAnchorId = (nodeId: string) => `branch-${nodeId}`;
+const branchAnchorElement = (nodeId: string) => document.getElementById(branchAnchorId(nodeId));
 const PROSE_CLASS =
   'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 ' +
   '[&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) ' +
@@ -68,6 +74,9 @@ const BRANCHES_LAYOUT_CSS = `
     align-self: start;
     max-height: calc(100dvh - 48px);
     overflow-y: auto;
+    /* Wheeling past the outline's end must not scroll the document: that
+       would move the current section and yank the outline back to it. */
+    overscroll-behavior: contain;
     background: color-mix(in srgb, var(--term-surface) 82%, transparent);
     -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
@@ -200,7 +209,13 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
   );
   const rows = useStructuralSelector(selectRows, rowsEqual);
   const directoryRows = useMemo(() => buildBranchDirectoryRows(rows), [rows]);
-  const [selectedDirectoryNodeId, setSelectedDirectoryNodeId] = useState<string | null>(null);
+  const directoryNodeIds = useMemo(() => directoryRows.map((row) => row.nodeId), [directoryRows]);
+  const reduceMotion = useReducedMotion(prefs.reduceMotion);
+  // State, not a ref: the scroller mounts only after a thread is available,
+  // and the spy must re-subscribe when it does.
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const { activeId: currentDirectoryNodeId, pin: pinDirectoryNode } =
+    useScrollSpy(scroller, directoryNodeIds, branchAnchorElement);
 
   const threadTitle = useMemo(() => {
     const root = rows[0];
@@ -212,16 +227,10 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
     onNav?.('dashboard');
   }, [onNav, openPane]);
 
-  const currentDirectoryNodeId =
-    selectedDirectoryNodeId && directoryRows.some((row) => row.nodeId === selectedDirectoryNodeId)
-      ? selectedDirectoryNodeId
-      : directoryRows[0]?.nodeId ?? null;
-
   const navigateDirectory = useCallback((nodeId: string) => {
-    setSelectedDirectoryNodeId(nodeId);
-    const section = document.getElementById(`branch-${nodeId}`);
-    section?.scrollIntoView({ block: 'start', behavior: prefersReducedMotion(prefs.reduceMotion) ? 'auto' : 'smooth' });
-  }, [prefs.reduceMotion]);
+    pinDirectoryNode(nodeId);
+    branchAnchorElement(nodeId)?.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+  }, [pinDirectoryNode, reduceMotion]);
 
   if (!activeProject) {
     return <BranchesEmpty title="No workspace selected" body="Choose a workspace to read its active thread." />;
@@ -235,6 +244,7 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
 
   return (
     <main
+      ref={setScroller}
       aria-label="Branch overview"
       style={{
         flex: 1,
@@ -250,6 +260,7 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
           rows={directoryRows}
           currentNodeId={currentDirectoryNodeId}
           onNavigate={navigateDirectory}
+          smoothScroll={!reduceMotion}
         />
         <article className="branches-document">
         <header style={{ marginBottom: root?.overview ? 40 : 56 }}>
@@ -266,7 +277,7 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
             Branch Document
           </div>
           <BranchHeading
-            id={root ? `branch-${root.nodeId}` : undefined}
+            id={root ? branchAnchorId(root.nodeId) : undefined}
             level={1}
             title={threadTitle}
             streaming={root?.streaming ?? false}
@@ -304,13 +315,29 @@ function BranchDirectory({
   rows,
   currentNodeId,
   onNavigate,
+  smoothScroll,
 }: {
   rows: readonly BranchDirectoryRow[];
   currentNodeId: string | null;
   onNavigate: (nodeId: string) => void;
+  smoothScroll: boolean;
 }) {
+  const navRef = useRef<HTMLElement | null>(null);
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  // A long outline scrolls on its own; keep the reader's section in view.
+  useEffect(() => {
+    const nav = navRef.current;
+    const item = currentNodeId ? itemRefs.current.get(currentNodeId) : undefined;
+    if (!nav || !item) return;
+    revealInScroller(nav, item, {
+      padding: OUTLINE_REVEAL_PADDING,
+      behavior: smoothScroll ? 'smooth' : 'auto',
+    });
+  }, [currentNodeId, smoothScroll]);
+
   return (
-    <nav className="branches-directory" aria-label="Branch directory">
+    <nav ref={navRef} className="branches-directory" aria-label="Branch directory">
       <div
         style={{
           padding: '0 16px 8px',
@@ -329,6 +356,10 @@ function BranchDirectory({
           return (
             <button
               key={row.nodeId}
+              ref={(element) => {
+                if (element) itemRefs.current.set(row.nodeId, element);
+                else itemRefs.current.delete(row.nodeId);
+              }}
               type="button"
               role="treeitem"
               aria-level={row.depth + 1}
@@ -357,7 +388,7 @@ function BranchSection({ row, onOpen }: { row: BranchDocumentRow; onOpen: () => 
   const deepIndent = row.depth > 3 ? Math.min((row.depth - 3) * 18, 54) : 0;
   return (
     <section
-      id={`branch-${row.nodeId}`}
+      id={branchAnchorId(row.nodeId)}
       aria-labelledby={`branch-title-${row.nodeId}`}
       style={{
         marginTop: row.depth === 1 ? 32 : row.depth === 2 ? 26 : 22,

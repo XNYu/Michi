@@ -121,3 +121,104 @@ test('opening a Branches node centers its focused Dashboard pane', async ({ page
   });
   expect(Math.abs(landing.paneCenter - landing.stripCenter)).toBeLessThanOrEqual(2);
 });
+
+const LONG_PROJECT_ID = 'long-read-ws';
+const LONG_SECTION_COUNT = 30;
+const longSectionId = (index: number) => `s${String(index).padStart(2, '0')}`;
+const longSectionTitle = (index: number) =>
+  `Section ${String(index).padStart(2, '0')} · deployment finding with a title long enough to wrap`;
+
+function longReadState() {
+  const paragraph = 'The reader needs enough body copy here for every section to span a good part of the viewport. ';
+  const sectionIds = Array.from({ length: LONG_SECTION_COUNT }, (_, index) => longSectionId(index + 1));
+  const nodes = Object.fromEntries(sectionIds.map((id, index) => [id, {
+    ...node(id, longSectionTitle(index + 1), `${paragraph.repeat(5)}\n\n${paragraph.repeat(4)}`),
+    projectId: LONG_PROJECT_ID,
+  }]));
+  return {
+    version: 6,
+    activeProjectId: LONG_PROJECT_ID,
+    projects: [{
+      id: LONG_PROJECT_ID,
+      name: 'Long read workspace',
+      chatIds: ['long-root', ...sectionIds],
+      edges: sectionIds.map((id) => ({ source: 'long-root', target: id, kind: 'branch' })),
+      trees: [{ id: 'tree-long', rootNodeId: 'long-root', name: 'Long read', createdAt: BASE_T, lastActiveAt: BASE_T }],
+      activeTreeId: 'tree-long',
+      contexts: [],
+      createdAt: BASE_T,
+    }],
+    nodes: {
+      'long-root': { ...node('long-root', 'Long read', 'A thread with many branches.'), projectId: LONG_PROJECT_ID },
+      ...nodes,
+    },
+  };
+}
+
+async function openLongRead(page: Page) {
+  // Instant scrolling keeps the outline's auto-follow deterministic.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript((state) => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem('michi:migrated', '1');
+    window.localStorage.setItem('michi:v1:state', JSON.stringify(state));
+  }, longReadState());
+  await installMockApi(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Overview' }).click();
+}
+
+/** Whether the outline item is fully visible inside both the outline card and the page scroller. */
+function outlineItemVisible(item: ReturnType<Page['getByRole']>) {
+  return item.evaluate((element) => {
+    const nav = element.closest('nav')!.getBoundingClientRect();
+    const main = element.closest('main')!.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    return rect.top >= Math.max(nav.top, main.top) && rect.bottom <= Math.min(nav.bottom, main.bottom);
+  });
+}
+
+test('Branches outline follows the section being read and keeps it in view', async ({ page }) => {
+  await openLongRead(page);
+
+  const directory = page.getByRole('navigation', { name: 'Branch directory' });
+  const documentScroller = page.getByRole('main', { name: 'Branch overview' });
+  const item = (index: number) => directory.getByRole('treeitem', { name: longSectionTitle(index) });
+
+  await expect(directory.getByRole('treeitem', { name: 'Long read' })).toHaveAttribute('aria-current', 'location');
+  expect(await outlineItemVisible(item(24))).toBe(false);
+
+  // Bring section 24's heading just below the top edge, as a reader would.
+  await documentScroller.evaluate((scroller, id) => {
+    const heading = document.getElementById(`branch-${id}`)!;
+    scroller.scrollTop += heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 40;
+  }, longSectionId(24));
+
+  await expect(item(24)).toHaveAttribute('aria-current', 'location');
+  await expect.poll(() => outlineItemVisible(item(24))).toBe(true);
+
+  // Short trailing sections cannot reach the reading line; the end belongs to the last one.
+  await documentScroller.evaluate((scroller) => { scroller.scrollTop = scroller.scrollHeight; });
+  await expect(item(LONG_SECTION_COUNT)).toHaveAttribute('aria-current', 'location');
+  await expect.poll(() => outlineItemVisible(item(LONG_SECTION_COUNT))).toBe(true);
+});
+
+test('Branches outline click holds its section until the reader scrolls again', async ({ page }) => {
+  await openLongRead(page);
+
+  const directory = page.getByRole('navigation', { name: 'Branch directory' });
+  const item = (index: number) => directory.getByRole('treeitem', { name: longSectionTitle(index) });
+
+  await item(3).click();
+  await expect(item(3)).toHaveAttribute('aria-current', 'location');
+
+  const article = await page.locator('.branches-document').boundingBox();
+  await page.mouse.move(article!.x + article!.width / 2, article!.y + 200);
+  await page.mouse.wheel(0, 1600);
+
+  await expect(item(3)).not.toHaveAttribute('aria-current', 'location');
+  await expect(directory.locator('[aria-current="location"]')).toHaveCount(1);
+  const current = await directory.locator('[aria-current="location"]').innerText();
+  expect(Number(/Section (\d+)/.exec(current)?.[1])).toBeGreaterThan(3);
+});
