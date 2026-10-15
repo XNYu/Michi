@@ -5,6 +5,8 @@ App against the unmodified official Kiro Crew Gateway. No Crew source patch,
 companion Gateway, owner token, or `/app-runtime` API is required.
 Validated against installed **0.8.0-insider.14** on 2026-10-07.
 
+中文接入步骤见 [Michi × KiroCrew 接入教程](GETTING_STARTED.zh-CN.md)。
+
 ## 简单使用
 
 1. 启动官方 Kiro Crew。在 Michi composer 的 Runtime 中选择 **Kiro Crew**。
