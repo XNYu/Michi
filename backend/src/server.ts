@@ -66,7 +66,7 @@ import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
 import { chatHub } from './agents/chatHub';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 import { createStreamTransport } from './services/streamTransport';
-import { CustomAgentsFeatureBusyError, CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
+import { CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
 
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
 // process.cwd(), but in the electron + monorepo dev loop the cwd is the
@@ -132,10 +132,9 @@ initDb();
 void initDbWorker(getDbPath()).catch((err) => {
   log.warn('boot', 'dbWorker failed to initialize; falling back to sync writes', { error: (err as Error).message });
 });
-const customAgentsFeature = new CustomAgentsFeatureGate({
-  dataDir: getMichiDataDir(),
-  defaultEnabled: process.env.MICHI_CUSTOM_AGENTS === '1',
-});
+// Custom Agents / Agent Runs: on only when MICHI_CUSTOM_AGENTS=1 is in the
+// environment at startup. Nothing in the app can change it afterwards.
+const customAgentsFeature = new CustomAgentsFeatureGate();
 const pendingAgentDeliveryTurnIds = new Set((getDb().prepare(`SELECT requested_turn_id FROM agent_run_watches
     WHERE delivery_status = 'pending' AND requested_turn_id IS NOT NULL`).all() as Array<{ requested_turn_id: string }>)
   .map((row) => row.requested_turn_id));
@@ -289,8 +288,10 @@ for (const factory of getEnabledFactories()) {
         agentRunToolsForSession: (binding) => {
             if (!agentRunAssembly || !binding.workspaceId) return null;
             const ownerUserId = binding.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+            // Null while Custom Agents is off, so ordinary chats are not handed
+            // spawn_agent & co. at all.
             if (binding.owner.kind === 'agent_run') {
-                return agentRunAssembly.createToolInvoker({
+                return agentRunAssembly.toolInvokerForSession({
                     kind: 'agent_run',
                     ownerUserId,
                     workspaceId: binding.workspaceId,
@@ -299,7 +300,7 @@ for (const factory of getEnabledFactories()) {
                 });
             }
             const parentNodeId = binding.nodeId ?? binding.owner.nodeId;
-            return agentRunAssembly.createToolInvoker({
+            return agentRunAssembly.toolInvokerForSession({
                 kind: 'conversation',
                 ownerUserId,
                 workspaceId: binding.workspaceId,
@@ -639,37 +640,6 @@ app.use('/api', mcpRouter);
 
 const customAgentsControl = {
   isEnabled: () => customAgentsFeature.isEnabled(),
-  ...(!REQUIRE_AUTH ? {
-    setEnabled: async (enabled: boolean) => {
-      if (!enabled) {
-        const inFlightAdmissions = agentRunAssembly!.beginFeatureDisable();
-        const row = getDb().prepare(`SELECT COUNT(*) AS count FROM agent_runs
-          WHERE status IN ('queued','preparing','running','waiting','recovering')`).get() as { count: number };
-        const activeRunCount = Math.max(row.count, inFlightAdmissions);
-        if (activeRunCount > 0) {
-          agentRunAssembly!.cancelFeatureDisable();
-          throw new CustomAgentsFeatureBusyError(activeRunCount);
-        }
-        try {
-          customAgentsFeature.setEnabled(false);
-        } catch (error) {
-          agentRunAssembly!.cancelFeatureDisable();
-          throw error;
-        }
-        return;
-      }
-
-      customAgentsFeature.setEnabled(true);
-      try {
-        await agentRunAssembly!.start();
-        agentRunAssembly!.completeFeatureEnable();
-      } catch (error) {
-        customAgentsFeature.setEnabled(false);
-        agentRunAssembly!.beginFeatureDisable();
-        throw error;
-      }
-    },
-  } : {}),
 };
 app.use('/api', setupAgentRoutes({ catalogCache: runtimeModelCache, customAgents: customAgentsControl }));
 app.use('/api', setupCustomAgentRoutes({

@@ -385,7 +385,6 @@ export class AgentRunAssembly {
   private stopping = false;
   private accepting = true;
   private admissionOpen: boolean;
-  private inFlightAdmissions = 0;
   private watchEvaluationRunning = false;
   private watchEvaluationDirty = false;
 
@@ -469,17 +468,18 @@ export class AgentRunAssembly {
     return this.isFeatureEnabled();
   }
 
-  beginFeatureDisable(): number {
-    this.admissionOpen = false;
-    return this.inFlightAdmissions;
-  }
-
-  cancelFeatureDisable(): void {
-    if (this.enabled && !this.stopping) this.admissionOpen = true;
-  }
-
+  /** Opens spawn admission once startup recovery has finished. The feature
+   *  itself is fixed for the life of the process (environment-only gate), so
+   *  there is no matching "disable". */
   completeFeatureEnable(): void {
     if (this.enabled && !this.stopping) this.admissionOpen = true;
+  }
+
+  /** Agent Run tools for a runtime session, or null while the feature is off —
+   *  so the tools are not even advertised to the model, rather than listed and
+   *  then refused when called. */
+  toolInvokerForSession(caller: AgentRunCaller): AgentRunToolInvoker | null {
+    return this.enabled ? this.createToolInvoker(caller) : null;
   }
 
   createToolInvoker(caller: AgentRunCaller): AgentRunToolInvoker {
@@ -683,12 +683,7 @@ export class AgentRunAssembly {
     if (!this.enabled || !this.accepting || !this.admissionOpen) {
       throw new Error('Agent Run service is unavailable');
     }
-    this.inFlightAdmissions += 1;
-    try {
-      return await operation();
-    } finally {
-      this.inFlightAdmissions -= 1;
-    }
+    return operation();
   }
 
   private guardedRouteService(api: AgentRunApiService): AgentRunRouteService {

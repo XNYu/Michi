@@ -101,6 +101,21 @@ describe('AgentRunAssembly', () => {
     await assert.rejects(() => existingInvoker.invoke('list_agents', {}), /disabled/);
   });
 
+  test('hands a runtime session no Agent Run tools at all while the feature is off', () => {
+    const deps = { dataDir: tmpDir, clock: new FakeClock(),
+      coordinator: fakeCoordinator(), watches: fakeWatches(),
+      recoverySource: { list: () => [], reclaimExpired: () => false },
+      retention: { cleanupExpired: async () => [] } as any };
+    const caller = { kind: 'conversation' as const, ownerUserId: 'owner-1', workspaceId: 'workspace-1', parentNodeId: 'node-1' };
+
+    // Off: null, so the runtime never lists spawn_agent & co. to the model.
+    assert.equal(createAgentRunAssembly({ ...deps, isEnabled: () => false }).toolInvokerForSession(caller), null);
+    assert.equal(createAgentRunAssembly({ ...deps, enabled: false }).toolInvokerForSession(caller), null);
+
+    const invoker = createAgentRunAssembly({ ...deps, isEnabled: () => true }).toolInvokerForSession(caller);
+    assert.equal(typeof invoker?.invoke, 'function');
+  });
+
   test('failed startup rolls back and a later enable installs maintenance timers', async () => {
     let recoveryAttempts = 0;
     const clock = new FakeClock();
@@ -142,32 +157,6 @@ describe('AgentRunAssembly', () => {
     await Promise.all([first, second]);
 
     assert.equal(recoveryCalls, 1);
-  });
-
-  test('disable closes admission before an in-flight spawn can commit', async () => {
-    let releaseSpawn!: () => void;
-    let markSpawnEntered!: () => void;
-    const spawnBlocked = new Promise<void>((resolve) => { releaseSpawn = resolve; });
-    const spawnEntered = new Promise<void>((resolve) => { markSpawnEntered = resolve; });
-    const coordinator = {
-      ...fakeCoordinator(),
-      spawn: async () => {
-        markSpawnEntered();
-        await spawnBlocked;
-        return run('spawned', AgentRunStatus.Queued);
-      },
-    } as any;
-    const assembly = createAgentRunAssembly({ enabled: true, dataDir: tmpDir, clock: new FakeClock(),
-      coordinator, watches: fakeWatches(),
-      recoverySource: { list: () => [], reclaimExpired: () => false },
-      retention: { cleanupExpired: async () => [] } as any });
-
-    const admitted = assembly.routeService.spawn('owner-1', {} as any, 'admitted');
-    await spawnEntered;
-    assert.equal(assembly.beginFeatureDisable(), 1);
-    await assert.rejects(() => assembly.routeService.spawn('owner-1', {} as any, 'blocked'), /unavailable/);
-    releaseSpawn();
-    await admitted;
   });
 
   test('startup audits queued, expired-running, waiting, and fired-pending state without awaiting long Run completion', async () => {

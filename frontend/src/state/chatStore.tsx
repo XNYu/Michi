@@ -8,7 +8,6 @@ import { resolveAtMentions, resolveAtNodeMentions, buildNodeTranscriptBlock, str
 import { runChatStream, type TurnEndReason } from './chatStreamRunner';
 import { createBackgroundTurnBinding } from './observeChatStream';
 import { createBackgroundTurnTransport } from './backgroundTurnTransport';
-import { subscribeAgentStatusChanged } from './agentStatusSync';
 import { compactChat } from '../services/api/stream';
 import { visibleMessageText } from './assistantBlocks';
 import * as perf from '../services/perf';
@@ -464,11 +463,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     void watchReady();
     const handler = () => { void load(); void loadModes(); };
     window.addEventListener('michi:reload-agent-status', handler);
-    const unsubscribeAgentStatus = subscribeAgentStatusChanged(activeBackendConnectionId, handler);
     return () => {
       cancelled = true;
       window.removeEventListener('michi:reload-agent-status', handler);
-      unsubscribeAgentStatus();
     };
   }, [activeBackendConnectionId, activeProjectId]);
   const refreshAgentStatus = useCallback(() => {

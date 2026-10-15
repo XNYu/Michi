@@ -51,8 +51,14 @@ test('local boot, fonts, drawers and optional pages do not produce console error
   await expect(artifacts).toHaveCount(0);
   await expect(trigger).toBeFocused();
 
-  await page.locator('.terminal-sidebar').getByText('Agents', { exact: true }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Custom Agents are not enabled' })).toBeVisible();
+  // Custom Agents is off unless the backend opts in (MICHI_CUSTOM_AGENTS=1):
+  // no sidebar entry, no Settings category, and none of its routes are polled.
+  await expect(page.locator('.terminal-sidebar').getByText('Agents', { exact: true })).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+,');
+  await expect(settings).toBeVisible();
+  await expect(settings.getByText(/custom agents/i)).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(settings).toHaveCount(0);
   expect(requests.filter(path => /^\/api\/(?:auth\/|agents(?:\/|$)|agent-runs(?:\/|$))/.test(path))).toEqual([]);
 
   await page.setViewportSize({ width: 390, height: 844 });

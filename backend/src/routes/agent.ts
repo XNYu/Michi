@@ -42,8 +42,6 @@ import type { AgentStatus, AgentRuntimeOption, AgentReasoning, RuntimeAvailabili
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
 import type { CustomAgentsFeatureControl } from '../services/customAgentsFeatureGate';
-import { CustomAgentsFeatureBusyError } from '../services/customAgentsFeatureGate';
-import { requireLocalControlRequest } from './middleware/localControl';
 
 const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -58,26 +56,9 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   const isCustomAgentsEnabled = () => opts?.customAgents?.isEnabled() ?? opts?.customAgentsEnabled ?? false;
   const router = Router();
 
-  router.put('/agent/custom-agents', requireLocalControlRequest, async (req: Request, res: Response) => {
-    if (typeof req.body?.enabled !== 'boolean') {
-      res.status(400).json({ ok: false, error: 'enabled must be a boolean' });
-      return;
-    }
-    if (!opts?.customAgents?.setEnabled) {
-      res.status(405).json({ ok: false, error: 'custom_agents_not_configurable' });
-      return;
-    }
-    try {
-      await opts.customAgents.setEnabled(req.body.enabled);
-      res.json({ ok: true, customAgentsEnabled: isCustomAgentsEnabled() });
-    } catch (error) {
-      res.status(error instanceof CustomAgentsFeatureBusyError ? 409 : 500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : 'failed to update Custom Agents',
-      });
-    }
-  });
-
+  // Custom Agents has no toggle route on purpose: the feature is switched on
+  // only by the backend's environment (see customAgentsFeatureGate). Status
+  // just reports it so clients know which optional routes exist.
   router.get("/agent/status", async (_req: Request, res: Response) => {
     const userId = (_req as any).user?.id as string | undefined;
     const cfg = getAgentConfig(userId);
