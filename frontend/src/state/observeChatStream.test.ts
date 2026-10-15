@@ -143,7 +143,7 @@ describe('cancellation settlement from the existing background binding', () => {
 
   function observe(turnId = 'self-turn-1', chatId = 'chat-1') {
     const status = vi.fn();
-    stops.push(cancelChatAndObserve(chatId, 'owner', turnId, status));
+    stops.push(cancelChatAndObserve(chatId, turnId, status));
     return status;
   }
 

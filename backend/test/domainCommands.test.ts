@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { selectWindowComposerDraft } from 'michi-shared';
 
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { applyWorkspaceCommands } from '../src/services/domainCommands';
@@ -55,6 +56,43 @@ describe('workspace domain commands', () => {
       commands: [{ type: 'workspace.upsert', payload: { id: 'ws-1', name: 'Two', created_at: 1, updated_at: 2 } }],
     }), /different payload/i);
     assert.equal(getWorkspace('ws-1')?.name, 'One');
+  });
+
+  test('saves and clears per-window drafts without overwriting another window', () => {
+    const first = JSON.stringify({ value: 'window one', mentions: [] });
+    const second = JSON.stringify({ value: 'window two', mentions: [] });
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'draft-seed',
+      commands: [
+        { type: 'workspace.upsert', payload: { id: 'ws-1', name: 'Drafts', created_at: 1, updated_at: 1 } },
+        { type: 'node.upsert', payload: { id: 'draft-node', workspace_id: 'ws-1', kind: 'chat', created_at: 1,
+          composer_draft: first, composer_draft_window_id: 'window-a' } },
+      ],
+    });
+    const patchDraft = (operationId: string, windowId: string, draft: string | null) => applyWorkspaceCommands('ws-1', {
+      operationId,
+      commands: [{ type: 'node.patch', payload: { id: 'draft-node', composer_draft: draft, composer_draft_window_id: windowId } }],
+    });
+    patchDraft('draft-second', 'window-b', second);
+    assert.equal(selectWindowComposerDraft(getNode('draft-node')?.composer_draft, 'window-a'), first);
+    assert.equal(selectWindowComposerDraft(getNode('draft-node')?.composer_draft, 'window-b'), second);
+    patchDraft('clear-first', 'window-a', null);
+    assert.equal(selectWindowComposerDraft(getNode('draft-node')?.composer_draft, 'window-a'), null);
+    assert.equal(selectWindowComposerDraft(getNode('draft-node')?.composer_draft, 'window-b'), second);
+
+    // Legacy/outbox writes must preserve scoped drafts as well.
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'draft-outbox',
+      commands: [{ type: 'node.patch', payload: { id: 'draft-node', composer_draft: JSON.stringify({ __michiPendingSpawnPrompt: 'child prompt' }) } }],
+    });
+    assert.equal(selectWindowComposerDraft(getNode('draft-node')?.composer_draft, 'window-b'), second);
+    assert.equal(JSON.parse(getNode('draft-node')!.composer_draft!).__michiPendingSpawnPrompt, 'child prompt');
+    assert.throws(() => patchDraft('invalid-window', '', first), /composer_draft_window_id/);
+    assert.equal(selectWindowComposerDraft(getNode('draft-node')?.composer_draft, 'window-b'), second);
+    saveWorkspace({ id: 'ws-2', name: 'Other', created_at: 1, updated_at: 1 });
+    assert.throws(() => applyWorkspaceCommands('ws-2', {
+      operationId: 'foreign-draft', commands: [{ type: 'node.patch', payload: { id: 'draft-node', composer_draft: first, composer_draft_window_id: 'window-b' } }],
+    }), /node not found/i);
   });
 
   test('rejects cross-workspace edges and rolls back the whole batch', () => {

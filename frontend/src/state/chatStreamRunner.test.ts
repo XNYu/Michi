@@ -31,6 +31,31 @@ function makeNode(): ChatNodeState {
 }
 
 describe('chatStreamRunner — chunk/tool-call ordering', () => {
+  it('restores literal input and mentions when another window wins a send race', () => {
+    let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
+    const rejectedDraft = { value: 'ask Guide', mentions: [{ kind: 'context' as const, refId: 'guide', label: 'Guide', start: 4, end: 9 }], quotedText: 'quoted passage' };
+    runChatStream({ prompt: 'ask @Guide', nodeId: 'n1', assistantId: 'a1', rejectedDraft,
+      dispatch: (action) => { nodes = reduceNodes(nodes, action); },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    const handlers = mockStream.mock.calls[0][2];
+    handlers.onError('A task is already running', undefined, undefined, 'turn_active');
+    expect(nodes.n1.composerDraft).toEqual(rejectedDraft);
+    expect(nodes.n1.error).toBe('A task is already running');
+  });
+  it('keeps newly typed text and adjusts mention positions when restoring rejected input', () => {
+    let nodes: Record<string, ChatNodeState> = { n1: { ...makeNode(), composerDraft: {
+      value: 'new Guide', mentions: [{ kind: 'context', refId: 'guide', label: 'Guide', start: 4, end: 9 }],
+    } } };
+    const onRejected = vi.fn();
+    runChatStream({ prompt: 'old text', nodeId: 'n1', assistantId: 'a1', rejectedDraft: { value: 'old text', mentions: [] }, onRejected,
+      dispatch: (action) => { nodes = reduceNodes(nodes, action); },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    mockStream.mock.calls[0][2].onError('A task is already running', undefined, undefined, 'turn_active');
+    expect(nodes.n1.composerDraft).toMatchObject({ value: 'old text\n\nnew Guide', mentions: [{ start: 14, end: 19 }] });
+    expect(onRejected).toHaveBeenCalledOnce();
+  });
   it('projects a model steering report through the foreground stream without appending it to the answer', () => {
     mockStream.mockClear();
     let nodes: Record<string, ChatNodeState> = { n1: makeNode() };

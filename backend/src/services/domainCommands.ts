@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { mergeLegacyComposerDraft, mergeWindowComposerDraft } from 'michi-shared';
 import { getDb, runInTransaction } from './db';
 import {
   deleteContext,
@@ -60,6 +61,16 @@ function optionalString(value: unknown): string | null {
 
 function optionalNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function updatedComposerDraft(raw: string | null | undefined, payload: Record<string, unknown>): string | null {
+  const draft = optionalString(payload.composer_draft);
+  if (!('composer_draft_window_id' in payload)) return mergeLegacyComposerDraft(raw, draft);
+  const windowId = payload.composer_draft_window_id;
+  if (typeof windowId !== 'string' || !windowId || windowId.length > 160) {
+    throw new Error('composer_draft_window_id must be a non-empty string <=160 chars');
+  }
+  return mergeWindowComposerDraft(raw, windowId, draft);
 }
 
 function payloadHash(workspaceId: string, commands: readonly WorkspaceCommand[]): string {
@@ -198,7 +209,7 @@ export function applyWorkspaceCommands(
               current_mode_id: optionalString(payload.current_mode_id),
               pane_width: optionalNumber(payload.pane_width),
               digest: optionalString(payload.digest),
-              composer_draft: optionalString(payload.composer_draft),
+              composer_draft: updatedComposerDraft(null, payload),
               trim_snapshot: optionalString(payload.trim_snapshot),
               pinned_at: optionalNumber(payload.pinned_at),
               created_at: optionalNumber(payload.created_at) ?? Date.now(),
@@ -240,7 +251,7 @@ export function applyWorkspaceCommands(
           for (const [key, column] of Object.entries(columns)) {
             if (!(key in payload)) continue;
             sets.push(`${column} = ?`);
-            const value = payload[key];
+            const value = key === 'composer_draft' ? updatedComposerDraft(node.composer_draft, payload) : payload[key];
             params.push(typeof value === 'boolean' ? (value ? 1 : 0) : value ?? null);
           }
           if (sets.length > 0) {

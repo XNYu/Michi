@@ -322,7 +322,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     editAndResend,
     cancelStream,
     setChatPermissionMode,
-    isObserver,
     createChildChat,
     createBlankChild,
     fanoutBranches,
@@ -1572,7 +1571,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }
   }, [streaming]);
 
-  const observing = isObserver(nodeId);
   const prevFocusedRef = useRef(isFocused);
   const wasStreamingRef = useRef(streaming);
   const lastQuoteRef = useRef(quotedText);
@@ -1785,7 +1783,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   };
 
   const onSubmit = async (forceBranch = false) => {
-    if (observing) return;
     const submitDraft = latestDraftRef.current;
     const submitQuotedText = latestQuotedTextRef.current;
     // Expand mention chips back to wire-format tokens (`@node:<id>` for nodes,
@@ -1931,6 +1928,14 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // The optimistic user message renders only the bare prose plus structured
     // quotedText / attachments / comments, so the bubble can show them as modules.
     const meta = {
+      rejectedDraft: { ...submitDraft, quotedText: submitQuotedText ?? undefined },
+      onRejected: () => {
+        setPendingAttachments((current) => [
+          ...pendingAttachments,
+          ...current.filter((attachment) => !pendingAttachments.some((sent) => sent.absPath === attachment.absPath)),
+        ]);
+        for (const comment of pending) addPendingComment(nodeId, comment.quotedText, comment.body, comment.source);
+      },
       quotedText: submitQuotedText ?? undefined,
       attachments: attachmentsForSend.length > 0 ? attachmentsForSend.map(a => ({ ...a })) : undefined,
       comments: pending.length > 0 ? pending.map(c => ({ ...c })) : undefined,
@@ -1967,14 +1972,13 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const sendDisabledBase = !draftHasText
     && pendingAttachments.length === 0
     && (n.pendingComments?.length ?? 0) === 0;
-  const sendDisabled = observing || sendDisabledBase;
+  const sendDisabled = sendDisabledBase;
 
   const isError = n.status === 'error';
   // composerEmpty mirrors the same predicate used in the onSubmit early-return above.
   const composerEmpty = sendDisabledBase;
   const sendMode: PaneComposerSendMode =
-    observing ? 'send'
-    : composerEmpty && streaming ? 'stop'
+    composerEmpty && streaming ? 'stop'
     : composerEmpty && isError ? 'retry'
     : 'send';
 
@@ -2161,7 +2165,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           onEditUserMessage={handleEditUserMessage}
           onContinueFollowUp={handleContinueFollowUp}
           onBranchFollowUp={handleBranchFollowUp}
-          followUpsDisabled={observing}
+          followUpsDisabled={false}
           anchorsByMessage={anchorsByMessage}
           onOpenBranch={handleOpenBranch}
           onMentionClick={handleMentionClick}
@@ -2268,7 +2272,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               value={draft.value}
               mentions={draft.mentions}
               onChange={setDraft}
-              disabled={observing}
               className="hide-sb"
               artifacts={mentionContexts}
               sameTreeNodes={sameTreeNodes}
@@ -2278,15 +2281,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
               availableModes={availableModes}
               currentModeId={n.currentModeId}
               onSwitchAgent={(modeId) => switchAgent(nodeId, modeId).catch(() => {})}
-              onSubmit={({ branch }) => observing ? undefined : void onSubmit(branch)}
+              onSubmit={({ branch }) => void onSubmit(branch)}
               onPaste={(e) => { void handlePaste(e as unknown as React.ClipboardEvent<HTMLTextAreaElement>); }}
             />
             </React.Suspense>
-            {observing && !draftHasText && (
-              <div className="composer-observing-hint" aria-hidden>
-                Viewing — another window is editing
-              </div>
-            )}
           </div>
         }
         toolbarLeft={
@@ -2307,7 +2305,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           <>
           {!permissionPreferences.global && <ComposerPermissionControl mode={n.permissionMode ?? 'ask'}
             runtimeIds={[resolvedBinding.runtime]}
-            compact={toolbarTier > 0} disabled={streaming || observing || permissionPreferences.loading}
+            compact={toolbarTier > 0} disabled={streaming || permissionPreferences.loading}
             onChange={(mode) => setChatPermissionMode(nodeId, mode)} />}
           <ComposerModelTrigger
             toolbarTier={toolbarTier}
@@ -2363,7 +2361,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           permission={n.pendingPermission}
           onRespond={(optionId) => resolvePermission(nodeId, optionId)}
           onCancel={() => denyPermission(nodeId)}
-          readOnly={observing}
         />
       )}
       {/* The ask_user card renders inline in the message flow (see

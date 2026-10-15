@@ -1,4 +1,5 @@
-import { isChatPermissionMode } from 'michi-shared';
+import { isChatPermissionMode, selectWindowComposerDraft } from 'michi-shared';
+import { WINDOW_ID } from '../config/windowIdentity';
 import { finalizeAssistantBlocks, migrateAssistantToBlocks, parseAssistantBlocks } from './assistantBlocks';
 import type {
   ChatMessage,
@@ -145,6 +146,7 @@ function parseMessageMetadata(raw: unknown): Record<string, unknown> {
 }
 
 function parseComposerDraft(raw: unknown): ComposerDraft | undefined {
+  if (typeof raw === 'string') raw = selectWindowComposerDraft(raw, WINDOW_ID);
   let value = raw;
   if (typeof value === 'string' && value.trim()) {
     try {

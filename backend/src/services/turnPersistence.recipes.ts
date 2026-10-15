@@ -106,7 +106,7 @@ export const NODE_SQL = {
 
   /** Clear composer draft (CAS: only if unchanged). */
   clearComposerDraft:
-    'UPDATE nodes SET composer_draft = NULL WHERE id = ? AND composer_draft = ?',
+    'UPDATE nodes SET composer_draft = ? WHERE id = ? AND composer_draft = ?',
 
 } as const;
 

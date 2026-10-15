@@ -176,6 +176,20 @@ describe('turn persistence repository', () => {
     assert.equal(node.composer_draft, null);
   });
 
+  test('consuming a spawn prompt preserves every window draft', () => {
+    const drafts = { 'window-a': JSON.stringify({ value: 'a', mentions: [] }), 'window-b': null };
+    getDb().prepare('UPDATE nodes SET composer_draft = ? WHERE id = ?').run(
+      JSON.stringify({ __michiPendingSpawnPrompt: 'Investigate the child', __michiWindowDrafts: drafts }), 'node-1',
+    );
+    beginTurn(createDurableTurn({
+      turnId: 'turn-scoped-spawn', assistantId: 'a-scoped-spawn', nodeId: 'node-1', workspaceId: 'ws-1',
+      displayUserText: 'Investigate the child', startedAt: 250,
+    }));
+    const node = getDb().prepare('SELECT composer_draft FROM nodes WHERE id = ?')
+      .get('node-1') as { composer_draft: string };
+    assert.deepEqual(JSON.parse(node.composer_draft), { __michiWindowDrafts: drafts });
+  });
+
   test('finalizes cancelled and errored partial turns without losing content', () => {
     let cancelled = createDurableTurn({
       turnId: 'turn-cancel', assistantId: 'a-cancel', nodeId: 'node-1', workspaceId: 'ws-1',

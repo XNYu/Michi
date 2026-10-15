@@ -21,6 +21,7 @@
 
 import {
   appendBranchOverviewEntry,
+  clearSpawnPromptFromComposerDraft,
   checkpointTurnContent,
   parseBranchOverviewEntries,
   serializeBranchOverviewEntries,
@@ -77,7 +78,7 @@ function clearPendingSpawnPromptOutbox(db: DbPrimitives, nodeId: string): void {
   } catch {
     return;
   }
-  db.run(NODE_SQL.clearComposerDraft, nodeId, raw);
+  db.run(NODE_SQL.clearComposerDraft, clearSpawnPromptFromComposerDraft(raw), nodeId, raw);
 }
 
 function saveMessageRow(

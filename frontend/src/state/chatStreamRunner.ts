@@ -32,8 +32,9 @@ interface RunChatStreamOptions {
   // the reducer's assistant blocks.
   assistantTextBufs: Ref<Record<string, string>>;
   cancelFns: Ref<Record<string, () => void>>;
-  ownerToken?: string;
   displayText?: string;
+  rejectedDraft?: import('./chatTypes').ComposerDraft;
+  onRejected?: () => void;
   enableKiroSidecarTitle?: boolean;
   userMetadata?: {
     quotedText?: string;
@@ -58,8 +59,9 @@ export function runChatStream({
   assistantId,
   dispatch,
   cancelFns,
-  ownerToken,
   displayText,
+  rejectedDraft,
+  onRejected,
   enableKiroSidecarTitle,
   userMetadata,
   extraHandlers,
@@ -355,13 +357,17 @@ export function runChatStream({
     onError: (message, _assistantId, turnId, code) => {
       if (turnId) currentTurnId = turnId;
       dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message, errorKind: code });
+      if (code === 'turn_active' && rejectedDraft) {
+        dispatch({ type: 'set-composer-draft', nodeId, draft: rejectedDraft, preserveExisting: true });
+        onRejected?.();
+      }
       cleanup();
       onTurnEnd?.('error', nodeId);
     },
     ...extraHandlers,
   };
 
-  const cancelTransport = streamMessage(nodeId, prompt, handlers, ownerToken, {
+  const cancelTransport = streamMessage(nodeId, prompt, handlers, {
     displayText,
     enableKiroSidecarTitle,
     userMetadata,

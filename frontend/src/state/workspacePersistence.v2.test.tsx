@@ -2,9 +2,10 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRef, useState } from 'react';
 import type { ChatNodeState, Project } from './chatTypes';
+import type { WorkspaceCommand } from '../services/api';
 
 const apiMocks = vi.hoisted(() => ({
-  applyWorkspaceCommands: vi.fn(async () => {}),
+  applyWorkspaceCommands: vi.fn(async (_workspaceId: string, _operationId: string, _commands: readonly WorkspaceCommand[]) => {}),
 }));
 
 vi.mock('../services/api', () => ({
@@ -42,10 +43,12 @@ function useHarness() {
   const [structureVersion, setStructureVersion] = useState(0);
   const nodeReads = useRef(0);
   const nodesRef = useRef(nodes);
+  const dirtyDraftNodeIdsRef = useRef(new Set<string>());
   nodesRef.current = nodes;
   useWorkspacePersistence({
     projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
+    dirtyDraftNodeIdsRef, windowId: 'window-a',
   });
   const trackedNodes = (nextNode: ChatNodeState): Record<string, ChatNodeState> => new Proxy({
     n1: nextNode,
@@ -56,6 +59,10 @@ function useHarness() {
     },
   });
   return {
+    editDraft(value: string) {
+      setNodes({ n1: { ...node, composerDraft: value ? { value, mentions: [] } : undefined } });
+      dirtyDraftNodeIdsRef.current.add('n1');
+    },
     streamChunk() {
       setNodes(trackedNodes({
         ...node,
@@ -102,6 +109,22 @@ describe('v2 authoritative workspace persistence', () => {
     expect(localStorage.getItem(stateProjectKey('michi:v1:state', 'ws-1'))).toBeNull();
 
     act(() => window.dispatchEvent(new Event('beforeunload')));
+  });
+
+  it('saves and clears draft edits even when the structural version stays fixed', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.editDraft('unsent draft'));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands).toHaveBeenCalledTimes(1);
+    const commands = apiMocks.applyWorkspaceCommands.mock.calls[0][2];
+    expect(commands).toEqual([{ type: 'node.patch', payload: {
+      id: 'n1', composer_draft_window_id: 'window-a', composer_draft: JSON.stringify({ value: 'unsent draft', mentions: [] }),
+    } }]);
+    act(() => result.current.editDraft(''));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands).toHaveBeenCalledTimes(2);
+    expect(apiMocks.applyWorkspaceCommands.mock.calls[1][2][0].payload.composer_draft).toBeNull();
   });
 
   it('does not scan the node graph for high-frequency stream-only renders', async () => {

@@ -481,6 +481,7 @@ export interface ExplicitCommandBatch {
 function nodeCommandPatch(
   row: NonNullable<ReturnType<typeof serializeNodeRow>>,
   node: ChatNodeState,
+  windowId?: string,
 ): Record<string, unknown> {
   return {
     id: row.id,
@@ -496,6 +497,7 @@ function nodeCommandPatch(
     minimized: row.minimized,
     digest: row.digest,
     composer_draft: row.composer_draft,
+    ...(windowId && !node.pendingSpawnPrompt ? { composer_draft_window_id: windowId } : {}),
     deleted_at: row.deleted_at,
     deletion_group_id: row.deletion_group_id,
     trim_snapshot: row.trim_snapshot,
@@ -509,6 +511,7 @@ export function buildExplicitWorkspaceCommands(
   nodes: Record<string, ChatNodeState>,
   delta: WorkspaceDirtyDelta,
   knownNodeProjections: ReadonlyMap<string, string>,
+  windowId?: string,
 ): ExplicitCommandBatch {
   const commands: WorkspaceCommand[] = [];
   const nodeProjectionUpdates = new Map<string, string>();
@@ -523,12 +526,23 @@ export function buildExplicitWorkspaceCommands(
   for (const nodeId of delta.nodeIds) {
     const row = serializeNodeRow(project, nodes, nodeId);
     if (!row) continue;
-    const patch = nodeCommandPatch(row, nodes[nodeId]);
+    const patch = nodeCommandPatch(row, nodes[nodeId], windowId);
     const projection = JSON.stringify(patch);
     if (knownNodeProjections.get(nodeId) === projection) continue;
-    commands.push({ type: 'node.upsert', payload: row });
+    commands.push({ type: 'node.upsert', payload: { ...row, ...(windowId && !nodes[nodeId].pendingSpawnPrompt ? { composer_draft_window_id: windowId } : {}) } });
     commands.push({ type: 'node.patch', payload: patch });
     nodeProjectionUpdates.set(nodeId, projection);
+  }
+  // Draft-only writes must not replay stale pane/graph fields from this window.
+  for (const nodeId of delta.draftNodeIds) {
+    if (delta.nodeIds.has(nodeId)) continue;
+    const node = nodes[nodeId];
+    if (!node || node.pendingSpawnPrompt || node.deletedAt) continue;
+    commands.push({ type: 'node.patch', payload: {
+      id: nodeId,
+      composer_draft: node.composerDraft ? JSON.stringify(node.composerDraft) : null,
+      ...(windowId ? { composer_draft_window_id: windowId } : {}),
+    } });
   }
   const edgeById = delta.edgeUpsertIds.size > 0
     ? new Map(project.edges.map((edge) => [serializedEdgeId(edge), edge] as const))
@@ -562,7 +576,7 @@ export function mergeWorkspaceDirtyDelta(
 ): WorkspaceDirtyDelta {
   const merged = emptyWorkspaceDirtyDelta();
   for (const key of [
-    'nodeIds', 'edgeUpsertIds', 'edgeDeleteIds',
+    'nodeIds', 'draftNodeIds', 'edgeUpsertIds', 'edgeDeleteIds',
     'treeUpsertIds', 'treeDeleteIds', 'contextUpsertIds', 'contextDeleteIds',
   ] as const) {
     for (const value of base[key]) merged[key].add(value);
@@ -585,6 +599,8 @@ export function mergeWorkspaceDirtyDelta(
 export interface WorkspaceDirtyDelta {
   /** Nodes whose row changed → upsert these node rows. */
   nodeIds: Set<string>;
+  /** Draft-only edits; save no shared pane or graph fields. */
+  draftNodeIds: Set<string>;
   /** Edges added/changed (by serialized edge id). */
   edgeUpsertIds: Set<string>;
   /** Edges removed (by serialized edge id). */
@@ -601,6 +617,7 @@ export interface WorkspaceDirtyDelta {
 export function emptyWorkspaceDirtyDelta(): WorkspaceDirtyDelta {
   return {
     nodeIds: new Set<string>(),
+    draftNodeIds: new Set<string>(),
     edgeUpsertIds: new Set<string>(),
     edgeDeleteIds: new Set<string>(),
     treeUpsertIds: new Set<string>(),
@@ -642,6 +659,7 @@ export function accumulateWorkspaceDirtyDelta(
   // Clone the existing sets so we return a new object (pure function).
   const d: WorkspaceDirtyDelta = {
     nodeIds: new Set(existing.nodeIds),
+    draftNodeIds: new Set(existing.draftNodeIds),
     edgeUpsertIds: new Set(existing.edgeUpsertIds),
     edgeDeleteIds: new Set(existing.edgeDeleteIds),
     treeUpsertIds: new Set(existing.treeUpsertIds),
@@ -908,6 +926,8 @@ interface UseWorkspacePersistenceArgs {
    * Optional for backwards compat with tests that mount the hook directly.
    */
   syncPausedRef?: MutableRefObject<boolean>;
+  /** Draft edits bypass the structural channel; dispatch records changed node IDs here. */
+  dirtyDraftNodeIdsRef?: MutableRefObject<Set<string>>;
 }
 
 export function useWorkspacePersistence({
@@ -924,6 +944,7 @@ export function useWorkspacePersistence({
   userId,
   windowId,
   syncPausedRef,
+  dirtyDraftNodeIdsRef,
 }: UseWorkspacePersistenceArgs) {
   // Compute the localStorage key used only for one-time migration and cleanup.
   const storageKey = userId ? buildStateKey(userId) : LEGACY_STATE_KEY;
@@ -997,7 +1018,7 @@ export function useWorkspacePersistence({
           if (!row) continue;
           nodeCommandProjectionRef.current.set(
             nodeId,
-            JSON.stringify(nodeCommandPatch(row, nodes[nodeId])),
+            JSON.stringify(nodeCommandPatch(row, nodes[nodeId], windowId)),
           );
         }
       }
@@ -1066,12 +1087,26 @@ export function useWorkspacePersistence({
     prevNodesRef.current = nodes;
   }, [projects, structureVersion]); // eslint-disable-line react-hooks/exhaustive-deps -- nodes are read at the structural boundary; hydrated intentionally excluded to avoid marking dirty on hydration
 
-  // Periodically turn structural state changes into explicit v2 commands.
+  const collectDirtyDrafts = () => {
+    for (const nodeId of dirtyDraftNodeIdsRef?.current ?? []) {
+      const node = nodesRef.current[nodeId];
+      if (!node || !projectsRef.current.some((project) => project.id === node.projectId && project.chatIds.includes(nodeId))) continue;
+      const delta = dirtyDeltaByProjectRef.current.get(node.projectId) ?? emptyWorkspaceDirtyDelta();
+      delta.draftNodeIds.add(nodeId);
+      dirtyDeltaByProjectRef.current.set(node.projectId, delta);
+      dirtyProjectIdsRef.current.add(node.projectId);
+      dirtyRef.current = true;
+    }
+    dirtyDraftNodeIdsRef?.current.clear();
+  };
+
+  // Periodically turn structural state and explicit draft edits into v2 commands.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const intervalId = window.setInterval(() => {
       if (
         (!dirtyRef.current
+          && !dirtyDraftNodeIdsRef?.current.size
           && pendingCommandDeltaByProjectRef.current.size === 0)
         || !hydratedRef.current
       ) return;
@@ -1082,6 +1117,8 @@ export function useWorkspacePersistence({
 
       const flush = () => {
         idleScheduledRef.current = false;
+        if (!hydratedRef.current || syncPausedRef?.current) return;
+        collectDirtyDrafts();
         const deltaSnapshot = new Map(dirtyDeltaByProjectRef.current);
 
         for (const [projectId, delta] of deltaSnapshot) {
@@ -1109,6 +1146,7 @@ export function useWorkspacePersistence({
               nodesRef.current,
               pending,
               nodeCommandProjectionRef.current,
+              windowId,
             );
             if (batch.commands.length === 0) {
               if (!queue.hasPending(projectId)) pendingCommandDeltaByProjectRef.current.delete(projectId);
@@ -1139,7 +1177,9 @@ export function useWorkspacePersistence({
   // Flush unsent structural commands with sendBeacon during unload.
   useEffect(() => {
     const handleBeforeUnload = () => {
+      if (!hydratedRef.current || syncPausedRef?.current) return;
       if (typeof navigator.sendBeacon !== 'function') return;
+      collectDirtyDrafts();
       const deltas = new Map(pendingCommandDeltaByProjectRef.current);
       for (const [projectId, delta] of dirtyDeltaByProjectRef.current) {
         deltas.set(
@@ -1155,6 +1195,7 @@ export function useWorkspacePersistence({
           nodesRef.current,
           delta,
           nodeCommandProjectionRef.current,
+          windowId,
         );
         if (batch.commands.length === 0) continue;
         const payload = JSON.stringify({

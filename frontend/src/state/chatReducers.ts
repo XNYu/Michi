@@ -1505,7 +1505,17 @@ export function reduceNodes(
     case 'set-composer-draft': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
-      const draft = normalizeComposerDraft(action.draft);
+      let draft = normalizeComposerDraft(action.draft);
+      if (action.preserveExisting && draft && n.composerDraft) {
+        const current = n.composerDraft;
+        const separator = draft.value && current.value ? '\n\n' : '';
+        const offset = draft.value.length + separator.length;
+        draft = {
+          value: draft.value + separator + current.value,
+          mentions: [...draft.mentions, ...current.mentions.map((mention) => ({ ...mention, start: mention.start + offset, end: mention.end + offset }))],
+          quotedText: [draft.quotedText, current.quotedText].filter(Boolean).join('\n\n') || undefined,
+        };
+      }
       if (composerDraftEqual(n.composerDraft, draft)) return nodes;
       const updated = { ...n };
       if (draft) updated.composerDraft = draft;

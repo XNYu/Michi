@@ -3114,21 +3114,6 @@ html[data-vibrancy="on"],
   background: color-mix(in srgb, var(--term-mauve) 18%, transparent);
   box-shadow: 0 0 3px color-mix(in srgb, var(--term-mauve) 30%, transparent);
 }
-/* Multi-window observer hint — shown over the (disabled, empty) composer while
-   another window owns editing. Replaces the old observing placeholder; matches
-   the message-body metrics so it sits where typed text would start. */
-.composer-observing-hint {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  color: var(--term-line-s);
-  font-family: var(--message-latin-font), var(--message-cjk-font);
-  font-size: var(--message-body-size);
-  line-height: var(--message-body-leading);
-  white-space: nowrap;
-}
-
 /* ── Global ask-user alert bar ────────────────────────────────────────────────
    Shell-level reminder row (AskUserAlertBar) shown under the topbar on every
    page while any node has an unanswered Ask User request. The inline ask card

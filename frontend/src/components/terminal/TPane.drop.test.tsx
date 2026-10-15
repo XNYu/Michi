@@ -31,7 +31,6 @@ const setComposerDraftFn = vi.fn();
 const sendMessageFn = vi.fn();
 const queueMessageFn = vi.fn();
 const cancelStreamFn = vi.fn();
-let mockObserver = false;
 let mockEditorMentions: MentionRecord[] = [];
 
 vi.mock('../../state/chatStore', async () => {
@@ -44,7 +43,6 @@ vi.mock('../../state/chatStore', async () => {
     sendMessage: sendMessageFn,
     retryLastTurn: () => {},
     cancelStream: cancelStreamFn,
-    isObserver: () => mockObserver,
     createChildChat: () => Promise.resolve(),
     fanoutBranches: () => Promise.resolve(),
     setFocusedNodeId: () => {},
@@ -151,7 +149,6 @@ beforeEach(() => {
   sendMessageFn.mockReset();
   queueMessageFn.mockReset();
   cancelStreamFn.mockReset();
-  mockObserver = false;
   mockEditorMentions = [];
   mockNode.status = 'idle';
   delete mockNode.composerDraft;
@@ -345,8 +342,7 @@ describe('TPane composer draft freshness', () => {
     );
   });
 
-  it('keeps observer panes read-only', async () => {
-    mockObserver = true;
+  it('allows the same conversation to remain editable without a window owner', async () => {
     mockNode.composerDraft = { value: 'seed', mentions: [] };
     render(<TPane nodeId="n1" />);
 
@@ -354,6 +350,6 @@ describe('TPane composer draft freshness', () => {
       fireEvent.click(screen.getByTestId('editor-submit'));
     });
 
-    expect(sendMessageFn).not.toHaveBeenCalled();
+    expect(sendMessageFn).toHaveBeenCalledWith('n1', 'seed', expect.any(Object));
   });
 });

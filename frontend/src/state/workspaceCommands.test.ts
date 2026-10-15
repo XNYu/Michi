@@ -19,6 +19,17 @@ function fixture() {
 }
 
 describe('explicit workspace command projection', () => {
+  it('scopes composer draft writes to the current window', () => {
+    const { project, nodes } = fixture();
+    nodes.n1.composerDraft = { value: 'unsent draft', mentions: [] };
+    const delta = emptyWorkspaceDirtyDelta();
+    delta.nodeIds.add('n1');
+    const batch = buildExplicitWorkspaceCommands(project, nodes, delta, new Map(), 'window-a');
+    for (const command of batch.commands) {
+      expect(command.payload.composer_draft_window_id).toBe('window-a');
+      expect(JSON.parse(String(command.payload.composer_draft)).value).toBe('unsent draft');
+    }
+  });
   it('does not emit messages and suppresses repeated stream-only node changes', () => {
     const { project, nodes } = fixture();
     const delta = emptyWorkspaceDirtyDelta();

@@ -12,7 +12,6 @@ export type { PermissionRequest } from '../state/chatTypes';
 export * from './api/uploads';
 export * from './api/sessions';
 export * from './api/stream';
-export * from './api/panes';
 export * from './api/permissions';
 export * from './api/persistence';
 export * from './api/prefs';

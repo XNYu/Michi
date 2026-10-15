@@ -18,7 +18,6 @@ import { startupMark } from "../services/startupTrace";
 import { log } from "../services/logger";
 import * as sessionRegistry from "../agents/sessionRegistry";
 import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/chatHub";
-import { paneOwnership } from "../agents/paneOwnership";
 import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
 import { isChatPermissionMode } from 'michi-shared';
@@ -1507,7 +1506,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             ? req.body.userMetadata
             : undefined;
         const legacyNodeId: string | undefined = req.body?.nodeId;
-        const ownerToken: string | undefined = req.body?.ownerToken;
         const turnId: string | undefined = typeof req.body?.turnId === 'string' && req.body.turnId.length > 0
             ? req.body.turnId
             : undefined;
@@ -1527,22 +1525,17 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 code: "IDENTITY_MISMATCH",
             });
         }
-        if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
-            return res.status(403).json({ error: "not the pane owner" });
-        }
         if (chatHub.isActive(nodeId)) {
-            // Instead of hard-rejecting, cancel the in-flight turn and wait
-            // for it to finish so the user can immediately send the next
-            // message. The cancel timeout (CANCEL_TIMEOUT_MS) ensures this
-            // does not block indefinitely when a runtime ignores the signal.
-            try {
-                await chatHub.cancelAndWait(nodeId);
-            } catch { /* best-effort */ }
-            // If the turn is _still_ active after cancelAndWait (should be
-            // extremely rare — the force-finish timer should have cleaned up),
-            // fall back to the old 409 so the caller retries.
+            // Only an explicit Stop may wait for cancellation cleanup. A new
+            // message from another window must never interrupt the active turn.
+            if (chatHub.getSnapshot(nodeId)?.cancelRequestedAt != null) {
+                try { await chatHub.cancelAndWait(nodeId); } catch { /* best-effort */ }
+            }
             if (chatHub.isActive(nodeId)) {
-                return res.status(409).json({ error: "a turn is already active for this chat" });
+                return res.status(409).json({
+                    error: "This conversation already has a running task. Wait for it to finish or start a branch.",
+                    code: "turn_active",
+                });
             }
         }
 
@@ -1551,6 +1544,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         try {
             const currentSession = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
             if (!currentSession || currentSession.id !== nodeId) throw new Error('Session changed before turn start; retry the message');
+            // Another request may have started while this one waited for the
+            // restore lock. Report the same recoverable conflict in both paths.
+            if (chatHub.isActive(nodeId)) {
+                return res.status(409).json({
+                    error: "This conversation already has a running task. Wait for it to finish or start a branch.",
+                    code: "turn_active",
+                });
+            }
             started = await chatHub.startTurn({
                 chatId: nodeId, nodeId, text, displayText, enableKiroSidecarTitle, userMetadata, session: currentSession,
                 turnId,
@@ -1620,14 +1621,13 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const requestedIdentifier = req.params.chatId;
         const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
         const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
-        const ownerToken: string | undefined = req.body?.ownerToken;
         const turnId: string | undefined = typeof req.body?.turnId === 'string'
             ? req.body.turnId
             : undefined;
+        if (!turnId?.trim()) {
+            return res.status(400).json({ error: "turnId is required to stop a specific turn" });
+        }
         try {
-            if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
-                return res.status(403).json({ error: "not the pane owner" });
-            }
             const activeTurnMatched = chatHub.cancel(nodeId, turnId);
             // Foreground turns are cancelled through ChatHub.activeSessions.
             // Runtime self-turns are owned by ClaudeSession's idle-pump lock,
@@ -1645,15 +1645,11 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const requestedIdentifier = req.params.chatId;
         const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
         const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
-        const ownerToken: string | undefined = req.body?.ownerToken;
         const text = typeof req.body?.text === "string" ? req.body.text : "";
         if (!text.trim()) {
             return res.status(400).json({ error: "text is required", accepted: false });
         }
         try {
-            if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
-                return res.status(403).json({ error: "not the pane owner", accepted: false });
-            }
             const result = await chatHub.steer(nodeId, text);
             res.status(result.accepted ? 200 : 409).json(result);
         } catch (err) {
@@ -1663,18 +1659,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
     // Compaction had no HTTP surface at all, so `chatHub.compact()` — and with
     // it Codex's native `thread/compact/start` and Kiro's ACP compact command —
-    // was unreachable from the client. Mirrors the steer route's ownership
-    // checks; 409 means the active session's runtime cannot compact.
+    // was unreachable from the client. Uses the same account authorization as steer;
+    // 409 means the active session's runtime cannot compact.
     router.post("/chats/:chatId/compact", requireChatOwner, async (req, res) => {
         const requestedIdentifier = req.params.chatId;
         const session = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
         const nodeId = session?.id ?? resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
-        const ownerToken: string | undefined = req.body?.ownerToken;
         const instructions = typeof req.body?.instructions === "string" ? req.body.instructions : undefined;
         try {
-            if (paneOwnership.hasLiveClaim(nodeId) && (!ownerToken || !paneOwnership.isHeldBy(nodeId, ownerToken))) {
-                return res.status(403).json({ error: "not the pane owner", started: false });
-            }
             // Compaction is normally requested while idle, when chatHub holds
             // no active session — pass the registry-resolved one.
             const result = await chatHub.compact(nodeId, instructions, session ?? undefined);
@@ -1818,36 +1810,11 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         });
     });
 
-    router.post("/chats/:chatId/claim", requireChatOwner, (req, res) => {
-        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
-        const ownerToken: unknown = req.body?.ownerToken;
-        const windowId: unknown = req.body?.windowId;
-        if (typeof ownerToken !== "string" || !ownerToken) {
-            return res.status(400).json({ error: "ownerToken is required" });
-        }
-        res.json(paneOwnership.claim(nodeId, ownerToken, typeof windowId === "string" ? windowId : "window"));
-    });
-
-    router.post("/chats/:chatId/heartbeat", requireChatOwner, (req, res) => {
-        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
-        const ownerToken: unknown = req.body?.ownerToken;
-        if (typeof ownerToken !== "string" || !ownerToken) {
-            return res.status(400).json({ error: "ownerToken is required" });
-        }
-        const ok = paneOwnership.heartbeat(nodeId, ownerToken);
-        if (!ok) return res.status(409).json({ ok: false, demoted: true });
-        res.json({ ok: true });
-    });
-
-    router.post("/chats/:chatId/release", requireChatOwner, (req, res) => {
-        const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
-        const ownerToken: unknown = req.body?.ownerToken;
-        if (typeof ownerToken !== "string" || !ownerToken) {
-            return res.status(400).json({ error: "ownerToken is required" });
-        }
-        paneOwnership.release(nodeId, ownerToken);
-        res.json({ ok: true });
-    });
+    // Compatibility for older renderers: these endpoints no longer acquire
+    // exclusive editing leases. Account/workspace authorization still applies.
+    router.post("/chats/:chatId/claim", requireChatOwner, (_req, res) => res.json({ owner: true }));
+    router.post("/chats/:chatId/heartbeat", requireChatOwner, (_req, res) => res.json({ ok: true }));
+    router.post("/chats/:chatId/release", requireChatOwner, (_req, res) => res.json({ ok: true }));
 
     // Accept or deny a pending permission request from kiro-cli.
     // The frontend sends { requestId, optionId } to approve, or

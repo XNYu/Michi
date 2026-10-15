@@ -40,7 +40,6 @@ vi.mock('../../state/chatStore', async () => {
     sendMessage: () => {},
     retryLastTurn: () => {},
     cancelStream: () => {},
-    isObserver: () => false,
     createChildChat: () => Promise.resolve(),
     fanoutBranches: () => Promise.resolve(),
     setFocusedNodeId: () => {},

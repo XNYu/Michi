@@ -684,9 +684,6 @@ describe('hydrateBackendWorkspaces', () => {
 vi.mock('../services/api', () => ({
   ensureSession: vi.fn().mockResolvedValue({ chatId: 'fake', currentModeId: null, resumeStrategy: 'fresh' }),
   streamMessage: vi.fn(() => () => {}),
-  claimPane: () => Promise.resolve({ owner: true }),
-  heartbeatPane: () => Promise.resolve(true),
-  releasePane: () => Promise.resolve(),
   subscribeChat: vi.fn(() => () => {}),
   subscribeChats: vi.fn(() => () => {}),
   subscribeBackground: vi.fn(() => () => {}),

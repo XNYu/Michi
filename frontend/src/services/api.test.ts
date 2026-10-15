@@ -169,7 +169,7 @@ describe('streamMessage terminal-state safety net', () => {
     ]));
     vi.stubGlobal('fetch', fetchMock);
     const onDone = vi.fn();
-    streamMessage('n1', 'wire prompt', { onDone }, undefined, {
+    streamMessage('n1', 'wire prompt', { onDone }, {
       displayText: 'visible text',
       userMetadata: { quotedText: 'quote' },
     });
@@ -190,7 +190,7 @@ describe('streamMessage terminal-state safety net', () => {
     ]));
     vi.stubGlobal('fetch', fetchMock);
 
-    streamMessage('n1', 'hello', { onDone: vi.fn() }, undefined, {
+    streamMessage('n1', 'hello', { onDone: vi.fn() }, {
       enableKiroSidecarTitle: false,
     });
 

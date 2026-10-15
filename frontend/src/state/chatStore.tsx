@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, claimPane, heartbeatPane, releasePane, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
+import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus, type SessionMode } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
@@ -9,9 +9,7 @@ import { runChatStream, type TurnEndReason } from './chatStreamRunner';
 import { createBackgroundTurnBinding } from './observeChatStream';
 import { createBackgroundTurnTransport } from './backgroundTurnTransport';
 import { subscribeAgentStatusChanged } from './agentStatusSync';
-import { mintOwnerToken, ownerStateReducer } from './paneOwnership';
 import { compactChat } from '../services/api/stream';
-import type { OwnerEvent, OwnerStateMap } from './paneOwnership';
 import { visibleMessageText } from './assistantBlocks';
 import * as perf from '../services/perf';
 import { startupMark, startupMarkOnce } from '../services/startupTrace';
@@ -23,6 +21,8 @@ import { joinMessageParts } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
+import { WINDOW_ID } from '../config/windowIdentity';
+export { WINDOW_ID } from '../config/windowIdentity';
 import { usePanePresenceIntegration } from './usePanePresenceIntegration';
 import { agentRunPaneId, normalizeBrowserUrl, parseSourceLocation, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
 import type { AgentResourceIdentity } from './agentIdentity';
@@ -260,26 +260,6 @@ export function activeTreeRootNodeId(project: Project | null | undefined): strin
   const t = project.trees.find((x) => x.id === project.activeTreeId);
   return t ? t.rootNodeId : null;
 }
-
-function resolveWindowId(): string {
-  const injected = (window as unknown as { electron?: { michiWindowId?: string } }).electron?.michiWindowId;
-  if (typeof injected === 'string' && injected.length > 0) return injected;
-  try {
-    const key = 'michi:windowId';
-    let v = window.sessionStorage.getItem(key);
-    if (!v) {
-      v = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `w-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      window.sessionStorage.setItem(key, v);
-    }
-    return v;
-  } catch {
-    return 'default';
-  }
-}
-
-export const WINDOW_ID = typeof window !== 'undefined' ? resolveWindowId() : 'default';
 
 export function ChatProvider({ children, userId }: { children: React.ReactNode; userId?: string }) {
   const [nodes, setNodes] = useState<Record<string, ChatNodeState>>({});
@@ -613,11 +593,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   /** Tracks chatIds that have been bound to the current backend process
    *  (via ensureSession). Reset on app restart (ref starts empty). */
   const boundSessionsRef = useRef<Set<string>>(new Set());
-  const ownerTokenRef = useRef(mintOwnerToken());
-  const [ownerState, setOwnerState] = useState<OwnerStateMap>({});
-  const ownerStateRef = useRef<OwnerStateMap>({});
-  const ownerClaimsRef = useRef<Record<string, { chatId: string }>>({});
-  const claimInFlightRef = useRef<Set<string>>(new Set());
   const backgroundTransportRef = useRef<Map<string, ReturnType<typeof createBackgroundTurnTransport>>>(new Map());
   // Direct replay streams installed after a renderer reload. Kept separate
   // from normal prompt cancel fns so re-rendering cannot open duplicate SSE
@@ -638,6 +613,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const sendMessageRef = useRef<(nodeId: string, text: string, meta?: UserSendMeta) => void>(() => {});
 
   const nodesRef = useRef(nodes);
+  // Draft edits keep structural subscribers quiet, but still need durable saves.
+  const dirtyDraftNodeIdsRef = useRef(new Set<string>());
   const lastNotifiedNodesRef = useRef(nodes);
   const nodeSubscribersRef = useRef<Map<string, Set<() => void>>>(new Map());
   const storeSubscribersRef = useRef<Set<() => void>>(new Set());
@@ -813,6 +790,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     userId,
     windowId: WINDOW_ID,
     syncPausedRef,
+    dirtyDraftNodeIdsRef,
   });
 
   // Pane Presence — reports every open pane slot for the ACTIVE project (across all its trees,
@@ -918,8 +896,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     // updaters synchronously — which it does not reliably do across renders
     // and batched event handlers. This caused startStream(newId, …) to read
     // the old ref and bail out when called right after a 'create' dispatch.
-    const next = reduceNodes(nodesRef.current, a);
+    const previous = nodesRef.current;
+    const next = reduceNodes(previous, a);
     nodesRef.current = next;
+    if ('nodeId' in a && previous[a.nodeId]?.composerDraft !== next[a.nodeId]?.composerDraft) {
+      dirtyDraftNodeIdsRef.current.add(a.nodeId);
+    }
 
     if (!HIGH_FREQ_ACTIONS.has(a.type)) {
       structureVersionRef.current += 1;
@@ -960,18 +942,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // placeholder (hydration only eager-loads the initially-active tree).
   // Mounted after `dispatch` is defined so it can dispatch `messages-loaded`.
   const prefetchTreeForNode = useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch, reconnectStreamingRef: reconnectStreamingNodeRef });
-
-  const dispatchOwner = useCallback((ev: OwnerEvent) => {
-    const next = ownerStateReducer(ownerStateRef.current, ev);
-    if (next === ownerStateRef.current) return;
-    ownerStateRef.current = next;
-    setOwnerState(next);
-  }, []);
-
-  const isObserver = useCallback(
-    (nodeId: string) => ownerState[nodeId]?.role === 'observer',
-    [ownerState],
-  );
 
   const reconcileBackgroundGap = useCallback(async (gap: {
     chatId: string;
@@ -1186,7 +1156,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         if (entry?.retry) clearTimeout(entry.retry);
         cancel();
         dispatch({ type: 'done', nodeId, assistantId, aborted: true });
-        cancelChatAndObserve(node.chatId!, ownerTokenRef.current, node.lastAppliedTurnId, (status) => {
+        cancelChatAndObserve(node.chatId!, node.lastAppliedTurnId, (status) => {
           dispatch({ type: 'cancel-recovery', nodeId, assistantId, ...status });
         });
         finish();
@@ -1208,122 +1178,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       recoveredForegroundReplayRef.current.clear();
     };
   }, [dispatch, hydrated]);
-
-  const releasePaneOwnership = useCallback(
-    (nodeId: string) => {
-      const claim = ownerClaimsRef.current[nodeId];
-      if (claim) {
-        delete ownerClaimsRef.current[nodeId];
-        releasePane(claim.chatId, ownerTokenRef.current).catch(() => {});
-      }
-      claimInFlightRef.current.delete(nodeId);
-      dispatchOwner({ type: 'released', nodeId });
-    },
-    [dispatchOwner],
-  );
-
-  const claimPaneOwnership = useCallback(
-    async (nodeId: string, chatId: string) => {
-      if (claimInFlightRef.current.has(nodeId)) return;
-      claimInFlightRef.current.add(nodeId);
-      try {
-        const result = await claimPane(chatId, ownerTokenRef.current, WINDOW_ID);
-        const stillOpen = openPanesRef.current.includes(nodeId);
-        const currentChatId = nodesRef.current[nodeId]?.chatId;
-        if (!stillOpen || currentChatId !== chatId) {
-          if (result.owner) releasePane(chatId, ownerTokenRef.current).catch(() => {});
-          return;
-        }
-        dispatchOwner({ type: 'claim-result', nodeId, result });
-        if (result.owner) {
-          ownerClaimsRef.current[nodeId] = { chatId };
-        } else {
-          delete ownerClaimsRef.current[nodeId];
-        }
-      } catch {
-        dispatchOwner({ type: 'claim-result', nodeId, result: { owner: false } });
-      } finally {
-        claimInFlightRef.current.delete(nodeId);
-      }
-    },
-    [dispatchOwner],
-  );
-
-  // Ownership bindings only depend on open pane ids and structural node fields
-  // such as chatId. Streaming chunks flip the nodes map every RAF, but they do
-  // not advance structureVersionRef; keep this key off the hot nodes ref so the
-  // owner/observer effect does not re-run on every token.
-  const openPaneBindingsKey = openPanes
-    .map((id) => `${id}:${nodesRef.current[id]?.chatId ?? ''}`)
-    .join('|');
-
-  useEffect(() => {
-    const openSet = new Set(openPanes);
-    for (const nodeId of Object.keys(ownerClaimsRef.current)) {
-      const claim = ownerClaimsRef.current[nodeId];
-      if (!openSet.has(nodeId) || nodesRef.current[nodeId]?.chatId !== claim.chatId) {
-        releasePaneOwnership(nodeId);
-      }
-    }
-    for (const nodeId of openPanes) {
-      const chatId = nodesRef.current[nodeId]?.chatId;
-      if (!chatId) continue;
-      const claim = ownerClaimsRef.current[nodeId];
-      if (claim?.chatId === chatId) continue;
-      const role = ownerStateRef.current[nodeId]?.role;
-      if (role !== 'owner' && !claimInFlightRef.current.has(nodeId)) {
-        void claimPaneOwnership(nodeId, chatId);
-      }
-    }
-  }, [openPaneBindingsKey, openPanes, claimPaneOwnership, releasePaneOwnership]);
-
-  useEffect(() => {
-    const HEARTBEAT_MS = 10_000;
-    const timer = window.setInterval(() => {
-      const openSet = new Set(openPanesRef.current);
-      for (const nodeId of openSet) {
-        const chatId = nodesRef.current[nodeId]?.chatId;
-        if (!chatId) continue;
-        const claim = ownerClaimsRef.current[nodeId];
-        if (claim?.chatId === chatId) {
-          heartbeatPane(chatId, ownerTokenRef.current)
-            .then((ok) => {
-              if (ok) return;
-              delete ownerClaimsRef.current[nodeId];
-              dispatchOwner({ type: 'heartbeat-demoted', nodeId });
-            })
-            .catch(() => {});
-          continue;
-        }
-        const role = ownerStateRef.current[nodeId]?.role;
-        if (role === 'observer' || !role) {
-          void claimPaneOwnership(nodeId, chatId);
-        }
-      }
-    }, HEARTBEAT_MS);
-    return () => window.clearInterval(timer);
-  }, [claimPaneOwnership, dispatchOwner]);
-
-  useEffect(() => {
-    const releaseAll = () => {
-      for (const [nodeId, claim] of Object.entries(ownerClaimsRef.current)) {
-        const body = JSON.stringify({ ownerToken: ownerTokenRef.current });
-        const url = `${nodeBackendApiBase(claim.chatId)}/chats/${claim.chatId}/release`;
-        if (navigator.sendBeacon) {
-          const blob = new Blob([body], { type: 'application/json' });
-          navigator.sendBeacon(url, blob);
-        } else {
-          releasePane(claim.chatId, ownerTokenRef.current).catch(() => {});
-        }
-        delete ownerClaimsRef.current[nodeId];
-      }
-    };
-    window.addEventListener('beforeunload', releaseAll);
-    return () => {
-      window.removeEventListener('beforeunload', releaseAll);
-      releaseAll();
-    };
-  }, []);
 
   // When the user moves focus to a node, mark it as viewed so the unread
   // indicator clears. On cleanup (focus departing), re-stamp viewedAt so any
@@ -1504,6 +1358,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       payload.attachments,
     );
     const meta: UserSendMeta = {
+      rejectedDraft: { value: payload.value, mentions: payload.mentions, quotedText: firstQuote ?? undefined },
       quotedText: firstQuote ?? undefined,
       attachments: payload.attachments.length > 0
         ? payload.attachments.map((attachment) => ({ ...attachment }))
@@ -1527,10 +1382,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       startupMarkOnce('first_message_send', { nodeId, textLen: text.length });
       const n = nodesRef.current[nodeId];
       if (!n) return;
-      if (ownerStateRef.current[nodeId]?.role === 'observer') {
-        console.warn('startStream called on observer pane — ignoring send');
-        return;
-      }
       const priorMessagesForResume = n.messages
         .filter((m) => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({
@@ -1742,8 +1593,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         dispatch,
         assistantTextBufs,
         cancelFns,
-        ownerToken: ownerTokenRef.current,
         displayText,
+        rejectedDraft: meta?.rejectedDraft ?? { value: meta?.displayText ?? text, mentions: [] },
+        onRejected: meta?.onRejected,
         enableKiroSidecarTitle: prefsRef.current.enableKiroSidecarTitles,
         userMetadata: {
           quotedText: meta?.quotedText,
@@ -2005,10 +1857,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       // ever land here on a streaming node, do nothing — auto-branching inside
       // startStream would risk recursion with createChildChat.
       const node = nodesRef.current[nodeId];
-      if (ownerStateRef.current[nodeId]?.role === 'observer') {
-        console.warn('sendMessage called on observer pane — ignoring send');
-        return;
-      }
       if (node?.status === 'streaming') {
         console.warn(
           'sendMessage called on streaming node — expected createChildChat (auto-branch)',
@@ -2089,32 +1937,26 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const cancelStream = useCallback((nodeId: string) => {
-    if (ownerStateRef.current[nodeId]?.role === 'observer') return;
     const fn = cancelFns.current[nodeId];
     const node = nodesRef.current[nodeId];
     const activeTurnId = node?.activeTurnId ?? node?.lastAppliedTurnId ?? node?.lastAppliedBackgroundTurnId;
     const observeCancellation = () => {
       const assistantId = node?.messages.at(-1)?.id;
       if (assistantId) dispatch({ type: 'done', nodeId, assistantId, aborted: true });
-      cancelChatAndObserve(node!.chatId!, ownerTokenRef.current, activeTurnId, (status) => {
+      cancelChatAndObserve(node!.chatId!, activeTurnId, (status) => {
         if (assistantId) dispatch({ type: 'cancel-recovery', nodeId, assistantId, ...status });
       });
     };
     if (node?.status === 'streaming') {
       // Optimistic cancel: immediately transition the node to idle so the
       // composer unlocks. The backend cancel and turn cleanup happen
-      // asynchronously — if the user sends a new message before the old turn
-      // is fully drained, the backend's cancelAndWait path handles it.
+      // asynchronously. A follow-up waits for this exact cancelled turn's
+      // cleanup; it never interrupts a different window's newer turn.
       dispatch({ type: 'optimistic-cancel', nodeId });
     }
     if (fn) {
       fn();
-    } else if (ownerStateRef.current[nodeId]?.role === 'owner' && node?.chatId) {
-      observeCancellation();
-    } else if (claimInFlightRef.current.has(nodeId) && node?.chatId) {
-      // A claim is installed by the server before its response reaches this
-      // pane. Send the cancel token now: it is already authoritative if the
-      // claim won, and safely rejected if another pane owns the lease.
+    } else if (node?.chatId && activeTurnId) {
       observeCancellation();
     } else {
       // Stop was pressed before streamMessage registered its cancel fn.
@@ -2259,14 +2101,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const steerMessage = useCallback(async (nodeId: string, text: string): Promise<boolean> => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId) return false;
-    const result = await steerChat(node.chatId, text, ownerTokenRef.current);
+    const result = await steerChat(node.chatId, text);
     return result.accepted;
   }, []);
 
   const compactContext = useCallback(async (nodeId: string, instructions?: string) => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId) return { started: false, detail: 'No live session' };
-    return compactChat(node.chatId, instructions, ownerTokenRef.current);
+    return compactChat(node.chatId, instructions);
   }, []);
 
   const queueMessage = useCallback(
@@ -3068,7 +2910,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createBlankChild,
       createMergedChat,
       cancelStream,
-      isObserver,
       availableModes,
       defaultModeId,
       agentStatus,
@@ -3201,7 +3042,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       createBlankChild,
       createMergedChat,
       cancelStream,
-      isObserver,
       availableModes,
       defaultModeId,
       agentStatus,
@@ -3327,7 +3167,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       fanoutBranches,
       switchAgent,
       cancelStream,
-      isObserver,
       deleteNode,
       trimNode,
       archiveNode,
@@ -3410,7 +3249,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       fanoutBranches,
       switchAgent,
       cancelStream,
-      isObserver,
       deleteNode,
       trimNode,
       archiveNode,

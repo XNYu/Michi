@@ -71,44 +71,38 @@ for (const accepted of [true, false]) {
 }
 
 for (const status of [200, 403, 409]) {
-  test(`Kiro compact ${status === 200 ? 'carries the pane owner token' : `does not fall through after HTTP ${status}`}`, async ({ page }) => {
-    let ownerToken: string | undefined;
-    const compacts: Array<{ ownerToken?: string; instructions?: string }> = [];
+  test(`Kiro compact ${status === 200 ? 'works without an exclusive window token' : `does not fall through after HTTP ${status}`}`, async ({ page }) => {
+    const compacts: Array<{ instructions?: string }> = [];
     let messageCount = 0;
     let commandCount = 0;
     await installMockApi(page, { custom: async (route) => {
       const url = new URL(route.request().url());
       if (route.request().method() !== 'POST') return false;
-      if (url.pathname.endsWith('/claim')) {
-        ownerToken = route.request().postDataJSON().ownerToken;
-      }
       if (url.pathname.endsWith('/message')) messageCount++;
       if (url.pathname.endsWith('/command')) commandCount++;
       if (url.pathname.endsWith('/compact')) {
         const body = route.request().postDataJSON();
         compacts.push(body);
-        const ownsPane = ownerToken && body.ownerToken === ownerToken;
-        await route.fulfill({ status: ownsPane ? status : 403,
-          json: !ownsPane || status === 403 ? { started: false, error: 'not the pane owner' }
+        await route.fulfill({ status,
+          json: status === 403 ? { started: false, error: 'not authorized' }
             : status === 409 ? { started: false, detail: 'Cannot compact an active Kiro session' }
               : { started: true } });
         return true;
       }
       return false;
     } });
-    await bootWithWorkspace(page, 'Kiro compact ownership');
+    await bootWithWorkspace(page, 'Kiro compact authorization');
     const editor = page.locator('[contenteditable="true"]').first();
     await editor.fill('Start a Kiro turn');
     await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
     await expect(page.getByText(/Hello from mock kiro/).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop stream', exact: true })).toHaveCount(0);
-    await expect.poll(() => ownerToken).toBeTruthy();
     await editor.fill('/compact preserve the project name');
     const response = page.waitForResponse((res) => res.url().endsWith('/compact'));
     await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
     expect((await response).status()).toBe(status);
-    expect(compacts).toEqual([{ ownerToken, instructions: 'preserve the project name' }]);
-    if (status === 403) await expect(page.getByText('not the pane owner')).toBeVisible();
+    expect(compacts).toEqual([{ instructions: 'preserve the project name' }]);
+    if (status === 403) await expect(page.getByText('not authorized')).toBeVisible();
     if (status === 409) await expect(page.getByText('Cannot compact an active Kiro session')).toBeVisible();
     await expect(editor).toBeEmpty();
     expect(messageCount).toBe(1);

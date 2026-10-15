@@ -4,7 +4,6 @@ import { cancelChatAndObserve, settleCancellationObservation, streamMessage } fr
 import type { CancelRecoveryStatus } from './chatStreamEvents';
 
 const TURN = 'original-turn';
-const OWNER = 'original-owner';
 const cleanups: Array<() => void> = [];
 let nodeId: string;
 let nextNode = 0;
@@ -66,7 +65,7 @@ function handlers() {
 }
 
 function observe(onStatus = vi.fn<(status: CancelRecoveryStatus) => void>(), turnId: string | undefined = TURN) {
-  const stop = cancelChatAndObserve(nodeId, OWNER, turnId, onStatus);
+  const stop = cancelChatAndObserve(nodeId, turnId, onStatus);
   cleanups.push(stop);
   return { onStatus, stop };
 }
@@ -106,7 +105,7 @@ describe('streamMessage cancellation recovery', () => {
       .mockResolvedValueOnce(replay.response);
     vi.stubGlobal('fetch', fetchMock);
     const h = handlers();
-    const cancel = streamMessage(nodeId, 'hello', h, OWNER, { turnId: TURN });
+    const cancel = streamMessage(nodeId, 'hello', h, { turnId: TURN });
     await flush();
     output.emit(chunk('before cancel'));
     await flush();
@@ -118,7 +117,7 @@ describe('streamMessage cancellation recovery', () => {
     expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/cancel$/);
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ ownerToken: OWNER, turnId: TURN });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ turnId: TURN });
     expect(h.onCancelRecovery).not.toHaveBeenCalled();
 
     // No abort listener in the mock: these frames genuinely reach the reader.
@@ -151,7 +150,7 @@ describe('streamMessage cancellation recovery', () => {
       .mockResolvedValueOnce(replay.response);
     vi.stubGlobal('fetch', fetchMock);
     const h = handlers();
-    const cancel = streamMessage(nodeId, 'hello', h, OWNER, { turnId: TURN });
+    const cancel = streamMessage(nodeId, 'hello', h, { turnId: TURN });
     await flush();
     cancel();
     await flush();
@@ -195,7 +194,7 @@ describe('streamMessage cancellation recovery', () => {
       .mockResolvedValueOnce(replay.response);
     vi.stubGlobal('fetch', fetchMock);
     const h = handlers();
-    const cancel = streamMessage(nodeId, 'hello', h, OWNER, { turnId: TURN });
+    const cancel = streamMessage(nodeId, 'hello', h, { turnId: TURN });
     h.onChunk.mockImplementation(() => cancel());
     await flush();
     output.emit(chunk('first'), chunk('must be dropped'), permission(), failure(), done());
@@ -222,7 +221,7 @@ describe('streamMessage cancellation recovery', () => {
       .mockResolvedValueOnce(monitor.response);
     vi.stubGlobal('fetch', fetchMock);
     const h = handlers();
-    const cancel = streamMessage(nodeId, 'hello', h, OWNER, { turnId: TURN });
+    const cancel = streamMessage(nodeId, 'hello', h, { turnId: TURN });
     output.close();
     await flush();
     expectCursor(fetchMock.mock.calls[1][0]);
@@ -254,7 +253,7 @@ describe('streamMessage cancellation recovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const h = handlers();
     h.onEnvelope.mockImplementation((envelope) => envelope.turnId === TURN);
-    const cancel = streamMessage(nodeId, 'hello', h, OWNER, { turnId: TURN });
+    const cancel = streamMessage(nodeId, 'hello', h, { turnId: TURN });
     if (source === 'foreground replay') output.close();
     await flush();
     const active = source === 'foreground replay' ? replay : output;
@@ -264,7 +263,7 @@ describe('streamMessage cancellation recovery', () => {
     cancel();
     await flush();
     const cancelIndex = source === 'foreground replay' ? 2 : 1;
-    expect(JSON.parse(String(fetchMock.mock.calls[cancelIndex][1]?.body))).toEqual({ ownerToken: OWNER, turnId: TURN });
+    expect(JSON.parse(String(fetchMock.mock.calls[cancelIndex][1]?.body))).toEqual({ turnId: TURN });
     expectCursor(fetchMock.mock.calls[cancelIndex + 1][0]);
     monitor.emit(done());
     await flush();
@@ -284,7 +283,7 @@ describe('streamMessage cancellation recovery', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(onStatus).toHaveBeenCalledTimes(1);
     const h = handlers();
-    streamMessage(nodeId, 'next prompt', h, OWNER, { turnId: 'next-turn' });
+    streamMessage(nodeId, 'next prompt', h, { turnId: 'next-turn' });
     expect(fetchMock.mock.calls[1][1]?.signal?.aborted).toBe(true);
     await flush();
     oldReplay.emit(failure(), done());
@@ -304,37 +303,17 @@ describe('streamMessage cancellation recovery', () => {
   });
 });
 
-describe('cancelChatAndObserve deadlines and ownership', () => {
-  it.each([
-    { label: 'undefined ID, immediate ACK', turnId: undefined, ackDelay: 0 },
-    { label: 'empty ID, delayed ACK', turnId: '', ackDelay: 1_000 },
-  ])('cannot confirm cancellation without a known turn ID: $label', async ({ turnId, ackDelay }) => {
-    const request = deferred<Response>();
-    const fetchMock = vi.fn<typeof fetch>().mockReturnValueOnce(request.promise);
+describe('cancelChatAndObserve deadlines and turn identity', () => {
+  it.each([undefined, ''])('does not send a cancellation without a known turn ID: %s', async (turnId) => {
+    const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
     const onStatus = vi.fn<(status: CancelRecoveryStatus) => void>();
-    // Call directly: observe() supplies a default ID when passed undefined.
-    cleanups.push(cancelChatAndObserve(nodeId, OWNER, turnId, onStatus));
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ ownerToken: OWNER });
-    settleCancellationObservation(nodeId, TURN, { state: 'settled' });
-    settleCancellationObservation(nodeId, '', { state: 'settled' });
-    expect(onStatus).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(ackDelay);
-    const beforeAck = ackDelay ? [[expect.objectContaining({ state: 'pending' })]] : [];
-    expect(onStatus.mock.calls).toEqual(beforeAck);
-
-    request.resolve(new Response('{}'));
+    cleanups.push(cancelChatAndObserve(nodeId, turnId, onStatus));
     await flush();
-    expect(onStatus.mock.calls).toEqual([
-      ...beforeAck,
-      [{ state: 'error', detail: expect.stringContaining('original turn could not be identified') }],
-    ]);
-    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
-    settleCancellationObservation(nodeId, TURN, { state: 'settled' });
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(onStatus).toHaveBeenCalledTimes(beforeAck.length + 1);
-    expect(onStatus.mock.calls.some(([status]) => status.state === 'settled')).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onStatus).toHaveBeenCalledExactlyOnceWith({
+      state: 'error', detail: 'A turn ID is required to cancel this chat',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -675,7 +654,7 @@ describe('cancelChatAndObserve deadlines and ownership', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { onStatus } = observe();
     const h = handlers();
-    streamMessage(nodeId, 'next', h, OWNER, { turnId: 'next-turn' });
+    streamMessage(nodeId, 'next', h, { turnId: 'next-turn' });
     expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
     oldCancel.resolve(new Response('{}'));
     await flush();

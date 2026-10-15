@@ -18,6 +18,7 @@ import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
 import type { AgentRuntime, LoadAgentSessionOptions, NewAgentSessionOptions } from '../src/agents/types';
 import { AcpClient } from '../src/services/acpClient';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
+import { chatHub } from '../src/agents/chatHub';
 
 let directory: string;
 let server: ReturnType<typeof express.application.listen>;
@@ -202,6 +203,70 @@ test('HTTP cancel then follow-up reuses the native ACP session without re-primin
   assert.deepEqual(releases, []);
   assert.equal(getNode('cancel-node')?.acp_session_id, 'native-1');
   assert.equal(listMessages('cancel-node').filter((message) => message.role === 'user').length, 2);
+});
+
+test('editing compatibility endpoints let both windows operate without exclusive claims', async (t) => {
+  await ensure();
+  for (const ownerToken of ['window-a', 'window-b']) {
+    const claim = await post('/chats/cancel-node/claim', { ownerToken, windowId: ownerToken });
+    assert.equal(claim.status, 200);
+    assert.deepEqual(await claim.json(), { owner: true });
+    assert.equal((await post('/chats/cancel-node/heartbeat', { ownerToken })).status, 200);
+  }
+  // Runtime operations use account authorization, regardless of window tokens.
+  assert.equal((await post('/chats/cancel-node/steer', { text: 'continue', ownerToken: 'window-b' })).status, 409);
+  t.mock.method(getSession('cancel-node') as KiroSession, 'compact', async () => ({ started: true, completed: true }));
+  assert.equal((await post('/chats/cancel-node/compact', { ownerToken: 'window-b' })).status, 200);
+  const first = post('/chats/cancel-node/message', { text: 'first', turnId: 'editable-first', ownerToken: 'window-b' });
+  await promptStarted;
+  assert.equal((await post('/chats/cancel-node/cancel', { turnId: 'editable-first', ownerToken: 'window-a' })).status, 200);
+  assert.equal((await first).status, 200);
+  await (await first).text();
+});
+
+test('a competing message is rejected without cancelling or replacing the running turn', async () => {
+  await ensure();
+  const first = post('/chats/cancel-node/message', { text: 'first', turnId: 'running-first' });
+  await promptStarted;
+  const second = await post('/chats/cancel-node/message', { text: 'second', turnId: 'competing-second' });
+  assert.equal(second.status, 409);
+  assert.equal((await second.json() as any).code, 'turn_active');
+  assert.equal(chatHub.getSnapshot('cancel-node')?.turnId, 'running-first');
+  assert.equal(chatHub.getSnapshot('cancel-node')?.cancelRequestedAt, null);
+  assert.equal(prompts.length, 1);
+  assert.equal(listMessages('cancel-node').filter((message) => message.role === 'user').length, 1);
+  await post('/chats/cancel-node/cancel', { turnId: 'running-first' });
+  await (await first).text();
+});
+
+test('simultaneous starts produce one running task and a recoverable conflict', async () => {
+  await ensure();
+  const responses = await Promise.all([
+    post('/chats/cancel-node/message', { text: 'one', turnId: 'race-one' }),
+    post('/chats/cancel-node/message', { text: 'two', turnId: 'race-two' }),
+  ]);
+  await promptStarted;
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+  const conflict = responses.find((response) => response.status === 409)!;
+  assert.equal((await conflict.json() as any).code, 'turn_active');
+  assert.equal(prompts.length, 1);
+  const runningTurnId = chatHub.getSnapshot('cancel-node')!.turnId;
+  await post('/chats/cancel-node/cancel', { turnId: runningTurnId });
+  await responses.find((response) => response.status === 200)!.text();
+});
+
+test('missing and stale Stop requests cannot interrupt the current turn', async () => {
+  await ensure();
+  const first = post('/chats/cancel-node/message', { text: 'current', turnId: 'current-turn' });
+  await promptStarted;
+  for (const body of [{}, { turnId: '' }, { turnId: '  ' }]) {
+    assert.equal((await post('/chats/cancel-node/cancel', body)).status, 400);
+  }
+  assert.equal((await post('/chats/cancel-node/cancel', { turnId: 'older-turn' })).status, 200);
+  assert.equal(chatHub.isActive('cancel-node'), true);
+  assert.equal(chatHub.getSnapshot('cancel-node')?.cancelRequestedAt, null);
+  await post('/chats/cancel-node/cancel', { turnId: 'current-turn' });
+  await (await first).text();
 });
 
 test('cancelled session keeps its model when global defaults changed and the client omits modelId', async () => {

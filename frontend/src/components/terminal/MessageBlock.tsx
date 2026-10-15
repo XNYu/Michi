@@ -47,7 +47,7 @@ export const NodeUserInputContext = createContext<NodeUserInputContextValue | nu
 /** Renders a user-input segment inline within the weave pipeline. */
 function InlineUserInputSegment({ requestId }: { requestId: number }) {
   const ctx = useContext(NodeUserInputContext);
-  const { resolveUserInputRequest, skipUserInputRequest, isObserver } = useChatActions();
+  const { resolveUserInputRequest, skipUserInputRequest } = useChatActions();
   const ui = ctx?.userInput;
   if (!ui || ui.requestId !== requestId) return null;
   if (ui.resolved) {
@@ -61,7 +61,6 @@ function InlineUserInputSegment({ requestId }: { requestId: number }) {
       userInput={ui}
       onSubmit={(answers) => resolveUserInputRequest(ctx.nodeId, answers)}
       onSkip={() => skipUserInputRequest(ctx.nodeId)}
-      readOnly={isObserver(ctx.nodeId)}
     />
   );
 }

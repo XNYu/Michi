@@ -64,7 +64,6 @@ export function streamMessage(
   nodeId: string,
   text: string,
   handlers: StreamHandlers,
-  ownerToken?: string,
   durable?: {
     /** Generated before POST so replay is possible before the first frame. */
     turnId?: string;
@@ -146,11 +145,12 @@ export function streamMessage(
       watchdog = undefined;
     }
   };
-  function settleError(message: string): void {
+  function settleError(message: string, code?: string): void {
     if (settled || terminalSeen) return;
     settled = true;
     clearWatchdog();
-    handlers.onError?.(message);
+    if (code) handlers.onError?.(message, undefined, undefined, code);
+    else handlers.onError?.(message);
   }
   function settleAborted(): void {
     if (settled || terminalSeen) return;
@@ -172,7 +172,6 @@ export function streamMessage(
       const payload: Record<string, unknown> = { text };
       if (clientTurnId) payload.turnId = clientTurnId;
       if (nodeId) payload.nodeId = nodeId;
-      if (ownerToken) payload.ownerToken = ownerToken;
       if (durable?.displayText !== undefined) payload.displayText = durable.displayText;
       if (durable?.enableKiroSidecarTitle !== undefined) {
         payload.enableKiroSidecarTitle = durable.enableKiroSidecarTitle;
@@ -186,7 +185,11 @@ export function streamMessage(
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`stream failed: ${res.status}`);
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => null);
+        const message = body && typeof body.error === 'string' ? body.error : `stream failed: ${res.status}`;
+        throw Object.assign(new Error(message), { code: typeof body?.code === 'string' ? body.code : undefined });
+      }
       sawFirstByte = true;
       startupMark('stream_response_headers', { chatId: nodeId, nodeId, status: res.status, durMs: Date.now() - startedAt });
 
@@ -252,7 +255,7 @@ export function streamMessage(
         if (watchdogTimedOut) settleError('stream stalled — no data received');
         else settleAborted();
       } else {
-        settleError(err?.message || String(err));
+        settleError(err?.message || String(err), err?.code);
       }
     } finally {
       clearWatchdog();
@@ -269,9 +272,9 @@ export function streamMessage(
     controller.abort();
     resumeCancel?.();
     if (handlers.onCancelRecovery && !terminalSeen) {
-      cancelChatAndObserve(nodeId, ownerToken, resumeTurnId || clientTurnId, handlers.onCancelRecovery);
+      cancelChatAndObserve(nodeId, resumeTurnId || clientTurnId, handlers.onCancelRecovery);
     } else {
-      cancelChat(nodeId, ownerToken, resumeTurnId || clientTurnId).catch(() => {});
+      cancelChat(nodeId, resumeTurnId || clientTurnId).catch(() => {});
     }
   };
 }
@@ -279,14 +282,12 @@ export function streamMessage(
 export async function steerChat(
   chatId: string,
   text: string,
-  ownerToken?: string,
 ): Promise<{ accepted: boolean; pending?: boolean; reason?: string }> {
   const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/steer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text,
-      ...(ownerToken ? { ownerToken } : {}),
     }),
   });
   const body = await res.json().catch(() => ({ accepted: false }));
@@ -306,14 +307,12 @@ export async function steerChat(
 export async function compactChat(
   chatId: string,
   instructions?: string,
-  ownerToken?: string,
 ): Promise<{ started: boolean; detail?: string }> {
   const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/compact`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...(instructions ? { instructions } : {}),
-      ...(ownerToken ? { ownerToken } : {}),
     }),
   });
   const body = await res.json().catch(() => ({ started: false }));
@@ -326,12 +325,12 @@ export async function compactChat(
   };
 }
 
-export async function cancelChat(chatId: string, ownerToken?: string, turnId?: string, signal?: AbortSignal): Promise<void> {
+export async function cancelChat(chatId: string, turnId?: string, signal?: AbortSignal): Promise<void> {
+  if (!turnId) throw new Error('A turn ID is required to cancel this chat');
   const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      ...(ownerToken ? { ownerToken } : {}),
       ...(turnId ? { turnId } : {}),
     }),
     signal,
@@ -363,7 +362,6 @@ export function settleCancellationObservation(chatId: string, turnId: string, st
 /** Observe only the cancelled turn's outcome, never its output or interactions. */
 export function cancelChatAndObserve(
   chatId: string,
-  ownerToken: string | undefined,
   turnId: string | undefined,
   onStatus: (status: CancelRecoveryStatus) => void,
 ): () => void {
@@ -420,7 +418,7 @@ export function cancelChatAndObserve(
     });
   };
   cancellationObservers.set(key, { turnId, stop, finish });
-  void cancelChat(chatId, ownerToken, turnId, request.signal).then(() => {
+  void cancelChat(chatId, turnId, request.signal).then(() => {
     if (turnId) observe();
     else finish({ state: 'error', detail: 'Cancellation requested, but the original turn could not be identified. Retry to check the session.' });
   }, (error: unknown) => {

@@ -32,9 +32,6 @@ vi.mock('../services/api', () => ({
   respondToPermission: () => Promise.resolve({ ok: true }),
   cancelPermission: () => Promise.resolve({ ok: true }),
   warmCwd: () => Promise.resolve({ ok: true }),
-  claimPane: vi.fn(() => Promise.resolve({ owner: true })),
-  heartbeatPane: () => Promise.resolve(true),
-  releasePane: () => Promise.resolve(),
   subscribeChat: vi.fn(() => () => {}),
   subscribeChats: vi.fn(() => () => {}),
   subscribeBackground: vi.fn(() => () => {}),
@@ -110,7 +107,6 @@ describe('auto-branch behavior (real provider)', () => {
     vi.mocked(api.cancelChatAndObserve).mockReset().mockImplementation(() => () => {});
     vi.mocked(api.subscribeChat).mockReset().mockImplementation(() => () => {});
     vi.mocked(api.subscribeBackground).mockReset().mockImplementation(() => () => {});
-    vi.mocked(api.claimPane).mockClear();
     vi.mocked(api.fetchAllWorkspacesMeta).mockReset().mockResolvedValue([]);
     vi.mocked(api.fetchTreeMessages).mockReset().mockResolvedValue([]);
     vi.mocked(api.bindPendingPrimaryAgent).mockReset();
@@ -337,7 +333,6 @@ describe('auto-branch behavior (real provider)', () => {
     const { result } = hydratedCancellationNode('idle');
     await waitFor(() => expect(result.current.node?.status).toBe('idle'));
     await act(async () => { result.current.store.openPane('cancel-node'); });
-    await waitFor(() => expect(api.claimPane).toHaveBeenCalled());
     await waitFor(() => expect(api.subscribeBackground).toHaveBeenCalledTimes(1));
     await act(async () => { result.current.store.sendMessage('cancel-node', 'foreground'); });
     const foreground = mockStreamMessage.mock.calls[0][2] as api.StreamHandlers;
@@ -361,7 +356,7 @@ describe('auto-branch behavior (real provider)', () => {
     });
     act(() => { result.current.store.cancelStream('cancel-node'); });
     expect(api.cancelChatAndObserve).toHaveBeenCalledExactlyOnceWith(
-      'cancel-node', expect.any(String), 'background-turn', expect.any(Function),
+      'cancel-node', 'background-turn', expect.any(Function),
     );
     expect(result.current.node?.status).toBe('idle');
     expect(result.current.node?.messages.at(-1)?.streaming).toBe(false);
@@ -392,9 +387,9 @@ describe('auto-branch behavior (real provider)', () => {
       (block.kind === 'answer' || block.kind === 'thinking') && block.streaming,
     )).toBe(false);
     expect(api.cancelChatAndObserve).toHaveBeenCalledExactlyOnceWith(
-      'cancel-node', expect.any(String), 'old-foreground', expect.any(Function),
+      'cancel-node', 'old-foreground', expect.any(Function),
     );
-    const onStatus = vi.mocked(api.cancelChatAndObserve).mock.calls[0][3];
+    const onStatus = vi.mocked(api.cancelChatAndObserve).mock.calls[0][2];
     act(() => { onStatus({ state: 'pending', detail: 'Waiting for cleanup' }); });
     expect(result.current.node?.runtimeActivity).toBe('Waiting for cleanup');
     act(() => { onStatus({ state: 'settled' }); });
@@ -417,7 +412,6 @@ describe('auto-branch behavior (real provider)', () => {
     const { result } = hydratedCancellationNode('streaming');
     await waitFor(() => expect(api.subscribeChat).toHaveBeenCalledTimes(1));
     await act(async () => { result.current.store.openPane('cancel-node'); });
-    await waitFor(() => expect(api.claimPane).toHaveBeenCalled());
     await waitFor(() => expect(api.subscribeBackground).toHaveBeenCalledTimes(1));
     const disconnect = vi.mocked(api.subscribeChat).mock.calls[0][3]!.onDisconnect!;
     act(() => { disconnect({ retryable: false, error: new Error('subscribe failed: 410') }); });
@@ -430,7 +424,7 @@ describe('auto-branch behavior (real provider)', () => {
       result.current.store.cancelStream('cancel-node');
     });
     expect(api.cancelChatAndObserve).toHaveBeenCalledExactlyOnceWith(
-      'cancel-node', expect.any(String), 'background-turn', expect.any(Function),
+      'cancel-node', 'background-turn', expect.any(Function),
     );
     expect(result.current.node?.status).toBe('idle');
     expect(detach).not.toHaveBeenCalled();

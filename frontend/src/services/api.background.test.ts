@@ -151,7 +151,7 @@ describe('background SSE', () => {
     vi.stubGlobal('fetch', fetchMock);
     const done = vi.fn();
 
-    streamMessage('n-client', 'hello', { onDone: done }, undefined, {
+    streamMessage('n-client', 'hello', { onDone: done }, {
       turnId: 'client-turn',
     });
 

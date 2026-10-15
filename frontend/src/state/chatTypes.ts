@@ -100,6 +100,10 @@ export interface MessageAttachment {
  * display representation from the wire payload sent to the agent.
  */
 export interface UserSendMeta {
+  /** Local input to restore if another window won the turn-start race. */
+  rejectedDraft?: ComposerDraft;
+  /** Restore transient composer attachments/comments after a rejected start. */
+  onRejected?: () => void;
   permissionMode?: import('michi-shared').ChatPermissionMode;
   /** Quoted passage for this turn. Rendered as a chip in the bubble. */
   quotedText?: string;
@@ -799,7 +803,7 @@ export type ChatAction =
   | { type: 'runtime-activity'; nodeId: string; assistantId?: string; detail?: string }
   | { type: 'cancel-recovery'; nodeId: string; assistantId: string; state: 'pending' | 'settled' | 'error'; detail?: string }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }
-  | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null }
+  | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null; preserveExisting?: boolean }
   | { type: 'add-comment'; nodeId: string; comment: PendingComment }
   | { type: 'edit-comment'; nodeId: string; commentId: string; body: string }
   | { type: 'remove-comment'; nodeId: string; commentId: string }
@@ -913,7 +917,6 @@ export interface ChatContextValue {
   createBlankChild: (parentNodeId: string, opts?: { anchorMessageId?: string }) => Promise<string>;
   createMergedChat: (sourceNodeIds: string[]) => Promise<string>;
   cancelStream: (nodeId: string) => void;
-  isObserver: (nodeId: string) => boolean;
   /** Process-global list of ACP agents (Kiro modes). Fetched once on mount. */
   availableModes: SessionMode[];
   /** The mode ACP assigns to a brand-new session before any user override. Null when unavailable. */
@@ -1226,7 +1229,6 @@ export type ChatActionsValue = Pick<
   | 'fanoutBranches'
   | 'switchAgent'
   | 'cancelStream'
-  | 'isObserver'
   | 'deleteNode'
   | 'trimNode'
   | 'archiveNode'

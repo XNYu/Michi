@@ -138,7 +138,7 @@ function mergeGapNode(
     deletionGroupId: local?.deletionGroupId ?? server.deletionGroupId,
     // The workspace snapshot is canonical for turn output and graph state,
     // but these fields may contain unsent user work newer than the server.
-    composerDraft: local?.composerDraft ?? server.composerDraft,
+    composerDraft: local ? local.composerDraft : server.composerDraft,
     pendingComments: local?.pendingComments,
     pendingQueued: local?.pendingQueued,
     queueErrored: local?.queueErrored,
