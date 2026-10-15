@@ -10,9 +10,14 @@ test('shared MCP endpoint routes explicit SessionIDs, keeps warm catalog stable,
     const registry = new McpSlotRegistry();
     const calls: Array<{ session: string; name: string; body: string }> = [];
     const overviews: Array<{ session: string; overview: string }> = [];
+    const notifications: Array<{ session: string; name: string; result: unknown }> = [];
     const agentCalls: Array<{ session: string; args: Record<string, unknown> }> = [];
     const callbacks = (session: string): McpSlotCallbacks => ({
         onSpawnBranches: async () => [],
+        onMcpToolResult: (name, result) => {
+            notifications.push({ session, name, result });
+            if (session === 'B') throw new Error('UI callback unavailable');
+        },
         onSaveArtifact: (name, body) => {
             calls.push({ session, name, body });
             return { name, filePath: `${session}/${name}`, size: body.length };
@@ -57,6 +62,12 @@ test('shared MCP endpoint routes explicit SessionIDs, keeps warm catalog stable,
         await save('A', 'after-warm');
         await Promise.all(Array.from({ length: 12 }, (_, i) => save(i % 2 ? 'B' : 'A', `parallel-${i}`)));
         assert.equal(calls.length, 15);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        const saved = notifications.filter(item => item.name === 'save_artifact');
+        assert.equal(saved.length, 15, 'each routed result reaches its own UI callback once');
+        assert.deepEqual(saved.map(item => item.session).sort(), calls.map(item => item.session).sort());
+        assert.ok(saved.every(item => (item.result as { isError?: boolean }).isError !== true),
+            'a UI notification failure must not change the tool response');
         assert.ok(calls.every(call => call.body === `from-${call.session}`));
         assert.deepEqual(calls.slice(0, 3).map(call => call.session), ['A', 'B', 'A']);
         await client.callTool({ name: 'set_branch_overview', arguments: { session_id: 'B', overview: 'B journal' } });

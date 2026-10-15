@@ -325,6 +325,28 @@ function allowedAgentRunToolNames(slot: McpSlot): AgentRunToolName[] {
     return configured.filter((name) => isToolExposed(slot, name));
 }
 
+function notifyMcpToolResult(slot: McpSlot, toolName: string, result: unknown): void {
+    if (!slot.onMcpToolResult) return;
+    setImmediate(() => {
+        try {
+            slot.onMcpToolResult?.(toolName, result);
+        } catch {
+            // Backfill is best-effort; never fail the MCP response.
+        }
+    });
+}
+
+function attachMcpToolResultNotify(server: McpServer, slot: McpSlot): void {
+    const proto = server as unknown as { registerTool: (...args: any[]) => unknown };
+    const original = proto.registerTool.bind(server);
+    proto.registerTool = (name: string, config: unknown, handler: (...args: any[]) => unknown) =>
+        original(name, config, async (...args: any[]) => {
+            const result = await handler(...args);
+            notifyMcpToolResult(slot, name, result);
+            return result;
+        });
+}
+
 /**
  * Build an MCP server bound to a slot. Side-effect tools delegate to the
  * slot's callbacks, which own ACP session creation and context file writes.
