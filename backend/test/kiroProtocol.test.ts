@@ -6,7 +6,7 @@ import { chooseResumeStrategy } from '../src/services/resumeStrategy';
 test('Kiro launch pins v2 by default and never sends v2-only flags to v3', () => {
     assert.equal(resolveKiroEngine(''), 'v2');
     assert.throws(() => resolveKiroEngine('v4'), /must be/);
-    assert.deepEqual(kiroArgs('v2', 'model'), ['acp', '--agent-engine', 'v2', '-a', '--model', 'model']);
+    assert.deepEqual(kiroArgs('v2', 'model'), ['acp', '--agent-engine', 'v2', '--model', 'model']);
     assert.deepEqual(kiroArgs('v3', 'model'), ['acp', '--agent-engine', 'v3', '--auth-method', 'cli']);
 });
 

@@ -10,7 +10,7 @@ export function resolveKiroEngine(value = process.env.MICHI_KIRO_ENGINE): KiroEn
 export function kiroArgs(engine: KiroEngine, model?: string): string[] {
     return engine === 'v3'
         ? ['acp', '--agent-engine', 'v3', '--auth-method', 'cli']
-        : ['acp', '--agent-engine', 'v2', '-a', ...(model ? ['--model', model] : [])];
+        : ['acp', '--agent-engine', 'v2', ...(model ? ['--model', model] : [])];
 }
 
 export interface AcpMcpServer {
