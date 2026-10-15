@@ -37,6 +37,7 @@ interface PaneMessageListProps {
   contentStyle: React.CSSProperties;
   streaming: boolean;
   viewportHeight: number;
+  bottomClearance?: number;
   onRetryTurn: (userMessageIndex: number) => void;
   onEditUserMessage: (text: string) => void;
   onContinueFollowUp: (question: string) => void;
@@ -76,6 +77,7 @@ function PaneMessageListInner({
   contentStyle,
   streaming,
   viewportHeight,
+  bottomClearance = 0,
   onRetryTurn,
   onEditUserMessage,
   onContinueFollowUp,
@@ -317,7 +319,7 @@ function PaneMessageListInner({
       />
       {/* Keep real content before the spacer so tail-follow never counts the
           reserved reply space as part of an error or status banner's offset. */}
-      <TailSpacer node={node} viewportHeight={viewportHeight} />
+      <TailSpacer node={node} viewportHeight={viewportHeight} bottomClearance={bottomClearance} />
     </div>
     </NodeUserInputContext.Provider>
   );
@@ -330,6 +332,7 @@ export const PaneMessageList = React.memo(PaneMessageListInner, (prev, next) =>
   prev.contentStyle === next.contentStyle &&
   prev.streaming === next.streaming &&
   prev.viewportHeight === next.viewportHeight &&
+  prev.bottomClearance === next.bottomClearance &&
   prev.onRetryTurn === next.onRetryTurn &&
   prev.onEditUserMessage === next.onEditUserMessage &&
   prev.onContinueFollowUp === next.onContinueFollowUp &&
@@ -461,17 +464,48 @@ function SubagentStatus({ node }: { node: ChatNodeState }) {
   );
 }
 
-function TailSpacer({ node, viewportHeight }: { node: ChatNodeState; viewportHeight: number }) {
-  if (node.status !== 'streaming') return null;
+function TailSpacer({ node, viewportHeight, bottomClearance }: {
+  node: ChatNodeState;
+  viewportHeight: number;
+  bottomClearance: number;
+}) {
+  const spacerRef = React.useRef<HTMLDivElement>(null);
+  const [height, setHeight] = React.useState(0);
   const last = node.messages[node.messages.length - 1];
-  if (!last || last.role !== 'assistant') return null;
-  if (node.followUpsGenerating || node.followUps.length > 0) return null;
-  const replyChars = (last.blocks ?? []).reduce(
-    (n, b) => n + (b.kind === 'answer' ? (b.rawText?.length ?? 0) : 0),
-    0,
-  );
-  if (replyChars > 1500) return null;
-  return <div aria-hidden style={{ height: viewportHeight * 0.7, flexShrink: 0 }} />;
+  const enabled = node.status === 'streaming' && last?.role === 'assistant'
+    && !node.followUpsGenerating && node.followUps.length === 0;
+  let userMessageId: string | undefined;
+  for (let i = node.messages.length - 1; i >= 0; i--) {
+    if (node.messages[i].role === 'user') {
+      userMessageId = node.messages[i].id;
+      break;
+    }
+  }
+
+  React.useLayoutEffect(() => {
+    const spacer = spacerRef.current;
+    const content = spacer?.parentElement;
+    if (!enabled || !spacer || !content || !userMessageId) return;
+    const user = Array.from(content.querySelectorAll<HTMLElement>('[data-msg-id]'))
+      .find(el => el.dataset.msgId === userMessageId);
+    if (!user) return;
+    const measure = () => {
+      // Reserve only the space needed to put the latest user message at 30%.
+      // Everything before this spacer counts, including tools and status rows.
+      // Composer clearance is already supplied by the scroller's bottom padding.
+      const turnHeight = spacer.getBoundingClientRect().top - user.getBoundingClientRect().top;
+      setHeight(Math.max(0, Math.ceil(viewportHeight * 0.7 - turnHeight - bottomClearance)));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    observer.observe(user);
+    return () => observer.disconnect();
+  }, [enabled, userMessageId, viewportHeight, bottomClearance]);
+
+  if (!enabled || !userMessageId) return null;
+  return <div ref={spacerRef} aria-hidden data-tail-spacer style={{ height, flexShrink: 0 }} />;
 }
 
 function McpServerError({ node }: { node: ChatNodeState }) {

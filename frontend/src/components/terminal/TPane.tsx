@@ -2109,6 +2109,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           contentStyle={innerWrap}
           streaming={streaming}
           viewportHeight={viewportH}
+          bottomClearance={n.pendingPermission ? 12 : composerHeight + 24}
           onRetryTurn={handleRetryTurn}
           onEditUserMessage={handleEditUserMessage}
           onContinueFollowUp={handleContinueFollowUp}
