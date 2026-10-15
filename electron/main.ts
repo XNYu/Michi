@@ -19,6 +19,7 @@ import { checkForUpdate, initAutoUpdate } from './autoUpdate';
 import { isClosePaneShortcut } from './paneShortcuts';
 import { listWorkspaceDirectory, resolveAllowedDirectory } from './workspaceFiles';
 import { applyBrowserTheme, normalizeBrowserTheme, type BrowserTheme } from './browserTheme';
+import { toSurfaceBounds } from './browserBounds';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -384,17 +385,13 @@ ipcMain.handle('browser:navigate', async (event, surfaceId: unknown, rawUrl: unk
 });
 
 ipcMain.on('browser:set-bounds', (event, surfaceId: unknown, value: unknown, visible: unknown) => {
-  if (!validSurfaceId(surfaceId) || !value || typeof value !== 'object') return;
+  if (!validSurfaceId(surfaceId)) return;
   const surface = browserSurfaces.get(surfaceKey(event.sender.id, surfaceId));
   if (!surface) return;
-  const rect = value as Record<string, unknown>;
-  if (![rect.x, rect.y, rect.width, rect.height].every((n) => typeof n === 'number' && Number.isFinite(n))) return;
-  const bounds = {
-    x: Math.round(rect.x as number),
-    y: Math.round(rect.y as number),
-    width: Math.max(1, Math.round(rect.width as number)),
-    height: Math.max(1, Math.round(rect.height as number)),
-  };
+  // The renderer sends CSS pixels; setBounds takes window points. Scale by the
+  // sending window's current zoom so View > Zoom In/Out cannot misplace the view.
+  const bounds = toSurfaceBounds(value, event.sender.getZoomFactor());
+  if (!bounds) return;
   const nowVisible = visible === true && bounds.width > 1 && bounds.height > 1;
   // Always set bounds BEFORE visibility so the view lands in the right place
   // when transitioning to visible. Then re-apply AFTER setVisible for safety —
