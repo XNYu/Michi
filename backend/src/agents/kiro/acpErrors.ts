@@ -1,4 +1,4 @@
-import { ACPError, ACPProcessExitedError, ACPNotRunningError } from "../../services/acpClient";
+import { ACPNativeSessionMissingError, ACPError, ACPProcessExitedError, ACPNotRunningError } from "../../services/acpClient";
 
 /**
  * kiro-cli collapses every runtime failure into JSON-RPC `-32603 "Internal
@@ -129,6 +129,7 @@ export function retryReason(cls: AcpErrorClass): string {
 /** Match the actual session/load envelope, not unrelated MCP/file "not found" errors. */
 export function isNativeSessionUnavailable(error: unknown, nativeSessionId: string): boolean {
   if (!(error instanceof ACPError) || error.method !== 'session/load' || error.sessionId !== nativeSessionId) return false;
+  if (error instanceof ACPNativeSessionMissingError) return true;
   if (error.rpcCode === -32601) return true; // session/load is explicitly unsupported.
   return error.rpcCode === -32603
     && error.rpcData === `Failed to start session: Session not found: ${nativeSessionId}`;

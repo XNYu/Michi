@@ -21,5 +21,8 @@ export class ACPError extends Error {
     }
 }
 export class ACPNotRunningError extends ACPError {}
+/** Only raised before writing a request, never for a pending request. */
+export class ACPRequestNotSentError extends ACPNotRunningError {}
 export class ACPProcessExitedError extends ACPError {}
 export class ACPSessionRecoveryRequiredError extends ACPError {}
+export class ACPNativeSessionMissingError extends ACPError {}

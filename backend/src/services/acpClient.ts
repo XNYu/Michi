@@ -1,3 +1,4 @@
+import { nativeSessionExists } from "../agents/kiro/nativeSessionLookup";
 import { ChildProcess } from "child_process";
 import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
@@ -43,8 +44,8 @@ const PROMPT_TIMEOUT_MS = 0;
 const MAX_RPC_ERROR_DATA_CHARS = 4 * 1024;
 
 
-import { ACPError, ACPNotRunningError, ACPProcessExitedError, ACPSessionRecoveryRequiredError } from "./acp/errors";
-export { ACPError, ACPNotRunningError, ACPProcessExitedError, ACPSessionRecoveryRequiredError } from "./acp/errors";
+import { ACPError, ACPNotRunningError, ACPRequestNotSentError, ACPProcessExitedError, ACPSessionRecoveryRequiredError, ACPNativeSessionMissingError } from "./acp/errors";
+export { ACPError, ACPNotRunningError, ACPRequestNotSentError, ACPProcessExitedError, ACPSessionRecoveryRequiredError, ACPNativeSessionMissingError } from "./acp/errors";
 export type { ACPErrorDetails } from "./acp/errors";
 
 export type AcpUpdate = Record<string, any>;
@@ -252,7 +253,8 @@ export class AcpClient {
     private exitError: Error | null = null;
     private exitListeners: Array<(err: Error) => void> = [];
     /** Tracks pending permission requests from kiro-cli so we can respond later. */
-    private pendingPermissions = new Map<number, { sessionId: string; options?: any[]; meta?: any }>();
+    private pendingPermissions = new Map<number, { rpcId: string | number; sessionId: string; options?: any[]; meta?: any }>();
+    private nextPermissionId = -1;
     private initialization: AcpInitializeResult | null = null;
     private readonly sessionInfo = new Map<string, AcpSessionInfo>();
     private readonly lastUserMessageId = new Map<string, string>();
@@ -485,8 +487,7 @@ export class AcpClient {
         // chunks/permissions from that native session enter another turn.
         if (msg?.params?.sessionId && this.needsSessionRecovery(msg.params.sessionId)) {
             if (msg.method === 'session/request_permission' && msg.id != null) {
-                this.pendingPermissions.set(msg.id, { sessionId: msg.params.sessionId });
-                this.cancelPermission(msg.id);
+                this.cancelPermission(this.registerPendingPermission(msg.id, { sessionId: msg.params.sessionId }));
             }
             return;
         }
@@ -497,19 +498,19 @@ export class AcpClient {
             if (msg.method === 'session/request_permission') {
                 const { sessionId, toolCall, options, _meta } = msg.params ?? {};
                 const queue = sessionId ? this.sessionQueues.get(sessionId) : undefined;
-                this.pendingPermissions.set(msg.id, { sessionId, options, meta: _meta });
+                const requestId = this.registerPendingPermission(msg.id, { sessionId, options, meta: _meta });
                 if (queue) {
                     queue.push({
                         update: {
                             sessionUpdate: 'permission_request',
-                            requestId: msg.id,
+                            requestId,
                             toolCall,
                             options,
                             _meta,
                         },
                     });
                 } else {
-                    this.cancelPermission(msg.id);
+                    this.cancelPermission(requestId);
                 }
             } else {
                 this.proc?.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id,
@@ -857,11 +858,11 @@ export class AcpClient {
     private notify(method: string, params?: any): Promise<void> {
         return new Promise((resolve, reject) => {
             if (this.stopped || this.exitError) {
-                reject(new ACPNotRunningError(this.exitError?.message || "ACP process stopped"));
+                reject(new ACPRequestNotSentError(this.exitError?.message || "ACP process stopped"));
                 return;
             }
             if (!this.proc?.stdin || this.proc.stdin.destroyed) {
-                reject(new ACPNotRunningError("ACP process is not running"));
+                reject(new ACPRequestNotSentError("ACP process is not running"));
                 return;
             }
             const payload = JSON.stringify({
@@ -886,11 +887,11 @@ export class AcpClient {
         return new Promise((resolve, reject) => {
             if (params?.sessionId) this.assertSessionUsable(params.sessionId);
             if (this.stopped || this.exitError) {
-                reject(new ACPNotRunningError(this.exitError?.message || "ACP process stopped"));
+                reject(new ACPRequestNotSentError(this.exitError?.message || "ACP process stopped"));
                 return;
             }
             if (!this.proc?.stdin || this.proc.stdin.destroyed) {
-                reject(new ACPNotRunningError("ACP process is not running"));
+                reject(new ACPRequestNotSentError("ACP process is not running"));
                 return;
             }
             const id = this.nextId++;
@@ -954,6 +955,16 @@ export class AcpClient {
     ): Promise<AcpSessionInfo> {
         const t0 = perf.now();
         this.assertSessionUsable(sessionId);
+        if (this.engine === 'v3') {
+            if (!this.capabilities?.loadSession || !this.capabilities.sessionCapabilities?.list) {
+                throw new ACPError('This Kiro server cannot verify native session history; original binding retained');
+            }
+            const exists = await nativeSessionExists(sessionId, cwd,
+                (params, timeout) => this.send('session/list', params, timeout, undefined, true), timeoutMs);
+            if (!exists) throw new ACPNativeSessionMissingError('Kiro native session is no longer available', {
+                method: 'session/load', sessionId,
+            });
+        }
         const createdQueue = !this.sessionQueues.has(sessionId);
         if (createdQueue) {
             this.sessionQueues.set(sessionId, new SessionQueue());
@@ -1296,6 +1307,17 @@ export class AcpClient {
         }
     }
 
+    /** Keep the UI's numeric contract independent of provider JSON-RPC IDs. */
+    private registerPendingPermission(rpcId: string | number, entry: { sessionId: string; options?: any[]; meta?: any }): number {
+        let requestId = rpcId;
+        if (typeof requestId !== 'number' || !Number.isFinite(requestId) || this.pendingPermissions.has(requestId)) {
+            while (this.pendingPermissions.has(this.nextPermissionId)) this.nextPermissionId--;
+            requestId = this.nextPermissionId--;
+        }
+        this.pendingPermissions.set(requestId, { ...entry, rpcId });
+        return requestId;
+    }
+
     /** Send a JSON-RPC response to a pending permission request, selecting an option. */
     respondToPermission(requestId: number, optionId: string): void {
         const pending = this.pendingPermissions.get(requestId);
@@ -1307,7 +1329,7 @@ export class AcpClient {
         if (!this.proc?.stdin || this.proc.stdin.destroyed) return;
         const payload = JSON.stringify({
             jsonrpc: '2.0',
-            id: requestId,
+            id: pending.rpcId,
             result: { outcome: { outcome: 'selected', optionId },
                 ...this.permissionConsent(pending, optionId),
             },
@@ -1340,7 +1362,7 @@ export class AcpClient {
         if (!this.proc?.stdin || this.proc.stdin.destroyed) return;
         const payload = JSON.stringify({
             jsonrpc: '2.0',
-            id: requestId,
+            id: pending.rpcId,
             result: { outcome: { outcome: 'cancelled' } },
         });
         this.proc.stdin.write(payload + '\n');

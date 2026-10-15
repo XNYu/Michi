@@ -9,7 +9,8 @@ function fixture(engine: KiroEngine) {
     const calls: any[] = [];
     internal.send = async (method: string, params: any) => {
         calls.push({ method, params });
-        if (method === 'initialize') return { protocolVersion: 1, agentCapabilities: { sessionCapabilities: { fork: {} } } };
+        if (method === 'initialize') return { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { fork: {}, list: {} } } };
+        if (method === 'session/list') return { sessions: [{ sessionId: 'parent', cwd: '/tmp' }] };
         if (method === 'session/new' || method === 'session/load') return { sessionId: 'parent',
             ...(engine === 'v3' ? { configOptions: [{ id: 'model', type: 'select', currentValue: 'old', options: [{ value: 'old' }, { value: 'new' }] }] }
                 : { models: { currentModelId: 'old' } }),
@@ -79,6 +80,7 @@ for (const engine of ['v2', 'v3'] as const) {
             }
             return send(method, params);
         };
+        await c.initialize();
         await c.loadSession('parent', '/tmp');
         const updates = [];
         for await (const event of c.prompt('parent', 'continue')) updates.push(event);

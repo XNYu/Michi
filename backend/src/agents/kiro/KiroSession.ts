@@ -13,7 +13,7 @@ import type {
     RuntimeToolProfile,
 } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
-import type { AcpPromptBlock } from "../../services/acpClient";
+import { ACPRequestNotSentError, type AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
 import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "../nodeSummaryExperiment";
@@ -328,7 +328,14 @@ export class KiroSession implements AgentSession {
                 }
                 if (this.owner?.kind === "agent_run") throw err;
                 const cls = classifyAcpError(err);
-                const canRetry = attempt === 0 && !firstVisibleYielded && isRetryable(cls);
+                // V3 has no idempotency key: an absent response does not prove
+                // the submitted prompt did no work. Only a transport preflight
+                // rejection is known not to have reached the server.
+                const safeToResend = this.nativeEngine !== 'v3' || err instanceof ACPRequestNotSentError;
+                const canRetry = safeToResend && attempt === 0 && !firstVisibleYielded && isRetryable(cls);
+                if (!safeToResend && isRetryable(cls) && err instanceof Error) {
+                    err.message = `Kiro stopped responding after the request was submitted. It may have performed actions. Check the session before retrying. ${err.message}`;
+                }
                 if (!canRetry) {
                     (err as { acpErrorKind?: string }).acpErrorKind = toErrorKind(cls);
                     throw err;
