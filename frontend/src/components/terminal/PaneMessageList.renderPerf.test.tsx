@@ -94,7 +94,7 @@ describe('PaneMessageList render performance', () => {
     render(renderList(node, vi.fn()));
 
     expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
-    expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
+    expect(screen.queryByText('Explore further')).toBeNull();
   });
 
   it('hides follow-ups while the node is still streaming even when visibleResponseComplete', () => {
@@ -111,6 +111,6 @@ describe('PaneMessageList render performance', () => {
     render(renderList(node, vi.fn()));
 
     expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
-    expect(screen.queryByText('▸ FOLLOW-UPS')).toBeNull();
+    expect(screen.queryByText('Explore further')).toBeNull();
   });
 });

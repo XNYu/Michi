@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronDown, LoaderCircle } from 'lucide-react';
 import type { ChatNodeState } from '../../state/chatTypes';
 import type { Prefs } from '../../state/prefs';
 import { visibleMessageText } from '../../state/assistantBlocks';
@@ -540,78 +541,46 @@ function FollowUpsSection({
   disabled: boolean;
   showFollowUps: boolean;
 }) {
+  const [collapsed, setCollapsed] = React.useState(false);
+  const contentId = React.useId();
   if (!prefs.enableFollowUps) return null;
 
-  if (node.status === 'streaming' && node.followUpsGenerating && node.followUps.length === 0) {
-    return (
-      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed var(--term-line)' }}>
-        <div
-          style={{
-            fontSize: 10,
-            color: 'var(--term-muted)',
-            letterSpacing: '.14em',
-            marginBottom: 8,
-            fontFamily: 'var(--ui-font)',
-          }}
-        >
-          ▸ FOLLOW-UPS
-        </div>
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="t-followup-skeleton"
-            style={{
-              display: 'flex',
-              gap: 10,
-              padding: '8px 10px',
-              marginBottom: 4,
-              fontFamily: 'var(--ui-font)',
-              fontSize: 12.5,
-              color: 'var(--term-faint)',
-              border: '1px dashed var(--term-line)',
-              alignItems: 'center',
-            }}
-          >
-            <span style={{ color: 'var(--term-accent)', opacity: 0.5, fontFamily: 'var(--ui-font)' }}>
-              {i + 1}.
-            </span>
-            <span style={{ flex: 1, opacity: 0.6 }}>
-              {i === 0 ? 'generating follow-ups' : ''}
-              {i === 0 && (
-                <span className="t-followup-dots" aria-hidden>…</span>
-              )}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (!showFollowUps) return null;
+  const loading = node.status === 'streaming' && !!node.followUpsGenerating && node.followUps.length === 0;
+  if (!loading && !showFollowUps) return null;
 
   return (
-    <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed var(--term-line)' }}>
-      <div
-        style={{
-          fontSize: 10,
-          color: 'var(--term-muted)',
-          letterSpacing: '.14em',
-          marginBottom: 8,
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        ▸ FOLLOW-UPS
+    <section className="t-followups" aria-label="Suggested follow-ups" aria-busy={loading}>
+      <header className="t-followups-heading">
+        <h3>Explore further</h3>
+        <button
+          type="button"
+          className="t-followups-toggle"
+          aria-label={collapsed ? 'Expand follow-ups' : 'Collapse follow-ups'}
+          title={collapsed ? 'Expand follow-ups' : 'Collapse follow-ups'}
+          aria-expanded={!collapsed}
+          aria-controls={contentId}
+          onClick={() => setCollapsed(value => !value)}
+        >
+          <ChevronDown size={15} aria-hidden />
+        </button>
+      </header>
+      <div id={contentId} hidden={collapsed}>
+        {loading ? (
+          <>
+            <div className="t-followups-loading" role="status"><LoaderCircle size={14} aria-hidden />Preparing next steps...</div>
+            <div aria-hidden>{[0, 1, 2].map(i => <div key={i} className="t-followup-skeleton" />)}</div>
+          </>
+        ) : node.followUps.slice(0, 3).map((q, i) => (
+          <FollowUpRow
+            key={i}
+            index={i}
+            question={q}
+            disabled={disabled || (node.status === 'streaming' && !node.visibleResponseComplete)}
+            onContinue={onContinueFollowUp}
+            onBranch={onBranchFollowUp}
+          />
+        ))}
       </div>
-      {node.followUps.slice(0, 3).map((q, i) => (
-        <FollowUpRow
-          key={i}
-          index={i}
-          question={q}
-          disabled={disabled || (node.status === 'streaming' && !node.visibleResponseComplete)}
-          onContinue={onContinueFollowUp}
-          onBranch={onBranchFollowUp}
-        />
-      ))}
-    </div>
+    </section>
   );
 }

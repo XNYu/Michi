@@ -4,7 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { FollowUpRow } from './FollowUpRow';
 
 describe('FollowUpRow', () => {
-  it('renders the index and the question text', () => {
+  it('renders the question without a number or a continuation arrow', () => {
     render(
       <FollowUpRow
         index={0}
@@ -13,7 +13,8 @@ describe('FollowUpRow', () => {
         onBranch={vi.fn()}
       />,
     );
-    expect(screen.getByText('1.')).toBeTruthy();
+    expect(screen.queryByText('1.')).toBeNull();
+    expect(screen.getByRole('button', { name: /Continue follow-up/i }).querySelector('svg')).toBeNull();
     expect(
       screen.getByText('Central Flow 运营人员的日常工作流程是什么样的'),
     ).toBeTruthy();
@@ -30,7 +31,7 @@ describe('FollowUpRow', () => {
         onBranch={onBranch}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Continue follow-up 1/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue follow-up/i }));
     expect(onContinue).toHaveBeenCalledWith('hello');
     expect(onBranch).not.toHaveBeenCalled();
   });
@@ -46,7 +47,7 @@ describe('FollowUpRow', () => {
         onBranch={onBranch}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Branch follow-up 2/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Branch follow-up/i }));
     expect(onBranch).toHaveBeenCalledWith('hello');
     expect(onContinue).not.toHaveBeenCalled();
   });
@@ -61,8 +62,9 @@ describe('FollowUpRow', () => {
       />,
     );
 
-    const branchButton = screen.getByRole('button', { name: /Branch follow-up 1/i });
+    const branchButton = screen.getByRole('button', { name: /Branch follow-up/i });
     expect(branchButton.querySelector('svg')).toBeTruthy();
+    expect(branchButton.tabIndex).toBe(0);
     expect(branchButton.textContent).not.toContain('⎇');
   });
 
@@ -77,7 +79,7 @@ describe('FollowUpRow', () => {
         onBranch={onBranch}
       />,
     );
-    const textBtn = screen.getByRole('button', { name: /Continue follow-up 1/i });
+    const textBtn = screen.getByRole('button', { name: /Continue follow-up/i });
     fireEvent.keyDown(textBtn, { key: 'b' });
     expect(onBranch).toHaveBeenCalledWith('hello');
     expect(onContinue).not.toHaveBeenCalled();
@@ -93,7 +95,7 @@ describe('FollowUpRow', () => {
         onBranch={onBranch}
       />,
     );
-    const textBtn = screen.getByRole('button', { name: /Continue follow-up 1/i });
+    const textBtn = screen.getByRole('button', { name: /Continue follow-up/i });
     fireEvent.keyDown(textBtn, { key: 'B' });
     expect(onBranch).toHaveBeenCalledWith('hello');
   });
@@ -108,7 +110,7 @@ describe('FollowUpRow', () => {
         onBranch={vi.fn()}
       />,
     );
-    const textBtn = screen.getByRole('button', { name: /Continue follow-up 1/i });
+    const textBtn = screen.getByRole('button', { name: /Continue follow-up/i });
     fireEvent.click(textBtn);
     expect(onContinue).toHaveBeenCalledWith('hello');
   });
@@ -125,8 +127,9 @@ describe('FollowUpRow', () => {
         onBranch={onBranch}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Continue follow-up 1/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Branch follow-up 1/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue follow-up/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Branch follow-up/i }));
+    fireEvent.keyDown(screen.getByRole('button', { name: /Continue follow-up/i }), { key: 'b' });
     expect(onContinue).not.toHaveBeenCalled();
     expect(onBranch).not.toHaveBeenCalled();
   });

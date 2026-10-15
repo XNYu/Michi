@@ -16,9 +16,8 @@ export function FollowUpRow({
   onBranch,
   disabled = false,
 }: FollowUpRowProps): JSX.Element {
-  const number = index + 1;
-  const ariaContinue = `Continue follow-up ${number} in current pane: ${question}. Press B to branch into a new pane.`;
-  const ariaBranch = `Branch follow-up ${number} into new pane: ${question}`;
+  const ariaContinue = `Continue follow-up in current pane: ${question}. Press B to branch into a new pane.`;
+  const ariaBranch = `Branch follow-up into new pane: ${question}`;
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -48,9 +47,6 @@ export function FollowUpRow({
       style={{ '--followup-delay': `${index * 90}ms` } as React.CSSProperties}
       data-disabled={disabled ? 'true' : undefined}
     >
-      <span className="t-followup-num" aria-hidden>
-        {number}.
-      </span>
       <button
         type="button"
         className="t-followup-text"
@@ -66,12 +62,11 @@ export function FollowUpRow({
         className="t-followup-branch"
         aria-label={ariaBranch}
         title="Branch into new pane"
-        tabIndex={-1}
         disabled={disabled}
         onClick={handleBranchClick}
       >
         <span className="t-followup-branch-glyph" aria-hidden>
-          <BranchIcon size={13} />
+          <BranchIcon size={15} />
         </span>
         <span className="t-followup-branch-label">Branch</span>
       </button>

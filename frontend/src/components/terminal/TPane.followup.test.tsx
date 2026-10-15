@@ -17,7 +17,7 @@ describe('FollowUpRow wired with TPane-style handlers', () => {
         onBranch={(q) => createChildChat(NODE_ID, q)}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Continue follow-up 1/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue follow-up/i }));
     expect(sendMessage).toHaveBeenCalledWith(NODE_ID, Q);
     expect(createChildChat).not.toHaveBeenCalled();
   });
@@ -35,7 +35,7 @@ describe('FollowUpRow wired with TPane-style handlers', () => {
         onBranch={(q) => createChildChat(NODE_ID, q)}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Branch follow-up 3/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Branch follow-up/i }));
     expect(createChildChat).toHaveBeenCalledWith(NODE_ID, Q);
     expect(sendMessage).not.toHaveBeenCalled();
   });
