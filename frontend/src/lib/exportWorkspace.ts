@@ -260,4 +260,3 @@ export function runSelectionTranscript(
   const suggestedFilename = defaultExportFilename(`${payload.rootTitle || project.name}-selection`);
   return { markdown, suggestedFilename };
 }
-
