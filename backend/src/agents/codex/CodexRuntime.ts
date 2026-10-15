@@ -107,12 +107,14 @@ export class CodexRuntime implements AgentRuntime {
   private readonly mcpRegistry: McpSlotRegistry;
   private readonly mcpPort: number;
   private readonly concurrencyCap: number;
+  private readonly idleSweep: ReturnType<typeof setInterval>;
   private readonly followUpsHookPocEnabled: boolean;
   private readonly followUpsExperimentMode: FollowUpsExperimentMode;
 
   private readonly sessions = new Map<string, CodexSession>();
   private readonly threadToSession = new Map<string, CodexSession>();
   private readonly pendingSessions = new Map<string, Promise<AgentSession>>();
+  private readonly releasingSessions = new Map<string, Promise<void>>();
   private recovery: Promise<void> | null = null;
   private daemonDisconnected = false;
 
@@ -148,7 +150,9 @@ export class CodexRuntime implements AgentRuntime {
     this.bridge = bridge;
     this.mcpRegistry = mcpRegistry;
     this.mcpPort = mcpPort;
-    this.concurrencyCap = parseInt(process.env.MICHI_CODEX_MAX_CONCURRENT ?? '10', 10);
+    const configuredCap = Number(process.env.MICHI_CODEX_MAX_CONCURRENT);
+    this.concurrencyCap = Number.isSafeInteger(configuredCap) && configuredCap > 0
+      ? configuredCap : Infinity;
     this.modelCacheStore = testSeams?.modelCache;
     this.modelCache = this.modelCacheStore?.load(this.id) ?? null;
 
@@ -186,6 +190,13 @@ export class CodexRuntime implements AgentRuntime {
       this.client = new CodexAppServerClient({ spawnEnv });
     }
     this.followUpsHookPocEnabled = followUpsHookPocEnabled;
+
+    this.idleSweep = setInterval(() => {
+      void this.releaseIdleSessions().catch((err: unknown) => {
+        console.warn('[CodexRuntime] idle session cleanup failed:', err);
+      });
+    }, 60_000);
+    this.idleSweep.unref();
 
     // Wire server-request (approval) handler once, shared across all sessions.
     this.client.onServerRequest((method, params, respond, context) => {
@@ -253,6 +264,7 @@ export class CodexRuntime implements AgentRuntime {
       if ((session.runtimeProfileHash ?? null) !== (opts.profileHash ?? null)) {
         throw new Error(`session ${id} runtime profile hash mismatch`);
       }
+      session.touch?.();
       return session;
     };
     const deadline = Date.now() + RECOVERY_TIMEOUT_MS;
@@ -261,14 +273,18 @@ export class CodexRuntime implements AgentRuntime {
       if (remaining <= 0) throw new Error(RECOVERY_TIMEOUT_MESSAGE);
       await withDeadline(this.recovery.catch(() => {}), remaining, RECOVERY_TIMEOUT_MESSAGE);
     }
+    const releasing = this.releasingSessions.get(id);
+    if (releasing) await withDeadline(releasing, Math.max(1, deadline - Date.now()), RECOVERY_TIMEOUT_MESSAGE);
     const pending = this.pendingSessions.get(id);
     if (pending) return compatible(await pending);
     const existing = this.sessions.get(id);
     if (existing) return compatible(existing);
-    if (this.sessions.size + this.pendingSessions.size >= this.concurrencyCap) {
+    const pendingCount = [...this.pendingSessions.keys()].filter((key) => !this.sessions.has(key)).length;
+    if (this.sessions.size + pendingCount >= this.concurrencyCap) {
       throw new CodexConcurrencyError(`Codex concurrency cap (${this.concurrencyCap}) reached.`);
     }
-    const work = create();
+    // Reserve before creation starts, including synchronous reentrant callers.
+    const work = Promise.resolve().then(create);
     this.pendingSessions.set(id, work);
     try { return compatible(await work); } finally { this.pendingSessions.delete(id); }
   }
@@ -288,13 +304,6 @@ export class CodexRuntime implements AgentRuntime {
     // Double-load guard
     const existing = this.sessions.get(publicId);
     if (existing) return existing;
-
-    // Concurrency cap
-    if (this.sessions.size >= this.concurrencyCap) {
-      throw new CodexConcurrencyError(
-        `Codex concurrency cap (${this.concurrencyCap}) reached. Try again when an existing session finishes.`,
-      );
-    }
 
     await this.client.ensureStarted();
 
@@ -608,6 +617,23 @@ export class CodexRuntime implements AgentRuntime {
     };
   }
 
+  private async releaseIdleSessions(): Promise<void> {
+    if (this.recovery) return;
+    const now = Date.now();
+    const releases: Promise<void>[] = [];
+    for (const session of this.sessions.values()) {
+      // Agent Runs own their lifecycle through the Executor. Chat bindings stay
+      // persisted; the next message resumes the original native thread.
+      if (session.owner.kind !== 'chat_node' || this.pendingSessions.has(session.id)) continue;
+      if (session.isIdleExpired(now, 5 * 60_000)) {
+        // releaseSession removes the maps and marks disposed synchronously,
+        // before awaiting unsubscribe, so no acquisition can reuse this object.
+        releases.push(this.releaseSession(session.id));
+      }
+    }
+    await Promise.all(releases);
+  }
+
   // ---- releaseSession ------------------------------------------------------
 
   /**
@@ -617,7 +643,10 @@ export class CodexRuntime implements AgentRuntime {
    */
   async releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
     const session = this.sessions.get(sessionId);
-    if (!session) return;
+    if (!session) {
+      await this.releasingSessions.get(sessionId);
+      return;
+    }
 
     // Ownership guard: reject if expectedOwner doesn't match.
     if (expectedOwner) {
@@ -628,7 +657,11 @@ export class CodexRuntime implements AgentRuntime {
     this.sessions.delete(sessionId);
     if (threadId) this.threadToSession.delete(threadId);
     sessionRegistry.dropSession(sessionId);
-    await session.dispose();
+    // A subsequent resume must wait for the old thread/unsubscribe and MCP
+    // cleanup, otherwise that cleanup can detach the newly resumed thread.
+    const releasing = session.dispose();
+    this.releasingSessions.set(sessionId, releasing);
+    try { await releasing; } finally { this.releasingSessions.delete(sessionId); }
   }
 
   // ---- listModels ----------------------------------------------------------
@@ -697,10 +730,12 @@ export class CodexRuntime implements AgentRuntime {
   // ---- shutdown ------------------------------------------------------------
 
   async shutdown(): Promise<void> {
+    clearInterval(this.idleSweep);
     const sessions = [...this.sessions.values()];
     for (const session of sessions) {
       await this.releaseSession(session.id);
     }
+    await Promise.all(this.releasingSessions.values());
     await this.client.shutdown();
   }
 

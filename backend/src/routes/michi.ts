@@ -217,11 +217,10 @@ function sendAgentRouteError(res: express.Response, err: unknown): void {
         return;
     }
     if (isConcurrencyError(err)) {
-        // Keep the historical code string — the frontend gates its
-        // "sessions busy, retry" UX on exactly CLAUDE_SESSIONS_BUSY. It now
-        // covers every runtime's concurrency cap, not just Claude.
+        const runtimeId = ({ ClaudeConcurrencyError: 'claude', CodexConcurrencyError: 'codex', KiroConcurrencyError: 'kiro' } as Record<string, string>)[(err as Error).name];
         res.status(503).json({
-            code: "CLAUDE_SESSIONS_BUSY",
+            code: "RUNTIME_SESSIONS_BUSY",
+            runtimeId,
             error: (err as Error).message,
         });
         return;

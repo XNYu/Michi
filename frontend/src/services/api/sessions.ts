@@ -284,16 +284,19 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   });
   if (!res.ok) {
     const raw = await res.text().catch(() => '');
-    let payload: { code?: string; error?: string } | null = null;
+    let payload: { code?: string; error?: string; runtimeId?: string } | null = null;
     try {
       payload = raw ? JSON.parse(raw) : null;
     } catch {
       payload = null;
     }
-    if (payload?.code === 'CLAUDE_SESSIONS_BUSY') {
+    if (payload?.code === 'RUNTIME_SESSIONS_BUSY' || payload?.code === 'CLAUDE_SESSIONS_BUSY') {
       startupMark('ensure_session_failed', { nodeId: opts.nodeId, status: res.status, code: payload.code, durMs: Date.now() - startedAt });
+      // Older gateways use CLAUDE_SESSIONS_BUSY for every runtime.
+      const runtimeId = payload.runtimeId ?? opts.runtimeId;
+      const label = ({ claude: 'Claude', codex: 'Codex', kiro: 'Kiro', pi: 'Pi' } as Record<string, string>)[runtimeId ?? ''] ?? 'Agent';
       throw new Error(
-        'Claude slots are busy. Stop a running reply or wait for one to finish, then retry.',
+        `${label} session capacity is full. Wait for an idle session to be released, then retry.`,
       );
     }
     startupMark('ensure_session_failed', { nodeId: opts.nodeId, status: res.status, durMs: Date.now() - startedAt });

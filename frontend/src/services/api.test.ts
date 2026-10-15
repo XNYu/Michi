@@ -48,19 +48,22 @@ describe('ensureSession', () => {
     vi.unstubAllGlobals();
   });
 
-  it('maps Claude session capacity errors to a user-facing message', async () => {
+  it.each([
+    ['RUNTIME_SESSIONS_BUSY', 'codex', 'claude', 'Codex'],
+    ['RUNTIME_SESSIONS_BUSY', 'claude', 'codex', 'Claude'],
+    ['RUNTIME_SESSIONS_BUSY', 'kiro', undefined, 'Kiro'],
+    ['CLAUDE_SESSIONS_BUSY', undefined, 'codex', 'Codex'],
+    ['CLAUDE_SESSIONS_BUSY', undefined, undefined, 'Agent'],
+  ] as const)('labels capacity errors using the runtime: %s %s %s', async (code, runtimeId, requestedRuntime, label) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({
-        code: 'CLAUDE_SESSIONS_BUSY',
-        error: 'ClaudeRuntime concurrency limit 10 reached',
-      }), {
+      new Response(JSON.stringify({ code, runtimeId, error: 'concurrency limit reached' }), {
         status: 503,
         headers: { 'Content-Type': 'application/json' },
       }),
     ));
 
-    await expect(ensureSession({ nodeId: 'n1' })).rejects.toThrow(
-      'Claude slots are busy. Stop a running reply or wait for one to finish, then retry.',
+    await expect(ensureSession({ nodeId: 'n1', runtimeId: requestedRuntime })).rejects.toThrow(
+      `${label} session capacity is full. Wait for an idle session to be released, then retry.`,
     );
   });
 

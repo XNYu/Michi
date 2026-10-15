@@ -180,6 +180,7 @@ export class CodexSession implements AgentSession {
   private readonly hiddenInternalToolCallIds = new Set<string>();
 
   // Turn mutex
+  private lastUsedAt = Date.now();
   private turnLock: Promise<void> | null = null;
   private turnLockRelease: (() => void) | null = null;
 
@@ -476,6 +477,7 @@ export class CodexSession implements AgentSession {
       this.cancelRequested = false;
       if (this.state === 'in_turn') this.state = 'idle';
       this.finishFollowUpsHookPocTurn();
+      this.touch();
       this.releaseTurnLock();
     }
   }
@@ -873,6 +875,12 @@ export class CodexSession implements AgentSession {
   }
 
   isBusy(): boolean { return this.state === 'in_turn' || (this.state !== 'crashed' && !!this.turnLock); }
+  touch(): void { this.lastUsedAt = Date.now(); }
+  isIdleExpired(now: number, ttlMs: number): boolean {
+    // A terminal notification can mark the state idle before send() finishes.
+    // Keep the session until its consumer has drained and released the turn lock.
+    return this.state === 'idle' && !this.turnLock && now - this.lastUsedAt >= ttlMs;
+  }
   needsRecovery(): boolean { return this.state === 'crashed'; }
   acceptsControl(params: Record<string, unknown>): boolean {
     if (this.state !== 'in_turn' || this.nativeSettled || !this.turnAbort || this.turnAbort.signal.aborted) return false;
@@ -1425,6 +1433,7 @@ export class CodexSession implements AgentSession {
         code: 'ESESSION_BUSY',
       });
     }
+    this.touch();
     let release!: () => void;
     this.turnLock = new Promise<void>((r) => {
       release = r;

@@ -262,6 +262,8 @@ export interface AgentStatus {
 }
 
 export interface AgentSession {
+  /** Refresh idle retention when a caller acquires this live session. */
+  touch?(): void;
   readonly nativeEngine?: string;
   getNativeResumeToken?(): JsonValue;
   /** Stable Michi node id for chats, or Attempt id for Agent Runs. */

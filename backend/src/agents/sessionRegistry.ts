@@ -16,6 +16,7 @@ export const HISTORY_STUB_MAX_ENTRIES = 256;
 
 function touch(entry: Entry): void {
     if (entry.kind === "stub") entry.lastAccessedAt = Date.now();
+    else entry.session.touch?.();
 }
 
 export function evictHistoryStubs(opts: {

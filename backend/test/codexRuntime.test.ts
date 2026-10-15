@@ -1,4 +1,10 @@
-import { test, beforeEach } from 'node:test';
+import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { closeDb } from '../src/services/db';
+import { saveWorkspace, saveNode, getNode, updateNodeResumeBinding } from '../src/services/dbRepository';
+import * as sessionRegistry from '../src/agents/sessionRegistry';
 import assert from 'node:assert/strict';
 import { CodexRuntime, CodexConcurrencyError, CodexSessionNotResumableError } from '../src/agents/codex/CodexRuntime';
 import type { CodexAppServerClient } from '../src/agents/codex/CodexAppServerClient';
@@ -352,36 +358,80 @@ test('newSession double-load guard returns existing session without re-creating'
   await runtime.shutdown();
 });
 
-test('newSession throws CodexConcurrencyError when cap is reached', async () => {
-  // Set cap to 1 via env — but since we construct directly, use concurrencyCap override
-  // Instead, we test by filling up to cap=1 using a tiny env mock:
-  // We can't easily override the env-parsed cap, so we use the default cap (10)
-  // and instead test the error shape with a runtime that has cap=1.
-  // We achieve cap=1 by filling the sessions map directly (internal white-box test).
-
-  const runtime = makeRuntime({
-    request: async (method: string, _params: unknown): Promise<unknown> => {
-      if (method === 'model/list') return { data: [{ id: 'm1', displayName: 'M1', description: '', hidden: false, isDefault: true, supportedReasoningEfforts: [], defaultReasoningEffort: 'low' }] };
-      if (method === 'thread/start') return { threadId: 'thread-cap-' + Math.random().toString(36).slice(2) };
-      return {};
-    },
+test('default Codex capacity allows more than ten live sessions', async (t) => {
+  const previous = process.env.MICHI_CODEX_MAX_CONCURRENT;
+  delete process.env.MICHI_CODEX_MAX_CONCURRENT;
+  t.after(() => {
+    if (previous === undefined) delete process.env.MICHI_CODEX_MAX_CONCURRENT;
+    else process.env.MICHI_CODEX_MAX_CONCURRENT = previous;
   });
+  let sequence = 0;
+  const runtime = makeRuntime({ request: async (method: string) =>
+    method === 'thread/start' ? { threadId: `capacity-${++sequence}` } : {},
+  });
+  t.after(() => runtime.shutdown());
+  const sessions = await Promise.all(Array.from({ length: 12 }, (_, i) =>
+    runtime.newSession({ sessionId: `capacity-${i}`, cwd: '/tmp', model: 'm1' })));
+  assert.equal(new Set(sessions).size, 12);
+});
 
-  // Fill up 10 sessions (default cap)
-  const filledIds: string[] = [];
-  for (let i = 0; i < 10; i++) {
-    const id = `cap-node-${i}`;
-    filledIds.push(id);
-    await runtime.newSession({ sessionId: id, cwd: '/tmp/test' });
+test('explicit cap counts pending allocations and preserves same-id deduplication', async (t) => {
+  const previous = process.env.MICHI_CODEX_MAX_CONCURRENT;
+  process.env.MICHI_CODEX_MAX_CONCURRENT = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env.MICHI_CODEX_MAX_CONCURRENT;
+    else process.env.MICHI_CODEX_MAX_CONCURRENT = previous;
+  });
+  let started!: () => void;
+  const starting = new Promise<void>((resolve) => { started = resolve; });
+  let complete!: () => void;
+  const gate = new Promise<void>((resolve) => { complete = resolve; });
+  const runtime = makeRuntime({ request: async (method: string) => {
+    if (method === 'thread/start') { started(); await gate; return { threadId: 'limited-thread' }; }
+    return {};
+  } });
+  t.after(() => runtime.shutdown());
+  const opts = { sessionId: 'limited', cwd: '/tmp', model: 'm1' };
+  const first = runtime.newSession(opts);
+  await starting;
+  const duplicate = runtime.newSession(opts);
+  await assert.rejects(runtime.newSession({ ...opts, sessionId: 'overflow' }), CodexConcurrencyError);
+  complete();
+  assert.equal(await first, await duplicate);
+  await assert.rejects(runtime.newSession({ ...opts, sessionId: 'overflow' }), CodexConcurrencyError);
+});
+
+test('idle sweep releases chat resources but preserves busy, draining, recent and Agent Run sessions', async (t) => {
+  let sequence = 0;
+  const unsubscribed: string[] = [];
+  const runtime = makeRuntime({ request: async (method: string, params: any) => {
+    if (method === 'thread/start') return { threadId: `idle-thread-${++sequence}` };
+    if (method === 'thread/unsubscribe') unsubscribed.push(params.threadId);
+    return {};
+  } });
+  t.after(() => runtime.shutdown());
+  const sessions: any[] = [];
+  for (const id of ['expired', 'busy', 'draining', 'recent', 'run']) {
+    sessions.push(await runtime.newSession({ sessionId: id, cwd: '/tmp', model: 'm1',
+      ...(id === 'run' ? { owner: { kind: 'agent_run' as const, runId: 'run', attemptId: id } } : {}) }));
   }
-
-  // 11th should throw
-  await assert.rejects(
-    runtime.newSession({ sessionId: 'cap-node-overflow', cwd: '/tmp/test' }),
-    CodexConcurrencyError,
-  );
-
-  await runtime.shutdown();
+  const [expired, busy, draining, recent, run] = sessions;
+  for (const session of [expired, busy, draining, run]) session.lastUsedAt = Date.now() - 360_000;
+  busy.state = 'in_turn';
+  draining.turnLock = Promise.resolve();
+  await (runtime as any).releaseIdleSessions();
+  assert.deepEqual(unsubscribed, [expired.threadId]);
+  assert.equal((runtime as any).sessions.has(expired.id), false);
+  assert.equal((runtime as any).threadToSession.has(expired.threadId), false);
+  assert.equal(expired.slotId, null);
+  for (const session of [busy, draining, recent, run]) {
+    assert.equal((runtime as any).sessions.get(session.id), session);
+  }
+  // Reusing an old session refreshes its idle deadline.
+  recent.lastUsedAt = Date.now() - 360_000;
+  assert.equal(sessionRegistry.getSession(recent.id), recent);
+  await (runtime as any).releaseIdleSessions();
+  assert.equal((runtime as any).sessions.get(recent.id), recent);
 });
 
 test('loadSession without external_session_id throws CodexSessionNotResumableError', async () => {
@@ -467,4 +517,70 @@ test('daemon exit marks sessions crashed and terminates in-flight drain', async 
   // The drain should resolve with a turn_end (terminal safety invariant)
   const events = await drainPromise;
   assert.ok(events.includes('turn_end'), `drain should end with turn_end, got: ${events.join(', ')}`);
+});
+
+test('scheduled idle cleanup preserves durable binding and resumes the original thread', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-codex-idle-'));
+  const previous = process.env.MICHI_DATA_DIR;
+  closeDb();
+  process.env.MICHI_DATA_DIR = directory;
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_000_000 });
+  const calls: Array<{ method: string; params: any }> = [];
+  const runtime = makeRuntime({ request: async (method: string, params: any) => {
+    calls.push({ method, params });
+    if (method === 'thread/start') return { threadId: 'original-idle-thread' };
+    if (method === 'thread/resume') return { threadId: params.threadId };
+    return {};
+  } });
+  t.after(async () => {
+    await runtime.shutdown();
+    closeDb();
+    if (previous === undefined) delete process.env.MICHI_DATA_DIR;
+    else process.env.MICHI_DATA_DIR = previous;
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  saveWorkspace({ id: 'idle-ws', name: 'Idle test', created_at: 1, updated_at: 1 } as any);
+  saveNode({ id: 'idle-node', workspace_id: 'idle-ws', title: 'Idle test', kind: 'chat',
+    status: 'idle', minimized: 0, spawned_by_agent: 0, created_at: 1 } as any);
+  const opts = { sessionId: 'idle-node', cwd: '/tmp', model: 'm1', reasoning: 'high' as const };
+  const original = await runtime.newSession(opts);
+  updateNodeResumeBinding('idle-node', { acp_session_id: original.nativeSessionId!, runtime_id: 'codex',
+    model_id: 'm1', provider_id: null, reasoning: 'high', resume_fingerprint: null, current_mode_id: null });
+  const binding = getNode('idle-node');
+  t.mock.timers.tick(4 * 60_000);
+  assert.equal((runtime as any).sessions.get('idle-node'), original);
+  t.mock.timers.tick(60_000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(sessionRegistry.getSession('idle-node'), undefined);
+  assert.deepEqual(getNode('idle-node'), binding);
+  assert.equal(calls.filter((call) => call.method === 'thread/unsubscribe').length, 1);
+  const resumed = await runtime.loadSession(opts);
+  assert.notEqual(resumed, original);
+  assert.equal(resumed.nativeSessionId, original.nativeSessionId);
+  assert.equal(calls.filter((call) => call.method === 'thread/start').length, 1);
+  assert.equal(calls.filter((call) => call.method === 'thread/resume').length, 1);
+  assert.equal(sessionRegistry.getSession('idle-node'), resumed);
+});
+
+test('reacquisition waits for idle unsubscribe cleanup before starting a replacement', async (t) => {
+  let finishUnsubscribe!: () => void;
+  const unsubscribe = new Promise<void>((resolve) => { finishUnsubscribe = resolve; });
+  let starts = 0;
+  const runtime = makeRuntime({ request: async (method: string) => {
+    if (method === 'thread/start') return { threadId: `release-race-${++starts}` };
+    if (method === 'thread/unsubscribe') await unsubscribe;
+    return {};
+  } });
+  t.after(() => runtime.shutdown());
+  const opts = { sessionId: 'release-race', cwd: '/tmp', model: 'm1' };
+  const original: any = await runtime.newSession(opts);
+  original.lastUsedAt = Date.now() - 360_000;
+  const cleanup = (runtime as any).releaseIdleSessions();
+  const next = runtime.newSession(opts);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(starts, 1, 'old unsubscribe must complete before any new acquisition');
+  finishUnsubscribe();
+  await cleanup;
+  assert.notEqual(await next, original);
+  assert.equal(starts, 2);
 });

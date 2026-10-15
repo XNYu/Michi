@@ -146,3 +146,19 @@ test('switching to a non-provider runtime does not pollute providerByRuntime', a
   assert.equal(getAgentConfig().providerByRuntime['plain-test'], undefined);
   assert.equal(getAgentConfig().providerByRuntime[runtime.id], 'enabled');
 });
+
+for (const runtimeId of ['codex', 'claude', 'kiro']) {
+  test(`capacity errors identify ${runtimeId} without the historical Claude code`, async (t) => {
+    const label = runtimeId[0].toUpperCase() + runtimeId.slice(1);
+    t.mock.method(runtime, 'newSession', async () => {
+      throw Object.assign(new Error(`${label} concurrency cap reached`), { name: `${label}ConcurrencyError` });
+    });
+    const result = await post('/nodes/node/ensure-session', {
+      workspaceId: 'ws', cwd: directory, runtimeId: runtime.id, modelId: 'flexible',
+    });
+    assert.equal(result.status, 503);
+    assert.deepEqual(result.body, {
+      code: 'RUNTIME_SESSIONS_BUSY', runtimeId, error: `${label} concurrency cap reached`,
+    });
+  });
+}
