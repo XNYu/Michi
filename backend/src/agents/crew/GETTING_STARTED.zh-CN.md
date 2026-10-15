@@ -6,7 +6,9 @@ Crew 提供后端；一次接入后，聊天、审批、模型、Memory、恢复
 
 ## 1. 更新 Michi
 
-默认安装器把代码和构建放在 `~/.michi`；macOS 桌面 App 位于 `~/Applications/michi.app`。先更新到包含 Crew App 0.6.0 的版本：
+公开安装器默认把代码放在 `~/Michi`；请按第 8 节从该目录运行兼容 helper，生成带明确安装路径的 Crew App，并将生成文件保存到专用持久目录，再完成第 3 节授权。不要把公开安装目录与 `~/.michi` 数据目录混淆。
+
+下方直接安装 `~/.michi/crew-app` 的流程仅适用于确实把源码和构建安装在 `~/.michi` 的用户。macOS 桌面 App 位于 `~/Applications/michi.app`。先更新到包含 Crew App 0.6.0 的版本：
 
 ```sh
 michi update
@@ -53,8 +55,7 @@ Michi 检查已安装 App 的版本；旧版会显示 **Sync Crew App** 并阻�
 
 ## 4. 在 Michi 中使用
 
-macOS 正常打开桌面 App，或运行 `michi`。Linux 运行 `michi start`，访问打印的
-地址；默认是 `http://localhost:4649`。
+macOS 正常打开桌面 App，或运行 `michi`。源码安装可在已构建的代码目录运行 `npm start`，访问打印的地址；默认是 `http://localhost:3000`。
 
 在 **Settings → Model** 或新对话 composer 的 Runtime 菜单选择 **Kiro Crew**。
 完整接入请保持默认 **michi-crew** 模板；模型和推理档位仍可在 composer 选择。

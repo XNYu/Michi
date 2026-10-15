@@ -6,7 +6,9 @@ KiroCrew supplies the backend. After one-time setup, use **Michi** for chats, ap
 
 ## 1. Update your Michi installation
 
-The standard installer clones and builds Michi in **~/.michi**. On macOS the desktop application is installed in **~/Applications/michi.app**. Crew stores its configuration and Apps in **~/.kiro/crew** by default.
+The public installer clones Michi into **~/Michi**. For that checkout, first follow section 9 to prepare a Crew App with an explicit installation path and keep its generated files in a persistent App source; then complete authorization in section 3. The **~/.michi** data directory alone is not a source installation.
+
+The direct **~/.michi/crew-app** instructions below apply only when your source checkout and build actually live at **~/.michi**. On macOS the desktop application is installed in **~/Applications/michi.app**. Crew stores its configuration and Apps in **~/.kiro/crew** by default.
 
 Use a Michi release containing Crew App **0.6.0 or newer**. Update through the normal command:
 
@@ -74,7 +76,7 @@ On macOS, launch Michi normally, or run:
 michi
 ```
 
-On Linux, run `michi start` and open the address it prints; the default is `http://localhost:4649`.
+For a source installation, run `npm start` from the built checkout and open the address it prints; the default is `http://localhost:3000`.
 
 In Michi:
 

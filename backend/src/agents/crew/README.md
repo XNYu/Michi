@@ -6,7 +6,7 @@ companion Gateway, owner token, or `/app-runtime` API is required.
 Originally validated against **0.8.0-insider.14** on 2026-10-07; App **0.6.0** install/Sync, official broker updates and native approvals were validated on macOS with **0.9.0-insider.6** on 2026-10-13. See the getting-started guide for the exact acceptance scope.
 
 中文接入步骤见 [Michi × KiroCrew 接入教程](GETTING_STARTED.zh-CN.md)。
-For an installed Michi application (default directory `~/.michi`), see the
+For an installed Michi application, including the public installer at `~/Michi`, see the
 [English getting-started guide](GETTING_STARTED.md).
 
 ## 简单使用
@@ -65,7 +65,7 @@ Crew 会把模板提示词放入自己的会话上下文；kiro-cli/KAS 也有�
 
 ## Complete the required App setup
 
-For a default installer checkout, install directly from the complete **~/.michi/crew-app** directory using Crew's **Install from path**. No generation script or copying is needed. The canonical manifest is `crew-app/app.json` (0.6.0).
+For a checkout actually installed at `~/.michi`, install directly from the complete **~/.michi/crew-app** directory using Crew's **Install from path**. No generation script or copying is needed. The canonical manifest is `crew-app/app.json` (0.6.0).
 
 1. Consent to **sessionApproval** and confirm the App is **Enabled**.
 2. In **Developer → MCP Management**, enable/approve `michi-crew-runtime:michi` **Stub / Routed**.

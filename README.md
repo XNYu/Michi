@@ -19,8 +19,8 @@ conversation, run them side by side, and fold the good ones back together.
 - **Branching work, not disposable chats**: create manual branches, let an
   agent fan out child branches, weave selected nodes, build digests, inspect a
   thread map, and follow an append-only branch Overview journal.
-- **Multiple agent runtimes**: Kiro, Cursor and Grok over ACP, Pi with multiple
-  API providers, Claude Code CLI, and Antigravity. Runtime, provider,
+- **Multiple agent runtimes**: Kiro, Kiro Crew, Cursor and Grok over ACP, Pi with multiple
+  API providers, Claude Code CLI, Codex, and Antigravity. Runtime, provider,
   model, reasoning, and permission options are selected per conversation where
   the runtime supports them.
 - **Durable streaming**: turns are persisted with IDs and sequence watermarks.
@@ -72,10 +72,20 @@ interactive, so exploring an alternative never costs you the thread you were on.
 | **Map** | A tree visualization of how a conversation has branched. |
 | **Multi-pane** | View one, two, or three chats side by side in a single view. |
 | **Artifacts** | Save files, links, code, and images; pin them to a workspace or mention them with `@`. |
-| **Multi-runtime** | Claude Code, Kiro-CLI, Cursor CLI, Grok CLI, Pi (multi-provider), and Antigravity, side by side in the same workspace. |
+| **Multi-runtime** | Claude Code, Codex, Kiro-CLI, Kiro Crew, Cursor CLI, Grok CLI, Pi (multi-provider), and Antigravity, side by side in the same workspace. |
 
 Attach files or images, add comments, quote earlier text, search messages, and
-export Markdown — all locally.
+export Markdown — all locally. Open the Browser pane beside your chats;
+**Settings → Browser** chooses whether links open there or in the system browser.
+
+**Settings → Model → Permissions** configures global or per-chat approval modes.
+Individual approval cards can trust one tool in the current chat or all tools for
+the current runtime session. Available modes depend on the runtime. Native resume
+and fork are independently configurable per runtime.
+
+Home lists recent threads across workspaces. Separate windows retain independent
+composer drafts, and a message sent during confirmed runtime cleanup continues
+automatically once the previous turn releases its session.
 
 ---
 
@@ -131,7 +141,9 @@ Michi is runtime-agnostic. Configure any of these from Settings:
 |---|---|
 | **Claude Code** | Anthropic's Claude CLI. |
 | **Kiro-CLI** | Kiro agent runtime. |
-| **Pi** | Multi-provider — Anthropic, Gemini, DeepSeek via API keys. |
+| **Kiro Crew** | Local official Crew Gateway with required App/MCP setup. See the [setup guide](backend/src/agents/crew/GETTING_STARTED.md). |
+| **Codex** | Codex app-server runtime. |
+| **Pi** | Multi-provider — Anthropic, Gemini, DeepSeek via API keys. [Gemini 4 Argon](docs/features/pi-gemini-argon.md) supports streaming continuation. |
 | **Antigravity** | Antigravity agent runtime. |
 | **Cursor** | Cursor CLI (`~/.local/bin/agent acp` — never Grok's `~/.grok/bin/agent`). Auth via `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` or an existing `agent login` cache. Official ACP modes: agent / plan / ask. |
 | **Grok** | Official xAI Grok CLI (`grok --no-auto-update agent stdio`). Prefers `grok login` cache, then `XAI_API_KEY` if set, then `grok.com`. Default model `grok-4.6`. |
