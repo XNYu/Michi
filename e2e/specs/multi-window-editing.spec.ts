@@ -38,7 +38,7 @@ test('two windows edit independently and restore their own durable drafts', asyn
   const custom = async (route: Route) => {
     const url = new URL(route.request().url());
     const method = route.request().method();
-    if (/\/(claim|heartbeat|release)$/.test(url.pathname)) leaseCalls.push(url.pathname);
+    if (/\/chats\/[^/]+\/(claim|heartbeat|release)$/.test(url.pathname)) leaseCalls.push(url.pathname);
     if (method === 'GET' && /^\/api\/workspaces(?:\/all)?$/.test(url.pathname)) {
       await route.fulfill({ json: { workspaces: [workspace] } });
       return true;
@@ -101,13 +101,15 @@ test('two windows edit independently and restore their own durable drafts', asyn
   }
 });
 
-test('a competing send retains the input and never requests cancellation', async ({ page }) => {
+test('stopping a competing send leaves the active turn untouched', async ({ page }) => {
   const message = 'This conversation already has a running task. Wait for it to finish or start a branch.';
   const cancels: string[] = [];
+  const requests: string[] = [];
   await installMockApi(page, { custom: async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (/\/chats\/[^/]+\/cancel$/.test(path)) cancels.push(path);
     if (/\/chats\/[^/]+\/message$/.test(path)) {
+      requests.push(route.request().postData()!);
       await route.fulfill({ status: 409, json: { error: message, code: 'turn_active' } });
       return true;
     }
@@ -117,8 +119,13 @@ test('a competing send retains the input and never requests cancellation', async
   const editor = page.locator('[contenteditable]').first();
   await editor.fill('Keep this unsent question');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
-  await expect(page.getByText(message, { exact: true })).toBeVisible();
-  await expect(editor).toHaveText('Keep this unsent question');
+  await expect.poll(() => requests.length).toBeGreaterThanOrEqual(2);
+  expect(new Set(requests).size).toBe(1);
+  await expect(page.getByText(message, { exact: true })).toHaveCount(0);
+  await expect(page.locator('.terminal-message-user').getByText('Keep this unsent question', { exact: true })).toHaveCount(1);
+  await expect(editor).toBeEmpty();
+  await page.getByRole('button', { name: 'Stop stream', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Send (Enter)', exact: true })).toBeVisible();
   await expect(editor).toHaveAttribute('contenteditable', 'true');
   expect(cancels).toEqual([]);
 });
