@@ -25,6 +25,7 @@
     "michi-shared": "file:../shared",
     "@earendil-works/pi-agent-core": "^0.85.1",
     "@earendil-works/pi-ai": "^0.85.1",
+    "@google/genai": "2.29.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-auth": "^1.6.11",
     "cors": "^2.8.5",

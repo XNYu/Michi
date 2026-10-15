@@ -61,3 +61,22 @@ async function loadPiAgentCoreModule(): Promise<PiAgentCoreModule> {
     }
     return nativeDynamicImport("@earendil-works/pi-agent-core") as Promise<PiAgentCoreModule>;
 }
+
+// Keep the exported Pi converters rather than duplicating their signature,
+// tool schema and cross-provider history rules. Both imports must be statically
+// visible to esbuild, while ts-node needs native ESM imports.
+export async function loadPiGoogleHelpers(): Promise<any> {
+    if (typeof __MICHIBUNDLE__ !== 'undefined' && __MICHIBUNDLE__) {
+        return Promise.all([
+            // @ts-ignore - exports subpath requires newer moduleResolution
+            import('@earendil-works/pi-ai/api/google-shared'),
+            // @ts-ignore - exports subpath requires newer moduleResolution
+            import('@earendil-works/pi-ai/api/simple-options'),
+        ]).then(([google, simple]) => ({ ...google, ...simple }));
+    }
+    const [google, simple] = await Promise.all([
+        nativeDynamicImport('@earendil-works/pi-ai/api/google-shared'),
+        nativeDynamicImport('@earendil-works/pi-ai/api/simple-options'),
+    ]);
+    return { ...(google as object), ...(simple as object) };
+}

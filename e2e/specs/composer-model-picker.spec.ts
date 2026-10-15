@@ -2,6 +2,45 @@ import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, sseBody } from '../fixtures/mockApi';
 import { installComposerModels } from '../fixtures/composerModels';
 
+test('selects Google Gemini 4 Argon with its three effort levels and saves Home defaults', async ({ page }) => {
+  const { status, ensures } = await installComposerModels(page);
+  const providers = [{ id: 'google', label: 'Google AI', keyLabel: 'Gemini API key', envVars: ['GEMINI_API_KEY'], defaultModel: 'gemini-4-argon', supportsReasoning: true, hasKey: true }];
+  Object.assign(status, { runtime: 'pi', label: 'Pi', provider: 'google', model: 'gemini-4-argon', reasoning: 'medium', providers,
+    capabilities: { ...status.capabilities, providerModels: true, apiKeys: true } });
+  for (const endpoint of ['models', 'runtime-catalog']) {
+    await page.route(`**/api/agent/${endpoint}*`, async (route) => {
+      await route.fulfill({ json: { models: [
+        { id: 'gemini-4-argon', label: 'Gemini 4 Argon', supportsReasoning: true, supportedReasoningLevels: ['low', 'medium', 'high'], defaultReasoning: 'medium', contextWindow: 1_048_576 },
+        { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+      ], providers, capabilities: status.capabilities, sanitizedModel: null } });
+    });
+  }
+  await bootWithWorkspace(page, 'Argon binding');
+  const trigger = page.getByRole('button', { name: /^Model settings:/ });
+  await trigger.click();
+  const picker = page.getByRole('dialog', { name: 'Model settings' });
+  await expect(trigger).toContainText('Gemini 4 Argon');
+  await expect(picker.getByRole('button', { name: /Select provider: Google AI/ })).toBeVisible();
+  await picker.getByRole('button', { name: /Select model:/ }).click();
+  await picker.getByRole('menuitemradio', { name: /^Gemini 4 Argon/ }).click();
+  const effort = picker.getByRole('slider', { name: 'Thinking effort' });
+  await expect(effort).toHaveAttribute('max', '2');
+  await effort.focus();
+  await effort.press('Home');
+  await expect(trigger).toContainText('Low');
+  await effort.press('End');
+  await expect(trigger).toContainText('High');
+  await effort.press('ArrowLeft');
+  await expect(trigger).toContainText('Medium');
+  await page.keyboard.press('Escape');
+  await page.locator('[contenteditable="true"]').first().fill('Use Gemini Argon');
+  await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+  await expect.poll(() => ensures.length).toBe(1);
+  // Home sends with the saved backend defaults; explicit pane overrides are
+  // covered by the existing tests below.
+  expect(status).toMatchObject({ runtime: 'pi', provider: 'google', model: 'gemini-4-argon', reasoning: 'medium' });
+});
+
 test('shows the Claude catalog label before opening the picker in Home and a new pane', async ({ page }) => {
   const { status, ensures, patches } = await installComposerModels(page);
   status.runtime = 'claude';

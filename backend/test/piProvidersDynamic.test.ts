@@ -81,6 +81,21 @@ test("returns a safe OpenRouter descriptor when the live catalog is unavailable"
   assert.equal(model.maxTokens, 16_384);
 });
 
+test('OpenRouter Argon has only its supported effort levels and retains live limits and pricing', async () => {
+  const actual: any = await originalLoadPiAi();
+  piAiModule.loadPiAi = async () => ({ getModel: () => undefined, getSupportedThinkingLevels: actual.getSupportedThinkingLevels });
+  global.fetch = async () => new Response(JSON.stringify({ data: [{ id: 'google/gemini-4-argon', name: 'Google: Gemini 4 Argon', context_length: 1_048_576,
+    pricing: { prompt: '0.000002', completion: '0.00001' }, top_provider: { max_completion_tokens: 65_536 }, supported_parameters: ['reasoning'] }] }));
+  const { listPiModels, resolvePiModel } = require('../src/agents/pi/piProviders');
+  const models = await listPiModels('openrouter');
+  assert.deepEqual(models[0].supportedReasoningLevels, ['low', 'medium', 'high']);
+  assert.equal(models[0].defaultReasoning, 'medium');
+  const model = await resolvePiModel('openrouter', 'google/gemini-4-argon');
+  assert.deepEqual(actual.getSupportedThinkingLevels(model), ['low', 'medium', 'high']);
+  assert.equal(model.maxTokens, 65_536);
+  assert.equal(model.cost.input, 2);
+});
+
 test("Cerebras model catalog returns qwen-3.8-27b and gpt-oss-120b, excluding decommissioned gemma-4-31b", async () => {
   const { listPiModels, resolvePiModel, resolveProviderModel, getModelAttemptIds } = require("../src/agents/pi/piProviders") as typeof import("../src/agents/pi/piProviders");
 

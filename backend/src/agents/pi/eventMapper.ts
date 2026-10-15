@@ -47,6 +47,8 @@ export interface MapperContext {
     runStartMs: number;
     /** Provider error captured from the terminal assistant message. */
     terminalError?: string;
+    /** Argon continuation bills repeated prompts; use its actual context size. */
+    latestContextTokens?: number;
 }
 
 export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<NormalizedEvent> {
@@ -69,6 +71,9 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 ctx.cumulative.inputTokens += m.usage.input ?? 0;
                 ctx.cumulative.outputTokens += m.usage.output ?? 0;
                 ctx.cumulative.totalCost += m.usage.cost?.total ?? 0;
+                if (typeof m.usage.contextTokens === 'number' && Number.isFinite(m.usage.contextTokens)) {
+                    ctx.latestContextTokens = m.usage.contextTokens;
+                }
             }
             if (m?.role === "assistant" && m.stopReason === "error") {
                 ctx.terminalError = formatAssistantError(m.errorMessage);
@@ -138,7 +143,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
         case "agent_end": {
             // One-shot end-of-run summary, then the SSE-closing turn_end.
             const ctxPct = ctx.contextWindow
-                ? ((ctx.cumulative.inputTokens + ctx.cumulative.outputTokens) / ctx.contextWindow) * 100
+                ? ((ctx.latestContextTokens ?? (ctx.cumulative.inputTokens + ctx.cumulative.outputTokens)) / ctx.contextWindow) * 100
                 : 0;
             yield { kind: "context_usage", contextUsagePercentage: ctxPct };
             yield {

@@ -2,6 +2,8 @@ import { loadPiAi } from "./piAi";
 import { DEFAULT_MODELS } from "../agentConfig";
 import { fetchOpenRouterModels, type OpenRouterModelInfo } from "./openrouterModels";
 import { isReasoningLevel, type ModelReasoningCapabilities } from 'michi-shared';
+import { GEMINI_ARGON_ID, argonThinkingLevelMap, geminiArgonModel, isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
+import { streamPiModel } from './geminiArgonStream';
 
 export interface PiProviderInfo {
     id: string;
@@ -96,7 +98,7 @@ export const PI_PROVIDERS: PiProviderInfo[] = [
         name: "Google AI",
         apiKeyLabel: "Gemini API key",
         envVars: ["GEMINI_API_KEY"],
-        defaultModel: "gemini-3.1-pro-preview",
+        defaultModel: GEMINI_ARGON_ID,
         supportsReasoning: true,
         keyUrl: "https://aistudio.google.com/app/apikey",
     },
@@ -313,7 +315,10 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
     }
 
     const piMod = await loadPiAi();
-    const models = (piMod as any).getModels(provider) as Array<Record<string, any>>;
+    const builtinModels = (piMod as any).getModels(provider) as Array<Record<string, any>>;
+    const models: Array<Record<string, any>> = provider === 'google'
+        ? [geminiArgonModel(), ...builtinModels.filter((model) => model.id !== GEMINI_ARGON_ID)]
+        : builtinModels;
     return models.map((m) => ({
         model_id: String(m.id),
         model_name: String(m.name || m.id),
@@ -325,6 +330,9 @@ export async function listPiModels(provider: string): Promise<PiModelInfo[]> {
 }
 
 function piModelReasoning(piMod: Awaited<ReturnType<typeof loadPiAi>>, model: any, providerSupportsReasoning: boolean): ModelReasoningCapabilities {
+    if (isGeminiArgon(model) || (model.provider === 'openrouter' && isOpenRouterArgon(model.id))) {
+        return { supportsReasoning: true, supportedReasoningLevels: ['low', 'medium', 'high'], defaultReasoning: 'medium' };
+    }
     const supportsReasoning = providerSupportsReasoning && model.reasoning === true;
     const levels = supportsReasoning ? piMod.getSupportedThinkingLevels(model).filter(isReasoningLevel) : [];
     return { supportsReasoning, supportedReasoningLevels: levels, ...(levels.includes('high') ? { defaultReasoning: 'high' as const } : {}) };
@@ -428,6 +436,7 @@ function dynamicOpenRouterModel(modelId: string, info?: OpenRouterModelInfo): Re
         contextWindow:
             info?.context_window_tokens ?? OPENROUTER_MODEL_DEFAULTS.contextWindow,
         maxTokens: info?.max_tokens ?? OPENROUTER_MODEL_DEFAULTS.maxTokens,
+        ...(isOpenRouterArgon(modelId) ? { reasoning: true, thinkingLevelMap: argonThinkingLevelMap(false) } : {}),
     };
 }
 
@@ -445,6 +454,8 @@ export async function resolvePiModel(provider: string, modelId: string): Promise
 
     const upstreamProvider = getUpstreamProviderId(provider);
 
+    if (upstreamProvider === 'google' && modelId === GEMINI_ARGON_ID) return geminiArgonModel();
+
     if (upstreamProvider === "cerebras") {
         const targetModelId = modelId === "gemma-4-31b" ? info.defaultModel : modelId;
         const overridden = CEREBRAS_MODELS[targetModelId];
@@ -453,7 +464,8 @@ export async function resolvePiModel(provider: string, modelId: string): Promise
 
     const piMod = await loadPiAi();
     const builtin = (piMod as any).getModel(upstreamProvider, modelId);
-    if (builtin) return builtin;
+    if (builtin) return upstreamProvider === 'openrouter' && isOpenRouterArgon(modelId)
+        ? { ...builtin, thinkingLevelMap: argonThinkingLevelMap(false) } : builtin;
 
     if (upstreamProvider === "openrouter") {
         const catalog = await fetchOpenRouterModels(getEnvProviderApiKey(provider));
@@ -550,7 +562,8 @@ export async function verifyPiProviderKey(
 
     const piMod = await loadPiAi();
     const model = await resolvePiModel(provider, modelId);
-    const timeoutMs = opts.timeoutMs ?? 15_000;
+    const argon = isGeminiArgon(model) || (provider === 'openrouter' && isOpenRouterArgon(modelId));
+    const timeoutMs = opts.timeoutMs ?? (argon ? 60_000 : 15_000);
     const started = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -564,14 +577,14 @@ export async function verifyPiProviderKey(
             },
         ];
 
-        for await (const ev of (piMod as any).streamSimple(
+        for await (const ev of streamPiModel(piMod,
             model,
             { messages, tools: [] },
             {
                 ...(apiKey ? { apiKey } : {}),
                 ...bedrockOpts,
                 reasoning: "low",
-                maxTokens: 16,
+                maxTokens: argon ? 32_768 : 16,
                 maxRetries: 0,
                 timeoutMs,
                 signal: controller.signal,

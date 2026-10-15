@@ -22,6 +22,8 @@ import { getRuntimeDeps } from "../runtimeDeps";
 import { getProviderInfo, providerUsesAwsCredentials } from "./piProviders";
 import { getModelAttemptIds, getUpstreamProviderId, resolvePiModel } from "./piProviders";
 import { loadPiAi, loadPiAgentCore } from "./piAi";
+import { streamPiModel } from './geminiArgonStream';
+import { isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
 import { buildPiTools, piToolResultErrorOverride } from "./piTools";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
@@ -437,7 +439,8 @@ export class PiSession implements AgentSession {
                     thinkingLevel: (() => {
                         if (getProviderInfo(provider)?.supportsReasoning === false) return 'off';
                         const r = this.requestedReasoning ?? deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
-                        return piMod.clampThinkingLevel(model, r ?? 'off');
+                        const defaultLevel = isGeminiArgon(model) || (model.provider === 'openrouter' && isOpenRouterArgon(model.id)) ? 'medium' : 'off';
+                        return piMod.clampThinkingLevel(model, r ?? defaultLevel);
                     })(),
                     messages: [],
                 },
@@ -924,7 +927,7 @@ export function streamSimpleWithFallback(
 
             try {
                 options?.signal?.throwIfAborted();
-                const inner = piMod.streamSimple(model, context, options);
+                const inner = streamPiModel(piMod, model, context, options);
                 let terminalSeen = false;
                 for await (const ev of inner) {
                     if (ev?.type === 'error' && (options?.signal?.aborted || ev.reason === 'aborted' || ev.error?.stopReason === 'aborted')) {
