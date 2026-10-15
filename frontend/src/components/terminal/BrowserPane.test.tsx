@@ -42,7 +42,8 @@ vi.mock('../../state/chatStore', () => ({
   }),
 }));
 
-vi.mock('../../hooks/usePaneShellStyle', () => ({ usePaneShellStyle: () => ({}) }));
+// Report the unfocused dim so tests can verify the browser chrome opts out.
+vi.mock('../../hooks/usePaneShellStyle', () => ({ usePaneShellStyle: () => ({ filter: 'brightness(0.76)' }) }));
 
 vi.mock('../../lib/electronBridge', () => ({
   getElectron: () => electronBridge,
@@ -85,6 +86,28 @@ describe('BrowserPane native bridge', () => {
     expect(closePane).toHaveBeenCalledWith('pane-browser-1');
   });
 
+  it('does not dim its chrome, because the native page cannot be dimmed with it', () => {
+    const { container } = render(<BrowserPane item={item} />);
+    const pane = container.querySelector<HTMLElement>('[data-pane-kind="browser"]');
+    expect(pane?.style.filter).toBe('none');
+  });
+
+  it('publishes bounds as soon as the viewport resizes, so a dock drag does not lag a frame', () => {
+    let resized: ResizeObserverCallback | undefined;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    // Frames never run, so any bounds published below came from the observer itself.
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    render(<BrowserPane item={item} />);
+    browserSetBounds.mockClear();
+    act(() => resized?.([], {} as ResizeObserver));
+    expect(browserSetBounds).toHaveBeenCalledWith('surface-browser-1', expect.any(Object), expect.any(Boolean));
+  });
+
   it('republishes the current viewport bounds after native surface creation', async () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -93,7 +116,7 @@ describe('BrowserPane native bridge', () => {
     }));
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-    const { container } = render(<BrowserPane item={item} />);
+    const { container, rerender } = render(<BrowserPane item={item} />);
     const viewport = container.querySelector('[data-pane-kind="browser"] > div:last-child');
     expect(viewport).toBeInstanceOf(HTMLElement);
     vi.spyOn(viewport as HTMLElement, 'getBoundingClientRect').mockReturnValue({
@@ -135,5 +158,27 @@ describe('BrowserPane native bridge', () => {
       width: 600,
       height: 500,
     }, true);
+    rerender(<BrowserPane item={item} active={false} />);
+    expect(browserSetBounds.mock.calls.at(-1)?.[2]).toBe(false);
+    rerender(<BrowserPane item={item} active />);
+    expect(browserSetBounds.mock.calls.at(-1)?.[2]).toBe(true);
+    expect(browserCreate).toHaveBeenCalledTimes(1);
+
+    // A creation/resize must not reveal web contents over an open modal.
+    document.documentElement.dataset.nativeSurfacesVisible = 'false';
+    rerender(<BrowserPane item={item} active={false} />);
+    rerender(<BrowserPane item={item} active />);
+    expect(browserSetBounds.mock.calls.at(-1)?.[2]).toBe(false);
+    delete document.documentElement.dataset.nativeSurfacesVisible;
+
+    // Fail closed if native content escapes its allocated dock.
+    container.setAttribute('data-browser-dock', '');
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({
+      left: 500, top: 0, right: 1020, bottom: 700,
+    } as DOMRect);
+    rerender(<BrowserPane item={item} active={false} />);
+    rerender(<BrowserPane item={item} active />);
+    expect(browserSetBounds.mock.calls.at(-1)?.[2]).toBe(false);
+
   });
 });

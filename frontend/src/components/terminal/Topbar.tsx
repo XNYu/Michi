@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   activeTreeRootNodeId,
   chatLabel,
@@ -16,6 +16,7 @@ import type { AppUpdateState } from '../../lib/electronBridge';
 import SidebarToggleButton from './SidebarToggleButton';
 import PaneCaption from './PaneCaption';
 import PaneLauncher from './PaneLauncher';
+import BrowserLauncher from './BrowserLauncher';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
 import { confirmDialog } from '../ui/ConfirmDialog';
@@ -81,7 +82,9 @@ export default function TerminalTopbar({
   } = useChatProjects();
   const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
   const { focusedPane: visualFocus } = usePresentedPaneFocus(focusedPane);
-  const { paneIds: openPanes, paneItems, exitingIds } = usePresentedPanes(activePanes, activeItems);
+  const { paneIds: presentedPanes, paneItems, exitingIds: allExitingIds } = usePresentedPanes(activePanes, activeItems);
+  const openPanes = useMemo(() => presentedPanes.filter(id => paneItems[id]?.kind !== 'browser'), [presentedPanes, paneItems]);
+  const exitingIds = useMemo(() => new Set([...allExitingIds].filter(id => openPanes.includes(id))), [allExitingIds, openPanes]);
   const {
     focusPane,
     closePane,
@@ -531,6 +534,7 @@ export default function TerminalTopbar({
       <div
         data-pane-caption-viewport={showPaneCells ? '' : undefined}
         style={{
+          marginRight: page === 'dashboard' ? 'var(--browser-dock-width, 0px)' : 0,
           flex: 1,
           // Zone 2 spans the whole over-body stretch of the topbar. When pane
           // cells are visible, use --term-bg so the topbar area to the right
@@ -575,7 +579,7 @@ export default function TerminalTopbar({
             } as React.CSSProperties}
           >
             {openPanes.map((id, i) => {
-              const isFirst = exitingIds.has(id) ? i === 0 : id === activePanes[0];
+              const isFirst = exitingIds.has(id) ? i === 0 : id === activePanes.find(paneId => activeItems[paneId]?.kind !== 'browser');
               const status = paneStatuses[i] ?? 'idle';
               const cellFocus = captionFocus.get(id);
               const isCellFocused = cellFocus === id;
@@ -763,6 +767,12 @@ export default function TerminalTopbar({
         )}
       </div>
 
+      {page === 'dashboard' && <div data-browser-caption-host style={{
+        position: 'absolute', right: 0, top: 0, bottom: 0,
+        width: 'var(--browser-dock-width, 0px)', overflow: 'hidden',
+        display: 'flex', alignItems: 'stretch', background: 'var(--term-pane-bg)',
+      }} />}
+
       {/* Right cluster: Update banner (when available) + thread-view toggles
           (Branches / Map / Digest) + Artifacts drawer trigger. Absolutely
           positioned so it doesn't shrink zone-2 — that would make the caption
@@ -893,6 +903,7 @@ export default function TerminalTopbar({
           {workspaceReady && !!activeProject && (
             <>
               <PaneLauncher />
+              <BrowserLauncher />
               <TopbarIconToggle
                 onClick={() => _onNav('branches')}
                 active={page === 'branches'}

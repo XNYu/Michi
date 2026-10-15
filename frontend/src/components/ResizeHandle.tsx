@@ -13,6 +13,7 @@ interface ResizeHandleProps {
   onResizeEnd?: () => void;
   /** Min width in px. */
   min?: number;
+  side?: 'left' | 'right';
 }
 
 const MIN_DEFAULT = 280;
@@ -28,6 +29,7 @@ export default function ResizeHandle({
   onResizeStart,
   onResizeEnd,
   min = MIN_DEFAULT,
+  side = 'right',
 }: ResizeHandleProps) {
   const dragging = useRef(false);
   const [active, setActive] = useState(false);
@@ -56,7 +58,7 @@ export default function ResizeHandle({
         }
       };
       const onMove = (ev: PointerEvent) => {
-        pendingW = Math.round(Math.max(min, startW + ev.clientX - startX));
+        pendingW = Math.round(Math.max(min, startW + (ev.clientX - startX) * (side === 'left' ? -1 : 1)));
         if (rafId == null) rafId = requestAnimationFrame(flush);
       };
       const onUp = () => {
@@ -73,11 +75,13 @@ export default function ResizeHandle({
         onResizeEnd?.();
         handle.removeEventListener('pointermove', onMove);
         handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('lostpointercapture', onUp);
       };
       handle.addEventListener('pointermove', onMove);
       handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('lostpointercapture', onUp);
     },
-    [paneRef, onResize, min, onResizeStart, onResizeEnd],
+    [paneRef, onResize, min, side, onResizeStart, onResizeEnd],
   );
 
   return (
@@ -95,7 +99,7 @@ export default function ResizeHandle({
       style={{
         position: 'absolute',
         top: 0,
-        right: 0,
+        [side]: 0,
         width: 8,
         height: '100%',
         cursor: 'col-resize',

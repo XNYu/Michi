@@ -13,7 +13,6 @@ const CHOICES: Array<{
 }> = [
   { id: 'review', glyph: '±', label: 'Review', description: 'Inspect workspace changes', shortcut: '⇧⌘G' },
   { id: 'terminal', glyph: '>_', label: 'Terminal', description: 'Start in this workspace', shortcut: '^`' },
-  { id: 'browser', glyph: '◎', label: 'Browser', description: 'Open a native web surface', shortcut: '⌘T' },
   { id: 'files', glyph: '▱', label: 'Files', description: 'Browse workspace and artifacts', shortcut: '⌘P' },
   { id: 'side-chat', glyph: '⊕', label: 'Side chat', description: 'Create a blank branch', shortcut: '⌥⌘S' },
 ];

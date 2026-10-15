@@ -95,6 +95,7 @@ export default function TerminalShell() {
 
   useEffect(() => {
     const visible = page === 'dashboard' && !paletteOpen && !settingsOpen && !settingsPresent && !artifactsOpen && !artifactsPresent && !newWsOpen;
+    document.documentElement.dataset.nativeSurfacesVisible = String(visible);
     window.dispatchEvent(new CustomEvent('michi:native-surfaces-visible', { detail: { visible } }));
   }, [page, paletteOpen, settingsOpen, settingsPresent, artifactsOpen, artifactsPresent, newWsOpen]);
   const {

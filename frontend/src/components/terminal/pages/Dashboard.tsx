@@ -12,6 +12,7 @@ import TPane from '../TPane';
 import DigestPane from '../DigestPane';
 import ArtifactPane from '../ArtifactPane';
 import PaneErrorBoundary from '../PaneErrorBoundary';
+import BrowserDock from '../BrowserDock';
 import TerminalHome from './Home';
 import { getElectron } from '../../../lib/electronBridge';
 import { getAgentRunDetail, getWebUploadCwd, importWorkspaceFileUpload, respondAgentRunInteraction, type UploadProgress } from '../../../services/api';
@@ -27,7 +28,6 @@ import { RetainedPaneContent, usePresentedPanes, usePresentedPaneFocus } from '.
 const FilePane = lazy(() => import('../FilePane'));
 const DiffPane = lazy(() => import('../DiffPane'));
 const TerminalPane = lazy(() => import('../TerminalPane'));
-const BrowserPane = lazy(() => import('../BrowserPane'));
 const PaneChooser = lazy(() => import('../PaneChooser'));
 const FilesPane = lazy(() => import('../FilesPane'));
 const ReviewPane = lazy(() => import('../ReviewPane'));
@@ -111,7 +111,10 @@ export default function TerminalDashboard() {
   const { activeProject, agentStatus } = useChatProjects();
   const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
   const { settleFocus } = usePresentedPaneFocus(focusedPane);
-  const { paneIds: openPanes, paneItems, exitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
+  const { paneIds: presentedPanes, paneItems, exitingIds: allExitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
+  const openPanes = useMemo(() => presentedPanes.filter(id => paneItems[id]?.kind !== 'browser'), [presentedPanes, paneItems]);
+  const exitingIds = useMemo(() => new Set([...allExitingIds].filter(id => openPanes.includes(id))), [allExitingIds, openPanes]);
+  const browserItems = activePanes.flatMap(id => { const item = activeItems[id]; return item?.kind === 'browser' ? [item] : []; });
   const { setPaneWidth, openAgentRunPane } = useChatActions();
   const agentDomain = useAgentDomain();
   const { prefs } = usePrefs();
@@ -477,18 +480,19 @@ export default function TerminalDashboard() {
       </div>
     );
   }
-  if (activeProject.activeTreeId === null && openPanes.length === 0) {
+  if (activeProject.activeTreeId === null && openPanes.length === 0 && browserItems.length === 0) {
     return <EmptyThreads />;
   }
-  if (openPanes.length === 0) {
+  if (openPanes.length === 0 && browserItems.length === 0) {
     return <TerminalHome onSubmitted={() => {}} />;
   }
   const effContentWidth =
-    activePanes.length === 1 && !layout.waitingForExit && prefs.singlePaneContentWidth !== null
+    activePanes.length - browserItems.length === 1 && !layout.waitingForExit && prefs.singlePaneContentWidth !== null
       ? prefs.singlePaneContentWidth
       : null;
   const { overflow, gridTemplateColumns } = layout;
   return (
+    <div style={{ flex: 1, display: 'flex', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
     <div
       style={{ flex: 1, position: 'relative', display: 'flex', minHeight: 0, minWidth: 0 }}
     >
@@ -573,7 +577,7 @@ export default function TerminalDashboard() {
                     : paneItems[id].kind === 'diff' ? <DiffPane item={paneItems[id]} />
                     : paneItems[id].kind === 'terminal' ? <TerminalPane item={paneItems[id]} />
                     : paneItems[id].kind === 'agent-run' ? <AgentRunPaneSurface item={paneItems[id]} />
-                    : <BrowserPane item={paneItems[id]} />}
+                    : null}
                 </Suspense>
               ) : paneKinds[i] === 'digest' ? (
                 <DigestPane nodeId={id} contentMaxWidth={effContentWidth} />
@@ -652,6 +656,8 @@ export default function TerminalDashboard() {
           aria-hidden
         />
       )}
+    </div>
+    {browserItems.length > 0 && <BrowserDock key={`${activeProject.id}::${activeProject.activeTreeId ?? ''}`} items={browserItems} focusedPane={focusedPane} />}
     </div>
   );
 }

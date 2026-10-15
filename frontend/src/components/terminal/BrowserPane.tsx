@@ -1,4 +1,4 @@
-import React, { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserPaneItem } from '../../state/paneItems';
 import { normalizeBrowserUrl } from '../../state/paneItems';
 import { useChatActions } from '../../state/chatStore';
@@ -10,7 +10,7 @@ const EMPTY_STATE: BrowserSurfaceState = {
   surfaceId: '', url: '', title: '', loading: false, canGoBack: false, canGoForward: false,
 };
 
-export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
+export default function BrowserPane({ item, active = true }: { item: BrowserPaneItem; active?: boolean }) {
   const { closePane, focusPane, setFocusedNodeId, updatePaneItem } = useChatActions();
   const closePaneRef = useRef(closePane);
   closePaneRef.current = closePane;
@@ -29,12 +29,19 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
   const [address, setAddress] = useState(item.url);
   const [state, setState] = useState<BrowserSurfaceState>({ ...EMPTY_STATE, surfaceId: item.surfaceId, url: item.url });
   const electron = getElectron();
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   const publishBounds = useCallback(() => {
     const element = viewportRef.current;
     if (!element || !electron?.browserSetBounds) return;
     const rect = element.getBoundingClientRect();
-    const visible = nativeVisibleRef.current && document.visibilityState === 'visible'
+    const dock = element.closest('[data-browser-dock]')?.getBoundingClientRect();
+    const contained = !dock || (rect.left >= dock.left && rect.right <= dock.right + 1 && rect.top >= dock.top && rect.bottom <= dock.bottom + 1);
+    const visible = contained && activeRef.current && nativeVisibleRef.current
+      && document.documentElement.dataset.nativeSurfacesVisible !== 'false'
+      && document.visibilityState === 'visible'
+      && rect.width > 1 && rect.height > 1
       && rect.bottom > 0 && rect.right > 0
       && rect.top < window.innerHeight && rect.left < window.innerWidth;
     electron.browserSetBounds(item.surfaceId, {
@@ -44,6 +51,8 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
       height: rect.height,
     }, visible);
   }, [electron, item.surfaceId]);
+
+  useLayoutEffect(() => { publishBounds(); }, [active, publishBounds]);
 
   useEffect(() => {
     if (!electron?.browserCreate) return;
@@ -125,7 +134,9 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(publishBounds);
     };
-    const observer = new ResizeObserver(schedule);
+    // ResizeObserver runs after layout and before paint, so publish directly:
+    // deferring to the next frame would make the native page trail a dock drag.
+    const observer = new ResizeObserver(() => publishBounds());
     observer.observe(element);
     const events = ['resize', 'scroll', 'michi:dashboard-scroll', 'michi:caption-scroll'] as const;
     for (const event of events) window.addEventListener(event, schedule, { passive: true });
@@ -182,8 +193,9 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
   };
 
   const desktopAvailable = !!electron?.browserCreate;
+  // filter: 'none' because the native page cannot share the unfocused dim.
   return (
-    <div data-pane-id={item.id} data-pane-kind="browser" className="terminal-pane" onMouseDown={() => { focusPane(item.id); setFocusedNodeId(null); }} style={shellStyle}>
+    <div data-pane-id={item.id} data-pane-kind="browser" className="terminal-pane" onMouseDown={() => { focusPane(item.id); setFocusedNodeId(null); }} style={{ ...shellStyle, filter: 'none' }}>
       <div style={{ height: 36, padding: '0 8px', display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid var(--term-line)', flexShrink: 0 }}>
         <button type="button" className="t-icon-btn" disabled={!state.canGoBack} onClick={() => electron?.browserBack?.(item.surfaceId)} aria-label="Back"><ChevronLeftIcon size={14} /></button>
         <button type="button" className="t-icon-btn" disabled={!state.canGoForward} onClick={() => electron?.browserForward?.(item.surfaceId)} aria-label="Forward"><ChevronRightIcon size={14} /></button>
@@ -200,7 +212,7 @@ export default function BrowserPane({ item }: { item: BrowserPaneItem }) {
         </form>
         <button type="button" className="t-icon-btn" onClick={() => { if (state.url) window.open(state.url, '_blank', 'noopener'); }} aria-label="Open in system browser"><ExternalLinkIcon size={14} /></button>
       </div>
-      <div ref={viewportRef} style={{ flex: 1, minHeight: 0, position: 'relative', background: 'var(--term-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div ref={viewportRef} style={{ marginLeft: desktopAvailable ? 8 : 0, flex: 1, minHeight: 0, position: 'relative', background: 'var(--term-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {!desktopAvailable ? <div style={{ maxWidth: 280, padding: 20, textAlign: 'center', color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>Native browser surfaces are available in the Michi desktop app. Web deployments cannot bypass site iframe policies.</div> : null}
         {state.error ? <div style={{ position: 'absolute', inset: 0, padding: 20, background: 'var(--term-bg)', color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', zIndex: 1 }}>⚠ {state.error}</div> : null}
       </div>
