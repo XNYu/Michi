@@ -365,10 +365,7 @@ async function bootHeavyWorkspace(page: Page, paneCount: number) {
 
 async function clickFirstHomeRecent(page: Page) {
   await page.evaluate(() => {
-    const caption = Array.from(document.querySelectorAll('div')).find(
-      (el) => el.textContent?.trim().toLowerCase() === 'recent threads',
-    );
-    const row = caption?.parentElement?.children.item(1) as HTMLElement | null;
+    const row = document.querySelector<HTMLElement>('[data-testid="home-continue-row"]');
     if (!row) throw new Error('missing home recent row');
     row.click();
   });

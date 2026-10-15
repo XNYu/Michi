@@ -1,20 +1,33 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
+import type { ChatNodeState } from '../../../state/chatTypes';
+import { navigateToNode } from '../../../state/navigateToNode';
 import ManageComposer from '../manage/ManageComposer';
 import { HomeWorkspaceChip } from '../HomeWorkspaceChip';
+import { Dot } from '../primitives';
+import { BranchIcon, FolderIcon } from '../icons';
+import { buildContinueItems, continueItemsEqual, type ContinueItem } from './homeContinue';
 
 interface HomeProps {
   onSubmitted: () => void;
 }
 
 const MAX_RECENTS = 6;
+/** The composer and the list under it share one column, so a row's title, its
+ *  workspace and its timestamp all sit inside the width the eye already has. */
+const HOME_COLUMN_WIDTH = 640;
 
 export default function TerminalHome({ onSubmitted }: HomeProps) {
   const {
     activeProject,
+    activeProjectId,
     projects,
+    focusedNodeId,
     selectProject,
     activateTree,
+    openPane,
+    openPaneInTree,
+    setFocusedNodeId,
   } = useChatStore();
 
   const liveProjects = useMemo(
@@ -22,18 +35,31 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
     [projects],
   );
 
-  const recents = useStructuralSelector((nodesMap) => {
-    if (!activeProject) return [];
-    const trees = activeProject.trees
-      .filter((t) => !t.archivedAt && !nodesMap[t.rootNodeId]?.deletedAt)
-      .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-      .slice(0, MAX_RECENTS);
-    return trees.map((t) => ({
-      id: t.id,
-      label: t.name || nodesMap[t.rootNodeId]?.title || 'Untitled',
-      lastActiveAt: t.lastActiveAt,
-    }));
-  });
+  const continueSelector = useCallback(
+    (nodesMap: Record<string, ChatNodeState>) =>
+      buildContinueItems(liveProjects, nodesMap, focusedNodeId, MAX_RECENTS),
+    [liveProjects, focusedNodeId],
+  );
+  const recents = useStructuralSelector(continueSelector, continueItemsEqual);
+
+  const openThread = (item: ContinueItem) => {
+    const alreadyActive =
+      item.projectId === activeProjectId
+      && projects.find((p) => p.id === item.projectId)?.activeTreeId === item.id;
+    // A row can live in any workspace — go through navigateToNode so the
+    // destination pane is seeded before the workspace/thread switch.
+    navigateToNode(
+      { projects, activeProjectId, selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId },
+      item.rootNodeId,
+      item.projectId,
+    );
+    // navigateToNode only activates a tree when it has to switch to it. Opening
+    // a thread from Home has always marked the whole thread read (the row's
+    // unread dot covers its branches too), so do that for the thread that is
+    // already active as well.
+    if (alreadyActive) activateTree(item.id, item.projectId);
+    onSubmitted();
+  };
 
   return (
     <div
@@ -61,7 +87,7 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
       <div
         style={{
           width: '100%',
-          maxWidth: 740,
+          maxWidth: HOME_COLUMN_WIDTH,
           display: 'flex',
           flexDirection: 'column',
           gap: 28,
@@ -124,11 +150,10 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         <div
           style={{
             width: '100%',
-            maxWidth: 740,
+            maxWidth: HOME_COLUMN_WIDTH,
             marginTop: 44,
             display: 'flex',
             flexDirection: 'column',
-            gap: 2,
           }}
         >
           <div
@@ -137,22 +162,15 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
               letterSpacing: 'var(--ls-caps-wide)',
               color: 'var(--term-muted)',
               textTransform: 'uppercase',
-              marginBottom: 10,
+              paddingBottom: 8,
               paddingLeft: 4,
+              borderBottom: '1px solid var(--term-line)',
             }}
           >
-            recent threads
+            continue
           </div>
           {recents.map((r) => (
-            <RecentRow
-              key={r.id}
-              label={r.label}
-              rel={formatRelative(r.lastActiveAt)}
-              onClick={() => {
-                activateTree(r.id);
-                onSubmitted();
-              }}
-            />
+            <ContinueRow key={`${r.projectId}:${r.id}`} item={r} onClick={() => openThread(r)} />
           ))}
         </div>
       )}
@@ -160,46 +178,96 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
   );
 }
 
-function RecentRow({
-  label,
-  rel,
-  onClick,
-}: {
-  label: string;
-  rel: string;
-  onClick: () => void;
-}) {
+/** One thread to pick back up: what it is, what it's doing, where it lives,
+ *  how far it has branched and when it last moved — all on one line. */
+function ContinueRow({ item, onClick }: { item: ContinueItem; onClick: () => void }) {
   const [hover, setHover] = useState(false);
   return (
-    <div
+    <button
+      type="button"
+      data-testid="home-continue-row"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        display: 'flex',
+        display: 'grid',
+        // status dot · title · workspace · branches · age
+        gridTemplateColumns: '8px minmax(0, 1fr) minmax(0, 150px) 34px 30px',
         alignItems: 'center',
-        gap: 12,
-        padding: '8px 10px',
+        columnGap: 10,
+        width: '100%',
+        height: 38,
+        padding: '0 4px',
+        border: 0,
+        borderBottom: '1px solid var(--term-line)',
+        textAlign: 'left',
         fontFamily: 'var(--ui-font)',
         fontSize: 'var(--fs-xl)',
-        color: hover ? 'var(--term-fg)' : 'var(--term-mid)',
+        color: 'var(--term-fg)',
         background: hover ? 'var(--term-hover-bg, var(--term-alt))' : 'transparent',
         cursor: 'pointer',
         transition: 'background var(--t-quick) var(--t-ease)',
       }}
     >
       <span
+        {...(item.status === 'idle'
+          ? { 'aria-hidden': true }
+          : { role: 'img', 'aria-label': item.status })}
+        style={{ display: 'inline-flex', justifyContent: 'center' }}
+      >
+        {item.status === 'streaming' && <Dot color="var(--term-select)" size={6} pulse />}
+        {item.status === 'unread' && <Dot color="var(--term-accent)" size={6} />}
+      </span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {item.label}
+      </span>
+      <span
         style={{
-          flex: 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          minWidth: 0,
+          color: 'var(--term-mid)',
+          fontSize: 'var(--fs-md)',
         }}
       >
-        {label}
+        <FolderIcon size={12} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {item.projectName}
+        </span>
       </span>
-      <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>{rel}</span>
-    </div>
+      <span
+        {...(item.branches > 0
+          ? { role: 'img', 'aria-label': `${item.branches} branch${item.branches === 1 ? '' : 'es'}` }
+          : { 'aria-hidden': true })}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 3,
+          color: 'var(--term-muted)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 'var(--fs-sm)',
+        }}
+      >
+        {item.branches > 0 && (
+          <>
+            <BranchIcon size={11} />
+            {item.branches}
+          </>
+        )}
+      </span>
+      <span
+        style={{
+          textAlign: 'right',
+          color: 'var(--term-muted)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 'var(--fs-sm)',
+        }}
+      >
+        {formatRelative(item.lastActiveAt)}
+      </span>
+    </button>
   );
 }
 
