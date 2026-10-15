@@ -56,6 +56,7 @@ export const UI_FONT_OPTS: readonly UiFont[] = [
 export type MessageFont = 'Source Serif 4' | 'Geist';
 
 export interface Prefs {
+  linkOpenTarget: 'internal' | 'external';
   fontFamily: 'sans' | 'serif' | 'mono';
   /** When true, show the agent's streamed reasoning (agent_thought_chunk) + execution plan inside the assistant message. */
   showThoughts: boolean;
@@ -197,6 +198,7 @@ export interface Prefs {
 }
 
 export const DEFAULT_PREFS: Prefs = {
+  linkOpenTarget: 'internal',
   fontFamily: 'sans',
   showThoughts: true,
   terminalPalette: 'bone',
@@ -284,6 +286,7 @@ function readInitial(): Prefs {
     merged.globalPermissions = typeof parsed.globalPermissions === 'boolean' ? parsed.globalPermissions : parsed.bypassPermissions === true;
     merged.permissionMode = isChatPermissionMode(parsed.permissionMode) ? parsed.permissionMode : parsed.bypassPermissions === true ? 'trust' : 'ask';
     delete (merged as { bypassPermissions?: unknown }).bypassPermissions;
+    merged.linkOpenTarget = merged.linkOpenTarget === 'external' ? 'external' : 'internal';
     merged.paneWidthMode = normalizePaneWidthMode(merged.paneWidthMode);
     merged.paneSpawnAnimation = normalizePaneMotion(merged.paneSpawnAnimation);
     delete (merged as { theme?: string }).theme;
@@ -457,6 +460,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       const merged = {
         ...DEFAULT_PREFS,
         ...remote,
+        linkOpenTarget: remote.linkOpenTarget === 'external' ? 'external' : 'internal',
         paneWidthMode: normalizePaneWidthMode(remote.paneWidthMode),
         paneSpawnAnimation: normalizePaneMotion(remote.paneSpawnAnimation),
       } as Prefs;

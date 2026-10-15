@@ -1,3 +1,4 @@
+import { openPreferredUrl } from '../services/openUrl';
 import {
   forwardRef,
   useEffect,
@@ -547,7 +548,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
           const href = anchor?.getAttribute('href');
           if (!href) return false;
           event.preventDefault();
-          window.open(href, '_blank', 'noopener,noreferrer');
+          openPreferredUrl(href);
           return true;
         },
       },

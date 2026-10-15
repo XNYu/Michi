@@ -1,3 +1,4 @@
+import { urlOpenRequests } from '../services/urlOpenRequests';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { log } from '../services/logger';
@@ -26,6 +27,15 @@ import { loadProfileActivity } from '../services/profileActivity';
 
 export function setupPersistenceRoutes(): express.Router {
   const router = express.Router();
+
+  router.post('/workspaces/:id/open-url/claim', requireWorkspaceOwner, (req, res) => {
+    if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });
+    if (!getWorkspace(req.params.id, req.user?.id)) return res.status(404).json({ error: 'not_found' });
+    const treeId = req.body?.treeId;
+    if (treeId !== null && typeof treeId !== 'string') return res.status(400).json({ error: 'treeId required' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ request: urlOpenRequests.claim({ workspaceId: req.params.id, treeId, ownerUserId: req.user?.id ?? null }) });
+  });
 
   router.get('/permissions/settings', (req, res) => {
     if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });

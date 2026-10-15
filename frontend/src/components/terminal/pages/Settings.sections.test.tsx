@@ -52,7 +52,7 @@ describe('Settings categories', () => {
     const categories = screen
       .getAllByRole('button')
       .map((button) => button.textContent?.trim());
-    expect(categories).toEqual(['Appearance', 'Model', 'Connections', 'Notifications', 'Shortcuts']);
+    expect(categories).toEqual(['Appearance', 'Model', 'Connections', 'Browser', 'Notifications', 'Shortcuts']);
     expect(screen.queryByText(/custom agents/i)).toBeNull();
     expect(screen.queryByRole('switch')).toBeNull();
   });

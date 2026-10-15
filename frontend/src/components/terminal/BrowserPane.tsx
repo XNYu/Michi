@@ -1,3 +1,4 @@
+import { openExternalUrl } from '../../services/openUrl';
 import React, { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BrowserPaneItem } from '../../state/paneItems';
 import { normalizeBrowserUrl } from '../../state/paneItems';
@@ -210,7 +211,7 @@ export default function BrowserPane({ item, active = true }: { item: BrowserPane
             style={{ width: '100%', height: 25, boxSizing: 'border-box', border: '1px solid var(--term-line)', borderRadius: 'var(--ui-radius-sm)', background: 'var(--term-alt)', color: 'var(--term-fg)', padding: '0 9px', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', outline: 'none' }}
           />
         </form>
-        <button type="button" className="t-icon-btn" onClick={() => { if (state.url) window.open(state.url, '_blank', 'noopener'); }} aria-label="Open in system browser"><ExternalLinkIcon size={14} /></button>
+        <button type="button" className="t-icon-btn" onClick={() => { if (state.url) openExternalUrl(state.url); }} aria-label="Open in system browser"><ExternalLinkIcon size={14} /></button>
       </div>
       <div ref={viewportRef} style={{ marginLeft: desktopAvailable ? 8 : 0, flex: 1, minHeight: 0, position: 'relative', background: 'var(--term-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {!desktopAvailable ? <div style={{ maxWidth: 280, padding: 20, textAlign: 'center', color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.6 }}>Native browser surfaces are available in the Michi desktop app. Web deployments cannot bypass site iframe policies.</div> : null}

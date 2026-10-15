@@ -73,6 +73,8 @@ export type FilePreviewResult =
   | { kind: 'image'; dataUrl: string; size: number; modifiedAt: number; extension: string };
 
 export interface ElectronBridge {
+  openExternal?(url: string): void;
+  onOpenUrl?(handler: (url: string) => void): () => void;
   /** True only in `electron-builder` packaged builds. Absent in older builds — treat as false. */
   isPackaged?: boolean;
   /** Stable id injected by Electron main for per-window renderer state. */

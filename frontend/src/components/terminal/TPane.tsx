@@ -1,3 +1,4 @@
+import { openPreferredUrl } from '../../services/openUrl';
 import { sessionModeCatalog } from '../../state/sessionModeCatalog';
 import { ChatCommandResult } from './ChatCommandResult';
 import { usePermissionPreferences } from '../../hooks/usePermissionPreferences';
@@ -1668,7 +1669,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       if (artifact?.filePath) {
         void openArtifactPane(artifact.filePath);
       } else if (artifact?.url) {
-        window.open(artifact.url, '_blank', 'noopener');
+        openPreferredUrl(artifact.url);
       }
     }
   }, [focusPane, mentionContexts, openArtifactPane]);

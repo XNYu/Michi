@@ -1,3 +1,4 @@
+import { openUrlTool } from '../agents/openUrlTool';
 import express, { Request, Response } from "express";
 import { randomBytes } from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -357,7 +358,7 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
     // globalContext tools (list_threads / search_messages / read_node) are
     // registered separately below because they don't go through the slot
     // callback indirection.
-    const SIDE_EFFECT_TOOL_NAMES = new Set(["spawn_branches", "save_artifact", "update_artifact", "show_image"]);
+    const SIDE_EFFECT_TOOL_NAMES = new Set(["open_url", "spawn_branches", "save_artifact", "update_artifact", "show_image"]);
     for (const tool of listEnabledBuiltinTools()) {
         if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name) || !isToolExposed(slot, tool.name)) continue;
         registerTool(
@@ -365,6 +366,7 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
             { description: tool.description, inputSchema: builtinToZodShape(tool) },
             async (args) => {
                 switch (tool.name) {
+                    case "open_url": return openUrlTool({ ...resolveSlotBinding(slot), ownerUserId: slot.ownerUserId }, args.url);
                     case "spawn_branches": {
                         const topics = Array.isArray(args?.topics) ? args.topics : [];
                         const trimmed = topics.slice(0, 5);

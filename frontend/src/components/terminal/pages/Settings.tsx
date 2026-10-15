@@ -1,3 +1,4 @@
+import { BrowserSettingsPane } from './settings/BrowserSettingsPane';
 import { useId, useMemo, useState } from 'react';
 import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
 import type { PageId } from '../../../state/commands';
@@ -13,7 +14,7 @@ import './Settings.css';
 
 // No Custom Agents section: that feature is switched on by the backend's
 // environment (MICHI_CUSTOM_AGENTS=1), never from the app.
-export type SettingsSection = 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account' | 'usage';
+export type SettingsSection = 'browser' | 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account' | 'usage';
 
 export default function TerminalSettings({
   onNav,
@@ -64,6 +65,7 @@ export default function TerminalSettings({
     ['appearance', 'Appearance'],
     ['model', 'Model'],
     ['connections', 'Connections'],
+    ['browser', 'Browser'],
     ['notifications', 'Notifications'],
     ['shortcuts', 'Shortcuts'],
     ...(signedIn ? ([['account', 'Account']] as Array<[SettingsSection, string]>) : []),
@@ -118,6 +120,7 @@ export default function TerminalSettings({
           {waitingForWorkspace ? <div role="status">Loading workspaces…</div> : <>
           {section === 'account' && <h2 className="terminal-settings-heading">Account</h2>}
           {section === 'appearance' && <AppearancePane />}
+          {section === 'browser' && <BrowserSettingsPane />}
           {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
           {section === 'connections' && <ConnectionsPane projects={projects} />}
           {section === 'notifications' && <NotificationsPane />}

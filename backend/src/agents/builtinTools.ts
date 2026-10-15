@@ -36,7 +36,7 @@ export interface ParamField {
     enum?: readonly string[];
 }
 
-export type BuiltinToolName =
+export type BuiltinToolName = "open_url"
     | "spawn_branches"
     | "save_artifact"
     | "update_artifact"
@@ -70,6 +70,11 @@ const f = (
 ): ParamField => ({ type, ...opts });
 
 export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
+    {
+        name: "open_url",
+        description: "Open an HTTP(S) link for the user in Michi. Always use this instead of shell open/xdg-open/start or launching a browser, so the user's internal/system browser preference is respected. This requests UI navigation, not web fetching or browser automation.",
+        parameters: { object: { url: f("string", { description: "Absolute HTTP(S) URL to open." }) } },
+    },
     {
         name: "spawn_branches",
         description:

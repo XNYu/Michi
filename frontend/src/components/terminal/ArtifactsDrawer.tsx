@@ -1,3 +1,4 @@
+import { openPreferredUrl } from '../../services/openUrl';
 import React, { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../../state/chatStore';
 import type { ArtifactEntry } from '../../state/chatTypes';
@@ -163,7 +164,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
     async (c: ArtifactEntry) => {
       const t = artifactType(c);
       if (t === 'link') {
-        if (c.url) window.open(c.url, '_blank', 'noopener,noreferrer');
+        if (c.url) openPreferredUrl(c.url);
         return;
       }
       // Reference artifacts are absolute disk paths *outside* the workspace;

@@ -17,6 +17,7 @@ const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
  * across app reinstalls / origin changes. Keep in sync with the Settings UI.
  */
 const PERSISTED_KEYS: ReadonlySet<string> = new Set([
+  "linkOpenTarget",
   "terminalPalette",
   "terminalAccentOverrides",
   "uiFont",

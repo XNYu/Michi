@@ -1,3 +1,4 @@
+import { useLinkOpening } from './useLinkOpening';
 import React, { useEffect, useState } from 'react';
 import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { useTerminalColors } from './useTerminalColors';
@@ -120,6 +121,7 @@ export default function TerminalShell() {
     navBack,
     navForward,
   } = useChatActions();
+  useLinkOpening();
   const { prefs, setPref } = usePrefs();
   const drawerMotion = prefs.reduceMotion ? 'instant' as const : 'standard' as const;
 

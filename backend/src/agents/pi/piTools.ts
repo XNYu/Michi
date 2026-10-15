@@ -1,3 +1,4 @@
+import { openUrlTool } from '../openUrlTool';
 import type { AgentToolBridge } from "../toolBridge";
 import {
     AGENT_RUN_TOOL_NAMES,
@@ -154,6 +155,10 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
         const parameters = withPurposeField(t.parameters, Type);
 
         switch (t.name) {
+            case "open_url":
+                return { name: t.name, label: "Open URL", description: t.description, parameters,
+                    execute: async (_id: string, args: any) => openUrlTool({ workspaceId, ownerUserId,
+                        nodeId: opts.owner?.kind === 'chat_node' ? opts.owner.nodeId : null }, args.url) };
             case "spawn_branches":
                 return {
                     name: t.name,

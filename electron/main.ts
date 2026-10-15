@@ -1022,32 +1022,28 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
     }
   });
 
-  // Route all external links to the system browser. The app itself loads
-  // localhost:3001 (dev) or 127.0.0.1:<port> (prod); anything else — http(s)
-  // links inside chat content, markdown, etc. — should never replace the app
-  // window or pop a child Electron window.
-  const isInternalUrl = (url: string): boolean => {
+  // Keep web navigation out of the app window. The renderer resolves the
+  // user's browser preference; explicit external opening uses its own IPC.
+  const routeLink = (url: string) => {
     try {
-      const u = new URL(url);
-      if (u.protocol === 'file:') return true;
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-      return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
-    } catch {
-      return false;
-    }
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') win.webContents.send('app:openUrl', parsed.href);
+      else if (parsed.protocol === 'mailto:' || parsed.protocol === 'tel:') void shell.openExternal(parsed.href);
+    } catch { /* Ignore malformed navigation. */ }
   };
-
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (isInternalUrl(url)) return { action: 'allow' };
-    void shell.openExternal(url);
+    routeLink(url);
     return { action: 'deny' };
   });
-
   win.webContents.on('will-navigate', (event, url) => {
-    if (!isInternalUrl(url)) {
-      event.preventDefault();
-      void shell.openExternal(url);
-    }
+    if (url === win.webContents.getURL()) return;
+    try {
+      const current = new URL(win.webContents.getURL());
+      const target = new URL(url);
+      if (['http:', 'https:'].includes(current.protocol) && target.origin === current.origin) return;
+    } catch { /* Invalid navigation is blocked below. */ }
+    event.preventDefault();
+    routeLink(url);
   });
 
   const withWindowId = (base: string): string => {
@@ -1116,7 +1112,7 @@ function pickerDefaultPath(): string {
   return app.getPath('home');
 }
 
-// Preload-level click interceptor sends external URLs here for shell.openExternal.
+// Explicit system-browser actions bypass the preferred link destination.
 ipcMain.on('app:openExternal', (_ev, url: string) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
     void shell.openExternal(url);
