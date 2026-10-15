@@ -7,6 +7,7 @@ import {
 } from './chatStreamEvents';
 
 const sampleEvents: ChatStreamEvent[] = [
+  { event: CHAT_STREAM_EVENTS.sessionState, data: { runtimeId: "kiro", modelId: "m1", reasoning: "high", commands: [], mcpErrors: [] } },
   { event: CHAT_STREAM_EVENTS.chunk, data: { text: 'hello' } },
   { event: CHAT_STREAM_EVENTS.thought, data: { text: 'thinking' } },
   {

@@ -5,7 +5,7 @@ import {
   nodeBackendApiBase,
   workspaceBackendApiBase,
 } from '../../config/backendConnections';
-import { parseAgentDefinitionDtoV1, type AgentDefinitionDtoV1 } from 'michi-shared';
+import { parseSessionState, type AgentSessionState, parseAgentDefinitionDtoV1, type AgentDefinitionDtoV1 } from 'michi-shared';
 import { startupMark } from '../startupTrace';
 import type { RuntimeId, AgentReasoning } from './agentRuntime';
 
@@ -200,6 +200,7 @@ export async function listPrimaryAgentDefinitions(
 }
 
 export interface EnsureSessionResult {
+  sessionState?: AgentSessionState;
   chatId: string;
   currentModeId: string | null;
   runtimeId?: RuntimeId;
@@ -315,6 +316,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   return {
     chatId: json.chatId as string,
     currentModeId: json.currentModeId ?? null,
+    sessionState: json.sessionState ? parseSessionState(json.sessionState) : undefined,
     runtimeId: json.runtimeId as RuntimeId | undefined,
     providerId: json.providerId ?? null,
     modelId: json.modelId ?? null,
@@ -347,7 +349,7 @@ export async function executeChatCommand(
   chatId: string,
   command: string,
   args?: Record<string, unknown>,
-): Promise<{ success: boolean; message?: string; data?: unknown }> {
+): Promise<{ success: boolean; message?: string; data?: unknown; sessionState?: AgentSessionState }> {
   const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/execute-command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

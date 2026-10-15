@@ -1,3 +1,4 @@
+import type { AgentSessionState } from 'michi-shared';
 import type { AgentCommand, AgentReasoning, PlanEntry, RuntimeId, SessionMode } from '../services/api';
 import type { AgentStatus } from '../services/api';
 import type { MentionRecord } from '../components/mentions';
@@ -285,6 +286,8 @@ export interface ChatNodeState {
   providerId?: string | null;
   modelId?: string | null;
   reasoning?: AgentReasoning | null;
+  /** Live catalog for this session; refreshed on reconnect, never a global default. */
+  sessionState?: AgentSessionState;
   /** @deprecated Fingerprint check removed. Field retained for DB hydration compatibility only; always null for new nodes. */
   resumeFingerprint?: string | null;
   projectId: string;
@@ -770,6 +773,7 @@ export type ChatAction =
   | { type: 'set-follow-ups'; nodeId: string; followUps: string[] }
   | { type: 'visible-response-complete'; nodeId: string; assistantId: string }
   | { type: 'follow-ups-status'; nodeId: string; status: 'in_progress' | 'completed' | 'failed' }
+  | { type: 'session-state'; nodeId: string; state: AgentSessionState }
   | { type: 'set-commands'; nodeId: string; commands: AgentCommand[] }
   | { type: 'set-current-mode'; nodeId: string; currentModeId: string }
   | { type: 'set-pane-width'; nodeId: string; width: number | undefined }

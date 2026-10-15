@@ -1,3 +1,4 @@
+import type { AgentSessionState } from 'michi-shared';
 import type { AgentCommand, PermissionOption, PlanEntry, SpawnBranchTopic, SubagentInfo, UserInputAnswer, UserInputQuestion } from "michi-shared";
 import type { SteeringReport } from 'michi-shared';
 
@@ -23,6 +24,7 @@ export type NormalizedEvent =
     | { kind: "branch_overview"; overview: string }
     | { kind: "follow_ups"; followUps: string[] }
     | { kind: "follow_ups_status"; status: "in_progress" | "completed" | "failed" }
+    | { kind: "session_state"; state: AgentSessionState }
     | { kind: "commands"; commands: AgentCommand[] }
     | { kind: "artifact_saved"; contextId?: string; name: string; filePath: string; size?: number }
     | { kind: "artifact_updated"; contextId?: string; name: string; filePath: string; size?: number }

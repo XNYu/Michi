@@ -54,6 +54,8 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
             return { event: CHAT_STREAM_EVENTS.followUps, data: { followUps: ev.followUps } };
         case "follow_ups_status":
             return { event: CHAT_STREAM_EVENTS.followUpsStatus, data: { status: ev.status } };
+        case "session_state":
+            return { event: CHAT_STREAM_EVENTS.sessionState, data: ev.state };
         case "commands":
             return { event: CHAT_STREAM_EVENTS.commands, data: { commands: ev.commands } };
         case "artifact_saved":

@@ -1,3 +1,4 @@
+import { subscribeSessionStates } from '../agents/sessionStateFeed';
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -1046,6 +1047,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             res.json({
                 ok: true,
                 currentModeId: session.currentModeId ?? null,
+                sessionState: session.getSessionState?.(),
                 runtimeId: session.runtimeId,
             });
         } catch (err) {
@@ -1500,6 +1502,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             return res.json({
                 chatId: session.id,
                 currentModeId: session.currentModeId ?? null,
+                sessionState: session.getSessionState?.(),
                 runtimeId: targetSignature.runtimeId,
                 providerId: targetSignature.providerId,
                 modelId: targetSignature.modelId,
@@ -1760,8 +1763,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             close: () => {},
             ownerUserId: backgroundUserId,
             }, { cursors, durableCursors });
+            const detachTurns = detach;
+            const detachStates = subscribeSessionStates((nodeId, state) => {
+                if (res.writableEnded || res.destroyed) return;
+                if (!writeSseFrame(res, encodeChatStreamEvent({ event: 'session_state', data: { ...state, nodeId, chatId: nodeId } }))) detachSubscriber();
+            }, backgroundUserId);
+            detach = () => { detachTurns(); detachStates(); };
             if (detached) detach();
         } catch {
+            detachSubscriber();
             if (!res.writableEnded) res.end();
             return;
         }
@@ -1969,7 +1979,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
     router.get("/chats/:chatId/modes", requireChatOwner, (req, res) => {
         const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
-        res.json({ currentModeId: session.currentModeId ?? null });
+        res.json({ currentModeId: session.currentModeId ?? null, ...session.getSessionState?.() });
     });
 
     router.post("/chats/:chatId/set-mode", requireChatOwner, async (req, res) => {

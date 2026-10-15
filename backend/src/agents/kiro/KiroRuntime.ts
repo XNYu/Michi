@@ -35,7 +35,7 @@ import type { GenerateTitleOptions } from '../types';
 import { michiMcpServer, resolveKiroEngine, rewindPoints, type AcpMcpServer, type KiroEngine } from './kiroProtocol';
 import { readKiroForkAnchor, saveKiroForkAnchor } from './kiroForkAnchors';
 import { KIRO_DESCRIPTOR } from '../capabilityDescriptors';
-import { slot, sanitizeReasoningLevels, isReasoningLevel } from 'michi-shared';
+import { slot, invisibleSlot, sanitizeReasoningLevels, isReasoningLevel } from 'michi-shared';
 
 // ---------------------------------------------------------------------------
 // Process lifecycle constants
@@ -156,9 +156,15 @@ export class KiroRuntime implements AgentRuntime {
     public readonly engine: KiroEngine;
     get nativeEngine(): KiroEngine { return this.engine; }
     get capabilityDescriptor() {
+        if (this.engine === 'v2') return KIRO_DESCRIPTOR;
+        const clients = [...this.pool.values(), ...[...this.sessionWorkers.values()].flatMap((worker) => [...worker.pool.values()])];
         return { ...KIRO_DESCRIPTOR,
-            compact: slot('native', 'native', this.engine === 'v3' ? '_kiro/session/compact' : '_kiro.dev/commands/execute compact'),
-            sessionFork: slot('native', 'native', this.engine === 'v3' ? 'session/fork' : '_kiro.dev/commands/execute rewind'),
+            compact: clients.length && clients.every((client) => client.supportsExtension('_kiro/session/compact'))
+                ? slot('native', 'native', '_kiro/session/compact') : invisibleSlot('Kiro has not negotiated compaction'),
+            sessionFork: clients.length && clients.every((client) => client.capabilities?.sessionCapabilities?.fork)
+                ? slot('native', 'native', 'session/fork') : invisibleSlot('Kiro has not negotiated session/fork'),
+            steer: clients.some((client) => !client.supportsExtension('_session/steer'))
+                ? invisibleSlot('Kiro steering is unavailable') : KIRO_DESCRIPTOR.steer,
         };
     }
     public readonly capabilities: AgentCapabilities = {

@@ -26,3 +26,4 @@ export class ACPRequestNotSentError extends ACPNotRunningError {}
 export class ACPProcessExitedError extends ACPError {}
 export class ACPSessionRecoveryRequiredError extends ACPError {}
 export class ACPNativeSessionMissingError extends ACPError {}
+export class ACPUnsupportedMethodError extends ACPError {}

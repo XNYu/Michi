@@ -1,3 +1,5 @@
+import { V3_COMMAND_METHODS, V3_COMPATIBILITY_METHODS, v3CommandNames, effortSelection } from '../agents/kiro/v3Commands';
+import { KiroSessionSnapshots } from '../agents/kiro/sessionSnapshots';
 import { nativeSessionExists } from "../agents/kiro/nativeSessionLookup";
 import { ChildProcess } from "child_process";
 import { existsSync, readdirSync } from "fs";
@@ -44,8 +46,8 @@ const PROMPT_TIMEOUT_MS = 0;
 const MAX_RPC_ERROR_DATA_CHARS = 4 * 1024;
 
 
-import { ACPError, ACPNotRunningError, ACPRequestNotSentError, ACPProcessExitedError, ACPSessionRecoveryRequiredError, ACPNativeSessionMissingError } from "./acp/errors";
-export { ACPError, ACPNotRunningError, ACPRequestNotSentError, ACPProcessExitedError, ACPSessionRecoveryRequiredError, ACPNativeSessionMissingError } from "./acp/errors";
+import { ACPError, ACPNotRunningError, ACPRequestNotSentError, ACPProcessExitedError, ACPSessionRecoveryRequiredError, ACPNativeSessionMissingError, ACPUnsupportedMethodError } from "./acp/errors";
+export { ACPError, ACPNotRunningError, ACPRequestNotSentError, ACPProcessExitedError, ACPSessionRecoveryRequiredError, ACPNativeSessionMissingError, ACPUnsupportedMethodError } from "./acp/errors";
 export type { ACPErrorDetails } from "./acp/errors";
 
 export type AcpUpdate = Record<string, any>;
@@ -256,11 +258,11 @@ export class AcpClient {
     private pendingPermissions = new Map<number, { rpcId: string | number; sessionId: string; options?: any[]; meta?: any }>();
     private nextPermissionId = -1;
     private initialization: AcpInitializeResult | null = null;
+    private readonly unsupportedExtensions = new Set<string>();
     private readonly sessionInfo = new Map<string, AcpSessionInfo>();
     private readonly lastUserMessageId = new Map<string, string>();
     private readonly loadingSessions = new Set<string>();
-    private readonly mcpStatus = new Map<string, any[]>();
-    private readonly mcpErrors = new Map<string, Set<string>>();
+    private readonly snapshots = new KiroSessionSnapshots();
     private readonly steeredSessions = new Set<string>();
     private readonly activePrompts = new Set<string>();
     private readonly steerRequests = new Map<string, Set<Promise<unknown>>>();
@@ -357,8 +359,51 @@ export class AcpClient {
         return this.initialization?.agentCapabilities;
     }
 
+    supportsExtension(method: string): boolean {
+        if (this.engine !== 'v3') return true;
+        return !this.unsupportedExtensions.has(method) && (
+            this.capabilities?._meta?.kiro?.extensionMethods?.includes(method) === true
+            || V3_COMPATIBILITY_METHODS.has(method));
+    }
+
+    private async sendExtension(method: string, params: Record<string, unknown>, timeoutMs: number, sessionId: string): Promise<any> {
+        if (!this.supportsExtension(method)) throw new ACPUnsupportedMethodError(`This Kiro server does not support ${method}`);
+        try { return await this.send(method, params, timeoutMs, sessionId, true); }
+        catch (error) {
+            if (this.engine === 'v3' && error instanceof ACPError && error.rpcCode === -32601) {
+                this.unsupportedExtensions.add(method);
+                this.publishSessionState(sessionId);
+                throw new ACPUnsupportedMethodError(`This Kiro server does not support ${method}`);
+            }
+            throw error;
+        }
+    }
+
     getSessionInfo(sessionId: string): AcpSessionInfo | undefined {
         return this.sessionInfo.get(sessionId);
+    }
+
+    getSessionState(sessionId: string) {
+        const state = this.snapshots.state(sessionId, this.sessionInfo.get(sessionId));
+        state.nativeEngine = this.engine;
+        if (this.engine === 'v3') {
+            const advertised = new Map(state.commands?.map((command) => [command.name, command]));
+            state.commands = v3CommandNames(this.sessionInfo.get(sessionId), (method) => this.supportsExtension(method))
+                .map((name) => advertised.get(name) ?? { name });
+        }
+        return state;
+    }
+
+    onSessionState(sessionId: string, notify: () => void): () => void {
+        return this.snapshots.subscribe(sessionId, notify);
+    }
+
+    private publishSessionState(sessionId: string): void {
+        if (this.loadingSessions.has(sessionId)) return;
+        this.snapshots.changed(sessionId);
+        if (this.activePrompts.has(sessionId)) this.injectUpdate(sessionId, {
+            sessionUpdate: 'session_state', state: this.getSessionState(sessionId),
+        });
     }
 
     getLastUserMessageId(sessionId: string): string | undefined {
@@ -368,6 +413,7 @@ export class AcpClient {
     private rememberSessionInfo(sessionId: string, info: AcpSessionInfo): AcpSessionInfo {
         const normalized = normalizeSessionInfo({ ...this.sessionInfo.get(sessionId), ...info });
         this.sessionInfo.set(sessionId, normalized);
+        this.publishSessionState(sessionId);
         return normalized;
     }
 
@@ -561,7 +607,16 @@ export class AcpClient {
                     this.rememberSessionInfo(sid, { configOptions: update.configOptions });
                 }
                 if (update.sessionUpdate === 'current_mode_update' && typeof update.currentModeId === 'string') {
-                    this.rememberSessionInfo(sid, { modes: { ...this.sessionInfo.get(sid)?.modes, currentModeId: update.currentModeId } });
+                    this.rememberSessionInfo(sid, {
+                        modes: { ...this.sessionInfo.get(sid)?.modes, currentModeId: update.currentModeId },
+                        configOptions: this.sessionInfo.get(sid)?.configOptions?.map((option) =>
+                            option.id === 'mode' || option.category === 'mode' ? { ...option, currentValue: update.currentModeId } : option),
+                    });
+                }
+                if (update.sessionUpdate === 'available_commands_update' && Array.isArray(update.availableCommands)) {
+                    this.snapshots.set(sid, { commands: update.availableCommands });
+                    this.publishSessionState(sid);
+                    return;
                 }
                 const nativeUserId = update._meta?.kiro?.userMessageId;
                 if (typeof nativeUserId === 'string') this.lastUserMessageId.set(sid, nativeUserId);
@@ -654,17 +709,14 @@ export class AcpClient {
         if (this.engine === 'v3' && msg?.method === '_kiro/mcp/status') {
             const { sessionId, servers } = msg.params ?? {};
             if (typeof sessionId !== 'string' || !Array.isArray(servers)) return;
-            this.mcpStatus.set(sessionId, servers);
-            const seen = this.mcpErrors.get(sessionId) ?? new Set<string>();
-            this.mcpErrors.set(sessionId, seen);
-            for (const server of servers) {
-                if (server.status !== 'failed' && server.status !== 'error') continue;
-                const error = typeof server.error === 'string' ? server.error : 'MCP server connection failed';
-                const key = `${server.name}:${error}`;
-                if (seen.has(key)) continue;
-                seen.add(key);
-                this.injectUpdate(sessionId, { sessionUpdate: 'mcp_server_error', serverName: server.name, error });
-            }
+            this.snapshots.set(sessionId, { servers });
+            this.publishSessionState(sessionId);
+            return;
+        }
+
+        if (this.engine === 'v3' && msg?.method === '_kiro/tools/didChange') {
+            const { sessionId, tools } = msg.params ?? {};
+            if (typeof sessionId === 'string' && Array.isArray(tools)) this.snapshots.set(sessionId, { tools });
             return;
         }
 
@@ -997,7 +1049,10 @@ export class AcpClient {
         const applied = result?.modes?.currentModeId ?? result?.configOptions?.find((c: AcpConfigOption) => c.id === 'mode')?.currentValue;
         if (applied && applied !== modeId) throw new ACPError(`Kiro did not select requested agent ${modeId}`);
         const info = this.sessionInfo.get(sessionId);
-        if (info) this.sessionInfo.set(sessionId, { ...info, modes: { ...info.modes, currentModeId: modeId } });
+        if (info) this.rememberSessionInfo(sessionId, { modes: { ...info.modes, currentModeId: modeId },
+            configOptions: info.configOptions?.map((option) => option.id === 'mode' || option.category === 'mode'
+                ? { ...option, currentValue: modeId } : option),
+        });
     }
 
     async setModel(sessionId: string, modelId: string, timeoutMs?: number): Promise<void> {
@@ -1025,9 +1080,10 @@ export class AcpClient {
     async steer(sessionId: string, message: string): Promise<{ queued: boolean; messageId?: string }> {
         if (!message.trim() || !this.activePrompts.has(sessionId)) return { queued: false };
         if (this.cancelledPrompts.has(sessionId)) return { queued: false };
+        if (!this.supportsExtension('_session/steer')) return { queued: false };
         const requests = this.steerRequests.get(sessionId) ?? new Set<Promise<unknown>>();
         this.steerRequests.set(sessionId, requests);
-        const request = this.send('_session/steer', { sessionId, message }, 10_000, sessionId, true);
+        const request = this.sendExtension('_session/steer', { sessionId, message }, 10_000, sessionId);
         requests.add(request);
         try {
             const result = await request;
@@ -1035,6 +1091,9 @@ export class AcpClient {
             return { queued: result?.queued === true && !this.cancelledPrompts.has(sessionId),
                 ...(typeof result?.messageId === 'string' ? { messageId: result.messageId } : {}),
             };
+        } catch (error) {
+            if (error instanceof ACPUnsupportedMethodError) return { queued: false };
+            throw error;
         } finally {
             requests.delete(request);
             if (requests.size === 0) this.steerRequests.delete(sessionId);
@@ -1042,7 +1101,7 @@ export class AcpClient {
     }
 
     async clearSteer(sessionId: string): Promise<{ cleared: boolean; messageIds?: string[] }> {
-        const result = await this.send('_session/steer/clear', { sessionId }, 10_000, sessionId, true);
+        const result = await this.sendExtension('_session/steer/clear', { sessionId }, 10_000, sessionId);
         if (result?.cleared === true) this.steeredSessions.delete(sessionId);
         return { cleared: result?.cleared === true,
             ...(Array.isArray(result?.messageIds) ? { messageIds: result.messageIds.filter((id: unknown) => typeof id === 'string') } : {}),
@@ -1189,6 +1248,8 @@ export class AcpClient {
             // sentinel from the prior prompt). Without this, the next turn's
             // stream would begin with stale content.
             q.drain();
+            const state = this.getSessionState(sessionId);
+            if (Object.keys(state).some((key) => !['runtimeId', 'nativeEngine', 'version'].includes(key))) q.push({ update: { sessionUpdate: 'session_state', state } });
             if (BACKEND_STREAM_PROBE_ENABLED) this.rawProbeState.delete(sessionId);
 
             // Yield any buffered context_usage that arrived between turns
@@ -1395,13 +1456,26 @@ export class AcpClient {
         timeoutMs = DEFAULT_TIMEOUT_MS,
     ): Promise<{ success: boolean; message?: string; data?: unknown }> {
         if (this.engine === 'v3') {
-            const methods: Record<string, string> = { compact: '_kiro/session/compact', context: '_kiro/session/context',
-                history: '_kiro/session/history', export: '_kiro/session/export', code: '_kiro/codeIntelligence', usage: '_kiro/account/getUsage' };
-            if (command === 'mcp') return { success: true, data: this.mcpStatus.get(sessionId) ?? [] };
-            const method = methods[command];
-            if (!method) return { success: false, message: `/${command} has no Kiro v3 command RPC` };
-            const result = await this.send(method, { ...args, sessionId }, timeoutMs, sessionId, true);
-            return { success: result?.success !== false, message: result?.message, data: result };
+            if (command === 'mcp') return { success: true, data: (this.snapshots.get(sessionId)?.servers ?? []).map((server) => ({
+                name: server.name, status: server.status, error: server.errorMessage ?? server.error,
+            })) };
+            if (command === 'tools') return { success: true, data: this.snapshots.get(sessionId)?.tools ?? [],
+                message: this.snapshots.get(sessionId)?.tools ? undefined : 'Kiro has not published its tool catalog yet.' };
+            if (command === 'effort') {
+                const selection = effortSelection(this.getSessionInfo(sessionId), args?.value);
+                if ('message' in selection) return { success: args?.value === undefined, message: selection.message };
+                await this.setConfigOption(sessionId, 'effortLevel', selection.value, timeoutMs);
+                return { success: true, message: `Effort set to ${selection.value}.` };
+            }
+            const method = V3_COMMAND_METHODS[command];
+            if (!method) return { success: false, message: `/${command} is not supported by Michi's Kiro V3 command interface.` };
+            try {
+                const result = await this.sendExtension(method, { ...args, sessionId }, timeoutMs, sessionId);
+                return { success: result?.success !== false, message: result?.message, data: result };
+            } catch (error) {
+                if (error instanceof ACPUnsupportedMethodError) return { success: false, message: error.message };
+                throw error;
+            }
         }
         const payload: Record<string, unknown> = {
             sessionId,
@@ -1462,8 +1536,7 @@ export class AcpClient {
         this.sessionInfo.delete(sessionId);
         this.lastMetadata.delete(sessionId);
         this.lastUserMessageId.delete(sessionId);
-        this.mcpStatus.delete(sessionId);
-        this.mcpErrors.delete(sessionId);
+        this.snapshots.delete(sessionId);
         this.steeredSessions.delete(sessionId);
         this.cancelledPrompts.delete(sessionId);
     }

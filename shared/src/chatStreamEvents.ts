@@ -1,3 +1,4 @@
+import { parseSessionState, type AgentSessionState } from './sessionState';
 import { parseSteeringReports, type SteeringReport } from './kiroSteering';
 
 export interface PlanEntry {
@@ -83,6 +84,7 @@ export const CHAT_STREAM_EVENTS = {
   followUps: "follow_ups",
   followUpsStatus: "follow_ups_status",
   commands: "commands",
+  sessionState: "session_state",
   artifactSaved: "artifact_saved",
   artifactUpdated: "artifact_updated",
   permissionRequest: "permission_request",
@@ -124,6 +126,7 @@ export interface ChatStreamPayloads {
   follow_ups: { followUps: string[] };
   follow_ups_status: { status: "in_progress" | "completed" | "failed" };
   commands: { commands: AgentCommand[] };
+  session_state: AgentSessionState;
   artifact_saved: { contextId?: string; name: string; filePath: string; size?: number };
   artifact_updated: { contextId?: string; name: string; filePath: string; size?: number };
   permission_request: {
@@ -297,6 +300,7 @@ const parsers = {
       raw === "completed" || raw === "failed" ? raw : "in_progress";
     return { status };
   },
+  session_state: parseSessionState,
   commands: (data) => ({ commands: parseCommands(data.commands) }),
   artifact_saved: (data) => ({
     contextId: optionalString(data.contextId),

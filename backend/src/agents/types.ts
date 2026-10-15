@@ -1,3 +1,4 @@
+import type { AgentSessionState } from 'michi-shared';
 import type {
   CapabilityDescriptor,
   EventConfidence,
@@ -262,6 +263,8 @@ export interface AgentStatus {
 }
 
 export interface AgentSession {
+  getSessionState?(): AgentSessionState;
+  onSessionState?(notify: () => void): () => void;
   /** Refresh idle retention when a caller acquires this live session. */
   touch?(): void;
   readonly nativeEngine?: string;

@@ -1,3 +1,4 @@
+import { trackSessionState, untrackSessionState, clearSessionStates } from './sessionStateFeed';
 import type { AgentSession, ChatMessage, RuntimeSessionOwner } from "./types";
 import type { NormalizedEvent } from "../services/chatEvents";
 import { getRuntimeDeps } from "./runtimeDeps";
@@ -144,6 +145,8 @@ export function registerSession(
         kind: "live",
         lastAccessedAt: Date.now(),
     });
+    if (owner.kind === 'chat_node') trackSessionState(session, ownerUserId ?? null);
+    else untrackSessionState(session.id);
     try {
         getRuntimeDeps().onSessionOwnerBound?.(session.id, owner);
     } catch {
@@ -211,11 +214,13 @@ export function sessionMatchesOwner(sessionId: string, owner: RuntimeSessionOwne
 }
 
 export function dropSession(chatId: string): void {
+    untrackSessionState(chatId);
     sessions.delete(chatId);
 }
 
 export function dropSessionForOwner(sessionId: string, owner: RuntimeSessionOwner): boolean {
     if (!sessionMatchesOwner(sessionId, owner)) return false;
+    untrackSessionState(sessionId);
     return sessions.delete(sessionId);
 }
 
@@ -245,5 +250,6 @@ export function getAncestors(chatId: string): AgentSession[] {
 }
 
 export function clearAllSessions(): void {
+    clearSessionStates();
     sessions.clear();
 }

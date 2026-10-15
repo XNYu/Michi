@@ -343,7 +343,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     openArtifactPane,
   } = useChatActions();
   const {
-    availableModes,
+    availableModes: defaultAvailableModes,
     defaultModeId,
     agentStatus,
     refreshAgentStatus,
@@ -353,6 +353,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const { prefs } = usePrefs();
   const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
+  const availableModes = n?.sessionState?.availableModes ?? defaultAvailableModes;
   const permissionPreferences = usePermissionPreferences(n ? workspaceBackendApiBase(n.projectId) : undefined);
   // Latest node state for callbacks that outlive their render closure — the
   // unmount-time scroll save reads messages through this.
@@ -445,7 +446,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     requestedBinding.runtime
   );
   const {
-    models: providerModels,
+    models: catalogModels,
     providers: catalogProviders,
     capabilities: catalogCapabilities,
     loading: modelsLoading,
@@ -459,6 +460,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   });
   const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride,
     catalogProviders.length > 0 ? catalogProviders : undefined);
+  const providerModels = requestedBinding.runtime === n?.runtimeId && n?.sessionState?.availableModels
+    ? n.sessionState.availableModels : catalogModels;
   const composerEffort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, catalogProviders);
   // Snapshot the composer's runtime/model/effort for a send or retry, and
   // clear the pending chip override that this call consumes.

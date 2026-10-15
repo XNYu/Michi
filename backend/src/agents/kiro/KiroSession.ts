@@ -13,7 +13,7 @@ import type {
     RuntimeToolProfile,
 } from "../types";
 import type { NormalizedEvent, PlanEntry } from "../../services/chatEvents";
-import { ACPRequestNotSentError, type AcpPromptBlock } from "../../services/acpClient";
+import { ACPRequestNotSentError, type AcpClient, type AcpPromptBlock } from "../../services/acpClient";
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
 import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "../nodeSummaryExperiment";
@@ -206,6 +206,32 @@ export class KiroSession implements AgentSession {
         return this.runtime.getCurrentModel(this.nativeSessionId) ?? null;
     }
 
+    getSessionState() {
+        return this.runtime.getClient?.(this.cwd)?.getSessionState?.(this.nativeSessionId) ?? { runtimeId: 'kiro' };
+    }
+
+    private stateClient?: AcpClient;
+    private detachState?: () => void;
+    private readonly stateListeners = new Set<() => void>();
+
+    private observeClient(client: AcpClient | undefined): void {
+        if (client === this.stateClient) return;
+        this.detachState?.();
+        this.stateClient = client;
+        this.detachState = client?.onSessionState?.(this.nativeSessionId, () => {
+            for (const notify of this.stateListeners) notify();
+        });
+    }
+
+    onSessionState(notify: () => void): () => void {
+        this.stateListeners.add(notify);
+        this.observeClient(this.runtime.getClient?.(this.cwd));
+        return () => {
+            this.stateListeners.delete(notify);
+            if (!this.stateListeners.size) { this.detachState?.(); this.stateClient = undefined; }
+        };
+    }
+
     getHistory(): ChatMessage[] {
         return this.history;
     }
@@ -304,7 +330,7 @@ export class KiroSession implements AgentSession {
                         yield { kind: "retry_end" };
                         retryActive = false;
                     }
-                    if (ev.kind !== "heartbeat") firstVisibleYielded = true;
+                    if (!["heartbeat", "session_state", "commands"].includes(ev.kind)) firstVisibleYielded = true;
                     yield ev;
                 }
                 if (retryActive) {
@@ -395,6 +421,7 @@ export class KiroSession implements AgentSession {
             yield { kind: 'turn_end', stopReason: 'cancelled' };
             return;
         }
+        if (this.stateListeners.size) this.observeClient(c);
         const completionStripper = new TrailingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         const steeringParser = new KiroSteeringParser();
         const steeringEvents = (segments: SteeringSegment[]): NormalizedEvent[] => segments.map((segment) =>
@@ -407,7 +434,9 @@ export class KiroSession implements AgentSession {
         try {
             for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks, signal)) {
                 const kind = update.sessionUpdate;
-                if (kind === "agent_message_chunk") {
+                if (kind === 'session_state') {
+                    yield { kind: 'session_state', state: update.state };
+                } else if (kind === "agent_message_chunk") {
                     const content = update.content;
                     const blocks = Array.isArray(content) ? content : content ? [content] : [];
                     for (const b of blocks) {

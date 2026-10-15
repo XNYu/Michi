@@ -290,6 +290,7 @@ export function reduceNodes(
           ...n,
           chatId: action.nodeId,
           runtimeId: action.runtimeId ?? n.runtimeId,
+          sessionState: action.runtimeId && action.runtimeId !== n.runtimeId ? undefined : n.sessionState,
           providerId: action.providerId !== undefined ? action.providerId : n.providerId,
           modelId: action.modelId !== undefined ? action.modelId : n.modelId,
           reasoning: action.reasoning !== undefined ? action.reasoning : n.reasoning,
@@ -1255,6 +1256,20 @@ export function reduceNodes(
       const next = action.status === 'in_progress';
       if ((n.followUpsGenerating ?? false) === next) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, followUpsGenerating: next } };
+    }
+    case 'session-state': {
+      const n = nodes[action.nodeId];
+      const state = action.state;
+      if (!n || (n.runtimeId && n.runtimeId !== state.runtimeId)) return nodes;
+      if (state.version !== undefined && n.sessionState?.version !== undefined && state.version < n.sessionState.version) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n,
+        sessionState: state,
+        ...(state.currentModeId !== undefined ? { currentModeId: state.currentModeId } : {}),
+        ...(state.modelId !== undefined ? { modelId: state.modelId } : {}),
+        ...(state.reasoning !== undefined ? { reasoning: state.reasoning } : {}),
+        ...(state.commands !== undefined ? { agentCommands: state.commands } : {}),
+        ...(state.mcpErrors !== undefined ? { mcpServerError: state.mcpErrors[0] } : {}),
+      } };
     }
     case 'set-commands': {
       const n = nodes[action.nodeId];

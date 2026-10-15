@@ -47,6 +47,7 @@ export interface StreamHandlers {
   onBranchOverview?: (overview: string, seq?: number, assistantId?: string, turnId?: string) => void;
   onFollowUps?: (followUps: string[]) => void;
   onFollowUpsStatus?: (status: 'in_progress' | 'completed' | 'failed') => void;
+  onSessionState?: (state: ChatStreamPayloads['session_state']) => void;
   onCommands?: (commands: AgentCommand[]) => void;
   onArtifactSaved?: (name: string, filePath: string, size?: number, contextId?: string) => void;
   onArtifactUpdated?: (name: string, filePath: string, size?: number, contextId?: string) => void;
@@ -125,6 +126,9 @@ export function dispatchChatStreamEvent(
       return;
     case CHAT_STREAM_EVENTS.followUpsStatus:
       handlers.onFollowUpsStatus?.(streamEvent.data.status);
+      return;
+    case CHAT_STREAM_EVENTS.sessionState:
+      handlers.onSessionState?.(streamEvent.data);
       return;
     case CHAT_STREAM_EVENTS.commands:
       handlers.onCommands?.(streamEvent.data.commands);

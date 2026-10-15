@@ -7,9 +7,10 @@ function fixture(engine: KiroEngine) {
     const c = new AcpClient('/bin/false', '/tmp', undefined, engine);
     const internal = c as any;
     const calls: any[] = [];
+    internal.initialization = { agentCapabilities: { _meta: { kiro: { extensionMethods: ['_kiro/session/compact'] } } } };
     internal.send = async (method: string, params: any) => {
         calls.push({ method, params });
-        if (method === 'initialize') return { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { fork: {}, list: {} } } };
+        if (method === 'initialize') return { protocolVersion: 1, agentCapabilities: { _meta: { kiro: { extensionMethods: ['_kiro/session/compact'] } }, loadSession: true, sessionCapabilities: { fork: {}, list: {} } } };
         if (method === 'session/list') return { sessions: [{ sessionId: 'parent', cwd: '/tmp' }] };
         if (method === 'session/new' || method === 'session/load') return { sessionId: 'parent',
             ...(engine === 'v3' ? { configOptions: [{ id: 'model', type: 'select', currentValue: 'old', options: [{ value: 'old' }, { value: 'new' }] }] }
@@ -25,6 +26,12 @@ function fixture(engine: KiroEngine) {
         return {};
     };
     return { c, internal, calls };
+}
+
+async function nextTurnUpdate(stream: AsyncIterableIterator<any>) {
+    let result = await stream.next();
+    while (!result.done && result.value.sessionUpdate === 'session_state') result = await stream.next();
+    return result;
 }
 
 for (const engine of ['v2', 'v3'] as const) {
@@ -84,7 +91,7 @@ for (const engine of ['v2', 'v3'] as const) {
         await c.loadSession('parent', '/tmp');
         const updates = [];
         for await (const event of c.prompt('parent', 'continue')) updates.push(event);
-        assert.deepEqual(updates.map((u) => u.content?.text ?? u.sessionUpdate), ['NEW', 'turn_end']);
+        assert.deepEqual(updates.filter((u) => u.sessionUpdate !== 'session_state').map((u) => u.content?.text ?? u.sessionUpdate), ['NEW', 'turn_end']);
     });
 }
 
@@ -94,6 +101,7 @@ test('v3 emits one usage summary and waits for prompt response despite early tur
     let complete!: () => void;
     internal.send = async () => new Promise((resolve) => { complete = () => resolve({ stopReason: 'end_turn' }); });
     const stream = c.prompt('parent', 'hello');
+    await stream.next(); // initial session snapshot
     const first = stream.next();
     internal.dispatch({ method: 'session/update', params: { sessionId: 'parent', update: {
         sessionUpdate: 'session_info_update', _meta: { kiro: { kind: 'turn_completion', elapsedTime: 5, promptTurnSummaries: [{ unit: 'credit', usage: 0.4 }] } },
@@ -106,7 +114,7 @@ test('v3 emits one usage summary and waits for prompt response despite early tur
     assert.equal(resolved, false);
     complete();
     assert.equal((await first).value?.totalCredits, 0.4);
-    assert.equal((await stream.next()).value?.sessionUpdate, 'turn_end');
+    assert.equal((await nextTurnUpdate(stream)).value?.sessionUpdate, 'turn_end');
     await stream.return?.();
 });
 
@@ -202,7 +210,7 @@ test('v3 compact uses the dedicated RPC and a queued prompt waits for its comple
     };
     const compact = c.compact('parent');
     const prompt = c.prompt('parent', 'continue');
-    const next = prompt.next();
+    const next = nextTurnUpdate(prompt);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(methods, ['_kiro/session/compact']);
     complete();
@@ -226,7 +234,7 @@ test('v3 compact immediately after done waits for native steer cleanup', async (
         return {};
     };
     const stream = c.prompt('parent', 'first');
-    assert.equal((await stream.next()).value?.sessionUpdate, 'turn_end');
+    assert.equal((await nextTurnUpdate(stream)).value?.sessionUpdate, 'turn_end');
     const cleanup = stream.return?.();
     await new Promise<void>((resolve) => setImmediate(resolve));
     const compact = c.compact('parent');
@@ -255,7 +263,7 @@ for (const engine of ['v2', 'v3'] as const) {
                 return {};
             };
             const stream = c.prompt('parent', 'hello');
-            const terminal = stream.next();
+            const terminal = nextTurnUpdate(stream);
             const steering = c.steer('parent', 'pending');
             await c.cancel('parent');
             finishPrompt({ stopReason: 'cancelled' });

@@ -1530,6 +1530,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           modelId: ensured.modelId,
           reasoning: ensured.reasoning,
         });
+        if (ensured.sessionState) dispatch({ type: 'session-state', nodeId, state: ensured.sessionState });
         boundSessionsRef.current.add(nodeId);
 
         if ((ensured.resumeStrategy === 'live' || ensured.resumeStrategy === 'exact') && peerBlocks.length > 0) {

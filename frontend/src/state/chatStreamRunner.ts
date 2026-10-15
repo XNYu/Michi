@@ -283,6 +283,7 @@ export function runChatStream({
     onFollowUps: (followUps) => dispatch({ type: 'set-follow-ups', nodeId, followUps }),
     onFollowUpsStatus: (status) =>
       dispatch({ type: 'follow-ups-status', nodeId, status }),
+    onSessionState: (state) => dispatch({ type: 'session-state', nodeId, state }),
     onCommands: (commands) => dispatch({ type: 'set-commands', nodeId, commands }),
     onSubagentListUpdate: (data) =>
       dispatch({ type: 'subagent-list-update', nodeId, subagents: data.subagents }),

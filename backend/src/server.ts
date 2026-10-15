@@ -1,3 +1,4 @@
+import { persistSessionState } from './services/sessionStatePersistence';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -152,6 +153,7 @@ log.info('boot', 'agent config loaded');
 // seam. MUST run before any runtime is constructed or warmed, since the
 // runtime modules read getRuntimeDeps() at call-time and throw if unconfigured.
 configureRuntimeDeps({
+  onSessionStateChanged: persistSessionState,
   chatPermissions: { getMode: resolveChatPermissionMode, hasGrant: hasChatToolGrant, grant: grantChatTool },
   historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission },
   dataDir: getMichiDataDir(),
