@@ -1403,11 +1403,14 @@ html[data-vibrancy="on"],
 /* Streaming label shimmer — a highlight sweeping across the text, in the
    Claude-app family. Colors ride --term-* tokens so it adapts per theme. */
 .term-shimmer {
-  background: linear-gradient(90deg,
-    var(--term-muted) 0%, var(--term-muted) 35%,
+  --term-shimmer-base: var(--term-muted);
+  background-color: var(--term-shimmer-base);
+  background-image: linear-gradient(90deg,
+    var(--term-shimmer-base) 0%, var(--term-shimmer-base) 35%,
     var(--term-fg) 50%,
-    var(--term-muted) 65%, var(--term-muted) 100%);
+    var(--term-shimmer-base) 65%, var(--term-shimmer-base) 100%);
   background-size: 220% 100%;
+  background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -1415,8 +1418,10 @@ html[data-vibrancy="on"],
   animation: termShimmer var(--t-loop-slow) linear infinite;
 }
 @keyframes termShimmer {
-  0% { background-position: 110% 0; }
-  100% { background-position: -110% 0; }
+  /* With a 220%-wide image, these offsets keep the entire 35–65% highlight
+     outside the label at both ends. The loop resets on identical base color. */
+  0% { background-position: 120% 0; }
+  100% { background-position: -20% 0; }
 }
 /* Expanded tool-rows entrance — a soft fade/slide on mount. Collapse is
    intentionally instant (mount/unmount), per "collapse fast, expand soft". */
@@ -1454,13 +1459,7 @@ html[data-vibrancy="on"],
   animation: termBreathe var(--t-loop) ease-in-out infinite;
 }
 .term-shimmer--accent {
-  background: linear-gradient(90deg,
-    var(--term-accent) 0%, var(--term-accent) 35%,
-    var(--term-fg) 50%,
-    var(--term-accent) 65%, var(--term-accent) 100%);
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
+  --term-shimmer-base: var(--term-accent);
 }
 @media (prefers-reduced-motion: reduce) {
   .term-dot-i--run { animation: none; opacity: 1; }
