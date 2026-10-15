@@ -29,12 +29,10 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ProjectEdge, Tree } from '../../../state/chatTypes';
 import type { ElkLayoutResult, ElkEdgeSection } from './useElkLayout';
+import { CARD_H, CARD_W } from '../map/mapCardMetrics';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const CARD_W = 348;
-const CARD_H = 118;
-const CARD_H_EXPANDED = 220;
 const GAP = 32;                        // min gap between card edges (px)
 const PAD = 60;                        // canvas padding
 
@@ -60,8 +58,8 @@ export interface UseOrbitLayoutParams {
   edges: readonly ProjectEdge[];
   liveSet: Set<string>;
   mode: string;
-  expandedSet: Set<string>;
-  measuredHeights: Map<string, number>;
+  /** Layout height per card id (measured; CARD_H when unknown). */
+  cardHeights: ReadonlyMap<string, number>;
   graphChildren: Map<string, string[]>;
   variant: OrbitVariant;
 }
@@ -190,8 +188,7 @@ function computeOrbitLayout(
   rootId: string,
   childMap: Map<string, string[]>,
   liveSet: Set<string>,
-  expandedSet: Set<string>,
-  measuredHeights: Map<string, number>,
+  cardHeights: ReadonlyMap<string, number>,
   variant: OrbitVariant,
 ): PositionResult {
   const ids = collectReachable(rootId, childMap, liveSet);
@@ -203,10 +200,7 @@ function computeOrbitLayout(
   const weightCache = new Map<string, number>();
   for (const id of ids) subtreeWeight(id, childMap, liveSet, weightCache);
 
-  const cardH = (id: string) =>
-    expandedSet.has(id)
-      ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
-      : CARD_H;
+  const cardH = (id: string) => cardHeights.get(id) ?? CARD_H;
 
   const ctx: LayoutCtx = {
     childMap,
@@ -437,8 +431,7 @@ export function useOrbitLayout({
   edges,
   liveSet,
   mode,
-  expandedSet,
-  measuredHeights,
+  cardHeights,
   graphChildren,
   variant,
 }: UseOrbitLayoutParams): ElkLayoutResult {
@@ -485,8 +478,7 @@ export function useOrbitLayout({
         tree.rootNodeId,
         graphChildren,
         liveSet,
-        expandedSet,
-        measuredHeights,
+        cardHeights,
         variant,
       );
 
@@ -542,7 +534,7 @@ export function useOrbitLayout({
       width: Math.max(offsetX - TREE_GAP, CARD_W + PAD * 2),
       height: Math.max(maxHeight, CARD_H + PAD * 2),
     });
-  }, [enabled, trees, activeTree, edges, liveSet, mode, expandedSet, measuredHeights, graphChildren, variant]);
+  }, [enabled, trees, activeTree, edges, liveSet, mode, cardHeights, graphChildren, variant]);
 
   return result;
 }

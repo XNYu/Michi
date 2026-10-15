@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import dagre from '@dagrejs/dagre';
 import { useChatStore, useChatNodesSnapshot, useStructuralSelector, chatLabel } from '../../../state/chatStore';
 import { sortTrees } from '../../../state/sidebarSelectors';
@@ -11,6 +11,9 @@ import { requestDigest } from '../../../lib/digestPrompt';
 import { findTreeIdForNode } from '../../../state/tree';
 import { MapTimeline } from '../map/MapTimeline';
 import { MapCard } from '../map/MapCard';
+import { autoCamera, boundsOf, focusIds, FOCUS_BRANCHES, type Camera } from '../map/mapCamera';
+import { useCameraSnapshot, useMapCamera, type MapCameraController } from '../map/useMapCamera';
+import { CARD_H, CARD_W, mapCardHeight } from '../map/mapCardMetrics';
 import { branchRibbonText } from '../../../state/mapOverviewSelectors';
 import { isNodeUnread } from '../../../state/sidebarSelectors';
 import Branches from './Branches';
@@ -20,19 +23,13 @@ import { useOrbitLayout, autoSelectVariant, type OrbitVariant } from './useOrbit
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
 
-// MapCard (DOM) box fed to dagre. Expanding a card reflows the graph — dagre
-// reserves the taller box so neighbors slide down to make room (a MODERATE
-// amount: CARD_H_EXPANDED tracks the real expanded content so the gap stays
-// ≈ NODE_SEP, not a big empty void). Both the cards and the shifted neighbors
-// animate to their new positions (see the wrapper's top/left transition).
-const CARD_W = 348;
-const CARD_H = 118;          // collapsed: heat bar + ASKED strip + title + summary + meta
-const CARD_H_EXPANDED = 220; // expanded: + trail + footer (≈ real content height)
+// MapCard boxes fed to the layout engines use measured DOM heights (see
+// cardHeights below). Expanding a card reflows the graph so neighbors slide
+// to make room; both animate to their new positions (wrapper top/left
+// transition).
 const NODE_SEP = 48;         // gap between sibling cards (cross-axis, vertical in LR)
-const RANK_SEP = 130;        // gap between ranks (main-axis, horizontal in LR)
+const RANK_SEP = 110;        // gap between ranks (main-axis, horizontal in LR)
 const TREE_GAP = 80;
-const MIN_ZOOM = 0.3;
-const MAX_ZOOM = 3;
 const FIT_PADDING = 72;
 
 // Glass material shared by the floating zoom pill. Token-based so it stays
@@ -42,7 +39,6 @@ const GLASS_BORDER = '1px solid color-mix(in srgb, var(--term-fg) 8%, transparen
 const GLASS_SHADOW = '0 12px 36px -18px color-mix(in srgb, var(--term-fg) 35%, transparent)';
 
 type MapMode = 'overview' | 'thread' | 'graph';
-type ZoomMode = 'auto' | 'manual';
 const DEFAULT_MAP_MODE: MapMode = 'thread';
 const EMPTY_TREES: readonly Tree[] = [];
 
@@ -129,15 +125,6 @@ function useStableLayoutTrees(value: readonly Tree[]): readonly Tree[] {
   return ref.current;
 }
 
-function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n));
-}
-
-// Cap how far "fit" is allowed to scale UP the graph. The cards are now
-// full-size (232px) so blowing them past 1:1 is what made them fill the screen;
-// keep fit at natural size (or below) and let the user zoom in manually.
-const MAX_FIT_ZOOM = 1.0;
-
 export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } = {}) {
   const {
     activeProject,
@@ -173,8 +160,6 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       return true;
     },
   );
-  const [zoom, setZoom] = useState(1);
-  const [zoomMode, setZoomMode] = useState<ZoomMode>('auto');
   // Top-level view (graph / timeline / doc). Session-only, always opens on graph.
   // The switcher floats top-right on the canvas, under the Topbar's icon row.
   const [view, setView] = useState<MapView>('graph');
@@ -194,36 +179,39 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   const [elkRouting, setElkRouting] = useState<ElkRoutingStyle>('ORTHOGONAL');
   const [orbitVariant, setOrbitVariant] = useState<OrbitVariant | 'auto'>('auto');
 
-  // Measured DOM heights for expanded cards. After the card expands and renders,
-  // a ResizeObserver reports its actual height. This feeds back into dagre so
-  // the layout uses real content height instead of the fixed CARD_H_EXPANDED
-  // estimate, guaranteeing NODE_SEP gaps between expanded cards.
+  // Measured DOM heights feed every layout engine so boxes match the real
+  // cards. `headHeights` is the collapsed part of each card (stable while the
+  // expand area animates); `measuredHeights` is the whole card, recorded only
+  // while it is expanded.
   const [measuredHeights, setMeasuredHeights] = useState<Map<string, number>>(new Map());
+  const [headHeights, setHeadHeights] = useState<Map<string, number>>(new Map());
   const cardRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
   const expandedSetRef = useRef(expandedSet);
   expandedSetRef.current = expandedSet;
   const roRef = useRef<ResizeObserver | null>(null);
   if (!roRef.current) {
-    roRef.current = new ResizeObserver((entries) => {
+    const mergeHeights = (prev: Map<string, number>, updates: [string, number][]) => {
       let changed = false;
-      const updates: [string, number][] = [];
-      for (const entry of entries) {
-        const el = entry.target as HTMLDivElement;
-        const nodeId = el.getAttribute('data-map-node');
-        if (!nodeId) continue;
-        // Only care about expanded cards — collapsed ones use CARD_H.
-        if (!expandedSetRef.current.has(nodeId)) continue;
-        const h = Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight);
-        if (h > 0) updates.push([nodeId, h]);
+      const next = new Map(prev);
+      for (const [nid, h] of updates) {
+        if (prev.get(nid) !== h) { next.set(nid, h); changed = true; }
       }
-      if (updates.length === 0) return;
-      setMeasuredHeights((prev) => {
-        const next = new Map(prev);
-        for (const [nid, h] of updates) {
-          if (prev.get(nid) !== h) { next.set(nid, h); changed = true; }
-        }
-        return changed ? next : prev;
-      });
+      return changed ? next : prev;
+    };
+    roRef.current = new ResizeObserver((entries) => {
+      const full: [string, number][] = [];
+      const heads: [string, number][] = [];
+      for (const entry of entries) {
+        const el = entry.target as HTMLElement;
+        const h = Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? el.offsetHeight);
+        if (h <= 0) continue;
+        const headId = el.getAttribute('data-map-card-head');
+        if (headId) { heads.push([headId, h]); continue; }
+        const nodeId = el.getAttribute('data-map-node');
+        if (nodeId && expandedSetRef.current.has(nodeId)) full.push([nodeId, h]);
+      }
+      if (heads.length > 0) setHeadHeights((prev) => mergeHeights(prev, heads));
+      if (full.length > 0) setMeasuredHeights((prev) => mergeHeights(prev, full));
     });
   }
   // Cleanup the ResizeObserver on unmount.
@@ -239,17 +227,10 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   const growTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [growIds, setGrowIds] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; targetId: string } | null>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
-  // Drag-to-pan: anchor the pointer's starting client-coords + the
-  // container's scroll offset, then on each pointermove we update
-  // scrollLeft/Top by the delta. Closed over via ref so the move
-  // handler isn't recreated on each render.
-  const panRef = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null);
-  const [panning, setPanning] = useState(false);
   const setMapMode = (nextMode: MapMode) => {
     setMode(nextMode);
-    setZoomMode('auto');
   };
 
   const hasActiveProject = activeProject !== null;
@@ -266,6 +247,15 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   const liveIds = useStableStringArray(computedLiveIds);
 
   const liveSet = useMemo(() => new Set(liveIds), [liveIds]);
+
+  // Layout height of every live card (measured, with estimates as fallback).
+  const cardHeights = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const id of liveIds) {
+      out.set(id, mapCardHeight(expandedSet.has(id), headHeights.get(id), measuredHeights.get(id)));
+    }
+    return out;
+  }, [liveIds, expandedSet, headHeights, measuredHeights]);
 
   const branchChildren = useMemo(() => {
     const children = new Map<string, string[]>();
@@ -384,17 +374,12 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       const idSet = new Set(ids);
 
       const g = new dagre.graphlib.Graph();
-      g.setGraph({ rankdir: 'LR', nodesep: NODE_SEP, ranksep: RANK_SEP });
+      // align UL: a parent lines up with its first child, so the root sits at
+      // the top-left and later branches continue downward.
+      g.setGraph({ rankdir: 'LR', nodesep: NODE_SEP, ranksep: RANK_SEP, align: 'UL' });
       g.setDefaultEdgeLabel(() => ({}));
       for (const id of ids) {
-        // Expanded cards reserve a taller box so dagre pushes the cross-axis
-        // neighbors down just enough to clear the expanded content.
-        // Use the measured DOM height when available (after the first render),
-        // otherwise fall back to the CARD_H_EXPANDED estimate.
-        const h = expandedSet.has(id)
-          ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
-          : CARD_H;
-        g.setNode(id, { width: CARD_W, height: h });
+        g.setNode(id, { width: CARD_W, height: cardHeights.get(id) ?? CARD_H });
       }
       for (const e of edges) {
         // dagre layout should only follow real parent/child branches.
@@ -459,10 +444,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       width: maxX + CARD_W / 2 + PAD,
       height: cursorY - TREE_GAP + PAD,
     };
-    // expandedSet IS a dependency: an expanded card reserves a taller dagre box,
-    // so toggling recomputes positions and neighbors slide to make room.
-    // measuredHeights refines the estimate once DOM measures are available.
-  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, expandedSet, measuredHeights]);
+    // cardHeights changes on expand/collapse and when DOM measurements land,
+    // so neighbors slide to make room.
+  }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, cardHeights]);
 
   // ELK layout (async). Only runs when layoutEngine === 'elk'.
   const elkResult = useElkLayout({
@@ -472,8 +456,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     edges,
     liveSet,
     mode,
-    expandedSet,
-    measuredHeights,
+    cardHeights,
     graphChildren,
     routingStyle: elkRouting,
   });
@@ -493,8 +476,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     edges,
     liveSet,
     mode,
-    expandedSet,
-    measuredHeights,
+    cardHeights,
     graphChildren,
     variant: resolvedOrbitVariant,
   });
@@ -546,8 +528,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     return () => { for (const t of timers.values()) clearTimeout(t); timers.clear(); };
   }, []);
 
-  useEffect(() => {
-    if (mode === 'overview') return;
+  // Layout effect so the first paint is already framed (no flash at 1x).
+  useLayoutEffect(() => {
+    if (mode === 'overview' || view !== 'graph') return;
     const surface = surfaceRef.current;
     if (!surface) return;
 
@@ -577,30 +560,41 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
       window.cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [layout?.height, layout?.width, mode]);
+  }, [layout?.height, layout?.width, mode, view]);
 
-  const fitZoom = useMemo(() => {
-    if (!layout || surfaceSize.width <= 0 || surfaceSize.height <= 0) return 1;
-    const usableWidth = Math.max(1, surfaceSize.width - FIT_PADDING * 2);
-    const usableHeight = Math.max(1, surfaceSize.height - FIT_PADDING * 2);
-    // Fit both axes so a wide (deep) tree AND a tall (branchy) tree both settle
-    // inside the viewport rather than overflowing on the unconsidered axis.
-    const fit = Math.min(usableWidth / layout.width, usableHeight / layout.height);
-    return clamp(fit, MIN_ZOOM, MAX_FIT_ZOOM);
-  }, [layout, surfaceSize.height, surfaceSize.width]);
+  // Auto framing target: the root and its first FOCUS_BRANCHES branches
+  // (the whole graph when it has no more than that). Everything else is
+  // reached by panning.
+  const autoTarget = useMemo<Camera | null>(() => {
+    if (!layout || layout.ids.length === 0) return null;
+    if (surfaceSize.width <= 0 || surfaceSize.height <= 0) return null;
+    const sizeOf = (id: string) => ({ width: CARD_W, height: cardHeights.get(id) ?? CARD_H });
+    const rootId = mode === 'thread'
+      ? activeTree?.rootNodeId
+      : layoutTrees.find((t) => layout.positions.has(t.rootNodeId))?.rootNodeId;
+    const ids = rootId ? focusIds(rootId, graphChildren, layout.positions, FOCUS_BRANCHES) : [];
+    const focus = boundsOf(ids.length > 0 ? ids : layout.ids, layout.positions, sizeOf);
+    if (!focus) return null;
+    const anchor = (rootId ? layout.positions.get(rootId) : undefined)
+      ?? { x: (focus.minX + focus.maxX) / 2, y: (focus.minY + focus.maxY) / 2 };
+    return autoCamera({ focus, anchor, viewport: surfaceSize, padding: FIT_PADDING });
+  }, [layout, surfaceSize, cardHeights, mode, activeTree, layoutTrees, graphChildren]);
 
-  const effectiveZoom = zoomMode === 'auto' ? fitZoom : zoom;
-  const zoomOut = () => {
-    setZoomMode('manual');
-    setZoom(clamp(Math.round((effectiveZoom - 0.1) * 10) / 10, MIN_ZOOM, MAX_ZOOM));
-  };
-  const zoomIn = () => {
-    setZoomMode('manual');
-    setZoom(clamp(Math.round((effectiveZoom + 0.1) * 10) / 10, MIN_ZOOM, MAX_ZOOM));
-  };
-  const fitMap = () => {
-    setZoomMode('auto');
-  };
+  const camera = useMapCamera({
+    viewport: surfaceSize,
+    content: { width: layout?.width ?? 0, height: layout?.height ?? 0 },
+    autoTarget,
+  });
+  const bindCameraSurface = camera.bindSurface;
+  const bindSurface = useCallback((el: HTMLDivElement | null) => {
+    surfaceRef.current = el;
+    bindCameraSurface(el);
+  }, [bindCameraSurface]);
+  // Switching thread or map mode starts from the default framing again.
+  const resetCameraToAuto = camera.resetToAuto;
+  useEffect(() => {
+    resetCameraToAuto();
+  }, [activeTreeId, mode, resetCameraToAuto]);
   const closeMenuFromMapPointerDown = (event: React.PointerEvent) => {
     if (event.button === 0 && menu) setMenu(null);
   };
@@ -737,10 +731,6 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     }
   };
 
-  const scaledWidth = layout.width * effectiveZoom;
-  const scaledHeight = layout.height * effectiveZoom;
-  const canvasWidth = Math.max(scaledWidth, surfaceSize.width);
-  const canvasHeight = Math.max(scaledHeight, surfaceSize.height);
   const nowTs = Date.now();
   const rootNodeId = activeTree?.rootNodeId ?? null;
 
@@ -767,96 +757,34 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
         onPointerDownCapture={closeMenuFromMapPointerDown}
         style={{ flex: 1, position: 'relative', minHeight: 0 }}
       >
-        {/* map surface */}
+        {/* map surface: clips the camera-transformed world and owns input
+            (wheel / pinch / drag-pan, see useMapCamera). */}
         <div
-          ref={surfaceRef}
-          onPointerDown={(e) => {
-            // Only start panning on left-click against empty canvas. If the
-            // press lands on a node group (or any descendant we care about),
-            // bail so click/contextmenu still work on nodes.
-            if (e.button !== 0) return;
-            const target = e.target as Element;
-            if (target.closest('[data-map-node]')) return;
-            const surface = surfaceRef.current;
-            if (!surface) return;
-            panRef.current = {
-              x: e.clientX,
-              y: e.clientY,
-              sx: surface.scrollLeft,
-              sy: surface.scrollTop,
-            };
-            setPanning(true);
-            surface.setPointerCapture(e.pointerId);
-          }}
-          onPointerMove={(e) => {
-            const start = panRef.current;
-            const surface = surfaceRef.current;
-            if (!start || !surface) return;
-            surface.scrollLeft = start.sx - (e.clientX - start.x);
-            surface.scrollTop = start.sy - (e.clientY - start.y);
-          }}
-          onPointerUp={(e) => {
-            if (!panRef.current) return;
-            panRef.current = null;
-            setPanning(false);
-            const surface = surfaceRef.current;
-            if (surface && surface.hasPointerCapture(e.pointerId)) {
-              surface.releasePointerCapture(e.pointerId);
-            }
-          }}
-          onPointerCancel={() => {
-            panRef.current = null;
-            setPanning(false);
-          }}
-          onWheel={(e) => {
-            // ⌘/Ctrl + wheel (or trackpad pinch, which browsers report as
-            // ctrlKey wheel) zooms; plain wheel keeps scrolling the canvas.
-            if (!e.ctrlKey && !e.metaKey) return;
-            e.preventDefault();
-            setZoomMode('manual');
-            setZoom((z) => {
-              const base = zoomMode === 'auto' ? fitZoom : z;
-              const next = base * (e.deltaY < 0 ? 1.1 : 1 / 1.1);
-              return clamp(Math.round(next * 100) / 100, MIN_ZOOM, MAX_ZOOM);
-            });
-          }}
+          ref={bindSurface}
+          data-map-surface=""
           style={{
             width: '100%',
             height: '100%',
-            overflow: 'auto',
+            position: 'relative',
+            overflow: 'hidden',
+            // The camera handles touch/trackpad gestures itself.
+            touchAction: 'none',
             backgroundImage: 'radial-gradient(color-mix(in srgb, var(--term-line) 55%, var(--term-bg)) 1px, transparent 1px)',
             backgroundSize: '20px 20px',
-            cursor: panning ? 'grabbing' : 'grab',
-            // Block native text selection while dragging — a stray drag would
-            // otherwise paint a selection rectangle across node labels.
-            userSelect: panning ? 'none' : undefined,
+            cursor: 'grab',
           }}
         >
-          <div
-            style={{
-              width: canvasWidth || scaledWidth,
-              height: canvasHeight || scaledHeight,
-              minWidth: '100%',
-              minHeight: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {/* Scaled canvas: SVG draws edges, DOM layer draws MapCards. Both
-                share one transform so pan/zoom stay aligned. The outer box
-                reserves the *scaled* footprint so the scroll container can pan;
-                the inner box is scaled from its top-left origin. */}
-            <div style={{ position: 'relative', width: scaledWidth, height: scaledHeight, flexShrink: 0 }}>
+            {/* World: SVG draws edges, DOM layer draws MapCards. Both share
+                the camera transform (written imperatively, never by React). */}
             <div
+              ref={camera.bindWorld}
+              data-map-world=""
               style={{
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 width: layout.width,
                 height: layout.height,
-                transform: `scale(${effectiveZoom})`,
-                transformOrigin: '0 0',
               }}
             >
             <svg
@@ -948,13 +876,10 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               const pos = layout.positions.get(id);
               if (!pos) return null;
               const exp = expandedSet.has(id);
-              // Wrapper uses dagre's allocated height (which incorporates the
-              // measured DOM height for expanded cards, falling back to the
-              // estimate). This keeps the card centered on dagre's pos.y.
+              // Wrapper uses the same height the layout engine was given, so
+              // the card stays centered on pos.y.
               const w = CARD_W;
-              const h = exp
-                ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
-                : CARD_H;
+              const h = cardHeights.get(id) ?? CARD_H;
               const sel = selection.has(id);
               const onMap = view === 'graph';
               return (
@@ -964,9 +889,19 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                   ref={(el) => {
                     const ro = roRef.current!;
                     const prev = cardRefsMap.current.get(id);
-                    if (prev && prev !== el) { ro.unobserve(prev); }
-                    if (el) { cardRefsMap.current.set(id, el); ro.observe(el); }
-                    else { cardRefsMap.current.delete(id); }
+                    if (prev && prev !== el) {
+                      ro.unobserve(prev);
+                      const prevHead = prev.querySelector('[data-map-card-head]');
+                      if (prevHead) ro.unobserve(prevHead);
+                    }
+                    if (el) {
+                      cardRefsMap.current.set(id, el);
+                      ro.observe(el);
+                      const head = el.querySelector('[data-map-card-head]');
+                      if (head) ro.observe(head);
+                    } else {
+                      cardRefsMap.current.delete(id);
+                    }
                   }}
                   onMouseEnter={onMap ? () => setHoveredId(id) : undefined}
                   onMouseLeave={onMap ? () => setHoveredId((h) => (h === id ? null : h)) : undefined}
@@ -1026,18 +961,10 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               );
             })}
             </div>
-            </div>
-          </div>
         </div>
 
         {/* Floating zoom pill — graph view only, bottom-right. */}
-        <ZoomPill
-          zoom={effectiveZoom}
-          auto={zoomMode === 'auto'}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onFit={fitMap}
-        />
+        <ZoomPill camera={camera} />
 
         {/* Layout engine toggle — bottom-left, for A/B comparison. */}
         <LayoutEnginePill
@@ -1105,19 +1032,12 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   );
 }
 
-function ZoomPill({
-  zoom,
-  auto,
-  onZoomIn,
-  onZoomOut,
-  onFit,
-}: {
-  zoom: number;
-  auto: boolean;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onFit: () => void;
-}) {
+function ZoomPill({ camera }: { camera: MapCameraController }) {
+  // Subscribes to the camera store so pinching re-renders only this pill.
+  const { k: zoom, auto } = useCameraSnapshot(camera);
+  const onZoomIn = camera.zoomIn;
+  const onZoomOut = camera.zoomOut;
+  const onFit = camera.fit;
   const btn = 't-icon-btn';
   const btnStyle: React.CSSProperties = {
     width: 28, height: 28, display: 'grid', placeItems: 'center',

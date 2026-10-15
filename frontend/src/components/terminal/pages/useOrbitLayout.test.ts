@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import type { ProjectEdge, Tree } from '../../../state/chatTypes';
 import { useOrbitLayout, type OrbitVariant } from './useOrbitLayout';
+import { CARD_H, CARD_H_EXPANDED, CARD_W } from '../map/mapCardMetrics';
 
-const CARD_W = 348;
-const CARD_H = 118;
-const CARD_H_EXPANDED = 220;
+function heightsFor(expanded: Set<string>): Map<string, number> {
+  return new Map([...expanded].map((id) => [id, CARD_H_EXPANDED]));
+}
 
 /**
  * Build the tree shape from the "Gamma 东京部署失败根因" screenshot: a root
@@ -74,8 +75,7 @@ describe('useOrbitLayout', () => {
         edges,
         liveSet,
         mode: 'thread',
-        expandedSet: new Set<string>(),
-        measuredHeights: new Map<string, number>(),
+        cardHeights: new Map<string, number>(),
         graphChildren: children,
         variant,
       };
@@ -110,8 +110,7 @@ describe('useOrbitLayout', () => {
           edges,
           liveSet,
           mode: 'thread',
-          expandedSet,
-          measuredHeights: new Map<string, number>(),
+          cardHeights: heightsFor(expandedSet),
           graphChildren: children,
           variant,
         },
@@ -130,8 +129,7 @@ describe('useOrbitLayout', () => {
         edges,
         liveSet: new Set(ids),
         mode: 'thread',
-        expandedSet: new Set<string>(),
-        measuredHeights: new Map<string, number>(),
+        cardHeights: new Map<string, number>(),
         graphChildren: children,
         variant: 'orbit-semi' as OrbitVariant,
       },

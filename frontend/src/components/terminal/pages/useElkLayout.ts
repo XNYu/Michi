@@ -13,6 +13,7 @@ import { useState, useEffect, useRef } from 'react';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk-api';
 import type { ProjectEdge, Tree } from '../../../state/chatTypes';
+import { CARD_H, CARD_W } from '../map/mapCardMetrics';
 
 // Singleton ELK instance — no need to create one per render.
 const elk = new ELK();
@@ -32,11 +33,10 @@ export type ElkEdgeSection = {
   bendPoints?: { x: number; y: number }[];
 };
 
-const CARD_W = 348;
-const CARD_H = 118;
-const CARD_H_EXPANDED = 220;
-const NODE_SEP = 100;
-const RANK_SEP = 160;
+// Card heights are measured, so sibling spacing no longer needs slack for
+// under-estimated boxes.
+const NODE_SEP = 48;
+const RANK_SEP = 110;
 const PAD = 36;
 
 export type ElkRoutingStyle = 'SPLINES' | 'POLYLINE' | 'ORTHOGONAL';
@@ -48,8 +48,8 @@ interface UseElkLayoutParams {
   edges: readonly ProjectEdge[];
   liveSet: Set<string>;
   mode: string; // 'thread' | 'graph' | 'overview'
-  expandedSet: Set<string>;
-  measuredHeights: Map<string, number>;
+  /** Layout height per card id (measured; CARD_H when unknown). */
+  cardHeights: ReadonlyMap<string, number>;
   graphChildren: Map<string, string[]>;
   routingStyle?: ElkRoutingStyle;
 }
@@ -79,8 +79,7 @@ export function useElkLayout({
   edges,
   liveSet,
   mode,
-  expandedSet,
-  measuredHeights,
+  cardHeights,
   graphChildren,
   routingStyle = 'SPLINES',
 }: UseElkLayoutParams): ElkLayoutResult {
@@ -130,12 +129,9 @@ export function useElkLayout({
       }
     }
 
-    const elkNodes: ElkNode[] = allIds.map((id) => {
-      const h = expandedSet.has(id)
-        ? Math.max(CARD_H_EXPANDED, measuredHeights.get(id) ?? CARD_H_EXPANDED)
-        : CARD_H;
-      return { id, width: CARD_W, height: h };
-    });
+    const elkNodes: ElkNode[] = allIds.map((id) => (
+      { id, width: CARD_W, height: cardHeights.get(id) ?? CARD_H }
+    ));
 
     const elkEdges: ElkExtendedEdge[] = [];
     for (const e of edges) {
@@ -165,6 +161,14 @@ export function useElkLayout({
         'elk.layered.spacing.edgeNodeBetweenLayers': '50',
         // Consider model order for deterministic results.
         'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+        // Keep each parent level with its first (top) child, so the root sits
+        // at the top-left and later branches continue downward and the
+        // default "root + first branches" view is one compact block. With
+        // direction RIGHT this is BK's RIGHTDOWN alignment (verified against
+        // elkjs 0.9; the default balanced placement can drop the root to the
+        // bottom of a bushy tree).
+        'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+        'elk.layered.nodePlacement.bk.fixedAlignment': 'RIGHTDOWN',
       },
     };
 
@@ -182,8 +186,8 @@ export function useElkLayout({
         const cx = PAD + (node.x ?? 0) + (node.width ?? CARD_W) / 2;
         const cy = PAD + (node.y ?? 0) + (node.height ?? CARD_H) / 2;
         positions.set(node.id, { x: cx, y: cy });
-        const right = cx + CARD_W / 2;
-        const bottom = cy + CARD_H / 2;
+        const right = cx + (node.width ?? CARD_W) / 2;
+        const bottom = cy + (node.height ?? CARD_H) / 2;
         if (right > maxX) maxX = right;
         if (bottom > maxY) maxY = bottom;
       }
@@ -213,7 +217,7 @@ export function useElkLayout({
       console.error('[ELK layout error]', err);
       setResult(null);
     });
-  }, [enabled, trees, activeTree, edges, liveSet, mode, expandedSet, measuredHeights, graphChildren, routingStyle]);
+  }, [enabled, trees, activeTree, edges, liveSet, mode, cardHeights, graphChildren, routingStyle]);
 
   return result;
 }
