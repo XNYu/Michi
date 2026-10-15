@@ -6,6 +6,8 @@ import type { TerminalPaneItem } from '../../state/paneItems';
 import { useChatActions } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { getElectron } from '../../lib/electronBridge';
+import { usePrefs } from '../../state/prefs';
+import { terminalTheme } from './terminalTheme';
 
 function cssVar(element: HTMLElement, name: string, fallback: string): string {
   return getComputedStyle(element).getPropertyValue(name).trim() || fallback;
@@ -13,6 +15,8 @@ function cssVar(element: HTMLElement, name: string, fallback: string): string {
 
 export default function TerminalPane({ item }: { item: TerminalPaneItem }) {
   const { focusPane, setFocusedNodeId } = useChatActions();
+  const { prefs } = usePrefs();
+  const terminalRef = useRef<Terminal | null>(null);
   const shellStyle = usePaneShellStyle(item.id);
   const hostRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'connecting' | 'ready' | 'unavailable' | 'exited'>('connecting');
@@ -35,13 +39,10 @@ export default function TerminalPane({ item }: { item: TerminalPaneItem }) {
       lineHeight: 1.25,
       scrollback: 10_000,
       smoothScrollDuration: 80,
-      theme: {
-        background: cssVar(host, '--term-pane-bg', 'Canvas'),
-        foreground: cssVar(host, '--term-fg', 'CanvasText'),
-        cursor: cssVar(host, '--term-accent', 'Highlight'),
-        selectionBackground: cssVar(host, '--term-select', 'Highlight'),
-      },
+      // CLI ANSI/256-color/truecolor output must remain readable in light themes.
+      minimumContrastRatio: 4.5,
     });
+    terminalRef.current = terminal;
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
@@ -84,11 +85,19 @@ export default function TerminalPane({ item }: { item: TerminalPaneItem }) {
       inputDisposable.dispose();
       offData?.();
       offExit?.();
+      terminalRef.current = null;
       terminal.dispose();
       // The PTY deliberately stays alive. Closing the pane, not unmounting the
       // Dashboard during navigation, owns terminalDestroy.
     };
   }, [item.cwd, item.surfaceId]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      // Update the renderer in place: preserve the PTY, buffer and selection.
+      terminalRef.current.options.theme = terminalTheme(prefs.terminalPalette, prefs.terminalAccentOverrides);
+    }
+  }, [prefs.terminalPalette, prefs.terminalAccentOverrides, item.cwd, item.surfaceId]);
 
   return (
     <div data-pane-id={item.id} data-pane-kind="terminal" className="terminal-pane" onMouseDown={() => { focusPane(item.id); setFocusedNodeId(null); }} style={shellStyle}>
