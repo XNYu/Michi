@@ -6,6 +6,8 @@ companion Gateway, owner token, or `/app-runtime` API is required.
 Validated against installed **0.8.0-insider.14** on 2026-10-07.
 
 中文接入步骤见 [Michi × KiroCrew 接入教程](GETTING_STARTED.zh-CN.md)。
+For an installed Michi application (default directory `~/.michi`), see the
+[English getting-started guide](GETTING_STARTED.md).
 
 ## 简单使用
 

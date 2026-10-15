@@ -1,34 +1,38 @@
 # Michi × KiroCrew 接入教程
 
-更新：2026-10-12。适用于 Michi 的 `dev` 源码和官方 KiroCrew Gateway。
+更新：2026-10-13。适用于已安装的 Michi 和官方本机 KiroCrew Gateway。
+终端命令采用 macOS/Linux shell 语法。另有 [英文接入教程](GETTING_STARTED.md)。
 
 日常使用只需要：启动 KiroCrew → 在 Michi 选择 **Kiro Crew** → 新建对话。
 需要 Michi 的分支、artifact 等工具或在 Michi 中审批时，再完成下面的一次性配置。
 
-## 1. 从 dev 构建 Michi
+## 1. 确认 Michi 安装版本
 
-在终端执行：
+默认安装器将代码、依赖和构建产物放在 `~/.michi`，macOS 桌面 App 安装在
+`~/Applications/michi.app`。安装器已经完成构建；普通用户无需另建开发工作树。
+在终端检查：
 
 ```sh
-cd /Users/yonghuyu/rabbitholes
-git branch --show-current
+cd "$HOME/.michi"
 node --version
 kirocrew --version
-VITE_API_URL=/api npm run build
+ls backend/scripts/crew-setup.cjs \
+   backend/src/agents/crew/app/app.json \
+   backend/dist/crewAcp.js \
+   backend/dist/crewMcp.js
 ```
 
-分支应为 `dev`，Node.js 需要 22 或更新版本。首次安装依赖时先运行 `npm install`。
-构建会生成 `backend/dist/crewAcp.js` 和 `backend/dist/crewMcp.js`。
+Node.js 需要 **22.19 或更新版本**。如使用自定义安装目录，请将本文的
+`~/.michi` 替换为实际安装目录；setup 脚本根据自身位置生成路径。
 
-可以用独立数据目录启动预览：
+如果文件或 Crew Runtime 不存在，使用正常的更新入口，升级到包含 Crew 支持的版本：
 
 ```sh
-PORT=3010 MICHI_DATA_DIR="$HOME/.michi-crew-preview" NODE_ENV=development npm start
+michi update
 ```
 
-打开 `http://localhost:3010`。如端口被占用，换一个空闲端口；Ctrl+C 停止预览。
-预览数据与原来的 Michi 数据分开，因此原有工作区不会自动出现在预览中。
-普通 `npm run build` 不会替换已安装的桌面 App。
+macOS 更新会退出并替换桌面 App，完成后重新打开。开发目录里的改动不会自动更新
+安装版；尚未发布的本地提交也无法通过安装器获得。
 
 ## 2. 安装或更新官方 Crew App
 
@@ -38,7 +42,7 @@ Michi 通过名为 `michi-crew-runtime` 的 App 接入。
 **首次接入、只需要基本聊天**，执行：
 
 ```sh
-kirocrew app install "$PWD/backend/src/agents/crew/app"
+kirocrew app install "$HOME/.michi/backend/src/agents/crew/app"
 kirocrew app enable michi-crew-runtime
 ```
 
@@ -51,15 +55,17 @@ kirocrew app enable michi-crew-runtime
 
 ## 3. 启用 Michi MCP 和 Michi 内审批
 
-在 **dev 根目录**执行：
+在 **Michi 安装目录**执行：
 
 ```sh
+cd "$HOME/.michi"
 node backend/scripts/crew-setup.cjs --mcp --approvals
 ```
 
 命令会打印 `Prepared App: /…/michi-crew-app-…`。
 复制这个实际目录，在 Crew **Apps** 页面安装或更新 **michi-crew-runtime**。
 脚本只准备文件；安装、启用和授权仍走官方 Crew 流程。
+准备目录是临时目录，请及时使用。后续更新时重新运行脚本，使用新打印的目录。
 
 需要核对两项配置：
 
@@ -70,12 +76,12 @@ node backend/scripts/crew-setup.cjs --mcp --approvals
    Node 参数应指向：
 
 ```text
-/Users/yonghuyu/rabbitholes/backend/dist/crewMcp.js
+~/.michi/backend/dist/crewMcp.js
 ```
 
-从旧 worktree 切换到 dev 时，尤其要确认这里不再指向
-`crew-enhancements/rabbitholes/backend/dist/crewMcp.js`。
-Node 可执行文件应是本机可用的 Node.js 22+；之后保持这份构建和路径可用。
+这里展示的是目录缩写，setup 脚本会自动生成展开后的绝对路径。
+自定义安装目录应使用该目录下的 relay；不要指向旧开发工作树或临时准备目录。
+Node 可执行文件应是本机可用的 Node.js 22.19+；之后保持这份安装和 Node 路径可用。
 
 等 Crew 当前任务结束或手动停止后，重启 **Gateway**：
 
@@ -85,6 +91,7 @@ kirocrew restart --port 5476
 
 只点击 Agent Capabilities 的 **Apply & Restart** 会重启聊天 Agent，不能替代 Gateway
 重启。加入新模板或更改 Stub 后，需要 Gateway 重新生成 broker 路由。
+如更改过 Gateway 端口，请使用实际端口。
 
 `sessionApproval` 是官方的较广权限，也覆盖用户自己创建的 Crew 会话。
 Michi 的适配器只处理自己所属的本机、未链接 App 会话；这是 Michi 的访问限制。
@@ -92,6 +99,9 @@ Michi 的适配器只处理自己所属的本机、未链接 App 会话；这是
 只想挂 MCP 时用 `--mcp`；只想接入审批时用 `--approvals`。
 
 ## 4. 在 Michi 中使用
+
+macOS 正常打开桌面 App，或运行 `michi`。Linux 运行 `michi start`，访问打印的
+地址；默认是 `http://localhost:4649`。
 
 在 **Settings → Model** 或新对话 composer 的 Runtime 菜单选择 **Kiro Crew**。
 新对话默认使用 **michi-crew** 模板；可在 composer 选择模型、推理档位和其他模板。
@@ -152,12 +162,13 @@ Crew 自己的 allowlist、治理策略和全局 YOLO 仍先执行。
 | --- | --- |
 | Crew 不可用 / 无法建会话 | 检查官方 Gateway 正在运行、App 为 Enabled、Node 和 ACP 构建存在；自定义 Gateway 仅支持 loopback。 |
 | MCP 没有 caller identity / 找不到路由 | 确认官方 Stub / Routed 已开启且批准启动；重启 Gateway，新建测试对话。普通 stdio 配置不能替代官方 caller 路由。 |
-| 合入 dev 后 MCP 仍走旧代码 | 重新运行 dev 的 setup 脚本，用生成目录更新 App，核对 Node 参数中的绝对路径。 |
+| 安装目录没有 Crew 文件或 Runtime | 升级到包含 Crew 支持的安装版；本地开发合并不会自动发布或更新安装版。 |
+| MCP 仍走旧代码 | 从实际安装目录重新运行 setup 脚本，用生成目录更新 App，核对 Node 参数中的绝对路径。 |
 | Ask 不弹审批卡 | 确认 sessionApproval 已同意且 App Enabled；查看 Crew allowlist / 全局 YOLO 是否先自动批准；检查全局权限设置。 |
 | 修改 Memory 后旧对话没有变化 | 已有会话模式固定；改默认值后新建对话。 |
 | 响应慢 | 查看是否选了 Extra high / Max、排队或等待审批；先用短消息和 Medium / High 排查。 |
 | 开发重启后本轮中断 | watcher 重启会终止适配器；确认原生任务已经停止，再恢复或重试。 |
-| 运行源码但桌面 App 仍是旧版 | 普通构建只更新源码产物；用预览访问，或有意执行桌面打包安装流程。 |
+| 桌面 App 仍是旧版 | 使用正常安装更新流程；只修改代码目录或构建 backend 不会更新桌面包。 |
 
 改进程环境变量后重启 Michi backend。常用覆盖项：
 `CREW_GATEWAY_URL`（默认 `http://127.0.0.1:5476`）、
