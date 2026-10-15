@@ -7,6 +7,7 @@ import { ClaudeSessionManager } from '../src/agents/claude/ClaudeSessionManager'
 import { ClaudeRuntime, ClaudeSessionNotResumableError } from '../src/agents/claude/ClaudeRuntime';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import * as sessionRegistry from '../src/agents/sessionRegistry';
+import { log } from '../src/services/logger';
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
@@ -46,7 +47,7 @@ class Child extends EventEmitter {
   }
 }
 
-function harness(t: TestContext) {
+function harness(t: TestContext, Session = ClaudeSession) {
   const binary = require('../src/agents/claude/claudeBinary');
   const db = require('../src/services/dbRepository');
   const children: Child[] = [];
@@ -62,6 +63,12 @@ function harness(t: TestContext) {
   let spawnError: Error | null = null;
   let nextHasPid = true;
   let autoWarm = false;
+  const logs: Array<{ level: string; message: string; meta?: Record<string, unknown> }> = [];
+  for (const level of ['info', 'warn', 'error'] as const) {
+    t.mock.method(log, level, (_stage: string, message: string, meta?: Record<string, unknown>) => {
+      logs.push({ level, message, meta });
+    });
+  }
   const mcp: any = {
     create(id: string, _cwd: string, _owner: unknown, callbacks: any, opts: any) {
       const slot = { slotId: `slot-${++nextSlot}`, parentChatId: id, ...callbacks, ...opts };
@@ -105,7 +112,7 @@ function harness(t: TestContext) {
     sessionRegistry.clearAllSessions();
   });
   return {
-    children, spawns, writes, slots, db, mcp,
+    children, spawns, writes, slots, db, mcp, logs,
     failPersistence(error: Error | null) { persistError = error; },
     failSpawn(error: Error) { spawnError = error; },
     noPidNext() { nextHasPid = false; },
@@ -117,7 +124,7 @@ function harness(t: TestContext) {
       return release;
     },
     session(overrides: Partial<ClaudeSessionDeps> = {}) {
-      const session = new ClaudeSession('node-edge', {
+      const session = new Session('node-edge', {
         nodeId: 'node-edge', cwd: '/tmp', workspaceId: null, bridge, mcpRegistry: mcp, mcpPort: 1, ...overrides,
       });
       sessions.add(session);
@@ -234,11 +241,85 @@ test('native initialization deadline is bounded and retains the original token',
   await session.spawnResume('native-original');
   const running = drain(session.send('resume'));
   await tick();
-  t.mock.timers.tick(20_000);
+  t.mock.timers.tick(59_999);
+  await tick();
+  assert.equal(session.getState(), 'in_turn');
+  assert.deepEqual(h.children[0].signals, []);
+  t.mock.timers.tick(1);
   const events = await running;
-  assert.ok(events.some((event) => event.kind === 'runtime_error' && /20 seconds/.test(event.error)));
+  assert.ok(events.some((event) => event.kind === 'runtime_error' && /60 seconds/.test(event.error)));
   assert.equal(session.nativeSessionId, 'native-original');
   assert.equal(session.getState(), 'crashed');
+  assert.ok(h.logs.some((entry) => entry.message === 'claude process failed'
+    && entry.meta?.nativeSessionId === 'native-original' && entry.meta?.resumePending === true));
+});
+
+test('native restore accepts slow initialization and clears its deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness(t), session = h.session();
+  await session.spawnResume('native-original');
+  const running = drain(session.send('resume'));
+  await tick();
+  t.mock.timers.tick(30_000);
+  await tick();
+  assert.deepEqual(h.children[0].signals, []);
+  h.children[0].init();
+  t.mock.timers.tick(60_000);
+  h.children[0].chunk('restored');
+  h.children[0].result();
+  const events = await running;
+  assert.ok(events.some((event) => event.kind === 'retry_end'));
+  assert.ok(events.some((event) => event.kind === 'chunk' && event.text === 'restored'));
+  assert.ok(!events.some((event) => event.kind === 'runtime_error'));
+  assert.equal(session.nativeSessionId, 'native-original');
+  assert.ok(h.logs.some((entry) => entry.message === 'claude native restore initialized'));
+});
+
+for (const [configured, expectedMs] of [['1250', 1250], ['invalid', 60_000], ['0', 60_000], ['2147483648', 60_000]] as const) {
+  test(`native restore uses configured deadline ${configured} safely`, async (t) => {
+    const modulePath = require.resolve('../src/agents/claude/ClaudeSession');
+    const cached = require.cache[modulePath];
+    const previous = process.env.MICHI_CLAUDE_INIT_TIMEOUT_MS;
+    process.env.MICHI_CLAUDE_INIT_TIMEOUT_MS = configured;
+    delete require.cache[modulePath];
+    t.after(() => {
+      if (previous === undefined) delete process.env.MICHI_CLAUDE_INIT_TIMEOUT_MS;
+      else process.env.MICHI_CLAUDE_INIT_TIMEOUT_MS = previous;
+      require.cache[modulePath] = cached;
+    });
+    const { ClaudeSession: Session } = require(modulePath) as typeof import('../src/agents/claude/ClaudeSession');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const h = harness(t, Session), session = h.session();
+    await session.spawnResume('native-original');
+    const running = drain(session.send('resume'));
+    await tick();
+    t.mock.timers.tick(expectedMs - 1);
+    await tick();
+    assert.deepEqual(h.children[0].signals, []);
+    t.mock.timers.tick(1);
+    const events = await running;
+    assert.ok(events.some((event) => event.kind === 'runtime_error'
+      && event.error.includes(`${expectedMs / 1000} seconds`)));
+    assert.equal(session.nativeSessionId, 'native-original');
+  });
+}
+
+test('Claude stderr is persisted with bounded process context and keeps the credential notice', async (t) => {
+  const h = harness(t), session = h.session();
+  await session.spawnResume('native-original');
+  const running = drain(session.send('resume'));
+  await tick();
+  h.children[0].stderr.write('awsCredentialExport did not return a valid value ' + 'x'.repeat(3_000));
+  h.children[0].init();
+  h.children[0].result();
+  const events = await running;
+  const entry = h.logs.find((entry) => entry.message === 'claude stderr');
+  assert.equal(entry?.level, 'warn');
+  assert.equal(entry?.meta?.nodeId, 'node-edge');
+  assert.equal(entry?.meta?.pid, h.children[0].pid);
+  assert.equal(entry?.meta?.resumePending, true);
+  assert.equal(String(entry?.meta?.stderr).length, 2_000);
+  assert.ok(events.some((event) => event.kind === 'mcp_server_error' && event.serverName === 'auth'));
 });
 
 for (const fresh of [true, false]) {

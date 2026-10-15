@@ -77,8 +77,12 @@ function sameRuntimeOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner)
 
 // Default 60s — claude's SessionStart hooks can take 10-20s on heavily-loaded
 // configs (financial-services, superpowers, etc). 5s was too aggressive in
-// real-world envs. Override via MICHI_CLAUDE_INIT_TIMEOUT_MS.
-const SPAWN_INIT_TIMEOUT_MS = parseInt(process.env.MICHI_CLAUDE_INIT_TIMEOUT_MS ?? '60000', 10);
+// real-world envs. Native restore uses the same deadline. Override via
+// MICHI_CLAUDE_INIT_TIMEOUT_MS; invalid values fall back to 60s.
+const configuredInitTimeoutMs = Number(process.env.MICHI_CLAUDE_INIT_TIMEOUT_MS ?? '60000');
+const SPAWN_INIT_TIMEOUT_MS = Number.isInteger(configuredInitTimeoutMs)
+  && configuredInitTimeoutMs > 0 && configuredInitTimeoutMs <= 2_147_483_647
+  ? configuredInitTimeoutMs : 60_000;
 const APPROVE_TIMEOUT_MS = parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '300000', 10);
 const DISPOSE_TERM_TIMEOUT_MS = parseInt(process.env.MICHI_CLAUDE_DISPOSE_TERM_TIMEOUT_MS ?? '2000', 10);
 const DISPOSE_KILL_TIMEOUT_MS = parseInt(process.env.MICHI_CLAUDE_DISPOSE_KILL_TIMEOUT_MS ?? '1000', 10);
@@ -386,7 +390,9 @@ export class ClaudeSession implements AgentSession {
       const tStdin = this.stdinWriteAt;
       const imageBlocks = buildClaudeImageBlocks(imageAttachments);
       if (this.resumePending) {
-        this.initTimer = setTimeout(() => this.failProcess(new Error('Claude native restore did not initialize within 20 seconds. Original session retained; please retry.')), 20_000);
+        this.initTimer = setTimeout(() => this.failProcess(new Error(
+          `Claude native restore did not initialize within ${SPAWN_INIT_TIMEOUT_MS / 1000} seconds. Original session retained; please retry.`,
+        )), SPAWN_INIT_TIMEOUT_MS);
       }
       this.writeStdin(userEnvelope(textForModel, imageBlocks));
       perf.measure('claude:write_stdin', tStdin, { sid: this.id });
@@ -684,6 +690,14 @@ export class ClaudeSession implements AgentSession {
 
   private failProcess(error: Error): void {
     if (this.state === 'disposed' || this.state === 'crashed') return;
+    log.error('chat', 'claude process failed', {
+      nodeId: this.nodeId,
+      sessionId: this.id,
+      nativeSessionId: this.externalSessionId,
+      pid: this.child?.pid,
+      resumePending: this.resumePending,
+      error: error.message,
+    });
     this.queue.push({ kind: 'runtime_error', error: error.message });
     void this.retireProcess().catch(() => {});
   }
@@ -1136,6 +1150,14 @@ export class ClaudeSession implements AgentSession {
           }
           if (this.initTimer) clearTimeout(this.initTimer);
           this.initTimer = undefined;
+          if (this.resumePending) {
+            log.info('chat', 'claude native restore initialized', {
+              nodeId: this.nodeId,
+              sessionId: this.id,
+              nativeSessionId: sessionId,
+              durationMs: Math.round(perf.now() - this.stdinWriteAt),
+            });
+          }
           if (this.resumePending) queue.push({ kind: 'retry_end' });
           this.resumePending = false;
         } else if (!this.firstModelEnvelopeThisTurn && this.stdinWriteAt) {
@@ -1222,6 +1244,14 @@ export class ClaudeSession implements AgentSession {
       throw error;
     }
     this.child = child;
+    log.info('chat', 'claude process spawned', {
+      nodeId: this.nodeId,
+      sessionId: this.id,
+      nativeSessionId: this.externalSessionId,
+      pid: child.pid,
+      resume: !!opts.resumeSessionId,
+      initTimeoutMs: SPAWN_INIT_TIMEOUT_MS,
+    });
     perf.measure('claude:cli_spawn_call', tCliSpawn, {
       sid: this.id,
       pid: child.pid,
@@ -1253,7 +1283,13 @@ export class ClaudeSession implements AgentSession {
       // Surface stderr as mcp_server_error only when meaningful
       const trimmed = chunk.trim();
       if (!trimmed) return;
-      console.warn(`[ClaudeSession] stderr: ${trimmed.slice(0, 200)}`);
+      log.warn('chat', 'claude stderr', {
+        nodeId: this.nodeId,
+        sessionId: this.id,
+        pid: child.pid,
+        resumePending: this.resumePending,
+        stderr: trimmed.slice(0, 2_000),
+      });
       // claude CLI prints this when the awsCredentialExport hook can't
       // produce creds — almost always missing or expired credentials.
       // Surface as a user-visible banner so they know to refresh them.
