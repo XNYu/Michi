@@ -360,13 +360,13 @@ describe('runtime factory registration', () => {
       // Node 20 in this environment lacks node:sqlite; assert the source order instead.
       const fs = await import('node:fs');
       const src = fs.readFileSync(require('node:path').join(__dirname, '../src/agents/runtimeFactories.ts'), 'utf8');
-      const ids = [...src.matchAll(/id:\s*"([^"]+)"/g)].map((m) => m[1]);
-      assert.deepEqual(ids, ['kiro', 'pi', 'claude', 'codex', 'antigravity', 'cursor', 'grok']);
+      const ids = [...src.matchAll(/^        id: "([^"]+)"/gm)].map((m) => m[1]);
+      assert.deepEqual(ids, ['kiro', 'crew', 'pi', 'claude', 'codex', 'antigravity', 'cursor', 'grok']);
       return;
     }
     assert.deepEqual(
       mod.RUNTIME_FACTORIES.map((f) => f.id),
-      ['kiro', 'pi', 'claude', 'codex', 'antigravity', 'cursor', 'grok'],
+      ['kiro', 'crew', 'pi', 'claude', 'codex', 'antigravity', 'cursor', 'grok'],
     );
   });
 
