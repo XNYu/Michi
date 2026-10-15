@@ -97,7 +97,7 @@ describe('PaneMessageList — branch anchor turn markers', () => {
     // (i.e., it is not the very first child).
     const msgWrap = document.querySelector('[data-msg-id="a1"]');
     expect(msgWrap).toBeTruthy();
-    const markerRow = titleBtn.closest('.t-pre-block');
+    const markerRow = titleBtn.closest('.t-branch-anchors');
     expect(markerRow).toBeTruthy();
     // The marker should be a descendant of the message wrapper.
     expect((msgWrap as Element).contains(markerRow as Element)).toBe(true);
@@ -118,7 +118,7 @@ describe('PaneMessageList — branch anchor turn markers', () => {
     renderList(parent, anchors);
 
     // No BranchAnchorRow buttons should be present
-    const buttons = screen.queryAllByRole('button', { name: /↳/ });
+    const buttons = screen.queryAllByRole('button', { name: /^Open branch:/ });
     expect(buttons).toHaveLength(0);
   });
 
@@ -145,7 +145,7 @@ describe('PaneMessageList — branch anchor turn markers', () => {
     expect(btns[1].textContent).toContain('Second fork');
   });
 
-  it('shows pulse indicator when child is streaming', () => {
+  it('shows a readable status when the child is streaming', () => {
     const u1 = makeMsg('u1', 'user', 'q');
     const a1 = makeMsg('a1', 'assistant', 'a');
     const parent = makeNode('parent', [u1, a1]);
@@ -156,7 +156,7 @@ describe('PaneMessageList — branch anchor turn markers', () => {
 
     const { container } = renderList(parent, anchors);
 
-    expect(container.querySelector('.t-branch-anchor-pulse')).toBeTruthy();
+    expect(container.querySelector('.t-branch-anchor-status')?.textContent).toBe('Running');
   });
 
   it('calls onOpenBranch with the child node id when title is clicked', () => {

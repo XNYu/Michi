@@ -1770,18 +1770,19 @@ function MessageBlockInner({
         />
       )}
       {turnAnchors && turnAnchors.length > 0 && (
-        <>
+        <section className="t-branch-anchors" aria-label="Branches from this reply">
+          <h3 className="t-branch-anchors-heading">Branches <span>{turnAnchors.length}</span></h3>
           {turnAnchors.map((a) => (
             <BranchAnchorRow
               key={`anchor-${a.childNodeId}`}
               title={a.title}
               messageCount={a.messageCount ?? 0}
               createdAt={a.createdAt}
-              streaming={a.status === 'streaming'}
+              status={a.status}
               onOpen={() => onOpenBranch?.(a.childNodeId)}
             />
           ))}
-        </>
+        </section>
       )}
       {!(m.streaming || hideActions) && (
         isUser ? (

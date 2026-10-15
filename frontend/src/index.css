@@ -2180,7 +2180,74 @@ html[data-vibrancy="on"],
   align-items: stretch;
   gap: 6px;
 }
-/* BranchAnchorRow — inline turn-marker between messages */
+/* Generated branches are full-row destinations, not quote blocks. */
+.t-branch-anchors {
+  container: branch-anchors / inline-size;
+  margin: 26px 0 10px;
+}
+.t-branch-anchors-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--term-mid);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.t-branch-anchors-heading span { color: var(--term-muted); }
+.t-branch-anchor-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 63px;
+  padding: 16px;
+  border: 0;
+  border-bottom: 1px solid var(--term-line);
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.t-branch-anchor-row:last-child { border-bottom: 0; }
+.t-branch-anchor-row:hover { background: color-mix(in srgb, var(--term-alt) 65%, transparent); }
+.t-branch-anchor-row:focus-visible { outline: 2px solid var(--term-accent); outline-offset: -2px; }
+.t-branch-anchor-glyph { display: inline-flex; color: var(--term-muted); }
+.t-branch-anchor-name {
+  min-width: 0;
+  color: var(--term-fg);
+  font-size: var(--branch-ui-text-size, 15.5px);
+  font-weight: 500;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.t-branch-anchor-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  color: var(--term-mid);
+  font-size: var(--branch-ui-meta-size, 12.5px);
+  font-weight: 400;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.t-branch-anchor-status,
+.t-branch-anchor-details { display: inline-flex; align-items: center; gap: 8px; }
+.t-branch-anchor-details { flex-wrap: wrap; }
+.t-branch-anchor-status { gap: 5px; white-space: nowrap; }
+.t-branch-anchor-status svg { flex-shrink: 0; }
+.t-branch-anchor-status.is-streaming { color: var(--term-select); }
+.t-branch-anchor-status.is-error { color: var(--term-danger); }
+@container branch-anchors (max-width: 520px) {
+  .t-branch-anchor-row { grid-template-columns: 18px minmax(0, 1fr); gap: 8px 10px; padding: 14px 12px; }
+  .t-branch-anchor-meta { grid-column: 2; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
+}
+
+/* Quote-anchored links retain their existing inline treatment. */
 .t-branch-anchor-title {
   background: none;
   border: 0;
