@@ -295,7 +295,14 @@ export default function TerminalTopbar({
   // Each page paints its own body background. The topbar must match so
   // there is no visible seam between the two. pageBackground() is the
   // single source of truth for both; see lib/pageBackground.ts.
-  const topbarBg = pageBackground(page);
+  // Dashboard reuses Home once the shared presentation layer has finished
+  // removing the last pane. Match that rendered surface here; using the raw
+  // route kept the pane surface white above Home's gray canvas.
+  const dashboardShowsHome = page === 'dashboard'
+    && activeProject != null
+    && activeProject.activeTreeId !== null
+    && openPanes.length === 0;
+  const topbarBg = pageBackground(dashboardShowsHome ? 'home' : page);
   const pageLabel =
     page === 'branches' ? 'OVERVIEW'
     : page === 'map' ? 'MAP'

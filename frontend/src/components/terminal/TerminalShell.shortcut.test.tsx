@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
 import { PrefsProvider } from '../../state/prefs';
 import { AgentDomainProvider } from '../../state/agentDomain';
@@ -14,6 +14,7 @@ const closePaneSpy = vi.hoisted(() => vi.fn());
 const clearSelectionSpy = vi.hoisted(() => vi.fn());
 const clearTreeSelectionSpy = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
+  activeTreeId: null as string | null,
   focusedPane: null as string | null,
   openPanes: [] as string[],
   selection: new Set<string>(),
@@ -25,7 +26,7 @@ vi.mock('../../state/chatStore', async () => {
   return {
     ...actual,
     useChatStore: () => ({
-      activeProject: { id: 'p1', name: 'P', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 },
+      activeProject: { id: 'p1', name: 'P', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: storeState.activeTreeId, createdAt: 0 },
       activeProjectId: 'p1',
       projects: [],
       openPanes: storeState.openPanes, focusedPane: storeState.focusedPane, focusedNodeId: null,
@@ -43,7 +44,7 @@ vi.mock('../../state/chatStore', async () => {
       sendMessage: () => {}, createContext: () => {},
     }),
     useChatProjects: () => ({
-      activeProject: { id: 'p1', name: 'P', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 },
+      activeProject: { id: 'p1', name: 'P', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: storeState.activeTreeId, createdAt: 0 },
       activeProjectId: 'p1',
       projects: [],
       order: [],
@@ -105,6 +106,7 @@ beforeEach(() => {
   closePaneSpy.mockReset();
   clearSelectionSpy.mockReset();
   clearTreeSelectionSpy.mockReset();
+  storeState.activeTreeId = null;
   storeState.focusedPane = null;
   storeState.openPanes = [];
   storeState.selection = new Set();
@@ -125,6 +127,22 @@ describe('TerminalShell shortcuts', () => {
       window.removeEventListener('michi:toggle-artifacts', spy);
     }
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the Home background when Dashboard has no presented panes', () => {
+    storeState.activeTreeId = 'tree-1';
+    const { container } = renderShell();
+
+    fireEvent.keyDown(window, {
+      key: '1', metaKey: true, bubbles: true,
+    });
+
+    expect(container.querySelector('h1')?.textContent).toContain(
+      'Another road diverged in a yellow wood.',
+    );
+    const topbar = container.querySelector<HTMLElement>('.terminal-topbar');
+    expect(topbar).toBeTruthy();
+    expect(topbar?.style.background).toBe('var(--term-bg)');
   });
 
   it('Shift+Cmd+A dispatches michi:toggle-artifacts', () => {
