@@ -24,10 +24,9 @@ For an installed Michi application (default directory `~/.michi`), see the
    审批模式在 **Michi Settings → Model → Permissions** 选择。
    **Use global permissions** 开启时统一选择，composer 隐藏审批开关；
    关闭后可以在各对话的 composer 选择 **Ask / Trust**。变更从下一轮生效。
-   启用下方 `sessionApproval` 授权后，审批卡在 Michi 显示；未启用时，
-   审批仍在 Crew 中处理，单对话权限控件显示 **Crew approvals**。
-5. 要使用 Michi 的线程、pane、artifact 或分支工具，按下方步骤配置可选 MCP。
-   要在 Michi 中点击批准或拒绝，再额外开启可选审批授权。
+   审批卡在 Michi 显示，Crew 只提供后端。
+5. 首次接入必须按下方流程同时完成 Michi MCP 和 `sessionApproval` 授权。
+   默认全部加入；未完成时显示 **Crew setup required** 并阻止新任务。
 
 Memory 控制的是 Crew 的长期学习，不等于删除聊天记录。Michi 自己仍保存对话。
 Crew 模板、治理策略和绑定身份也可能限制 Memory 工具。
@@ -57,44 +56,48 @@ Crew 会把模板提示词放入自己的会话上下文；kiro-cli/KAS 也有�
 精简指令减少输入和工具往返，但模型、推理档位、Memory 检索和排队仍会影响耗时。
 不会自动降低用户选择的 Extra high；日常简短对话可以手动选 Medium/High。
 
-第一次加入此模板后，如果启用了 Michi MCP，结束正在运行的任务再重启 Gateway，
+第一次加入此模板后，结束正在运行的任务再重启 Gateway，
 让官方 Stub overlay 包含新模板。只点 App Sync 不会生成新模板的 broker 路由。
 
 开发 watcher 的重启会中断本轮。适配器退出时停止自己启动的 Crew 工作并释放 MCP
 绑定；保留原生历史。旧任务仍在运行时拒绝重试，先在 Crew 中完成或停止它。
 
-## Install the base App
+## Complete the required App setup
 
-Build Michi normally (this does not replace the installed desktop app):
-
-```sh
-npm run build
-kirocrew app install "$PWD/backend/src/agents/crew/app"
-kirocrew app enable michi-crew-runtime
-```
-
-For an existing App, use Crew Apps' supported Update/Sync flow and preserve its
-secret and existing sessions. Do not uninstall/reinstall to update. The base
-manifest requests only `/api/chat`, `/api/models`, and `/api/agents/catalog`.
-If `MICHI_ENABLED_RUNTIMES` is set, include `crew`.
-
-## Optional Michi MCP
-
-Prepare an App directory pointing at the built Michi relay:
+For a standard installed Michi, prepare the complete App from the installation directory:
 
 ```sh
-node backend/scripts/crew-setup.cjs --mcp
+cd "$HOME/.michi"
+node backend/scripts/crew-setup.cjs
 ```
 
-The command prints a prepared directory. Install or update **that directory** in
-Crew Apps. In official **Developer → MCP Management**, find `michi-crew-runtime:michi`, inspect
-its Node command/arguments, enable **Stub / Routed**, approve the displayed launch,
-then restart the **Gateway** when requested (`kirocrew restart --port 5476`).
-In 0.8.0-insider.14, Stub changes wait for the next Gateway start, even for new
-chats. **Apply & Restart** on Agent Capabilities only relaunches chat agents and
-does not activate a new Stub route. Finish or stop active work before restarting.
-Keep the referenced Michi build at that path.
-The setup command prepares files only; it does not alter Crew config or accept grants.
+For source development, build the backend and run the same helper from that checkout.
+The helper always includes **Michi MCP and sessionApproval**. Legacy `--mcp` and
+`--approvals` arguments remain accepted, but also prepare both features.
+
+1. Install the printed directory in official **Crew Apps**, or use Update / Sync
+   for an existing App, preserving its secret and sessions.
+2. Review and consent to **sessionApproval**, then confirm the App is **Enabled**.
+3. In **Developer → MCP Management**, find `michi-crew-runtime:michi`, inspect
+   its Node command and relay path, enable **Stub / Routed**, and approve the launch.
+4. Finish or stop active work, then restart the **Gateway**:
+   `kirocrew restart --port 5476` (use the configured port).
+
+The helper prepares files; the official Crew flow records consent and launch approval.
+The generated relay points into the installation used to run the helper; retain that
+installation and Node path. `MICHI_ENABLED_RUNTIMES`, if set, must include `crew`.
+
+After setup, use Michi for chats and approvals. Offline readiness requires both
+approval consent and declared/routed MCP. Missing setup blocks new work with a
+configuration message. The adapter rechecks approval consent and MCP configuration before each turn,
+including already loaded sessions; it does not redirect approvals to Crew.
+Readiness confirms installed configuration, not successful live MCP execution.
+
+## Michi MCP
+
+In 0.8.0-insider.14, Stub changes wait for the next Gateway start, even for new chats.
+**Apply & Restart** on Agent Capabilities only relaunches chat agents and does not
+activate a new Stub route.
 
 The official broker must inject `kirocrew.caller` metadata. A plain stdio or HTTP
 entry, `poolable: true`, or a guessed session environment is insufficient. The
@@ -118,21 +121,15 @@ Michi MCP URLs. Resume/fork register the appropriate endpoint. Cleanup deletes a
 immutable lease, so an old turn cannot delete a newer binding. Small non-secret
 slot-hash pointers may remain after cleanup; they contain no usable endpoint.
 
-## Optional in-app approval
+## Approvals in Michi
 
-Prepare this variant if you want Michi's ordinary **Ask / Trust** controls:
-
-```sh
-node backend/scripts/crew-setup.cjs --mcp --approvals
-```
-
-Update the App in official Crew Apps, review its `sessionApproval` permission, and
-explicitly enable it through Crew's consent flow. Updating an existing registration
-may disable it until consent is given. This official grant is **broader than App-only
-access**: it also permits control of user-owned Crew chats. Michi deliberately
-filters its adapter to its own local, unlinked App sessions. The default App has
-no such grant. This is a supported configuration choice, not a narrowed upstream
-security boundary.
+The default prepared App requests **sessionApproval**. Review and consent to it
+through official Crew Apps during setup. Updating an existing registration may
+leave it disabled until consent is given. This official grant is **broader than
+App-only access**: it also permits control of user-owned Crew chats. Michi filters
+its adapter to its own local, unlinked App sessions; this is an adapter restriction,
+not a narrower upstream security boundary. Missing or revoked consent blocks new
+turns until setup is completed.
 
 When granted, Michi clears per-slot Crew Trust at the start of each turn and forwards
 pending native tool requests to the normal Michi permission workflow:
@@ -153,8 +150,8 @@ Cancellation drains pending MCP publication and approval work before admitting
 a successor turn.
 The official approve API accepts only `request_id`: its check and POST are not atomic.
 **Do not control the same chat concurrently in Crew and Michi** when using this
-optional bridge. An upstream exact-card/turn approval API is needed for that stronger
-guarantee. The default Crew approval workflow remains available without this grant.
+bridge. An upstream exact-card/turn approval API is needed for that stronger
+guarantee. Daily approval decisions are made in Michi.
 
 ## Parity and limits
 
@@ -168,8 +165,8 @@ guarantee. The default Crew approval workflow remains available without this gra
 | Resume | Same owned Gateway slot across adapter restarts |
 | Historical fork | Independent transcript fork at a stable message ID, preserving native Memory identity |
 | Memory | Native learning/recall, configured in Settings for new Crew chats |
-| In-app approval | Optional broad official grant; limitations above |
-| Michi MCP | Optional official App stdio relay plus Stub launch approval |
+| In-app approval | Required official grant; approval decisions in Michi, limitations above |
+| Michi MCP | Included by default; required official App relay and Stub launch approval |
 | Same-turn steer | **Unsupported for official App callers**; busy sends are queued follow-ups |
 | Compact | Crew automatic compaction; no adapter command for manual compact |
 | Subagents | Crew's native tools work; no dedicated Michi roster/control stream |
@@ -201,5 +198,4 @@ Restart the Michi backend after process-level changes. The default Memory prefer
 is stored in Michi SQLite, scoped to the desktop or authenticated cloud owner. Saved
 native session modes cannot be overwritten by graph persistence.
 
-See [validation evidence](VALIDATION.md). Optional approval and official broker live
-acceptance must be distinguished from mocked contract tests.
+Approval and official broker live acceptance must be distinguished from mocked contract tests.
