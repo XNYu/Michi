@@ -41,7 +41,7 @@ interface WorkspaceCardData {
   lastTs: number;
   threads: ThreadPreview[];
   /** All live nodes with a derivable title — used for filter scope and for the
-   * search-result preview that replaces "Recent threads" while a query is
+   * search-result preview that replaces the latest thread while a query is
    * active. */
   nodes: NodeMeta[];
   models: string[];
@@ -174,29 +174,125 @@ function shortModelLabel(modelId: string): string {
   return modelId.split('/').pop()!.split(':')[0];
 }
 
-function sparkPath(values: number[], w: number, h: number, pad = 1.5): string {
-  if (!values.length) return '';
-  const max = Math.max(1, ...values);
-  const step = (w - pad * 2) / Math.max(1, values.length - 1);
-  return values
-    .map((v, i) => {
-      const x = pad + i * step;
-      const y = h - pad - (v / max) * (h - pad * 2);
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-}
+const ACTIVITY_BAR_HEIGHT = 16;
 
-function Sparkline({ values, color, width = 110, height = 22 }: { values: number[]; color: string; width?: number; height?: number }) {
-  const path = sparkPath(values, width, height);
-  const area = path + ` L${width - 1.5},${height - 1.5} L${1.5},${height - 1.5} Z`;
+/** Fourteen days of message counts as one bar per day. A day with nothing is a
+ *  short stub, so an idle workspace shows a flat floor instead of a drawn line
+ *  that looks like data. */
+function ActivityBars({ values }: { values: number[] }) {
+  const max = Math.max(1, ...values);
+  const total = values.reduce((sum, v) => sum + v, 0);
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden style={{ display: 'block' }}>
-      <path d={area} fill={color} opacity="0.14" />
-      <path d={path} stroke={color} strokeWidth="1.1" fill="none" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
+    <span
+      role="img"
+      aria-label={`${total} message${total === 1 ? '' : 's'} in the last 14 days`}
+      title={`${total} message${total === 1 ? '' : 's'} in the last 14 days`}
+      style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2, height: ACTIVITY_BAR_HEIGHT, verticalAlign: 'middle' }}
+    >
+      {values.map((v, i) => (
+        <span
+          key={i}
+          aria-hidden
+          style={{
+            width: 3,
+            height: v > 0 ? Math.max(4, Math.round((v / max) * ACTIVITY_BAR_HEIGHT)) : 2,
+            background: v > 0 ? 'var(--term-mid)' : 'var(--term-line)',
+          }}
+        />
+      ))}
+    </span>
   );
 }
+
+/** `/Users/<name>/…` and `/home/<name>/…` read as `~/…` — the home prefix is
+ *  the same on every row and only costs width. `/Users/Shared` is not anyone's
+ *  home, so it stays as written. */
+function displayPath(cwd: string): string {
+  return cwd.replace(/^\/(?:Users|home)\/(?!Shared(?:\/|$))[^/]+(?=\/|$)/, '~');
+}
+
+/** The path as the row should show it for a given filter: shortened, unless the
+ *  query only hits inside the part shortening would hide — then the full path,
+ *  so the highlight has something to land on. */
+function pathForQuery(cwd: string, query: string): string {
+  const short = displayPath(cwd);
+  if (!query) return short;
+  const q = query.toLowerCase();
+  if (short.toLowerCase().includes(q)) return short;
+  return cwd.toLowerCase().includes(q) ? cwd : short;
+}
+
+type SortKey = 'name' | 'threads' | 'nodes' | 'last';
+type SortDir = 'asc' | 'desc';
+
+/** Direction a column starts in when it becomes the sort key: names A→Z,
+ *  counts and recency largest/newest first. */
+const INITIAL_SORT_DIR: Record<SortKey, SortDir> = {
+  name: 'asc',
+  threads: 'desc',
+  nodes: 'desc',
+  last: 'desc',
+};
+
+function compareBy(key: SortKey, a: WorkspaceCardData, b: WorkspaceCardData): number {
+  switch (key) {
+    case 'name':
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    case 'threads':
+      return a.threadCount - b.threadCount;
+    case 'nodes':
+      return a.liveCount - b.liveCount;
+    case 'last':
+    default:
+      return a.lastTs - b.lastTs;
+  }
+}
+
+const ROW_HEIGHT = 37;
+/** Left gutter of the first column — room for the active row's accent bar. */
+const FIRST_CELL_PAD = 10;
+
+const TH_STYLE: React.CSSProperties = {
+  padding: '0 12px 9px 0',
+  textAlign: 'left',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  fontSize: 'var(--fs-sm)',
+  fontWeight: 500,
+  letterSpacing: 'var(--ls-caps)',
+  textTransform: 'uppercase',
+  color: 'var(--term-muted)',
+  whiteSpace: 'nowrap',
+  borderBottom: '1px solid var(--term-line-s)',
+};
+
+const TD_STYLE: React.CSSProperties = {
+  height: ROW_HEIGHT,
+  padding: '0 12px 0 0',
+  borderBottom: '1px solid var(--term-line)',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  fontSize: 'var(--fs-lg)',
+  color: 'var(--term-fg)',
+};
+
+const TD_NUMERIC: React.CSSProperties = {
+  ...TD_STYLE,
+  textAlign: 'right',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  fontVariantNumeric: 'tabular-nums',
+  fontSize: 'var(--fs-md)',
+  color: 'var(--term-mid)',
+};
+
+const VISUALLY_HIDDEN: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  overflow: 'hidden',
+  clipPath: 'inset(50%)',
+  whiteSpace: 'nowrap',
+};
 
 function toMenuSections(sections: ContextMenuSection[]): MenuSection[] {
   return sections.map((s, si) => ({
@@ -242,6 +338,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   const [hoverId, setHoverId] = React.useState<string | null>(null);
   const [menu, setMenu] = React.useState<{ id: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
+  const [sort, setSort] = React.useState<{ key: SortKey; dir: SortDir }>({ key: 'last', dir: 'desc' });
 
   const changeFolder = React.useCallback(async (projectId: string) => {
     if (projects.find((project) => project.id === projectId)?.backendConnectionId) {
@@ -298,14 +395,29 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
 
   const cards = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return allCards;
-    return allCards.filter((c) =>
-      c.name.toLowerCase().includes(q)
-      || (c.cwd?.toLowerCase().includes(q) ?? false)
-      || c.threads.some((t) => t.title.toLowerCase().includes(q))
-      || c.nodes.some((n) => n.title.toLowerCase().includes(q)),
+    const matching = !q
+      ? allCards
+      : allCards.filter((c) =>
+          c.name.toLowerCase().includes(q)
+          || (c.cwd?.toLowerCase().includes(q) ?? false)
+          // …and the path as the row displays it, so typing `~/code` finds it.
+          || (c.cwd ? displayPath(c.cwd).toLowerCase().includes(q) : false)
+          || c.threads.some((t) => t.title.toLowerCase().includes(q))
+          || c.nodes.some((n) => n.title.toLowerCase().includes(q)),
+        );
+    // allCards arrives newest-first; Array.prototype.sort is stable, so ties on
+    // the chosen column keep that recency order.
+    const sign = sort.dir === 'asc' ? 1 : -1;
+    return [...matching].sort((a, b) => sign * compareBy(sort.key, a, b));
+  }, [allCards, query, sort]);
+
+  const toggleSort = (key: SortKey) => {
+    setSort((cur) =>
+      cur.key === key
+        ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: INITIAL_SORT_DIR[key] },
     );
-  }, [allCards, query]);
+  };
 
   const totals = React.useMemo(() => {
     let nodes = 0, threads = 0, streaming = 0, digests = 0;
@@ -499,37 +611,69 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
           </div>
         )
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-            gap: 18,
-          }}
-        >
-          {cards.map((w) => (
-            <WorkspaceCard
-              key={w.id}
-              w={w}
-              query={query.trim()}
-              hover={hoverId === w.id}
-              renaming={renamingId === w.id}
-              onEnter={() => setHoverId(w.id)}
-              onLeave={() => setHoverId((cur) => (cur === w.id ? null : cur))}
-              onOpen={() => {
-                setManageWorkspaceId(w.id);
-                onNav('workspace-manage');
-              }}
-              onOpenMenu={(rect) => {
-                setMenu({ id: w.id, x: rect.right, y: rect.bottom + 4 });
-              }}
-              onCommitRename={(name) => {
-                const trimmed = name.trim();
-                if (trimmed && trimmed !== w.name) renameProject(w.id, trimmed);
-                setRenamingId(null);
-              }}
-              onCancelRename={() => setRenamingId(null)}
-            />
-          ))}
+        // One row per workspace, so twenty of them fit a screen and each column
+        // can be read straight down. Scrolls sideways rather than collapsing
+        // columns when the pane is too narrow for them.
+        <div style={{ overflowX: 'auto' }}>
+          <table
+            style={{
+              width: '100%',
+              minWidth: 760,
+              borderCollapse: 'collapse',
+              tableLayout: 'fixed',
+              fontFamily: 'var(--ui-font)',
+            }}
+          >
+            <colgroup>
+              <col style={{ width: '22%' }} />
+              <col style={{ width: '20%' }} />
+              <col style={{ width: 82 }} />
+              <col style={{ width: 70 }} />
+              <col />
+              <col style={{ width: 88 }} />
+              {/* Wide enough for "just now" at the mono caption size. */}
+              <col style={{ width: 78 }} />
+              <col style={{ width: 34 }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <SortHeader label="Name" sortKey="name" sort={sort} onSort={toggleSort} first />
+                <th scope="col" style={TH_STYLE}>Path</th>
+                <SortHeader label="Threads" sortKey="threads" sort={sort} onSort={toggleSort} numeric />
+                <SortHeader label="Nodes" sortKey="nodes" sort={sort} onSort={toggleSort} numeric />
+                <th scope="col" style={TH_STYLE}>{query.trim() ? 'Match' : 'Latest thread'}</th>
+                <th scope="col" style={TH_STYLE}>14 days</th>
+                <SortHeader label="Last" sortKey="last" sort={sort} onSort={toggleSort} numeric />
+                <th scope="col" style={{ ...TH_STYLE, padding: 0 }}><span style={VISUALLY_HIDDEN}>Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {cards.map((w) => (
+                <WorkspaceTableRow
+                  key={w.id}
+                  w={w}
+                  query={query.trim()}
+                  hover={hoverId === w.id}
+                  renaming={renamingId === w.id}
+                  onEnter={() => setHoverId(w.id)}
+                  onLeave={() => setHoverId((cur) => (cur === w.id ? null : cur))}
+                  onOpen={() => {
+                    setManageWorkspaceId(w.id);
+                    onNav('workspace-manage');
+                  }}
+                  onOpenMenu={(rect) => {
+                    setMenu({ id: w.id, x: rect.right, y: rect.bottom + 4 });
+                  }}
+                  onCommitRename={(name) => {
+                    const trimmed = name.trim();
+                    if (trimmed && trimmed !== w.name) renameProject(w.id, trimmed);
+                    setRenamingId(null);
+                  }}
+                  onCancelRename={() => setRenamingId(null)}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -545,7 +689,65 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   );
 }
 
-function WorkspaceCard({
+function SortHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  numeric,
+  first,
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: { key: SortKey; dir: SortDir };
+  onSort: (key: SortKey) => void;
+  numeric?: boolean;
+  first?: boolean;
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      style={{
+        ...TH_STYLE,
+        textAlign: numeric ? 'right' : 'left',
+        paddingLeft: first ? FIRST_CELL_PAD : 0,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        style={{
+          display: 'inline-flex',
+          // Right-aligned columns put the arrow slot BEFORE the label, so the
+          // label's right edge stays flush with the numbers under it.
+          flexDirection: numeric ? 'row-reverse' : 'row',
+          alignItems: 'center',
+          gap: 4,
+          padding: 0,
+          border: 0,
+          background: 'transparent',
+          font: 'inherit',
+          letterSpacing: 'inherit',
+          textTransform: 'inherit',
+          color: active ? 'var(--term-fg)' : 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        {label}
+        {/* Fixed-width slot so the label doesn't shift when the arrow appears.
+            Never empty: an empty inline-block has no text baseline, and the
+            button would then sit lower than its neighbours. */}
+        <span aria-hidden style={{ display: 'inline-block', width: '1ch' }}>
+          {active ? (sort.dir === 'asc' ? '↑' : '↓') : <>&nbsp;</>}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+function WorkspaceTableRow({
   w,
   query,
   hover,
@@ -568,18 +770,18 @@ function WorkspaceCard({
   onCommitRename: (name: string) => void;
   onCancelRename: () => void;
 }) {
-  // While the filter is active, replace the "Recent threads" preview with the
-  // top matching nodes so the user sees *why* this card matched. Falls back
-  // to recent threads if only name/cwd matched (no node-title hit).
+  // While the filter is active, the latest-thread cell shows the newest
+  // matching node instead, so the user sees *why* this row matched. Falls back
+  // to the latest thread if only name/cwd matched (no node-title hit).
   const matchedNodes = React.useMemo(() => {
     if (!query) return [];
     const q = query.toLowerCase();
     return w.nodes
       .filter((n) => n.title.toLowerCase().includes(q))
-      .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-      .slice(0, 3);
+      .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
   }, [query, w.nodes]);
-  const showMatches = query !== '' && matchedNodes.length > 0;
+  const topMatch = matchedNodes[0];
+  const latest = w.threads[0];
   const accent = workspaceAccent(w.id);
   const renameRef = React.useRef<HTMLInputElement>(null);
   const [draft, setDraft] = React.useState(w.name);
@@ -594,51 +796,48 @@ function WorkspaceCard({
   }, [renaming, w.name]);
 
   return (
-    <article
+    <tr
+      data-testid={`workspace-table-row-${w.id}`}
+      // The whole row is a pointer target; keyboard users reach the same action
+      // through the name button below, whose click bubbles up to here.
       onClick={() => { if (!renaming) onOpen(); }}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       style={{
-        background: 'var(--term-surface)',
-        border: '1px solid var(--term-line)',
-        padding: '18px 18px 16px',
         cursor: 'pointer',
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 240,
-        outline: w.active ? `1.5px solid var(--term-accent)` : 'none',
-        outlineOffset: w.active ? -1 : 0,
-        boxShadow: hover
-          ? '0 2px 4px rgba(26,25,22,.05), 0 18px 40px rgba(26,25,22,.11)'
-          : '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
-        transition: 'box-shadow var(--t-soft) cubic-bezier(.2,0,.4,1), transform var(--t-soft) cubic-bezier(.2,0,.4,1)',
-        transform: hover ? 'translateY(-3px)' : 'none',
+        background: w.active
+          ? 'var(--term-alt)'
+          : hover ? 'var(--term-hover-bg, var(--term-alt))' : 'transparent',
+        transition: 'background var(--t-quick) var(--t-ease)',
       }}
     >
-      {/* Header strip */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
-        <span
-          style={{
-            width: 34,
-            height: 34,
-            background: accent,
-            border: 'none',
-            // eslint-disable-next-line no-restricted-syntax -- fixed workspace badge palette, not theme-driven
-            color: '#fff',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 'var(--fs-lg)',
-            fontWeight: 700,
-            fontFamily: 'var(--ui-font)',
-            flexShrink: 0,
-            borderRadius: 0,
-          }}
-        >
-          {initialOf(w.name)}
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <td
+        style={{
+          ...TD_STYLE,
+          paddingLeft: FIRST_CELL_PAD,
+          // The active workspace: an accent bar down the row's leading edge.
+          boxShadow: w.active ? 'inset 2px 0 0 var(--term-accent)' : undefined,
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span
+            aria-hidden
+            style={{
+              width: 20,
+              height: 20,
+              background: accent,
+              // eslint-disable-next-line no-restricted-syntax -- fixed workspace badge palette, not theme-driven
+              color: '#fff',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 'var(--fs-sm)',
+              fontWeight: 700,
+              flexShrink: 0,
+            }}
+          >
+            {initialOf(w.name)}
+          </span>
           {renaming ? (
             <input
               ref={renameRef}
@@ -652,13 +851,12 @@ function WorkspaceCard({
                 if (e.key === 'Escape') { e.preventDefault(); onCancelRename(); }
               }}
               style={{
-                width: '100%',
+                flex: 1,
+                minWidth: 0,
                 fontFamily: 'var(--ui-font)',
-                fontSize: 'var(--fs-2xl)',
-                lineHeight: 1.25,
-                fontWeight: 600,
+                fontSize: 'var(--fs-lg)',
+                fontWeight: 500,
                 color: 'var(--term-fg)',
-                letterSpacing: 0,
                 background: 'var(--term-bg)',
                 border: '1px solid var(--term-accent)',
                 padding: '2px 6px',
@@ -667,48 +865,36 @@ function WorkspaceCard({
               }}
             />
           ) : (
-            <div
+            // A real button, so the row's action is reachable and announced
+            // from the keyboard. It has no handler of its own: Enter / Space
+            // fire a click that bubbles to the row.
+            <button
+              type="button"
               style={{
-                fontFamily: 'var(--ui-font)',
-                fontSize: 'var(--fs-2xl)',
-                lineHeight: 1.25,
-                fontWeight: 600,
-                color: 'var(--term-fg)',
-                letterSpacing: 0,
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
+                minWidth: 0,
+                padding: 0,
+                border: 0,
+                background: 'transparent',
+                font: 'inherit',
+                fontWeight: 500,
+                color: 'inherit',
+                textAlign: 'left',
+                cursor: 'pointer',
                 overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
               <Highlight text={w.name} q={query} />
-            </div>
+            </button>
           )}
-          <div
-            style={{
-              fontSize: 'var(--fs-sm)',
-              color: 'var(--term-muted)',
-              marginTop: 3,
-              fontFamily: w.cwd ? 'var(--font-mono, ui-monospace, monospace)' : 'var(--ui-font)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              letterSpacing: w.cwd ? 0 : 'var(--ls-wide)',
-              textTransform: w.cwd ? 'none' : 'uppercase',
-            }}
-          >
-            {w.cwd
-              ? <Highlight text={w.cwd} q={query} />
-              : 'quick chat · no folder'}
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
           {w.streaming > 0 && (
             <span
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,
+                flexShrink: 0,
                 fontSize: 'var(--fs-xs)',
                 color: 'var(--term-select, var(--term-accent))',
                 fontWeight: 700,
@@ -720,214 +906,94 @@ function WorkspaceCard({
               LIVE
             </span>
           )}
-          {w.active && !w.streaming && (
-            <Dot color="var(--term-accent)" size={7} pulse />
-          )}
-        </div>
-      </div>
+        </span>
+      </td>
 
-      {/* Stats block */}
-      <div
+      <td
+        title={w.cwd}
         style={{
-          background: 'rgba(250,249,245,.8)',
-          border: '1px solid var(--term-line)',
-          padding: '10px 12px',
-          marginBottom: 12,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: 12,
+          ...TD_STYLE,
+          fontFamily: w.cwd ? 'var(--font-mono, ui-monospace, monospace)' : 'var(--ui-font)',
+          fontSize: 'var(--fs-md)',
+          color: 'var(--term-muted)',
         }}
       >
-        <Stat label="nodes" value={String(w.liveCount)} />
-        <Stat label="threads" value={String(w.threadCount)} />
-      </div>
+        {w.cwd
+          ? <Highlight text={pathForQuery(w.cwd, query)} q={query} />
+          : 'quick chat · no folder'}
+      </td>
 
-      {/* Preview list: matched nodes while filtering, recent threads otherwise. */}
-      <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px', flex: 1 }}>
-        {showMatches
-          ? matchedNodes.map((n, i) => (
-              <li
-                key={i}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  gap: 8,
-                  padding: '4px 0',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--term-line)',
-                  fontSize: 'var(--fs-md)',
-                  color: 'var(--term-fg)',
-                }}
-              >
-                <span
-                  style={{
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    flex: 1,
-                  }}
-                >
-                  {n.kind === 'digest' && (
-                    <span style={{ color: 'var(--term-digest, #2f6b4e)', marginRight: 4 }}>●</span>
-                  )}
-                  <Highlight text={n.title} q={query} />
-                </span>
-                <span
-                  style={{
-                    fontSize: 'var(--fs-xs)',
-                    color: 'var(--term-muted)',
-                    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                    flexShrink: 0,
-                  }}
-                >
-                  {n.lastActiveAt > 0 ? formatRelative(n.lastActiveAt) : '—'}
-                </span>
-              </li>
-            ))
-          : w.threads.map((t, i) => (
-              <li
-                key={i}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  gap: 8,
-                  padding: '4px 0',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--term-line)',
-                  fontSize: 'var(--fs-md)',
-                  color: 'var(--term-fg)',
-                }}
-              >
-                <span
-                  style={{
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    flex: 1,
-                  }}
-                >
-                  <Highlight text={t.title} q={query} />
-                </span>
-                <span
-                  style={{
-                    fontSize: 'var(--fs-xs)',
-                    color: 'var(--term-muted)',
-                    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                    flexShrink: 0,
-                  }}
-                >
-                  {t.branches > 0 && <span style={{ marginRight: 6 }}>⎇{t.branches}</span>}
-                  {t.age}
-                </span>
-              </li>
-            ))}
-        {!showMatches && w.threads.length === 0 && (
-          <li
-            style={{
-              fontSize: 'var(--fs-md)',
-              color: 'var(--term-muted)',
-              fontStyle: 'italic',
-              padding: '4px 0',
-            }}
-          >
-            No threads yet.
-          </li>
+      <td style={TD_NUMERIC}>{w.threadCount}</td>
+      <td style={TD_NUMERIC}>{w.liveCount}</td>
+
+      <td style={{ ...TD_STYLE, color: 'var(--term-mid)' }}>
+        {topMatch ? (
+          <>
+            {topMatch.kind === 'digest' && (
+              <span style={{ color: 'var(--term-digest)', marginRight: 4 }}>●</span>
+            )}
+            <Highlight text={topMatch.title} q={query} />
+            {matchedNodes.length > 1 && (
+              <span style={{ color: 'var(--term-muted)', marginLeft: 8, fontSize: 'var(--fs-sm)' }}>
+                +{matchedNodes.length - 1}
+              </span>
+            )}
+          </>
+        ) : latest ? (
+          <Highlight text={latest.title} q={query} />
+        ) : (
+          <span style={{ color: 'var(--term-muted)' }}>—</span>
         )}
-      </ul>
+      </td>
 
-      {/* Footer: sparkline + last activity */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderTop: '1px solid var(--term-line)',
-          paddingTop: 10,
-          gap: 10,
-        }}
-      >
-        <Sparkline values={w.spark} color={accent} />
-        <span
+      <td style={{ ...TD_STYLE, textOverflow: 'clip' }}>
+        <ActivityBars values={w.spark} />
+      </td>
+
+      <td style={{ ...TD_NUMERIC, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
+        {formatRelative(w.lastTs)}
+      </td>
+
+      <td style={{ ...TD_STYLE, padding: 0, textOverflow: 'clip' }}>
+        <button
+          type="button"
+          title="More actions"
+          aria-label="More actions"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenMenu(e.currentTarget.getBoundingClientRect());
+          }}
           style={{
-            fontSize: 'var(--fs-xs)',
+            width: 24,
+            height: 24,
+            border: '1px solid transparent',
+            background: 'transparent',
             color: 'var(--term-muted)',
-            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+            opacity: hover ? 1 : 0.45,
+            transition: 'opacity var(--t-soft), background var(--t-soft), border-color var(--t-soft)',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 'var(--fs-2xl)',
+            lineHeight: 1,
+            padding: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'var(--term-hover-bg, var(--term-alt))';
+            e.currentTarget.style.borderColor = 'var(--term-line)';
+            e.currentTarget.style.color = 'var(--term-fg)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+            e.currentTarget.style.borderColor = 'transparent';
+            e.currentTarget.style.color = 'var(--term-muted)';
           }}
         >
-          {formatRelative(w.lastTs)}
-        </span>
-      </div>
-
-      {/* Kebab menu — three dots, top-right */}
-      <button
-        type="button"
-        title="More actions"
-        aria-label="More actions"
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenMenu(e.currentTarget.getBoundingClientRect());
-        }}
-        style={{
-          position: 'absolute',
-          top: 10,
-          right: 10,
-          width: 24,
-          height: 24,
-          border: '1px solid transparent',
-          background: 'transparent',
-          color: 'var(--term-muted)',
-          opacity: hover ? 1 : 0.45,
-          transition: 'opacity var(--t-soft), background var(--t-soft), border-color var(--t-soft)',
-          cursor: 'pointer',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 'var(--fs-2xl)',
-          lineHeight: 1,
-          padding: 0,
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'var(--term-hover-bg, var(--term-alt))';
-          e.currentTarget.style.borderColor = 'var(--term-line)';
-          e.currentTarget.style.color = 'var(--term-fg)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'transparent';
-          e.currentTarget.style.borderColor = 'transparent';
-          e.currentTarget.style.color = 'var(--term-muted)';
-        }}
-      >
-        ⋯
-      </button>
-    </article>
-  );
-}
-
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-      <span
-        style={{
-          color: 'var(--term-muted)',
-          letterSpacing: 'var(--ls-wide)',
-          textTransform: 'uppercase',
-          fontSize: 'var(--fs-xs)',
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-          color: color || 'var(--term-fg)',
-          fontWeight: 500,
-          fontSize: 'var(--fs-lg)',
-        }}
-      >
-        {value}
-      </span>
-    </div>
+          ⋯
+        </button>
+      </td>
+    </tr>
   );
 }
 
