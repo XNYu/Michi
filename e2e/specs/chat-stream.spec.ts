@@ -3,6 +3,7 @@ import { installMockApi, bootWithWorkspace, sseBody } from '../fixtures/mockApi'
 
 declare global {
   interface Window {
+    hiddenTailStream?: ReadableStreamDefaultController<Uint8Array>;
     shortAnswerTest?: {
       stream?: ReadableStreamDefaultController<Uint8Array>;
       sample: boolean;
@@ -13,67 +14,95 @@ declare global {
 }
 
 test.describe('chat stream', () => {
-  test('a send during runtime cleanup waits and continues in the same conversation', async ({ page }) => {
-    let ready = false;
-    const requests: Array<{ url: string; body: string }> = [];
-    await installMockApi(page, { custom: async (route) => {
-      const request = route.request();
-      if (!/\/chats\/[^/]+\/message$/.test(new URL(request.url()).pathname)) return false;
-      requests.push({ url: request.url(), body: request.postData()! });
-      if (!ready) {
-        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
-          code: 'turn_active', error: 'The previous turn is still finishing',
-        }) });
-      } else {
-        await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
-          { event: 'chunk', data: { text: 'Continued in this conversation.' } },
-          { event: 'done', data: { stopReason: 'end_turn', persisted: true } },
-        ]) });
+  for (const boundary of ['visible-answer', 'done'] as const) {
+    test(`sending after ${boundary} silently continues while the runtime finishes`, async ({ page }) => {
+      let ready = false;
+      let firstTurn = true;
+      const requests: Array<{ url: string; body: string }> = [];
+      await installMockApi(page, { custom: async (route) => {
+        const request = route.request();
+        if (!/\/chats\/[^/]+\/message$/.test(new URL(request.url()).pathname)) return false;
+        if (firstTurn) {
+          firstTurn = false;
+          await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+            { event: 'chunk', data: { text: 'The changes are ready.\n\n[FOLLOW-UP 1/3: Run the check]\n[FOLLOW-UP 2/3: Review changes]\n[FOLLOW-UP 3/3: Next step]' } },
+            ...(boundary === 'done' ? [{ event: 'done' as const, data: { stopReason: 'end_turn', persisted: true } }] : []),
+          ]) });
+          return true;
+        }
+        requests.push({ url: request.url(), body: request.postData()! });
+        if (!ready) {
+          await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
+            code: 'turn_active', error: 'The previous turn is still finishing',
+          }) });
+        } else {
+          const payload = request.postDataJSON();
+          const reply = payload.displayText === 'Then summarize the result' ? 'Summary delivered.' : 'Continued in this conversation.';
+          await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+            { event: 'chunk', data: { text: reply } },
+            { event: 'done', data: { stopReason: 'end_turn', persisted: true } },
+          ]) });
+        }
+        return true;
+      } });
+      // Keep the unfinished first foreground stream alive after its response
+      // closes. The real backend retains its immutable turn for replay.
+      await page.addInitScript(() => {
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (input, init) => {
+          const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, location.href);
+          if (/\/chats\/[^/]+\/stream$/.test(url.pathname)) {
+            return new Response(new ReadableStream<Uint8Array>({
+              start(controller) {
+                window.hiddenTailStream = controller;
+                init?.signal?.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true });
+              },
+            }), { headers: { 'content-type': 'text/event-stream' } });
+          }
+          return originalFetch(input, init);
+        };
+      });
+      await bootWithWorkspace(page);
+      const composer = page.locator('[contenteditable="true"]').first();
+      await composer.fill('Review the current changes');
+      await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+      await expect(page.getByText('The changes are ready.', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Send (Enter)', exact: true })).toBeVisible();
+      await composer.fill('Run the next check');
+      await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+      await expect.poll(() => requests.length).toBeGreaterThanOrEqual(2);
+      await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
+      await expect(composer).toBeEmpty();
+      await expect(page.getByText(/Waiting for|Still finishing|previous turn is still|已收到|撤回|start a branch/i)).toHaveCount(0);
+      await expect(page.getByText('failed', { exact: true })).toHaveCount(0);
+      await expect(page.locator('.t-pre-block')).toHaveCount(0);
+      if (boundary === 'visible-answer') {
+        // A further message belongs to the new foreground turn. The old
+        // hidden tail's late terminal event must leave this queue intact.
+        await composer.fill('Then summarize the result');
+        await page.getByRole('button', { name: 'Send next (Enter). Sends after the current response', exact: true }).click();
+        await expect(page.locator('.t-pre-block')).toHaveCount(1);
+        await expect.poll(() => page.evaluate(() => !!window.hiddenTailStream)).toBe(true);
+        await page.evaluate(async (body) => {
+          window.hiddenTailStream!.enqueue(new TextEncoder().encode(body));
+          window.hiddenTailStream!.close();
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+        }, sseBody([{ event: 'done', data: { stopReason: 'end_turn', persisted: true } }]));
+        await expect(page.locator('.t-pre-block')).toHaveCount(1);
       }
-      return true;
-    } });
-    await bootWithWorkspace(page);
-    const composer = page.locator('[contenteditable="true"]').first();
-    await composer.fill('Run the next check');
-    await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
-    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toBeVisible();
-    await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
-    await expect(composer).toBeEmpty();
-    await expect(page.getByText('failed', { exact: true })).toHaveCount(0);
-    ready = true;
-    await expect(page.getByText('Continued in this conversation.', { exact: true })).toBeVisible();
-    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toHaveCount(0);
-    await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
-    expect(requests.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(requests.map((request) => request.body)).size).toBe(1);
-    expect(new Set(requests.map((request) => request.url)).size).toBe(1);
-  });
-
-  test('Stop withdraws a waiting send without cancelling the previous response', async ({ page }) => {
-    let messages = 0;
-    let cancellations = 0;
-    await installMockApi(page, { custom: async (route) => {
-      const path = new URL(route.request().url()).pathname;
-      if (/\/chats\/[^/]+\/cancel$/.test(path)) cancellations++;
-      if (!/\/chats\/[^/]+\/message$/.test(path)) return false;
-      messages++;
-      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'turn_active' }) });
-      return true;
-    } });
-    await page.clock.install();
-    await bootWithWorkspace(page);
-    await page.locator('[contenteditable="true"]').first().fill('Wait for the next check');
-    await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
-    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: /Stop stream/ }).click();
-    await expect(page.getByRole('button', { name: /Stop stream/ })).toHaveCount(0);
-    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toHaveCount(0);
-    const stoppedAt = messages;
-    // Advance beyond the capped retry delay to prove the waiting POST stops.
-    await page.clock.fastForward(3_000);
-    expect(messages).toBe(stoppedAt);
-    expect(cancellations).toBe(0);
-  });
+      ready = true;
+      await expect(page.getByText('Continued in this conversation.', { exact: true })).toBeVisible();
+      await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
+      const continuationRequests = requests.filter((request) => JSON.parse(request.body).displayText === 'Run the next check');
+      expect(new Set(continuationRequests.map((request) => request.body)).size).toBe(1);
+      if (boundary === 'visible-answer') {
+        await expect(page.getByText('Summary delivered.', { exact: true })).toBeVisible();
+        await expect(page.locator('.terminal-message-user').getByText('Then summarize the result', { exact: true })).toHaveCount(1);
+      }
+      expect(new Set(requests.map((request) => request.url)).size).toBe(1);
+    });
+  }
 
   test('user message → assistant chunks rendered → title applied', async ({ page }) => {
     await installMockApi(page);

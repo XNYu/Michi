@@ -270,7 +270,7 @@ describe('foreground send while the previous turn finishes', () => {
 
   const busy = () => new Response(JSON.stringify({ code: 'turn_active', error: 'Still busy' }), { status: 409 });
 
-  it('waits through repeated busy responses and sends the same payload once the runtime is ready', async () => {
+  it('silently waits through repeated busy responses and sends the same payload once the runtime is ready', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(busy())
       .mockResolvedValueOnce(busy())
@@ -284,13 +284,13 @@ describe('foreground send while the previous turn finishes', () => {
       userMetadata: { quotedText: 'quote', attachments: [{ name: 'file', absPath: '/tmp/file' }] },
     });
     await vi.advanceTimersByTimeAsync(0);
-    expect(onRetryStart).toHaveBeenCalledExactlyOnceWith({ detail: 'Waiting for previous response to finish' });
+    expect(onRetryStart).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(250);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(500);
     expect(onDone).toHaveBeenCalledTimes(1);
-    expect(onRetryEnd).toHaveBeenCalledOnce();
+    expect(onRetryEnd).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
     const payloads = fetchMock.mock.calls.map(([, init]) => (init as RequestInit).body);
     expect(new Set(payloads).size).toBe(1);

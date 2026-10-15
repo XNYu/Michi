@@ -184,7 +184,6 @@ export function streamMessage(
       startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });
       let res: Response;
       let busyAttempt = 0;
-      let announcedWait = false;
       for (;;) {
         controller.signal.throwIfAborted();
         waitingForTurn = false;
@@ -199,13 +198,10 @@ export function streamMessage(
         const body = await res.json().catch(() => null);
         // This response guarantees our turn never began. Keep the optimistic
         // message and its immutable payload/ID, then try when the owner is idle.
+        // Finishing the previous turn is a normal handoff: keep it invisible.
         // Never retry ambiguous network failures or other kinds of conflict.
         if (res.status === 409 && body?.code === 'turn_active') {
           waitingForTurn = true;
-          if (!announcedWait) {
-            announcedWait = true;
-            handlers.onRetryStart?.({ detail: 'Waiting for previous response to finish' });
-          }
           await new Promise<void>((resolve, reject) => {
             const onAbort = () => {
               clearTimeout(timer);
@@ -224,7 +220,6 @@ export function streamMessage(
         throw Object.assign(new Error(message), { code: typeof body?.code === 'string' ? body.code : undefined });
       }
       sawFirstByte = true;
-      if (announcedWait) handlers.onRetryEnd?.({});
       startupMark('stream_response_headers', { chatId: nodeId, nodeId, status: res.status, durMs: Date.now() - startedAt });
 
       const reader = res.body.getReader();

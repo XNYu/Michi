@@ -1335,10 +1335,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   const handleTurnEnd = useCallback((reason: TurnEndReason, endedNodeId: string) => {
     const ended = nodesRef.current[endedNodeId];
+    // The visible answer can finish before its hidden runtime tail. If a new
+    // foreground turn has already started, that older terminal callback must
+    // not consume the new turn's queue or invalidate its session binding.
+    if (!ended || ended.status === 'streaming') return;
     if (reason === 'error') {
       boundSessionsRef.current.delete(endedNodeId);
     }
-    if (!ended) return;
     const queue = nextQueuedBatch(ended.pendingQueued ?? [], ended.runtimeId ?? agentStatusRef.current?.runtime, ended.sessionState?.nativeEngine);
     if (queue.length === 0) return;
     if (reason === 'error') {
