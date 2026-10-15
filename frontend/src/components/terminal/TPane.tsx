@@ -444,9 +444,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const requestedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride);
 
   // Load catalog for the *resolved* runtime (which may differ from the global active runtime).
-  const shouldLoadModels = !!modelMenu && !!(
-    requestedBinding.runtime
-  );
+  // Claude's provider-qualified IDs need CLI labels even before the picker opens.
+  const shouldLoadModels = !!requestedBinding.runtime
+    && (!!modelMenu || requestedBinding.runtime === 'claude');
   const {
     models: catalogModels,
     providers: catalogProviders,
@@ -462,7 +462,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   });
   const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride,
     catalogProviders.length > 0 ? catalogProviders : undefined);
-  const providerModels = requestedBinding.runtime === n?.runtimeId && n?.sessionState?.availableModels
+  const providerModels = requestedBinding.runtime === n?.runtimeId && n?.sessionState?.availableModels?.length
     ? n.sessionState.availableModels : catalogModels;
   const composerEffort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, catalogProviders);
   // Snapshot the composer's runtime/model/effort for a send or retry, and

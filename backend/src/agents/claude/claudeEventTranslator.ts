@@ -11,13 +11,43 @@ interface UsageShape {
   cache_read_input_tokens?: number;
 }
 
-function computeContextPct(usage: UsageShape, modelName: string): number {
+function computeContextPct(usage: UsageShape, modelName: string, contextWindow?: number): number {
   const { entry } = getClaudeModelEntry(modelName);
   const used =
     (usage.input_tokens ?? 0) +
     (usage.cache_read_input_tokens ?? 0) +
-    (usage.cache_creation_input_tokens ?? 0);
-  return Math.min(100, (used / entry.contextWindow) * 100);
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.output_tokens ?? 0);
+  return Math.min(100, (used / (contextWindow ?? entry.contextWindow)) * 100);
+}
+
+/** A message's usage is one API call; result.usage sums every call in the turn. */
+function messageUsage(value: unknown): UsageShape | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const usage: UsageShape = {};
+  for (const key of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'] as const) {
+    const n = raw[key];
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) usage[key] = n;
+  }
+  // Output-only deltas cannot tell us the size of the input context.
+  return usage.input_tokens !== undefined || usage.cache_creation_input_tokens !== undefined
+    || usage.cache_read_input_tokens !== undefined ? usage : undefined;
+}
+
+function reportedContextWindow(env: ClaudeEnvelope, modelName: string): number | undefined {
+  const models = env['modelUsage'];
+  if (!models || typeof models !== 'object') return undefined;
+  const modelKey = (id: string) => id.toLowerCase().replace(/^.*(?=claude-)/, '').replace(/\[\d+m\]$/, '');
+  for (const [id, value] of Object.entries(models)) {
+    if (!value || typeof value !== 'object') continue;
+    const entry = value as Record<string, unknown>;
+    if (id !== modelName && modelKey(id) !== modelKey(modelName)
+      && entry.canonicalModel !== modelName) continue;
+    const window = entry.contextWindow;
+    if (typeof window === 'number' && Number.isFinite(window) && window > 0) return window;
+  }
+  return undefined;
 }
 
 function computeCost(usage: UsageShape, modelName: string): number {
@@ -69,6 +99,9 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
   let claudeSessionId: string | null = null;
   let turnStartMs: number = Date.now();
   let modelName: string = DEFAULT_MODELS.claude;
+  let latestUsage: UsageShape | undefined;
+  const contextWindows = new Map<string, number>();
+  const contextPct = (usage: UsageShape) => computeContextPct(usage, modelName, contextWindows.get(modelName));
   const seenUnknownModels = new Set<string>();
 
   // Track which content-block index produced the last text/thinking delta so
@@ -223,7 +256,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
     if (isFallback && !seenUnknownModels.has(name)) {
       seenUnknownModels.add(name);
       console.warn(
-        `[claudeEventTranslator] Unknown model "${name}" — using Opus-tier fallback rates. ` +
+        `[claudeEventTranslator] Unknown model "${name}" — using fallback context window. ` +
           'Update claudeModelCatalog.ts to add this model.',
       );
     }
@@ -231,6 +264,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
 
   function startTurn(): void {
     turnStartMs = Date.now();
+    latestUsage = undefined;
     // Reset the subagent roster so a new turn doesn't inherit the previous
     // turn's (terminated) agents. The first subagent_list_update of this turn
     // repopulates it; if there are no subagents, the frontend clears on its
@@ -259,6 +293,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
 
       if (subtype === 'init') {
         claudeSessionId = (env['session_id'] as string | null) ?? null;
+        if (typeof env['model'] === 'string') modelName = env['model'];
         // No emit — callers listen via getSessionId()
         return;
       }
@@ -281,6 +316,12 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
       if (typeof message['model'] === 'string') {
         modelName = message['model'];
         checkUnknownModel(modelName);
+      }
+
+      const usage = messageUsage(message['usage']);
+      if (usage) {
+        latestUsage = usage;
+        emit({ kind: 'context_usage', contextUsagePercentage: contextPct(usage) });
       }
 
       const content = message['content'];
@@ -353,6 +394,10 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
 
       const evtype = event['type'] as string | undefined;
       if (evtype === 'message_start') {
+        const message = event['message'] as Record<string, unknown> | undefined;
+        if (typeof message?.['model'] === 'string') modelName = message['model'];
+        latestUsage = messageUsage(message?.['usage']);
+        if (latestUsage) emit({ kind: 'context_usage', contextUsagePercentage: contextPct(latestUsage) });
         // A new turn is starting. Reset the per-turn block-index trackers so
         // the first text/thinking block in the new turn doesn't accidentally
         // share an index with the previous turn (Claude restarts indices at
@@ -368,6 +413,15 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
         }
         lastTextIndex = null;
         lastThinkingIndex = null;
+        return;
+      }
+      if (evtype === 'message_delta' && latestUsage) {
+        const usage = event['usage'] as Record<string, unknown> | undefined;
+        const output = usage?.['output_tokens'];
+        if (typeof output === 'number' && Number.isFinite(output) && output >= 0) {
+          latestUsage = { ...latestUsage, output_tokens: output };
+          emit({ kind: 'context_usage', contextUsagePercentage: contextPct(latestUsage) });
+        }
         return;
       }
       if (evtype === 'content_block_start') {
@@ -476,6 +530,8 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
     // result envelope — end of turn
     if (type === 'result') {
       const subtype = (env['subtype'] as string | undefined) ?? '';
+      const contextWindow = reportedContextWindow(env, modelName);
+      if (contextWindow !== undefined) contextWindows.set(modelName, contextWindow);
       const usage = (env['usage'] as UsageShape | undefined) ?? emptyUsage();
       if (usage) mergeUsage(usage);
 
@@ -492,7 +548,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void): Translato
 
       if (subtype === 'success') {
         const turnDurationMs = Date.now() - turnStartMs;
-        const contextUsagePercentage = computeContextPct(usage, modelName);
+        const contextUsagePercentage = latestUsage ? contextPct(latestUsage) : undefined;
         const totalCredits = computeCost(usage, modelName);
 
         emit({ kind: 'usage_summary', contextUsagePercentage, totalCredits, turnDurationMs });

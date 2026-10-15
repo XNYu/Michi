@@ -204,7 +204,7 @@ describe('claudeEventTranslator', () => {
   // Cost tracking is disabled (all rates are zero), so totalCredits = 0.
   // contextUsagePercentage still works (uses contextWindow from catalog).
   //   usage = { input_tokens:100, cache_read_input_tokens:50, cache_creation_input_tokens:50, output_tokens:200 }
-  //   contextPct = (100 + 50 + 50) / 1_000_000 * 100 = 0.02
+  //   contextPct = (100 + 50 + 50 + 200) / 1_000_000 * 100 = 0.04
 
   test('result.success with usage emits usage_summary then turn_end with correct token math', () => {
     const { emitted, feed } = makeTranslator();
@@ -214,6 +214,7 @@ describe('claudeEventTranslator', () => {
       type: 'assistant',
       message: {
         model: 'claude-opus-4-7-20250514',
+        usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 50, output_tokens: 200 },
         content: [],
       },
     });
@@ -236,10 +237,10 @@ describe('claudeEventTranslator', () => {
     const summary = emitted[0] as unknown as UsageSummaryEv;
     assert.equal(summary.kind, 'usage_summary');
 
-    // contextUsagePercentage = (100+50+50)/1000000 * 100 = 0.02
+    // Context includes the latest input (including cache) and generated output.
     assert.ok(
-      Math.abs(summary.contextUsagePercentage - 0.02) < 1e-9,
-      `contextUsagePercentage: expected 0.02, got ${summary.contextUsagePercentage}`,
+      Math.abs(summary.contextUsagePercentage - 0.04) < 1e-9,
+      `contextUsagePercentage: expected 0.04, got ${summary.contextUsagePercentage}`,
     );
 
     // Cost tracking disabled — totalCredits is always 0
@@ -266,6 +267,7 @@ describe('claudeEventTranslator', () => {
     emitted.length = 0;
 
     startTurn();
+    feed({ type: 'assistant', message: { content: [], usage: { input_tokens: 160_000, output_tokens: 1_000 } } });
     feed({
       type: 'result',
       subtype: 'success',
@@ -276,6 +278,7 @@ describe('claudeEventTranslator', () => {
     });
 
     startTurn();
+    feed({ type: 'assistant', message: { content: [], usage: { input_tokens: 60_000, output_tokens: 500 } } });
     feed({
       type: 'result',
       subtype: 'success',
@@ -285,27 +288,84 @@ describe('claudeEventTranslator', () => {
       },
     });
 
-    assert.equal(emitted.length, 4, 'two successful turns should emit usage_summary + turn_end each');
+    const summaries = emitted.filter((ev) => ev.kind === 'usage_summary');
+    assert.equal(summaries.length, 2);
 
     type UsageSummaryEv = { kind: string; contextUsagePercentage: number; totalCredits: number };
-    const first = emitted[0] as unknown as UsageSummaryEv;
-    const second = emitted[2] as unknown as UsageSummaryEv;
+    const first = summaries[0] as unknown as UsageSummaryEv;
+    const second = summaries[1] as unknown as UsageSummaryEv;
 
     assert.equal(first.kind, 'usage_summary');
     assert.equal(second.kind, 'usage_summary');
     assert.ok(
-      Math.abs(first.contextUsagePercentage - 16) < 1e-9,
-      `first contextUsagePercentage: expected 16, got ${first.contextUsagePercentage}`,
+      Math.abs(first.contextUsagePercentage - 16.1) < 1e-9,
+      `first contextUsagePercentage: expected 16.1, got ${first.contextUsagePercentage}`,
     );
     assert.ok(
-      Math.abs(second.contextUsagePercentage - 6) < 1e-9,
-      `second contextUsagePercentage: expected 6, got ${second.contextUsagePercentage}`,
+      Math.abs(second.contextUsagePercentage - 6.05) < 1e-9,
+      `second contextUsagePercentage: expected 6.05, got ${second.contextUsagePercentage}`,
     );
 
     const firstExpectedCost = 0;  // cost tracking disabled
     const secondExpectedCost = 0;
     assert.ok(Math.abs(first.totalCredits - firstExpectedCost) < 1e-9);
     assert.ok(Math.abs(second.totalCredits - secondExpectedCost) < 1e-9);
+  });
+
+  test('tool loops use the latest parent call, excluding turn totals and subagents', () => {
+    const { emitted, feed } = makeTranslator();
+    for (let i = 0; i < 12; i++) {
+      feed({ type: 'assistant', message: { model: 'global.anthropic.claude-opus-5-5[1m]', content: [],
+        usage: { input_tokens: 2_000, cache_read_input_tokens: 97_000, output_tokens: 1_000 } } });
+    }
+    feed({ type: 'assistant', parent_tool_use_id: 'subagent', message: { model: 'claude-haiku-4-5', content: [],
+      usage: { input_tokens: 190_000 } } });
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 214_000, cache_read_input_tokens: 1_164_000 } });
+    const summary = emitted.find((ev) => ev.kind === 'usage_summary');
+    assert.equal(summary?.kind === 'usage_summary' && summary.contextUsagePercentage, 10);
+    const live = emitted.filter((ev) => ev.kind === 'context_usage');
+    assert.equal(live.length, 12);
+    assert.equal(live[11].kind === 'context_usage' && live[11].contextUsagePercentage, 10);
+  });
+
+  test('uses the CLI context window for the active model without summing modelUsage', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+    feed({ type: 'assistant', message: { model: 'claude-sonnet-4-6', content: [],
+      usage: { input_tokens: 1_000, cache_creation_input_tokens: 19_000, output_tokens: 2_000 } } });
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 900_000 }, modelUsage: {
+      'global.anthropic.claude-sonnet-4-6': { contextWindow: 200_000, inputTokens: 900_000 },
+      'claude-haiku-4-5': { contextWindow: 10_000, inputTokens: 800_000 },
+    } });
+    const summary = emitted.find((ev) => ev.kind === 'usage_summary');
+    assert.equal(summary?.kind === 'usage_summary' && summary.contextUsagePercentage, 11);
+    startTurn();
+    feed({ type: 'assistant', message: { model: 'claude-sonnet-4-6', content: [], usage: { input_tokens: 40_000 } } });
+    const live = emitted.filter((ev) => ev.kind === 'context_usage');
+    assert.equal(live[1].kind === 'context_usage' && live[1].contextUsagePercentage, 20);
+  });
+
+  test('updates live context from streaming message usage and replaces it after compaction', () => {
+    const { emitted, feed } = makeTranslator();
+    feed({ type: 'stream_event', event: { type: 'message_start', message: { model: 'claude-opus-5',
+      usage: { input_tokens: 100_000, cache_read_input_tokens: 400_000 } } } });
+    feed({ type: 'stream_event', event: { type: 'message_delta', usage: { output_tokens: 10_000 } } });
+    feed({ type: 'stream_event', event: { type: 'message_start', message: { model: 'claude-opus-5',
+      usage: { input_tokens: 20_000 } } } });
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 900_000 } });
+    const live = emitted.filter((ev) => ev.kind === 'context_usage');
+    assert.deepEqual(live.map((ev) => ev.kind === 'context_usage' && ev.contextUsagePercentage), [50, 51, 2]);
+    const summary = emitted.find((ev) => ev.kind === 'usage_summary');
+    assert.equal(summary?.kind === 'usage_summary' && summary.contextUsagePercentage, 2);
+  });
+
+  test('omits context when a turn has no per-message usage instead of using totals or stale usage', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+    feed({ type: 'assistant', message: { model: 'claude-opus-5', content: [], usage: { input_tokens: 100_000 } } });
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 100_000 } });
+    startTurn();
+    feed({ type: 'result', subtype: 'success', usage: { input_tokens: 2_000_000 } });
+    const summaries = emitted.filter((ev) => ev.kind === 'usage_summary');
+    assert.equal(summaries[1].kind === 'usage_summary' && summaries[1].contextUsagePercentage, undefined);
   });
 
   // ── Case 9: result.error_max_turns → mcp_server_error + turn_end ─────────

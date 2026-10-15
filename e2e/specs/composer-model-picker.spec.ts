@@ -1,6 +1,54 @@
 import { expect, test } from '@playwright/test';
-import { bootWithWorkspace } from '../fixtures/mockApi';
+import { bootWithWorkspace, sseBody } from '../fixtures/mockApi';
 import { installComposerModels } from '../fixtures/composerModels';
+
+test('shows the Claude catalog label before opening the picker in Home and a new pane', async ({ page }) => {
+  const { status, ensures, patches } = await installComposerModels(page);
+  status.runtime = 'claude';
+  status.label = 'Claude';
+  status.model = 'global.anthropic.claude-opus-5-5[1m]';
+  const catalogRequests: string[] = [];
+  for (const endpoint of ['models', 'runtime-catalog']) {
+    await page.route(`**/api/agent/${endpoint}*`, async (route) => {
+      catalogRequests.push(endpoint);
+      await route.fulfill({ json: { models: [{ id: status.model, label: 'Opus (1M context)' }],
+        providers: [], capabilities: status.capabilities, sanitizedModel: null } });
+    });
+  }
+  await page.route('**/api/chats/*/message', async (route) => {
+    await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+      { event: 'context_usage', data: { contextUsagePercentage: 45 } },
+      { event: 'chunk', data: { text: 'Claude reply.' } },
+      { event: 'context_usage', data: { contextUsagePercentage: 8 } },
+      { event: 'usage_summary', data: { contextUsagePercentage: 8 } },
+      { event: 'done', data: { stopReason: 'end_turn' } },
+    ]) });
+  });
+  await bootWithWorkspace(page, 'Claude composer labels');
+  const trigger = page.getByRole('button', { name: /^Model settings:/ });
+  await expect(trigger).toContainText('Opus (1M context)');
+  await expect(page.getByRole('dialog', { name: 'Model settings' })).toHaveCount(0);
+  await expect.poll(() => catalogRequests.length).toBeGreaterThan(0);
+  await page.locator('[contenteditable="true"]').first().fill('Check the Claude pane label');
+  await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+  await expect(page.getByText('Claude reply.').first()).toBeVisible();
+  await expect(trigger).toContainText('Opus (1M context)');
+  await expect(page.getByRole('meter')).toHaveAttribute('aria-valuenow', '8');
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: 'Model settings' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: 'Model settings' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  // The store separately fetches /models once at startup to sanitize saved IDs.
+  // Home, the new pane and repeated picker opens share one runtime catalog request.
+  expect(catalogRequests.filter((endpoint) => endpoint === 'runtime-catalog')).toEqual(['runtime-catalog']);
+  await page.locator('[contenteditable="true"]').first().fill('Continue with the same model');
+  await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+  await expect.poll(() => ensures.length).toBe(2);
+  expect(ensures[1]).toMatchObject({ runtimeId: 'claude', modelId: 'global.anthropic.claude-opus-5-5[1m]' });
+  expect(patches).toEqual([]);
+});
 
 test('saves model and effort as Home defaults and preserves the draft', async ({ page }, testInfo) => {
   const errors: string[] = [];
@@ -140,8 +188,10 @@ test('adapts effort to model capabilities and sends a valid pane override', asyn
   await expect(effort).toHaveCount(0);
   await expect(trigger).not.toContainText('High');
   await selectModel('Instant model');
-  await expect(picker.getByText('Thinking effort')).toHaveCount(0);
-  await picker.screenshot({ path: testInfo.outputPath('effort-hidden.png') });
+  await expect(effort).toBeDisabled();
+  await expect(effort).toHaveAttribute('aria-valuetext', 'Not available');
+  await expect(trigger).not.toContainText('High');
+  await picker.screenshot({ path: testInfo.outputPath('effort-unavailable.png') });
   await page.keyboard.press('Escape');
   await editor.fill('Continue without adjustable effort');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();

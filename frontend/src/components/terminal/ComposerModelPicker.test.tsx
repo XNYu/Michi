@@ -19,6 +19,20 @@ const baseProps: ComposerModelPickerProps = {
 };
 
 describe('ComposerModelPicker', () => {
+  it('formats a Claude ID in the overview while preserving the selected request ID', () => {
+    const model = 'global.anthropic.claude-opus-5-5[1m]';
+    const nextModel = 'global.anthropic.claude-sonnet-5';
+    const onSaveModel = vi.fn();
+    render(<ComposerModelPicker {...baseProps} resolvedBinding={{ ...baseProps.resolvedBinding, runtime: 'claude', model }}
+      providerModels={[{ id: nextModel, label: 'Sonnet 5' }]} onSaveModel={onSaveModel} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Select model: Opus 5.5 (1M)' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Opus 5.5 (1M) Current model' }));
+    expect(onSaveModel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Select model: Opus 5.5 (1M)' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Sonnet 5' }));
+    expect(onSaveModel).toHaveBeenCalledExactlyOnceWith(nextModel);
+  });
+
   beforeEach(() => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
   });

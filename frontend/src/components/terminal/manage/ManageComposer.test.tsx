@@ -56,7 +56,7 @@ vi.mock('../../../state/chatStore', () => ({
 vi.mock('../../../services/api', () => ({
   listPrimaryAgentDefinitions: vi.fn(async () => []),
   bindPendingPrimaryAgent: vi.fn(),
-  listAgentModels: vi.fn(async () => ({ models: [], sanitizedModel: null })),
+  fetchRuntimeCatalog: vi.fn(async () => ({ models: [], providers: [], capabilities: null })),
   saveAgentOptions: vi.fn(async () => ({})),
   getWebUploadCwd: vi.fn(async () => '/tmp'),
   importWorkspaceFileUpload: vi.fn(),

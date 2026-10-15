@@ -63,6 +63,12 @@ describe('claudeModelCatalog', () => {
     assert.equal(UNKNOWN_CLAUDE_MODEL_FALLBACK.contextWindow, 200_000);
   });
 
+  test('provider-prefixed ids and explicit extended windows retain the context budget', () => {
+    assert.equal(getClaudeModelEntry('global.anthropic.claude-opus-5-5[1m]').entry.contextWindow, 1_000_000);
+    assert.equal(getClaudeModelEntry('claude-new-model[1m]').entry.contextWindow, 1_000_000);
+    assert.equal(getClaudeModelEntry('claude-haiku-4-5[1m]').entry.contextWindow, 1_000_000);
+  });
+
   // ── Case 5: all rate fields are finite non-negative numbers ────────────────
   // Cost tracking is disabled for Claude runtime; rates are zero.
 

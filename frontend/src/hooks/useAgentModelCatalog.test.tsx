@@ -87,4 +87,19 @@ describe('useAgentModelCatalog', () => {
 
     expect(result.current.models).toEqual([{ id: 'gemini-pro' }]);
   });
+
+  it('reuses the local catalog on reopen and refreshes only for an explicit retry', async () => {
+    vi.mocked(listAgentModels).mockResolvedValue({ models: [{ id: 'opus' }], sanitizedModel: null });
+    const view = renderHook(({ enabled }) => useAgentModelCatalog({ enabled, runtime: 'claude' }),
+      { initialProps: { enabled: true } });
+    await waitFor(() => expect(view.result.current.models).toEqual([{ id: 'opus' }]));
+    view.rerender({ enabled: false });
+    view.rerender({ enabled: true });
+    expect(listAgentModels).toHaveBeenCalledTimes(1);
+    await act(async () => view.result.current.retry());
+    expect(listAgentModels).toHaveBeenLastCalledWith({ runtime: 'claude', provider: undefined, refresh: true });
+    view.rerender({ enabled: false });
+    view.rerender({ enabled: true });
+    expect(listAgentModels).toHaveBeenCalledTimes(2);
+  });
 });

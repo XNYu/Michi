@@ -67,12 +67,13 @@ export const UNKNOWN_CLAUDE_MODEL_FALLBACK: ClaudeModelEntry = {
 };
 
 export function getClaudeModelEntry(modelName: string): { entry: ClaudeModelEntry; isFallback: boolean } {
-  // Strip extended-thinking suffix (e.g. "[1m]") before lookup — it doesn't
-  // affect pricing tier, only context budget.
+  // The suffix selects an extended context window, not extended thinking.
   const normalized = modelName.toLowerCase().replace(/\[\d+m\]$/, '');
   const entry = CLAUDE_MODEL_CATALOG[normalized] ?? CLAUDE_MODEL_CATALOG[aliasForConcreteModel(normalized)];
-  if (entry) return { entry, isFallback: false };
-  return { entry: UNKNOWN_CLAUDE_MODEL_FALLBACK, isFallback: true };
+  const base = entry ?? UNKNOWN_CLAUDE_MODEL_FALLBACK;
+  const contextMillions = Number(modelName.match(/\[(\d+)m\]$/i)?.[1]);
+  const contextWindow = contextMillions > 0 ? contextMillions * 1_000_000 : base.contextWindow;
+  return { entry: contextWindow === base.contextWindow ? base : { ...base, contextWindow }, isFallback: !entry };
 }
 
 function aliasForConcreteModel(modelName: string): string {

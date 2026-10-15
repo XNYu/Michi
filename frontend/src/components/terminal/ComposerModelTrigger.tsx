@@ -5,6 +5,7 @@ import { ChevronRightIcon } from './icons';
 import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
+import { composerModelLabel } from './composerModelLabel';
 
 interface ComposerModelTriggerProps {
   toolbarTier: 0 | 1 | 2;
@@ -22,7 +23,7 @@ export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding
   const caps = catalogCapabilities ?? (resolvedBinding.runtime === agentStatus?.runtime ? agentStatus.capabilities : undefined);
   const runtimeLabel = agentStatus?.availableRuntimes?.find((runtime) => runtime.id === resolvedBinding.runtime)?.label || resolvedBinding.runtime;
   const hasModel = caps?.providerModels || caps?.models || resolvedBinding.model;
-  const modelLabel = providerModels.find((model) => model.id === resolvedBinding.model)?.label || resolvedBinding.model || 'Default model';
+  const modelLabel = composerModelLabel(resolvedBinding.runtime, resolvedBinding.model, providerModels);
   const effort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, providers);
   const effortLabel = effort.adjustable ? REASONING_LABELS[effort.value ?? ''] ?? effort.value : undefined;
 

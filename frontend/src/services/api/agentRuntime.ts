@@ -1,5 +1,6 @@
 import type { CapabilityDescriptor, ModelReasoningCapabilities } from 'michi-shared';
 import { activeBackendApiBase, backendApiBase } from '../../config/backendConnections';
+import { createCatalogRequestCache } from '../catalogRequestCache';
 
 // === Agent runtime API ===
 
@@ -156,16 +157,25 @@ export interface AgentModelsResponse {
   sanitizedModel: string | null;
 }
 
-export async function listAgentModels(opts?: { provider?: string }): Promise<AgentModelsResponse> {
-  const url = new URL(`${activeBackendApiBase()}/agent/models`, window.location.href);
+const agentModelsCache = createCatalogRequestCache<AgentModelsResponse>();
+
+export async function listAgentModels(opts?: { provider?: string; runtime?: string; refresh?: boolean }): Promise<AgentModelsResponse> {
+  const base = activeBackendApiBase();
+  const url = new URL(`${base}/agent/models`, window.location.href);
   if (opts?.provider) url.searchParams.set('provider', opts.provider);
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`listAgentModels failed: ${res.status}`);
-  const body = await res.json();
-  return {
-    models: Array.isArray(body.models) ? body.models : [],
-    sanitizedModel: typeof body.sanitizedModel === 'string' ? body.sanitizedModel : null,
+  const load = async (): Promise<AgentModelsResponse> => {
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error(`listAgentModels failed: ${res.status}`);
+    const body = await res.json();
+    return {
+      models: Array.isArray(body.models) ? body.models : [],
+      sanitizedModel: typeof body.sanitizedModel === 'string' ? body.sanitizedModel : null,
+    };
   };
+  // Unscoped callers cannot safely cache an endpoint whose runtime is implicit.
+  return opts?.runtime
+    ? agentModelsCache.load(JSON.stringify([base, opts.runtime, opts.provider ?? '']), load, opts.refresh)
+    : load();
 }
 
 export interface RuntimeCatalogResponse {
@@ -179,18 +189,23 @@ export interface RuntimeCatalogResponse {
  * editor and per-node composer pickers use this for any runtime, not just
  * the active chat runtime). Backend returns cached data when available.
  */
-export async function fetchRuntimeCatalog(runtimeId: string, provider?: string): Promise<RuntimeCatalogResponse> {
-  const url = new URL(`${activeBackendApiBase()}/agent/runtime-catalog`, window.location.href);
+const runtimeCatalogCache = createCatalogRequestCache<RuntimeCatalogResponse>((value) => value.capabilities !== null);
+
+export async function fetchRuntimeCatalog(runtimeId: string, provider?: string, opts?: { refresh?: boolean }): Promise<RuntimeCatalogResponse> {
+  const base = activeBackendApiBase();
+  const url = new URL(`${base}/agent/runtime-catalog`, window.location.href);
   url.searchParams.set('runtime', runtimeId);
   if (provider) url.searchParams.set('provider', provider);
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`fetchRuntimeCatalog failed: ${res.status}`);
-  const body = await res.json();
-  return {
-    providers: Array.isArray(body.providers) ? body.providers : [],
-    models: Array.isArray(body.models) ? body.models : [],
-    capabilities: body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : null,
-  };
+  return runtimeCatalogCache.load(JSON.stringify([base, runtimeId, provider ?? '']), async () => {
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error(`fetchRuntimeCatalog failed: ${res.status}`);
+    const body = await res.json();
+    return {
+      providers: Array.isArray(body.providers) ? body.providers : [],
+      models: Array.isArray(body.models) ? body.models : [],
+      capabilities: body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : null,
+    };
+  }, opts?.refresh);
 }
 
 export async function saveProviderKey(

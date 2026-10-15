@@ -46,6 +46,18 @@ function renderToolbar(overrides: Partial<ComponentProps<typeof PaneComposerTool
 }
 
 describe('PaneComposerToolbarLeft', () => {
+  test('shows a readable Claude model before catalog loading, then uses the CLI label', () => {
+    const resolvedBinding = { runtime: 'claude', provider: undefined,
+      model: 'global.anthropic.claude-opus-5-5[1m]', reasoning: undefined, source: 'node' as const };
+    const props = { toolbarTier: 0 as const, agentStatus: null, resolvedBinding,
+      catalogCapabilities: null, providerModels: [], isStreaming: false, onOpenModelMenu: vi.fn() };
+    const view = render(<ComposerModelTrigger {...props} />);
+    expect(screen.getByRole('button', { name: 'Model settings: claude, Opus 5.5 (1M)' })).toBeTruthy();
+    expect(screen.queryByText(/global\.anthropic/)).toBeNull();
+    view.rerender(<ComposerModelTrigger {...props} providerModels={[{ id: resolvedBinding.model, label: 'Opus (1M context)' }]} />);
+    expect(screen.getByRole('button', { name: 'Model settings: claude, Opus (1M context)' })).toBeTruthy();
+  });
+
   test('hides stale effort labels for models with no adjustable effort', () => {
     renderToolbar({
       agentStatus: { ...STATUS, capabilities: { ...STATUS.capabilities, reasoning: true, supportedReasoningLevels: ['low', 'high'] } },

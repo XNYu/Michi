@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listAgentModels, type AgentModelInfo } from '../services/api';
+import { activeBackendApiBase } from '../config/backendConnections';
 
 const RETRY_DELAYS_MS = [500, 1_000, 2_000] as const;
 
@@ -32,8 +33,11 @@ export function useAgentModelCatalog({
   runtime,
   provider,
 }: UseAgentModelCatalogOptions) {
-  const key = useMemo(() => `${runtime ?? ''}:${provider ?? ''}`, [provider, runtime]);
+  const base = activeBackendApiBase();
+  const key = useMemo(() => JSON.stringify([base, runtime ?? '', provider ?? '']), [base, provider, runtime]);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const refreshRequested = useRef(false);
+  const loadedKey = useRef<string | null>(null);
   const [state, setState] = useState<AgentModelCatalogState>({
     key,
     models: [],
@@ -43,6 +47,10 @@ export function useAgentModelCatalog({
 
   useEffect(() => {
     if (!enabled || !runtime) return;
+    const refresh = refreshRequested.current;
+    refreshRequested.current = false;
+    if (!refresh && loadedKey.current === key) return;
+    loadedKey.current = null;
 
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -57,8 +65,9 @@ export function useAgentModelCatalog({
 
     const load = async () => {
       try {
-        const response = await listAgentModels({ provider: provider ?? undefined });
+        const response = await listAgentModels({ runtime, provider: provider ?? undefined, refresh });
         if (cancelled) return;
+        loadedKey.current = key;
         setState({ key, models: response.models, loading: false, error: null });
       } catch (err) {
         if (cancelled) return;
@@ -91,7 +100,10 @@ export function useAgentModelCatalog({
     };
   }, [enabled, key, provider, reloadNonce, runtime]);
 
-  const retry = useCallback(() => setReloadNonce((n) => n + 1), []);
+  const retry = useCallback(() => {
+    refreshRequested.current = true;
+    setReloadNonce((n) => n + 1);
+  }, []);
   const current = state.key === key
     ? state
     : { key, models: [], loading: false, error: null };

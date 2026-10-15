@@ -7,6 +7,7 @@ import { ChevronLeftIcon, ChevronRightIcon, RetryIcon } from './icons';
 import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
+import { composerModelLabel } from './composerModelLabel';
 
 type PickerPage = 'overview' | 'model' | 'runtime' | 'provider';
 type SelectionHandler<T> = (value: T) => void | Promise<void>;
@@ -54,7 +55,7 @@ export function ComposerModelPicker({
   const searchable = page === 'model' && providerModels.length > 7;
   const effort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, providers);
   const runtimeLabel = agentStatus?.availableRuntimes?.find((runtime) => runtime.id === resolvedBinding.runtime)?.label || resolvedBinding.runtime;
-  const modelLabel = providerModels.find((model) => model.id === resolvedBinding.model)?.label || resolvedBinding.model || 'Default model';
+  const modelLabel = composerModelLabel(resolvedBinding.runtime, resolvedBinding.model, providerModels);
   const providerLabel = providers.find((provider) => provider.id === resolvedBinding.provider)?.label || resolvedBinding.provider || 'Default provider';
   const closeRef = useRef(onClose);
   const returnTarget = useRef<PickerPage>('runtime');

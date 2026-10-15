@@ -21,7 +21,7 @@ import {
   type AgentReasoning,
   type UploadProgress,
 } from '../../../services/api';
-import { useAgentModelCatalog } from '../../../hooks/useAgentModelCatalog';
+import { useRuntimeCatalog } from '../../../hooks/useRuntimeCatalog';
 import { resolveNodeBinding } from '../../../state/nodeBindingResolution';
 import { appendAttachmentsSentinel } from '../../../lib/composerAttachments';
 import { toast } from 'sonner';
@@ -222,7 +222,7 @@ function ScopedManageComposer({
       .finally(() => { if (!controller.signal.aborted) setPrimaryAgentsLoading(false); });
     return () => controller.abort();
   }, [enableAgentSelect, workspaceId, usesActiveBackend, customAgentsEnabled]);
-  const shouldLoadModels = !!modelMenu && !!(
+  const shouldLoadModels = (!!modelMenu || agentStatus?.runtime === 'claude') && !!(
     agentStatus?.capabilities.providerModels || agentStatus?.capabilities.models === true
   );
   const {
@@ -230,7 +230,7 @@ function ScopedManageComposer({
     loading: modelsLoading,
     error: modelsError,
     retry: retryModels,
-  } = useAgentModelCatalog({
+  } = useRuntimeCatalog({
     enabled: shouldLoadModels,
     runtime: agentStatus?.runtime,
     provider: agentStatus?.provider,
