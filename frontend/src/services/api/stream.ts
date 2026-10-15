@@ -101,6 +101,7 @@ export function streamMessage(
   let resumeTimer: ReturnType<typeof setTimeout> | null = null;
   let resumeAttempt = 0;
   let cancelledByUser = false;
+  let waitingForTurn = false;
   let sawFirstByte = false;
   const acceptEnvelope: NonNullable<StreamHandlers['onEnvelope']> = (envelope) => {
     if (cancelledByUser || handlers.onEnvelope?.(envelope) === false) return false;
@@ -178,20 +179,52 @@ export function streamMessage(
         payload.enableKiroSidecarTitle = durable.enableKiroSidecarTitle;
       }
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
+      const requestBody = JSON.stringify(payload);
       const startedAt = Date.now();
       startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });
-      const res = await fetchStream(`${nodeBackendApiBase(nodeId)}/chats/${nodeId}/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) {
+      let res: Response;
+      let busyAttempt = 0;
+      let announcedWait = false;
+      for (;;) {
+        controller.signal.throwIfAborted();
+        waitingForTurn = false;
+        res = await fetchStream(`${nodeBackendApiBase(nodeId)}/chats/${nodeId}/message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody,
+          signal: controller.signal,
+        });
+        controller.signal.throwIfAborted();
+        if (res.ok && res.body) break;
         const body = await res.json().catch(() => null);
+        // This response guarantees our turn never began. Keep the optimistic
+        // message and its immutable payload/ID, then try when the owner is idle.
+        // Never retry ambiguous network failures or other kinds of conflict.
+        if (res.status === 409 && body?.code === 'turn_active') {
+          waitingForTurn = true;
+          if (!announcedWait) {
+            announcedWait = true;
+            handlers.onRetryStart?.({ detail: 'Waiting for previous response to finish' });
+          }
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(controller.signal.reason);
+            };
+            const timer = setTimeout(() => {
+              controller.signal.removeEventListener('abort', onAbort);
+              resolve();
+            }, Math.min(2_000, 250 * (2 ** Math.min(busyAttempt++, 3))));
+            controller.signal.addEventListener('abort', onAbort, { once: true });
+            if (controller.signal.aborted) onAbort();
+          });
+          continue;
+        }
         const message = body && typeof body.error === 'string' ? body.error : `stream failed: ${res.status}`;
         throw Object.assign(new Error(message), { code: typeof body?.code === 'string' ? body.code : undefined });
       }
       sawFirstByte = true;
+      if (announcedWait) handlers.onRetryEnd?.({});
       startupMark('stream_response_headers', { chatId: nodeId, nodeId, status: res.status, durMs: Date.now() - startedAt });
 
       const reader = res.body.getReader();
@@ -272,6 +305,9 @@ export function streamMessage(
     resumeTimer = null;
     controller.abort();
     resumeCancel?.();
+    // Withdrawing a message that was explicitly rejected as busy must leave
+    // the previous response running. There is no backend turn to cancel yet.
+    if (waitingForTurn) return;
     if (handlers.onCancelRecovery && !terminalSeen) {
       cancelChatAndObserve(nodeId, resumeTurnId || clientTurnId, handlers.onCancelRecovery);
     } else {

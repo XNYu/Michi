@@ -255,6 +255,40 @@ test('simultaneous starts produce one running task and a recoverable conflict', 
   await responses.find((response) => response.status === 200)!.text();
 });
 
+test('a finalized response still reserves the runtime until its iterator cleanup completes', async (t) => {
+  await ensure();
+  let releaseCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+  let enteredCleanup!: () => void;
+  const cleaningUp = new Promise<void>((resolve) => { enteredCleanup = resolve; });
+  t.mock.method(getSession('cancel-node')!, 'send', async function* () {
+    try {
+      yield { kind: 'chunk' as const, text: 'Finished answer' };
+      yield { kind: 'turn_end' as const, stopReason: 'end_turn' };
+    } finally {
+      enteredCleanup();
+      await cleanup;
+    }
+  });
+  const first = post('/chats/cancel-node/message', { text: 'first', turnId: 'cleanup-first' });
+  try {
+    await cleaningUp;
+    assert.equal(chatHub.isActive('cancel-node'), false);
+    assert.equal(chatHub.isOwnerTurnActive('cancel-node'), true);
+    const second = await post('/chats/cancel-node/message', { text: 'second', turnId: 'cleanup-second' });
+    assert.equal(second.status, 409);
+    assert.equal((await second.json() as any).code, 'turn_active');
+    assert.equal(listMessages('cancel-node').filter((message) => message.role === 'user').length, 1);
+  } finally {
+    releaseCleanup();
+    await (await first).text();
+  }
+  const retry = await post('/chats/cancel-node/message', { text: 'second', turnId: 'cleanup-second' });
+  assert.equal(retry.status, 200);
+  await retry.text();
+  assert.equal(listMessages('cancel-node').filter((message) => message.role === 'user').length, 2);
+});
+
 test('missing and stale Stop requests cannot interrupt the current turn', async () => {
   await ensure();
   const first = post('/chats/cancel-node/message', { text: 'current', turnId: 'current-turn' });

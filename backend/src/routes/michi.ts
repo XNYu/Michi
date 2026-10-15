@@ -1572,15 +1572,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 code: "IDENTITY_MISMATCH",
             });
         }
-        if (chatHub.isActive(nodeId)) {
+        if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId)) {
             // Only an explicit Stop may wait for cancellation cleanup. A new
             // message from another window must never interrupt the active turn.
             if (chatHub.getSnapshot(nodeId)?.cancelRequestedAt != null) {
                 try { await chatHub.cancelAndWait(nodeId); } catch { /* best-effort */ }
             }
-            if (chatHub.isActive(nodeId)) {
+            if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId)) {
                 return res.status(409).json({
-                    error: "This conversation already has a running task. Wait for it to finish or start a branch.",
+                    error: "Waiting for the previous response to finish.",
                     code: "turn_active",
                 });
             }
@@ -1592,10 +1592,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const currentSession = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
             if (!currentSession || currentSession.id !== nodeId) throw new Error('Session changed before turn start; retry the message');
             // Another request may have started while this one waited for the
-            // restore lock. Report the same recoverable conflict in both paths.
-            if (chatHub.isActive(nodeId)) {
+            // restore lock, or its iterator may still be releasing the runtime.
+            if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId)) {
                 return res.status(409).json({
-                    error: "This conversation already has a running task. Wait for it to finish or start a branch.",
+                    error: "Waiting for the previous response to finish.",
                     code: "turn_active",
                 });
             }

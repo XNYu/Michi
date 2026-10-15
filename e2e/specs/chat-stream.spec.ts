@@ -13,6 +13,68 @@ declare global {
 }
 
 test.describe('chat stream', () => {
+  test('a send during runtime cleanup waits and continues in the same conversation', async ({ page }) => {
+    let ready = false;
+    const requests: Array<{ url: string; body: string }> = [];
+    await installMockApi(page, { custom: async (route) => {
+      const request = route.request();
+      if (!/\/chats\/[^/]+\/message$/.test(new URL(request.url()).pathname)) return false;
+      requests.push({ url: request.url(), body: request.postData()! });
+      if (!ready) {
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
+          code: 'turn_active', error: 'The previous turn is still finishing',
+        }) });
+      } else {
+        await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+          { event: 'chunk', data: { text: 'Continued in this conversation.' } },
+          { event: 'done', data: { stopReason: 'end_turn', persisted: true } },
+        ]) });
+      }
+      return true;
+    } });
+    await bootWithWorkspace(page);
+    const composer = page.locator('[contenteditable="true"]').first();
+    await composer.fill('Run the next check');
+    await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
+    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toBeVisible();
+    await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
+    await expect(composer).toBeEmpty();
+    await expect(page.getByText('failed', { exact: true })).toHaveCount(0);
+    ready = true;
+    await expect(page.getByText('Continued in this conversation.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toHaveCount(0);
+    await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(requests.map((request) => request.body)).size).toBe(1);
+    expect(new Set(requests.map((request) => request.url)).size).toBe(1);
+  });
+
+  test('Stop withdraws a waiting send without cancelling the previous response', async ({ page }) => {
+    let messages = 0;
+    let cancellations = 0;
+    await installMockApi(page, { custom: async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (/\/chats\/[^/]+\/cancel$/.test(path)) cancellations++;
+      if (!/\/chats\/[^/]+\/message$/.test(path)) return false;
+      messages++;
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'turn_active' }) });
+      return true;
+    } });
+    await page.clock.install();
+    await bootWithWorkspace(page);
+    await page.locator('[contenteditable="true"]').first().fill('Wait for the next check');
+    await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
+    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: /Stop stream/ }).click();
+    await expect(page.getByRole('button', { name: /Stop stream/ })).toHaveCount(0);
+    await expect(page.getByText('Waiting for previous response to finish', { exact: true })).toHaveCount(0);
+    const stoppedAt = messages;
+    // Advance beyond the capped retry delay to prove the waiting POST stops.
+    await page.clock.fastForward(3_000);
+    expect(messages).toBe(stoppedAt);
+    expect(cancellations).toBe(0);
+  });
+
   test('user message → assistant chunks rendered → title applied', async ({ page }) => {
     await installMockApi(page);
     await bootWithWorkspace(page);

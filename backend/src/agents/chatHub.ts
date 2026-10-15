@@ -473,7 +473,7 @@ export class ChatHub {
   }
 
   async startTurn(args: StartTurnArgs): Promise<StartedTurn> {
-    if (this.isActive(args.chatId) || this.pendingSelfTurns.has(args.chatId)) {
+    if (this.isActive(args.chatId) || this.isOwnerTurnActive(args.chatId) || this.pendingSelfTurns.has(args.chatId)) {
       throw new Error('a turn is already active for this chat');
     }
     const turnId = args.turnId ?? randomUUID();

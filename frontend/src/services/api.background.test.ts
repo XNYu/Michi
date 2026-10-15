@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from 'michi-shared';
 import { streamMessage, subscribeBackground } from './api';
 
@@ -258,5 +258,70 @@ describe('foreground stream startup failures', () => {
     expect(onError).toHaveBeenCalledWith('stream failed: 409');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('/chats/n-conflict/message');
+  });
+});
+
+describe('foreground send while the previous turn finishes', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const busy = () => new Response(JSON.stringify({ code: 'turn_active', error: 'Still busy' }), { status: 409 });
+
+  it('waits through repeated busy responses and sends the same payload once the runtime is ready', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(sseResponse([
+        encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.done, data: { persisted: true } }),
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const onError = vi.fn(), onDone = vi.fn(), onRetryStart = vi.fn(), onRetryEnd = vi.fn();
+    streamMessage('n-busy', 'wire text', { onError, onDone, onRetryStart, onRetryEnd }, {
+      turnId: 'waiting-turn', displayText: 'visible text',
+      userMetadata: { quotedText: 'quote', attachments: [{ name: 'file', absPath: '/tmp/file' }] },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onRetryStart).toHaveBeenCalledExactlyOnceWith({ detail: 'Waiting for previous response to finish' });
+    expect(onError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onRetryEnd).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    const payloads = fetchMock.mock.calls.map(([, init]) => (init as RequestInit).body);
+    expect(new Set(payloads).size).toBe(1);
+    expect(JSON.parse(String(payloads[0]))).toMatchObject({ turnId: 'waiting-turn', text: 'wire text', displayText: 'visible text' });
+    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/message'))).toBe(true);
+  });
+
+  it('withdraws the waiting send without cancelling the previous turn or leaving a retry timer', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => busy());
+    vi.stubGlobal('fetch', fetchMock);
+    const onError = vi.fn(), onAborted = vi.fn(), onCancelRecovery = vi.fn();
+    const cancel = streamMessage('n-busy', 'next', { onError, onAborted, onCancelRecovery });
+    await vi.advanceTimersByTimeAsync(0);
+    cancel();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onAborted).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onCancelRecovery).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('still surfaces a real startup failure after waiting, without resending or replaying it', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(busy()).mockResolvedValueOnce(new Response(JSON.stringify({
+      code: 'IDENTITY_MISMATCH', error: 'Identity changed',
+    }), { status: 409 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onError = vi.fn();
+    streamMessage('n-busy', 'next', { onError });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(onError).toHaveBeenCalledExactlyOnceWith('Identity changed', undefined, undefined, 'IDENTITY_MISMATCH');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
