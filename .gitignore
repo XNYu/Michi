@@ -90,7 +90,6 @@ docs/*
 !docs/kiro-acp-validation.md
 
 # Local-only assets
-AGENTS.md
 CLAUDE.md
 ghostty
 design.png
