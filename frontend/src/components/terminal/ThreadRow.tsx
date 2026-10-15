@@ -279,11 +279,12 @@ export default function ThreadRow({
                   : isActive ? '2px solid var(--term-accent)'
                   : '2px solid transparent',
               }),
-          // Weight + color ladder is shared with classic: quiet mid/450 at rest,
-          // fg/600 when focused, 900 when unread. Flattening it to one weight
-          // read as uniformly too-black.
+          // Shared with classic. Focus/selection is carried by colour (mid → fg)
+          // and the fill, never by weight: the title keeps 450 in every state so
+          // it doesn't widen and re-truncate as the selection moves. 900 stays
+          // reserved for unread.
           color: isActive || selected || menu ? 'var(--term-fg)' : 'var(--term-mid)',
-          fontWeight: unread ? 900 : (isActive || selected ? 600 : 450),
+          fontWeight: unread ? 900 : 450,
           fontSize: 'var(--sb-fs, var(--fs-xl))',
           fontFamily: 'var(--ui-font)',
           position: 'relative',
@@ -332,7 +333,8 @@ export default function ThreadRow({
               flex: 1,
               minWidth: 0,
               fontSize: 'var(--fs-xl)',
-              fontWeight: 600,
+              // Matches the row title so entering rename doesn't change weight.
+              fontWeight: 450,
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
               background: 'var(--term-surface)',

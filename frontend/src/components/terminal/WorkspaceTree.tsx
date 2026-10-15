@@ -1002,8 +1002,9 @@ function MergedGroupsSection({
                 borderLeft: isFocused
                   ? '2px solid var(--term-accent)'
                   : '2px solid transparent',
+                // Focus changes colour and fill, not weight (see ThreadRow).
                 color: isFocused ? 'var(--term-fg)' : 'var(--term-mid)',
-                fontWeight: isFocused ? 600 : 400,
+                fontWeight: 400,
                 fontSize: 'var(--fs-md)',
                 fontFamily: 'var(--ui-font)',
               }}
@@ -1091,7 +1092,7 @@ function MergedGroupsSection({
                       ? '2px solid var(--term-accent)'
                       : '2px solid transparent',
                     color: focused ? 'var(--term-fg)' : 'var(--term-mid)',
-                    fontWeight: focused ? 600 : 400,
+                    fontWeight: 400,
                     fontSize: 'var(--fs-md)',
                     fontFamily: 'var(--ui-font)',
                     cursor: 'pointer',

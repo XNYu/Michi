@@ -190,9 +190,10 @@ export default function BranchRow({
                   : focused ? '2px solid var(--term-accent)'
                   : '2px solid transparent',
               }),
-          // Same weight/color ladder as classic — one flat weight read too black.
+          // Same as ThreadRow: focus/selection changes colour and fill, not
+          // weight. 900 stays reserved for unread.
           color: focused || selected || menuOpen ? 'var(--term-fg)' : 'var(--term-mid)',
-          fontWeight: unread ? 900 : (focused || selected ? 600 : 450),
+          fontWeight: unread ? 900 : 450,
           fontSize: 'var(--sb-fs, var(--fs-xl))',
           fontFamily: 'var(--ui-font)',
         }}
@@ -225,7 +226,8 @@ export default function BranchRow({
               padding: '1px 4px',
               fontSize: 'var(--fs-xl)',
               fontFamily: 'var(--ui-font)',
-              fontWeight: 500,
+              // Matches the row title so entering rename doesn't change weight.
+              fontWeight: 450,
               background: 'var(--term-surface)',
               border: '1px solid var(--term-accent)',
               borderRadius: 'var(--ui-radius-sm)',
