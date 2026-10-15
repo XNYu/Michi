@@ -13,6 +13,7 @@ import type { SettingsSection } from './pages/Settings';
 import { usePrefs } from '../../state/prefs';
 import type { PageId } from '../../state/commands';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
+import { IS_MAC } from '../../lib/platform';
 import { setManageWorkspaceId, useManageWorkspaceId } from '../../state/manageRoute';
 import { setManageAgentRoute, useManageAgentRoute } from '../../state/manageRoute';
 import { useAgentDomain } from '../../state/agentDomain';
@@ -269,7 +270,32 @@ export default function TerminalShell() {
         }
         return;
       }
-      if (isEditable(document.activeElement)) return;
+      const typing = isEditable(document.activeElement);
+      // ⌘T / ⌘⌥T also run before the isEditable gate, like ⌘W: TPane
+      // refocuses its composer when a reply finishes, which is exactly when
+      // users reach for them. While typing on macOS only ⌘ counts, because
+      // Ctrl+T is the system "transpose characters" binding in text fields.
+      const tMod = typing && IS_MAC ? e.metaKey : meta;
+      // ⌘T new thread → open home (thread is created on first send)
+      if (tMod && !e.altKey && !e.shiftKey && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault();
+        setPage('home');
+        return;
+      }
+      // ⌘⌥T new blank branch (legacy ⌘T)
+      if (tMod && e.altKey && !e.shiftKey && (e.key === 't' || e.key === 'T' || e.key === '†')) {
+        if (focusedPane) {
+          e.preventDefault();
+          // The new pane mounts already focused, so TPane won't pull focus
+          // into it. Blur so typing doesn't land in the parent's composer.
+          if (typing) (document.activeElement as HTMLElement).blur();
+          void createBlankChild(focusedPane, { anchorMessageId: focusedLastMessageId })
+            .then(() => setPage('dashboard'))
+            .catch(() => {});
+        }
+        return;
+      }
+      if (typing) return;
       // Escape clears both node- and tree-level selection. They can coexist
       // (for example after selecting in Map, then entering manage mode), so
       // clear both in one pass instead of returning after the first set.
@@ -323,22 +349,6 @@ export default function TerminalShell() {
       if (PROFILE_PAGE_ENABLED && !e.shiftKey && !e.altKey && (e.key === 'p' || e.key === 'P')) {
         e.preventDefault();
         setPage('profile');
-        return;
-      }
-      // ⌘T new thread → open home (thread is created on first send)
-      if (!e.altKey && !e.shiftKey && (e.key === 't' || e.key === 'T')) {
-        e.preventDefault();
-        setPage('home');
-        return;
-      }
-      // ⌘⌥T new blank branch (legacy ⌘T)
-      if (e.altKey && !e.shiftKey && (e.key === 't' || e.key === 'T' || e.key === '†')) {
-        if (focusedPane) {
-          e.preventDefault();
-          void createBlankChild(focusedPane, { anchorMessageId: focusedLastMessageId })
-            .then(() => setPage('dashboard'))
-            .catch(() => {});
-        }
         return;
       }
       // ⌘\ open the most-recent chat not already in a pane

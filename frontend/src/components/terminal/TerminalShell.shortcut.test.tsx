@@ -11,8 +11,10 @@ function renderShell() {
 
 
 const closePaneSpy = vi.hoisted(() => vi.fn());
+const createBlankChildSpy = vi.hoisted(() => vi.fn());
 const clearSelectionSpy = vi.hoisted(() => vi.fn());
 const clearTreeSelectionSpy = vi.hoisted(() => vi.fn());
+const platformState = vi.hoisted(() => ({ isMac: false }));
 const storeState = vi.hoisted(() => ({
   activeTreeId: null as string | null,
   focusedPane: null as string | null,
@@ -37,7 +39,7 @@ vi.mock('../../state/chatStore', async () => {
       clearSelection: clearSelectionSpy,
       clearTreeSelection: clearTreeSelectionSpy, selectAllTrees: () => {},
       restoreLastDeletion: () => null, openPane: () => {}, closePane: closePaneSpy,
-      createThread: () => {}, createBlankChild: () => {},
+      createThread: () => {}, createBlankChild: createBlankChildSpy,
       focusPane: () => {}, selectProject: () => {}, createProject: () => {},
       // Home's composer (rendered by TerminalShell) reads these at render time.
       availableModes: [], agentStatus: null, refreshAgentStatus: () => {},
@@ -72,7 +74,7 @@ vi.mock('../../state/chatStore', async () => {
       focusPane: () => {},
       closePane: closePaneSpy,
       openPane: () => {},
-      createBlankChild: () => {},
+      createBlankChild: createBlankChildSpy,
       restoreLastDeletion: () => null,
       clearSelection: clearSelectionSpy,
       clearTreeSelection: clearTreeSelectionSpy,
@@ -90,6 +92,14 @@ vi.mock('./useTerminalColors', () => ({
   useTerminalColors: () => ({}),
 }));
 
+vi.mock('../../lib/platform', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/platform')>('../../lib/platform');
+  return {
+    ...actual,
+    get IS_MAC() { return platformState.isMac; },
+  };
+});
+
 vi.mock('../../state/prefs', async () => {
   const actual = await vi.importActual<any>('../../state/prefs');
   return {
@@ -104,8 +114,11 @@ vi.mock('../../state/prefs', async () => {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   closePaneSpy.mockReset();
+  createBlankChildSpy.mockReset();
+  createBlankChildSpy.mockResolvedValue('child');
   clearSelectionSpy.mockReset();
   clearTreeSelectionSpy.mockReset();
+  platformState.isMac = false;
   storeState.activeTreeId = null;
   storeState.focusedPane = null;
   storeState.openPanes = [];
@@ -179,6 +192,80 @@ describe('TerminalShell shortcuts', () => {
     }
     expect(closePaneSpy).toHaveBeenCalledTimes(1);
     expect(closePaneSpy).toHaveBeenCalledWith('L');
+  });
+
+  // Regression: TPane refocuses its composer when a reply finishes, so ⌘⌥T
+  // was swallowed by the isEditable gate at the moment users want to branch.
+  it('Cmd+Option+T branches from the focused pane even when a textarea has focus', () => {
+    storeState.focusedPane = 'L';
+    renderShell();
+    const ta = document.createElement('textarea');
+    document.body.appendChild(ta);
+    ta.focus();
+    let notPrevented: boolean;
+    try {
+      // macOS reports ⌥T as '†'.
+      notPrevented = fireEvent.keyDown(window, { key: '†', metaKey: true, altKey: true });
+      // Focus must leave the parent's composer: the new pane mounts already
+      // focused, so nothing else moves typing focus out of it.
+      expect(document.activeElement).not.toBe(ta);
+    } finally {
+      ta.remove();
+    }
+    expect(notPrevented).toBe(false);
+    expect(createBlankChildSpy).toHaveBeenCalledTimes(1);
+    expect(createBlankChildSpy.mock.calls[0][0]).toBe('L');
+  });
+
+  it('Cmd+T opens Home even when a textarea has focus', () => {
+    const { container } = renderShell();
+    const topbar = () => container.querySelector<HTMLElement>('.terminal-topbar');
+    fireEvent.keyDown(window, { key: '1', metaKey: true });
+    expect(topbar()?.dataset.page).toBe('dashboard');
+    const ta = document.createElement('textarea');
+    document.body.appendChild(ta);
+    ta.focus();
+    try {
+      fireEvent.keyDown(window, { key: 't', metaKey: true });
+    } finally {
+      ta.remove();
+    }
+    expect(topbar()?.dataset.page).toBe('home');
+  });
+
+  // On macOS, Ctrl+T in a text field is the system "transpose characters"
+  // binding. Moving ⌘T/⌘⌥T above the isEditable gate must not steal it.
+  it('leaves macOS Ctrl+T and Ctrl+Option+T to a focused text field', () => {
+    platformState.isMac = true;
+    // focusedPane alone arms ⌘⌥T; leaving openPanes empty keeps a real TPane
+    // (which needs CSS.highlights) out of the dashboard.
+    storeState.focusedPane = 'L';
+    const { container } = renderShell();
+    fireEvent.keyDown(window, { key: '1', metaKey: true });
+    const ta = document.createElement('textarea');
+    document.body.appendChild(ta);
+    ta.focus();
+    let ctrlT: boolean;
+    let ctrlOptT: boolean;
+    try {
+      ctrlT = fireEvent.keyDown(window, { key: 't', ctrlKey: true });
+      ctrlOptT = fireEvent.keyDown(window, { key: '†', ctrlKey: true, altKey: true });
+      expect(document.activeElement).toBe(ta);
+    } finally {
+      ta.remove();
+    }
+    expect(ctrlT).toBe(true);
+    expect(ctrlOptT).toBe(true);
+    expect(container.querySelector<HTMLElement>('.terminal-topbar')?.dataset.page).toBe('dashboard');
+    expect(createBlankChildSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps Ctrl+T as new thread on macOS when nothing editable has focus', () => {
+    platformState.isMac = true;
+    const { container } = renderShell();
+    fireEvent.keyDown(window, { key: '1', metaKey: true });
+    fireEvent.keyDown(window, { key: 't', ctrlKey: true });
+    expect(container.querySelector<HTMLElement>('.terminal-topbar')?.dataset.page).toBe('home');
   });
 
   it('Escape clears node and tree selection together', () => {
