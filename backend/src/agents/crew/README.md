@@ -3,7 +3,7 @@
 Michi launches its bundled ACP adapter and authenticates as the `michi-crew-runtime`
 App against the unmodified official Kiro Crew Gateway. No Crew source patch,
 companion Gateway, owner token, or `/app-runtime` API is required.
-Validated against installed **0.8.0-insider.14** on 2026-10-07.
+Originally validated against **0.8.0-insider.14** on 2026-10-07; App **0.6.0** install/Sync, official broker updates and native approvals were validated on macOS with **0.9.0-insider.6** on 2026-10-13. See the getting-started guide for the exact acceptance scope.
 
 中文接入步骤见 [Michi × KiroCrew 接入教程](GETTING_STARTED.zh-CN.md)。
 For an installed Michi application (default directory `~/.michi`), see the
@@ -37,7 +37,7 @@ Crew 模板、治理策略和绑定身份也可能限制 Memory 工具。
 
 ```sh
 VITE_API_URL=/api npm run build
-PORT=3010 MICHI_DATA_DIR="$HOME/.michi-crew-preview" NODE_ENV=development npm start
+PORT=3010 MICHI_DATA_DIR="$HOME/.michi-crew-preview" MICHI_CONFIG_DIR="$HOME/.michi-crew-preview" NODE_ENV=development npm start
 ```
 
 然后打开 `http://localhost:3010`，创建 workspace，在 composer 选择 **Kiro Crew**。
@@ -65,31 +65,15 @@ Crew 会把模板提示词放入自己的会话上下文；kiro-cli/KAS 也有�
 
 ## Complete the required App setup
 
-For a standard installed Michi, prepare the complete App from the installation directory:
+For a default installer checkout, install directly from the complete **~/.michi/crew-app** directory using Crew's **Install from path**. No generation script or copying is needed. The canonical manifest is `crew-app/app.json` (0.6.0).
 
-```sh
-cd "$HOME/.michi"
-node backend/scripts/crew-setup.cjs
-```
+1. Consent to **sessionApproval** and confirm the App is **Enabled**.
+2. In **Developer → MCP Management**, enable/approve `michi-crew-runtime:michi` **Stub / Routed**.
+3. Crew resolves the bare Python launcher to its own interpreter. It finds Node >=22.19 from `backend/dist/crew-node.json`, then common installed runtimes as fallback. The default root is computed inside Python.
+4. Restart the Gateway after first installation or migration from an App older than 0.6.0, after active work finishes. Sync alone can retain the old broker launch.
+5. For updates, use **michi update → Crew App Sync**. Michi reports outdated manifests. The live host reloads compatible relay handlers on the same connection, preserving in-flight calls and the last valid generation during rebuilds. Host/API changes require a new process.
 
-For source development, build the backend and run the same helper from that checkout.
-The helper always includes **Michi MCP and sessionApproval**. Legacy `--mcp` and
-`--approvals` arguments remain accepted, but also prepare both features.
-
-1. For first installation, copy the prepared files into a persistent source such as
-   `~/.michi/crew-app`, then use **Apps / Discover → Manage app sources → Install from path**.
-   For updates, copy the prepared files into the existing App’s registered source
-   before **Sync**. Sync does not select a new source. Do not overwrite a code checkout;
-   see the getting-started guide for existing temporary sources and source-change limits.
-2. Review and consent to **sessionApproval**, then confirm the App is **Enabled**.
-3. In **Developer → MCP Management**, find `michi-crew-runtime:michi`, inspect
-   its Node command and relay path, enable **Stub / Routed**, and approve the launch.
-4. Finish or stop active work, then restart the **Gateway**:
-   `kirocrew restart` (service-aware). Use `--port` only for an independently managed Gateway.
-
-The helper prepares files; the official Crew flow records consent and launch approval.
-The generated relay points into the installation used to run the helper; retain that
-installation and Node path. `MICHI_ENABLED_RUNTIMES`, if set, must include `crew`.
+Old generated sources and custom checkouts retain `backend/scripts/crew-setup.cjs`; refresh their exact registered source before Sync. Do not overwrite the canonical source folder with generated files. See section 9 of the getting-started guide.
 
 After setup, use Michi for chats and approvals. Offline readiness requires both
 approval consent and declared/routed MCP. Missing setup blocks new work with a

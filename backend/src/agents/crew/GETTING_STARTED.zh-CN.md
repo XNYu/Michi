@@ -1,156 +1,55 @@
-# Michi × KiroCrew 接入教程
+# 在 Michi 中使用 KiroCrew
 
-更新：2026-10-13。适用于已安装的 Michi 和官方本机 KiroCrew Gateway。
-终端命令采用 macOS/Linux shell 语法。另有 [英文接入教程](GETTING_STARTED.md)。
+更新于 2026-10-13，适用于 Michi Crew App **0.6.0** 和官方 Crew **0.9.0-insider.6**。
 
-KiroCrew 提供后端。完成下面的一次性配置后，在 **Michi** 中聊天、审批工具、选择模型、
-设置 Memory、恢复和分叉对话；保持 KiroCrew 运行即可。
-**Michi MCP 和 Approvals 是必需的接入能力，默认同时加入，无须选择。**
+Crew 提供后端；一次接入后，聊天、审批、模型、Memory、恢复和分叉都在 **Michi** 操作。**Michi MCP 和 sessionApproval 必选，App 已默认包含。** 保持 Crew 运行。
 
-## 1. 确认 Michi 安装版本
+## 1. 更新 Michi
 
-默认安装器将代码、依赖和构建产物放在 `~/.michi`，macOS 桌面 App 安装在
-`~/Applications/michi.app`。安装器已经完成构建；普通用户无需另建开发工作树。
-在终端检查：
-
-```sh
-cd "$HOME/.michi"
-node --version
-kirocrew --version
-node -p 'require("./backend/src/agents/crew/app/app.json").version'
-ls backend/scripts/crew-setup.cjs \
-   backend/src/agents/crew/app/app.json \
-   backend/dist/crewAcp.js \
-   backend/dist/crewMcp.js
-```
-
-Node.js 需要 **22.19 或更新版本**。如使用自定义安装目录，请将本文的
-`~/.michi` 替换为实际安装目录；setup 脚本根据自身位置生成路径。
-本教程需要包含完整 setup 脚本的 Michi 版本，随包 Crew App manifest 应为 **0.5.0 或更新**。
-
-如果文件或 Crew Runtime 不存在，使用正常的更新入口，升级到包含 Crew 支持的版本：
+默认安装器把代码和构建放在 `~/.michi`；macOS 桌面 App 位于 `~/Applications/michi.app`。先更新到包含 Crew App 0.6.0 的版本：
 
 ```sh
 michi update
 ```
 
-macOS 更新会退出并替换桌面 App，完成后重新打开。开发目录里的改动不会自动更新
-安装版；尚未发布的本地提交也无法通过安装器获得。
+macOS 更新会重建并替换 App，同时退出 Michi，之后重新打开。本地 dev 提交必须发布到安装器使用的分支后，其他用户才能通过 update 获得。
 
-## 2. 准备 Michi App
+默认安装现在已经包含完整的 `~/.michi/crew-app`，**首次接入无须运行 setup 脚本，也无须复制文件**。只有桌面包产生的数据目录不算代码安装目录；安装目录应包含 `crew-app/launch.py`、`backend/dist/crewMcpHost.js`、`crewMcp.js` 和 `crew-node.json`。
 
-先启动官方 KiroCrew，默认 Gateway 为 `http://127.0.0.1:5476`。
-Michi 通过名为 `michi-crew-runtime` 的 App 接入。
+## 2. 在 Crew 中直接安装
 
-在 **Michi 安装目录**执行：
+启动官方 Crew 并登录。本地默认 Gateway 地址是 `http://127.0.0.1:5476`。
 
-```sh
-cd "$HOME/.michi"
-node backend/scripts/crew-setup.cjs
-```
+打开 **Apps / Discover → Manage app sources → Install from path**，填入自己的绝对路径：
 
-脚本默认同时加入 **Michi MCP 和 Approvals**，不需要选功能或加开关。
-命令会打印 `Prepared App: /…/michi-crew-app-…`。下一步使用这个实际目录。
-脚本准备 App 文件，安装、启用和权限授权由官方 Crew 流程记录。
-准备目录是临时目录。下一节会将文件复制到可复用的 App 来源目录。更新 Michi 后重新
-运行脚本，把新文件复制到**同一个已登记来源目录**，再点 Sync。
+| 平台 | 示例，替换用户名 |
+| --- | --- |
+| macOS | `/Users/你的用户名/.michi/crew-app` |
+| Linux | `/home/你的用户名/.michi/crew-app` |
+| Windows | `C:\Users\你的用户名\.michi\crew-app` |
 
-如果 Michi 设置了 `MICHI_ENABLED_RUNTIMES`，列表中需要包含 `crew`。
-默认没有设置这个变量时，不需要额外配置。
+不要直接输入未展开的 `$HOME`、`${HOME}` 或 `~`。macOS/Linux 可以用 `printf '%s\n' "$HOME/.michi/crew-app"` 显示路径。
 
-## 3. 在 KiroCrew 完成一次性配置
+App 名称是 **michi-crew-runtime**，默认模板是 **michi-crew**。Crew 保存该路径作为后续 Sync 的来源。自定义安装、工作树和旧生成来源请看第 8 节；不要为了更新卸载旧 App。
 
-本节步骤全部必需。这些是后端接入操作；完成后，日常聊天和审批都在 Michi 中进行。
+## 3. 授权和后续更新
 
-### 首次安装：保留固定的 App 来源目录
+1. 阅读并同意 **sessionApproval**，确认 App **Enabled**。它让 Michi 接收和回答 Crew 的待审批请求，日常 **Ask / Trust 在 Michi 选择**。官方授权还包含用户自己在 Crew 创建的聊天；Michi adapter 只操作自己的本地、未链接 App 会话。
+2. 在 **Developer → MCP Management** 找到 `michi-crew-runtime:michi`，启用 **Stub / Routed**，检查并批准启动。Sync 后重新加载此页面；如果显示 **command changed**，必须批准新的 Python 启动命令，保存过 Stub 选择不代表新命令已获批。如果没有 Developer，先打开 **Settings → Developer → Developer Mode**。
+3. manifest 的命令是 `python`，由 Crew 解析为自己的解释器。启动器从 Michi 构建记录 `backend/dist/crew-node.json` 找到 Node，要求 **22.19 或更新**，不依赖 GUI 的 Node PATH。默认安装目录在 Python 内解析，无须 Crew 替换参数中的 HOME。
+4. 首次安装，或从 **0.6.0 之前**的 App 升级后，必须重启 **Gateway**，让新模板、broker 路由和 Python host 启动命令替换缓存。即使 Sync 没有提示也要重启；先结束或停止活跃任务。默认服务管理的实例用 `kirocrew restart`。Agent Capabilities 的 **Apply & Restart** 只重启聊天 Agent。
 
-将下方占位路径替换为脚本打印的**实际 Prepared App 目录**，然后复制到固定目录：
+以后默认安装用户只需：
 
 ```sh
-PREPARED_APP="/actual/path/michi-crew-app-..."
-CREW_APP_SOURCE="$HOME/.michi/crew-app"
-mkdir -p "$CREW_APP_SOURCE"
-cp -R "$PREPARED_APP/." "$CREW_APP_SOURCE/"
-printf '%s\n' "$CREW_APP_SOURCE"
+michi update
 ```
 
-在 Crew 打开 **Apps / Discover → Manage app sources → Install from path**，
-填写上面打印的 `CREW_APP_SOURCE` 绝对路径。保留这个目录，后续更新继续使用。
-使用自定义 Michi 安装目录时，也可把固定来源目录放在那份安装下。
+然后到 **Apps / Library → Michi Crew Runtime → Sync**。无需生成或复制；Sync 从同一个 `~/.michi/crew-app` 读取新版，保留 App secret 和数据。Sync 后重新加载 **Developer → MCP Management**；如显示 **command changed**，批准当前新命令。首次从 0.6.0 之前迁移必须重启 Gateway；以后 host、launcher 或 API 变化则按版本说明重启。
 
-### 更新已有 App：使用原来登记的来源目录
+Michi 检查已安装 App 的版本；旧版会显示 **Sync Crew App** 并阻止新的 Crew 工作。Sync 后回到 Michi 刷新。
 
-Crew 的 **Sync** 会重新读取安装时登记的 source，**不能选择新生成的目录**。
-已有同名 App 也不能靠再次 Install 覆盖。
-
-只读取已登记来源路径，不读取凭据：
-
-若在 Michi 的 `.env` 自定义了 `KIROCREW_HOME`，先在此终端 export 同一个绝对路径。
-下面的 Node 命令不会读取 Michi 的 `.env`。
-
-```sh
-node -p 'require(require("node:path").join(process.env.KIROCREW_HOME || require("node:os").homedir() + "/.kiro/crew", "apps/michi-crew-runtime/installed.json")).source'
-```
-
-如果来源是专用的 `~/.michi/crew-app`，或以前 helper 生成的 `michi-crew-app-*`
-临时目录，把本次准备的新文件复制到**该原始路径**：
-
-```sh
-PREPARED_APP="/actual/path/michi-crew-app-..."
-CREW_APP_SOURCE="/exact/source/path/printed/above"
-mkdir -p "$CREW_APP_SOURCE"
-cp -R "$PREPARED_APP/." "$CREW_APP_SOURCE/"
-```
-
-然后打开 Crew 中已有的 **michi-crew-runtime**，点击 **Sync**。
-它会读取更新后的来源，保留 secret 和会话。旧 helper 临时目录若已消失，可以在记录的
-原路径重建；该路径仍属于临时目录，后续 Sync 前需要保留或重新填入文件。
-
-如果 source 指向开发或安装**代码仓库**，不要用生成文件覆盖仓库。
-当前 Crew UI 没有更换 source 的控件，CLI 也没有 `app update` 命令。
-把已有 App 改到新来源需要官方已认证 update API 显式传入 `source`，属于普通接入流程
-之外的高级迁移。安排迁移时保留已有 App 和会话。
-
-### 授予审批权限
-
-查看并同意 **sessionApproval** 权限，确认 App 显示 **Enabled**。
-更新后 App 可能暂时禁用，需要先完成授权。
-
-**sessionApproval** 是一次性接入授权，让 Michi 能接收和答复 Crew 的原生审批请求。
-日常的 **Ask / Trust** 模式在 Michi 选择；授予接入权限本身不代表自动批准所有工具。
-
-`sessionApproval` 是官方的较广权限，也覆盖用户自己创建的 Crew 会话。
-Michi 的适配器只处理自己所属的本机、未链接 App 会话。通过 Michi 控制这些对话，
-避免同时从 Crew 控制同一对话。
-
-### 开启并批准 Michi MCP
-
-1. 打开 **Developer → MCP Management**，找到 `michi-crew-runtime:michi`。
-2. 检查 Node 启动命令，开启 **Stub / Routed**，批准启动。
-3. 核对 Node 参数应是下列路径展开后的绝对路径：
-
-```text
-~/.michi/backend/dist/crewMcp.js
-```
-
-setup 脚本自动生成安装目录中的绝对路径，并记录运行脚本使用的 Node 可执行文件。
-自定义安装目录应使用该目录下的 relay。之后保持这份安装和 Node 路径可用。
-
-### 重启 Gateway
-
-等 Crew 当前任务结束或手动停止后，执行：
-
-```sh
-kirocrew restart
-```
-
-Agent Capabilities 的 **Apply & Restart** 重启聊天 Agent；这里需要重启 **Gateway**，
-让新 Stub 和模板的 broker 路由生效。默认命令会尊重 Crew 配置的端口和 launchd/systemd
-服务管理。只有明确独立运行、未交给服务管理的 Gateway，才用
-`kirocrew restart --port <实际端口>` 指定实例。
-
-缺少必需的授权或 MCP 配置时，Michi 会显示 **Crew setup required** 或接入未完成错误，
-并阻止新任务。补齐本节配置后回到 Michi 重试。
+已运行的 MCP 连接会在下一次请求加载兼容的新 relay handler；进行中的调用保留原来的版本，构建间隙保留最后可用 handler。如果版本改变 host、launcher 或 handler API，仍需要重开会话或重启 Gateway，按版本说明操作。
 
 ## 4. 在 Michi 中使用
 
@@ -223,7 +122,7 @@ Crew 自己的 allowlist、治理策略和全局 YOLO 仍先执行。
 | Crew 不可用 / 无法建会话 | 检查官方 Gateway 正在运行、App 为 Enabled、Node 和 ACP 构建存在；自定义 Gateway 仅支持 loopback。 |
 | MCP 没有 caller identity / 找不到路由 | 确认官方 Stub / Routed 已开启且批准启动；重启 Gateway，新建测试对话。普通 stdio 配置不能替代官方 caller 路由。 |
 | 安装目录没有 Crew 文件或 Runtime | 升级到包含 Crew 支持的安装版；本地开发合并不会自动发布或更新安装版。 |
-| MCP 仍走旧代码 | 按第 3 节检查已有 App 的来源，只从核对后的来源 Sync，再核对 relay 参数。 |
+| MCP 仍走旧代码 | 自定义安装请检查 MICHI_CREW_INSTALL_DIR；旧生成目录按第 8 节刷新来源。 |
 | Ask 不弹审批卡 | 确认 sessionApproval 已同意且 App Enabled；查看 Crew allowlist / 全局 YOLO 是否先自动批准；检查全局权限设置。 |
 | 修改 Memory 后旧对话没有变化 | 已有会话模式固定；改默认值后新建对话。 |
 | 响应慢 | 查看是否选了 Extra high / Max、排队或等待审批；先用短消息和 Medium / High 排查。 |
@@ -243,23 +142,34 @@ MICHI_CREW_MCP_DIR="$HOME/custom-crew-mcp" node backend/scripts/crew-setup.cjs
 
 两处都使用你的实际目录；默认配置无须覆盖。不需要复制 App secret。
 
-## 8. 当前边界与验证范围
+## 8. 旧生成来源和自定义安装
 
-已接入文字 / thinking、原生工具输入输出、模型 / reasoning / 模板、恢复、稳定历史
-fork、Memory、Michi MCP 和 Michi 内审批。
+旧用户保留已登记的来源目录和凭据，不会自动迁移到新默认目录。自定义安装或自定义 MCP binding 目录仍使用兼容 helper，在实际安装或已构建工作树运行：
 
-官方 App 调用者目前**不支持同轮 steer**；忙时发送的消息进入下一轮队列。
-Crew 自动 compact 可用，但没有 Michi 手动 compact 命令。
-没有独立的 Crew 子 Agent 管理界面，适配器未接入图片 / 音频。
-私有 Member 的 Memory 继承还没有真实验收。
+```sh
+node backend/scripts/crew-setup.cjs
+```
 
-历史真实 Gateway 验收在 **2026-10-07 / 0.8.0-insider.14** 完成，涵盖 Memory、
-恢复 / fork、MCP 隔离和 Allow Once / Deny。Trust 两项由受控自动化测试验证。
-2026-10-12 本机 CLI 为 **0.8.0-insider.16**；这次 dev 整合的自动测试和构建结果
-见 [VALIDATION.md](VALIDATION.md)，不等同于对 .16 重跑完整真实验收。
+helper 打印 Prepared App 路径，始终包含 MCP 和审批，并设置明确的 `MICHI_CREW_INSTALL_DIR` / `MICHI_CREW_MCP_DIR`。
 
-更详细的运行原理见 [Runtime README](README.md)，审批语义见 [APPROVALS.md](APPROVALS.md)。
+首次自定义安装，把生成文件复制到专用持久目录，例如 `<自定义安装>/crew-app-prepared`，从它安装。**不要把生成文件覆盖到仓库自带的 crew-app。**
 
-本教程于 2026-10-13 由两个独立 reviewer 对照当前 Michi 源码和官方
-**0.9.0-insider.6** CLI / 源码核查。接入操作和 App 同轮 steer 限制已核实，
-这次事实核查不等同于新做一次干净安装或真实模型验收。
+已有 App 用以下命令读取已登记来源（不读取凭据）；自定义 Crew home 需先 export 相同的 KIROCREW_HOME：
+
+```sh
+node -p 'require(require("node:path").join(process.env.KIROCREW_HOME || require("node:os").homedir() + "/.kiro/crew", "apps/michi-crew-runtime/installed.json")).source'
+```
+
+把新生成文件复制到这个**经过核对的专用生成来源目录**，然后点 Sync。旧临时目录丢失时可以在原路径重建；不要卸载旧 App。若来源是代码 checkout，禁止拿生成文件覆盖它；当前 UI 没有改 source 的入口，迁移需要官方 authenticated update API 显式指定 source，并保留原 App secret 和会话。
+
+## 当前边界和验证范围
+
+已接入文字/thinking、原生工具、模型/reasoning/模板、恢复、历史 fork、Crew Memory、Michi MCP 和审批。官方 App 调用者不支持同轮 steer，忙时消息排到下一轮；自动 compact 可用，但没有 Michi 手动 compact 命令。适配器未接入图片/音频，也没有专用 Crew 子 Agent 管理界面。私有 Member Memory 继承仍未实测。
+
+2026-10-13 使用官方 **0.9.0-insider.6** 验证了 production manifest 的隔离安装/Sync，以及实际安装 App 的 UI Sync。真实模型验证了并发 MCP 隔离、adapter 重启恢复、独立 fork binding 和未绑定会话拒绝。带空格默认 HOME、空 Node PATH、stdio 连接内更新和构建恢复通过实际进程测试。这些实测在 macOS；Windows/Linux 还没有跨平台真实验收。
+
+完整使用细节见 [英文教程](GETTING_STARTED.md)，审批语义见 [APPROVALS.md](APPROVALS.md)。
+
+本次还用官方 broker 在同一真实模型轮次验证了 relay 更新，host 进程未重启；原生审批允许、拒绝、取消及取消后的下一轮通过。Michi 浏览器 UI 中 Allow Once 实际写入预期测试文件，Deny 阻止另一文件生成；隔离旧版配置显示 Sync Crew App，恢复 0.6.0 后恢复 Ask。两种 Trust 按钮有自动化覆盖，本轮未对真实模型逐个手动点击。
+
+默认 `~/.michi` 路径在隔离 HOME 中用官方 Python 和真实 stdio 验证；本机已安装 App 通过自定义工作树兼容配置完成真实 Crew 测试。Windows/Linux 未进行真实平台验收；macOS 安装器和 update 打包链已检查，但未运行会替换用户桌面 App 的安装命令，源码构建及产物单独验证。

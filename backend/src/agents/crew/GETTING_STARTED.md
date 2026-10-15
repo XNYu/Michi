@@ -1,145 +1,70 @@
 # Use KiroCrew in Michi
 
-Updated October 13, 2026. This guide is for an installed Michi application and the official local KiroCrew Gateway. Terminal commands below use macOS/Linux shell syntax.
+Updated October 13, 2026 for Michi Crew App **0.6.0** and official KiroCrew **0.9.0-insider.6**. Terminal examples use macOS/Linux syntax.
 
-KiroCrew supplies the backend. After the one-time setup below, use **Michi** for chats, tool approvals, model selection, Memory settings, resume, and forks. Keep KiroCrew running. **Michi MCP and Approvals are required parts of this integration and are included by default.**
+KiroCrew supplies the backend. After one-time setup, use **Michi** for chats, approvals, model selection, Memory, resume and forks. Keep KiroCrew running. **Michi MCP and sessionApproval are required and included in the App.**
 
-## 1. Check your Michi installation
+## 1. Update your Michi installation
 
-The standard Michi installer uses these locations:
+The standard installer clones and builds Michi in **~/.michi**. On macOS the desktop application is installed in **~/Applications/michi.app**. Crew stores its configuration and Apps in **~/.kiro/crew** by default.
 
-| Location | Purpose |
-| --- | --- |
-| `~/.michi` | Installation checkout, dependencies, and build output. It is also the default location for Michi data and configuration. |
-| `~/Applications/michi.app` | Installed macOS desktop application. |
-| `~/.kiro/crew` | Default KiroCrew home, including installed Crew Apps. |
-
-Michi must include the **Kiro Crew** runtime and the complete setup helper described here (bundled Crew App manifest **0.5.0 or newer**). Official KiroCrew must be installed and signed in. The Michi installer builds Michi for you; you do not need a separate development checkout or a preview server.
-
-These paths describe an installer-based installation. If you installed only a standalone desktop bundle, a `~/.michi` data directory alone does not contain the setup helper or App manifest; obtain the matching installer/setup resources for that release first.
-
-In a terminal, check the default installation:
-
-```sh
-cd "$HOME/.michi"
-node --version
-kirocrew --version
-node -p 'require("./backend/src/agents/crew/app/app.json").version'
-ls backend/scripts/crew-setup.cjs \
-   backend/src/agents/crew/app/app.json \
-   backend/dist/crewAcp.js \
-   backend/dist/crewMcp.js
-```
-
-Use Node.js **22.19 or newer**. If you installed Michi in a different directory, use that installation directory instead of `~/.michi` throughout this guide. The setup script resolves paths from its own installation, so custom directories work too.
-
-If these Crew files or the runtime are missing, update to a Michi version that includes Crew support using the normal update command:
+Use a Michi release containing Crew App **0.6.0 or newer**. Update through the normal command:
 
 ```sh
 michi update
 ```
 
-On macOS, this rebuilds and replaces the desktop app and quits the running Michi app. Reopen it after the update. A change made only in a developer checkout is not an update to the installed app, and is not available through the installer until it has been published.
+On macOS the update rebuilds/replaces the application and quits Michi; reopen it afterward. A local development commit becomes available to other installer users only after it is published to the installer's source branch.
 
-## 2. Prepare the Michi App
+A default installation already contains the complete **~/.michi/crew-app** directory. **Do not run crew-setup.cjs or copy App files for a new default installation.** A data directory from a standalone desktop bundle alone is not an installation checkout: it must contain `crew-app/launch.py`, `backend/dist/crewMcpHost.js`, `backend/dist/crewMcp.js` and `backend/dist/crew-node.json`.
 
-Start the official KiroCrew application. Its default local Gateway address is `http://127.0.0.1:5476`.
+## 2. Install the App directly in Crew
 
-Michi connects through a Crew App named **michi-crew-runtime**. Run this command from the installed Michi directory:
+Start the official KiroCrew application and sign in. The default local Gateway is `http://127.0.0.1:5476`.
 
-```sh
-cd "$HOME/.michi"
-node backend/scripts/crew-setup.cjs
-```
+In Crew, open **Apps / Discover → Manage app sources → Install from path**. Enter the **absolute path** to your installation's `crew-app` directory:
 
-The helper always prepares **both Michi MCP and Approvals**. There are no feature flags to choose. It prints a line such as:
+| Platform | Example path; replace the username |
+| --- | --- |
+| macOS | `/Users/yourname/.michi/crew-app` |
+| Linux | `/home/yourname/.michi/crew-app` |
+| Windows | `C:\Users\yourname\.michi\crew-app` |
 
-```text
-Prepared App: /.../michi-crew-app-...
-```
+Do not enter a literal `$HOME`, `${HOME}` or `~` unless Crew's path field explicitly expands it. If needed, print your macOS/Linux path with `printf '%s\n' "$HOME/.michi/crew-app"`.
 
-Use the **actual directory printed on your machine** in the next step. The helper prepares the App files; KiroCrew records installation, permissions, and launch approval through its official setup flow.
+Crew records this directory as the App's source. Keep the installation at that location. The App is named **michi-crew-runtime** and includes the **michi-crew** agent template, Michi MCP and approvals.
 
-The prepared directory is temporary. The next section copies its files into a reusable App source directory. After updating Michi, rerun the helper and copy the new files into the **same registered source** before using Sync.
+For a custom installation, custom MCP binding directory, source worktree, or an App previously installed from a generated directory, use the compatibility instructions in section 9. Do not install a second App with the same name or uninstall the existing one to update it.
 
-## 3. Complete one-time setup in KiroCrew
+## 3. Complete one-time authorization and keep the App updated
 
-All steps in this section are required. These are backend setup actions; once complete, daily chats and approvals take place in Michi.
+### Grant sessionApproval
 
-### First installation: keep a persistent App source
+Review the **sessionApproval** disclosure, consent, and confirm the App is **Enabled**. This allows Michi to receive and answer Crew's native pending tool requests. It does not automatically approve every tool; choose **Ask / Trust in Michi**.
 
-Replace the placeholder below with the **actual Prepared App directory** printed by the helper, then copy it into a persistent source directory:
+The official grant also covers user-owned Crew chats. Michi's adapter restricts its access to its own local, unlinked App sessions. Avoid controlling the same session concurrently from Crew and Michi.
 
-```sh
-PREPARED_APP="/actual/path/michi-crew-app-..."
-CREW_APP_SOURCE="$HOME/.michi/crew-app"
-mkdir -p "$CREW_APP_SOURCE"
-cp -R "$PREPARED_APP/." "$CREW_APP_SOURCE/"
-printf '%s\n' "$CREW_APP_SOURCE"
-```
+### Enable Michi MCP through the official broker
 
-In KiroCrew, open **Apps / Discover → Manage app sources → Install from path** and enter the absolute `CREW_APP_SOURCE` path printed by the command above. Keep this directory for future updates. For a custom Michi installation, you may keep the source under that installation instead.
-
-### Updating an existing App: reuse its registered source
-
-Crew's **Sync** rereads the source recorded at installation. It does **not** let you choose a newly generated directory. Reinstalling an existing App with the same name is also refused.
-
-To read the registered source without reading any credentials:
-
-If `KIROCREW_HOME` is customized in Michi's `.env`, export that same absolute path
-in this terminal first. This Node command does not read Michi's `.env`.
-
-```sh
-node -p 'require(require("node:path").join(process.env.KIROCREW_HOME || require("node:os").homedir() + "/.kiro/crew", "apps/michi-crew-runtime/installed.json")).source'
-```
-
-If it is the dedicated `~/.michi/crew-app` directory, or an earlier helper's `michi-crew-app-*` temporary directory, copy the newly prepared App files into **that exact source**:
-
-```sh
-PREPARED_APP="/actual/path/michi-crew-app-..."
-CREW_APP_SOURCE="/exact/source/path/printed/above"
-mkdir -p "$CREW_APP_SOURCE"
-cp -R "$PREPARED_APP/." "$CREW_APP_SOURCE/"
-```
-
-Then open the existing **michi-crew-runtime** App in Crew and click **Sync**. This uses the updated source and preserves its secret and sessions. A missing old helper directory can be recreated at the recorded path; it remains a temporary location, so retain or refill it before later Syncs.
-
-If the recorded source points into a development or installation **code checkout**, do not overwrite that checkout with generated files. The current Crew UI has no change-source control, and its CLI has no `app update` command. Changing an existing App to a different source requires Crew's authenticated update API with an explicit `source`; that advanced migration is outside this ordinary setup flow. Preserve the existing App and sessions while arranging that migration.
-
-### Grant approval access
-
-Review and consent to the App's **sessionApproval** permission, then confirm it shows **Enabled**. An updated App may remain disabled until consent is given.
-
-**sessionApproval** is the one-time permission that lets Michi receive and answer
-Crew's native approval requests. Your day-to-day **Ask / Trust** choice is made in
-Michi; granting this integration permission does not automatically approve every tool.
-
-This official permission also covers user-owned Crew chats. Michi restricts its adapter to its own local, unlinked App sessions. Use Michi to control those chats and avoid concurrent control of the same chat from Crew.
-
-### Enable and approve Michi MCP
-
-1. Open **Developer → MCP Management** in Crew.
+1. Open **Developer → MCP Management** in Crew. If Developer is hidden, enable **Settings → Developer → Developer Mode** first.
 2. Find **michi-crew-runtime:michi**.
-3. Review the Node command and arguments, enable **Stub / Routed**, and approve the launch.
-4. Confirm that the relay argument is the absolute path expanded from:
+3. Enable **Stub / Routed**, inspect the launch and approve it. After Sync, reload this page: **command changed** means the new Python launch still needs approval. A saved Stub opt-in alone does not prove the new command is approved.
+4. The manifest names `python`. Crew resolves this to its own Python interpreter. The launcher starts Michi's MCP host using a supported Node recorded by the Michi build; it does not depend on the GUI's Node PATH. Node must be **22.19 or newer**. The default installation is resolved inside the launcher as `~/.michi`; Crew does not need to substitute placeholders in command arguments.
+5. After first installation, or migration from an App older than **0.6.0**, restart the **Gateway** so the new template, broker route and Python host launch replace cached entries. Finish or stop active Crew work first. Use `kirocrew restart` for the default service-managed Gateway. **Apply & Restart** in Agent Capabilities only restarts chat agents. This one-time restart is required even if Sync does not display a restart prompt.
 
-```text
-~/.michi/backend/dist/crewMcp.js
-```
+After this setup, all daily chats and approvals take place in Michi.
 
-The helper generates this absolute path automatically, along with the Node executable you used to run it. For a custom installation, the relay path must point into that installation. Keep the installation and the selected Node executable available.
-
-### Restart the Gateway
-
-After active Crew tasks finish or have been stopped, run:
+### Later updates: Michi update, then Crew Sync
 
 ```sh
-kirocrew restart
+michi update
 ```
 
-The default command respects Crew’s configured port and launchd/systemd service management. Only for a Gateway you deliberately run independently of those services, use `kirocrew restart --port <your-port>` to target that instance. **Apply & Restart** in Agent Capabilities restarts chat agents; a **Gateway** restart activates newly configured Stub routes and generates the broker route for a newly added template.
+Then open **Apps / Library → Michi Crew Runtime → Sync** in Crew. Sync rereads the recorded `~/.michi/crew-app` source, updates its manifest/template, and preserves the App secret and App data. No App generation or copying is needed for default installations. After Sync, reload **Developer → MCP Management** and approve the new command if it reports **command changed**. The first migration from an App older than **0.6.0** also requires a Gateway restart; later host/launcher/API changes may require another restart, as described by the release.
 
-If required consent or MCP configuration is missing, Michi reports **Crew setup required** or an incomplete-setup error and blocks new work. Complete the steps above, then return to Michi and retry.
+Michi checks the installed App version and displays **Sync Crew App** when it is older than the version included in Michi. It blocks new Crew work until the App is updated; return to Michi after Sync to refresh the check.
+
+Already-running MCP connections load updated compatible relay handlers on subsequent requests. In-flight calls finish with the generation they started with. A rebuild gap retains the last working handlers. A change to the host/launcher or handler API still requires a new MCP process; reopen the Crew session or restart its Gateway when the release requests it.
 
 ## 4. Open Michi and create a Crew chat
 
@@ -214,10 +139,10 @@ Buttons are neutral gray until hover/focus. There are no dedicated approval shor
 | Symptom | What to check |
 | --- | --- |
 | Crew runtime or setup files are missing | The installed Michi version must include Crew support. Update the installed application; a local development merge alone is insufficient. |
-| Crew setup required | Run the helper, update the App, complete sessionApproval consent, enable and approve Stub / Routed, then restart the Gateway. |
+| Crew setup required | Install or Sync the complete App, complete sessionApproval consent, and enable/approve Stub / Routed. Restart the Gateway if Crew requests it. |
 | Crew is unavailable or a chat cannot start | Run the official Gateway, confirm the App is Enabled, and check the Node executable and ACP build. Custom Gateway URLs must remain loopback addresses. |
-| MCP reports missing caller identity | Enable and approve the official Stub / Routed entry, restart the Gateway, and send a new turn from Michi. A plain stdio entry cannot replace the official broker route. |
-| MCP uses an old worktree | Follow the existing-App source checks in section 3, Sync from the verified source, and check the relay argument. |
+| MCP reports missing caller identity | Reload Developer → MCP Management after Sync and resolve command changed by approving the current launch. Confirm Stub / Routed, restart the Gateway, then send a new turn from Michi. A saved Stub opt-in can coexist with an unapproved launch; direct stdio cannot replace the broker route. |
+| MCP uses an old worktree | Check MICHI_CREW_INSTALL_DIR for a custom installation and refresh the registered source described in section 9. |
 | Ask does not show a card | Check sessionApproval consent, App enablement, global/per-chat permissions, and Crew's allowlist/global YOLO. |
 | Changing Memory does not affect an existing chat | The mode is fixed after creation. Change the default, then start a new chat. |
 | Responses are slow | Check reasoning level, queued work, and pending approvals. Try a short message with Medium / High reasoning. |
@@ -230,12 +155,43 @@ MICHI_CREW_MCP_DIR="$HOME/custom-crew-mcp" node backend/scripts/crew-setup.cjs
 
 Use your actual directory in both places. Defaults need no override.
 
-## Current limits
+## 9. Existing generated sources and custom installations
 
-The integration supports text/thinking, native tool input/output, model/reasoning/template selection, resume, historical forks, native Memory, Michi MCP, and approvals in Michi.
+Existing users keep their registered App source and credentials. Their source does not automatically move to the new default directory. A custom Michi installation also needs an explicit installation path in the App environment.
 
-Official App callers cannot use **same-turn steer**; messages sent while busy are queued for the next turn. Crew can compact automatically, but Michi has no manual Crew compact command. There is no dedicated Crew subagent management interface, and the adapter does not support image/audio attachments. Private Member Memory inheritance has not been verified in a real private Member session.
+From your actual Michi installation or built source checkout, run:
 
-Real Gateway acceptance was performed with **0.8.0-insider.14** on October 7, 2026, including Memory, resume/fork, MCP isolation, Allow Once, and Deny. The two Trust choices have controlled automated coverage. The October 12 integration checks do not constitute a fresh complete real-provider run against **0.8.0-insider.16**.
+```sh
+node backend/scripts/crew-setup.cjs
+```
 
-The tutorial was independently checked against current Michi source and the installed official **0.9.0-insider.6** CLI/source on October 13, 2026. This confirmed the documented setup contracts and current App steer restriction; it was not a new clean-install or real-provider acceptance run.
+The helper prints **Prepared App: /actual/path/michi-crew-app-...** and always includes both capabilities. It sets `MICHI_CREW_INSTALL_DIR` to that checkout and `MICHI_CREW_MCP_DIR` to the binding directory. It prepares files without granting authorization.
+
+For a first custom installation, copy the prepared files into a dedicated persistent App source, such as `<custom-install>/crew-app-prepared`, then install from that absolute path. **Do not copy generated files over the repository's canonical crew-app directory.**
+
+For an existing App, read its registered source without reading credentials:
+
+```sh
+node -p 'require(require("node:path").join(process.env.KIROCREW_HOME || require("node:os").homedir() + "/.kiro/crew", "apps/michi-crew-runtime/installed.json")).source'
+```
+
+If Crew uses a custom home, export the same `KIROCREW_HOME` first. Copy the prepared files into the **exact dedicated generated source** recorded there, then click **Sync**. A missing old temporary source can be recreated at that same path. Preserve the App; do not uninstall. Crew's current UI does not offer a change-source control.
+
+Example, after replacing both placeholders with the actual paths:
+
+```sh
+PREPARED_APP="/actual/path/michi-crew-app-..."
+CREW_APP_SOURCE="/exact/registered/generated/source"
+mkdir -p "$CREW_APP_SOURCE"
+cp -R "$PREPARED_APP/." "$CREW_APP_SOURCE/"
+```
+
+If the registered source points into a code checkout, do not overwrite it with generated files. Source migration uses Crew's authenticated update API with an explicit source; arrange that migration while preserving the existing secret and sessions.
+
+## Current limits and verification scope
+
+Text/thinking, native tool results, model/reasoning/template selection, resume, historical forks, Crew Memory, Michi MCP and approvals in Michi are implemented. Official App callers cannot use **same-turn steer**; busy messages queue for the next turn. Crew compacts automatically, but Michi has no manual Crew compact command or dedicated Crew subagent manager. The adapter does not support image/audio attachments. Private Member Memory inheritance remains unverified.
+
+On October 13, 2026, the production manifest passed official **0.9.0-insider.6** parser/install/Sync checks in an isolated home. The actual installed App was updated through Crew's **Sync** UI. Real model calls verified concurrent MCP isolation, adapter restart/resume, independent fork bindings and refusal for unbound sessions. Default-path startup with spaces and an empty Node PATH, plus same-connection handler updates and rebuild recovery, passed real stdio transport tests. The official broker also loaded a new relay generation during the same real model turn while retaining its host process, then recovered the original generation. Native approval allow/reject/cancel and a clean successor turn passed against an isolated official Gateway. In the actual Michi browser UI, Allow Once wrote the expected test file and Deny prevented a separate file from being created. An isolated old App version displayed Sync Crew App, and returning to 0.6.0 restored Ask. Trust button semantics have automated coverage; these two Trust choices were not manually exercised against a real model in this acceptance run.
+
+The exact default `~/.michi` path was tested in an isolated HOME with the official Python and real stdio transport. This machine's installed App uses the custom-worktree compatibility environment, so the real Crew routing tests use that environment. These are macOS checks; Windows/Linux launcher compatibility is designed but has not received live acceptance on those platforms. The macOS installer/update packaging itself was inspected, not run during acceptance, because it replaces the user's desktop app. The source/build integration and all required artifacts were verified separately.
