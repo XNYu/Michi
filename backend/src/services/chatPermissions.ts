@@ -45,6 +45,9 @@ export function writeNodePermissionMode(nodeId: string, mode: ChatPermissionMode
   if (process.env.MICHI_CLOUD === '1' && (!userId || getWorkspace(node.workspace_id)?.owner_user_id !== userId)) {
     throw new Error('Chat not found');
   }
+  // Follow-ups already have a durable choice. Even an UPDATE matching zero
+  // rows takes SQLite's writer lock, so avoid it during ordinary session setup.
+  if (initialOnly && node.permission_mode != null) return;
   getDb().prepare(`UPDATE nodes SET permission_mode = ? WHERE id = ?${initialOnly ? ' AND permission_mode IS NULL' : ''}`).run(mode, nodeId);
   if (mode === 'ask' && !initialOnly) getDb().prepare('DELETE FROM chat_permission_grants WHERE node_id = ?').run(nodeId);
 }

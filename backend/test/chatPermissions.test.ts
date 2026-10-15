@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { closeDb, initDb } from '../src/services/db';
+import { closeDb, getDb, initDb } from '../src/services/db';
 import { saveNode, saveWorkspace, getNode } from '../src/services/dbRepository';
 import * as prefsConfig from '../src/services/prefsConfig';
 import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode, grantChatTool, hasChatToolGrant } from '../src/services/chatPermissions';
@@ -62,6 +62,19 @@ test('first-prompt choice cannot overwrite an existing durable choice on resume'
   // Delayed graph snapshots omit the server-owned permission column.
   saveNode({ id: 'a', workspace_id: 'ws', kind: 'chat', status: 'idle', minimized: 0, spawned_by_agent: 0, created_at: 1, permission_mode: 'yolo' });
   assert.equal(getNode('a')?.permission_mode, 'ask');
+});
+
+test('resuming an initialized permission choice does not acquire a writer lock', (t) => {
+  writeNodePermissionMode('a', 'trust', null, true);
+  const db = getDb();
+  const prepare = db.prepare.bind(db);
+  t.mock.method(db, 'prepare', (sql: string) => {
+    assert.doesNotMatch(sql, /UPDATE nodes SET permission_mode/);
+    return prepare(sql);
+  });
+
+  writeNodePermissionMode('a', 'yolo', null, true);
+  assert.equal(getNode('a')?.permission_mode, 'trust');
 });
 
 test('always-allow grants stay in one chat and returning to Ask revokes them', () => {
