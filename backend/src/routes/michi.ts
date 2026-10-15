@@ -51,6 +51,7 @@ import {
     normalizeResumeSignature,
     normalizeReasoning,
     normalizeSignaturePart,
+    signaturesEqual,
     type ResumeSignature,
     type ResumeStrategy,
     type TranscriptMessage,
@@ -245,6 +246,7 @@ async function persistResumeBinding(
     session: AgentSession,
     signature: ResumeSignature,
     fingerprint: string | null,
+    skipUnchanged = false,
 ): Promise<void> {
     const fields = {
         nodeId,
@@ -257,6 +259,22 @@ async function persistResumeBinding(
         resume_fingerprint: fingerprint ?? null,
         current_mode_id: session.currentModeId ?? null,
     };
+    const row = skipUnchanged ? getNode(nodeId) : null;
+    const externalSessionId = (fields.runtime_id === 'codex' || fields.runtime_id === 'claude')
+        && fields.acp_session_id !== nodeId ? fields.acp_session_id : null;
+    const runtimeEngine = fields.runtime_id === 'kiro' ? fields.runtime_engine ?? 'v2' : null;
+    // A committed live binding needs no new write. Avoid waiting behind unrelated
+    // worker writes on every follow-up; new/changed bindings still await commit.
+    if (row
+        && row.acp_session_id === fields.acp_session_id
+        && (row.external_session_id ?? null) === externalSessionId
+        && row.runtime_id === fields.runtime_id
+        && (row.runtime_engine ?? null) === runtimeEngine
+        && (row.provider_id ?? null) === fields.provider_id
+        && (row.model_id ?? null) === fields.model_id
+        && (row.reasoning ?? null) === fields.reasoning
+        && (row.resume_fingerprint ?? null) === fields.resume_fingerprint
+        && (fields.current_mode_id === null || row.current_mode_id === fields.current_mode_id)) return;
     if (isDbWorkerReady()) {
         // The next ensure-session may arrive immediately after cancel. It must
         // observe this binding rather than manufacture another fresh session.
@@ -1241,6 +1259,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!runtime) {
                 return res.status(500).json({ error: `Unknown agent runtime: ${runtimeId}` });
             }
+            const persistedBinding = nativeResumeId(runtimeId, row);
+            const liveSession = sessionRegistry.getSessionForOwner(nodeId, { kind: 'chat_node', nodeId }, req.user?.id ?? null)
+                ?? (existingChatId ? sessionRegistry.getSessionForOwner(existingChatId, { kind: 'chat_node', nodeId }, req.user?.id ?? null) : undefined);
             const targetSignature: ResumeSignature = primaryProfile
                 ? {
                     runtimeId,
@@ -1274,19 +1295,27 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 }
                 const requestedReasoning = body.reasoning !== undefined
                     ? normalizeReasoning(body.reasoning) : targetSignature.reasoning;
-                const effort = await getModelReasoningOptions(runtime, targetSignature.modelId, targetSignature.providerId, requestedReasoning);
-                targetSignature.modelId = effort.modelId ?? targetSignature.modelId;
-                targetSignature.reasoning = effort.value ?? null;
+                targetSignature.reasoning = requestedReasoning;
+                // The live session already validated these settings when it was
+                // bound. Ordinary follow-ups must not wait on catalog discovery
+                // (which can start another CLI session) before sending a prompt.
+                const settingsAlreadyValidated = !!boundSignature && !!liveSession && !!persistedBinding
+                    && liveSession.runtimeId === runtimeId
+                    && (liveSession.nativeSessionId ?? liveSession.id) === persistedBinding
+                    && (liveSession.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null)
+                    && (liveSession.currentModelId ?? null) === targetSignature.modelId
+                    && signaturesEqual(boundSignature, targetSignature);
+                if (!settingsAlreadyValidated) {
+                    const effort = await getModelReasoningOptions(runtime, targetSignature.modelId, targetSignature.providerId, requestedReasoning);
+                    targetSignature.modelId = effort.modelId ?? targetSignature.modelId;
+                    targetSignature.reasoning = effort.value ?? null;
+                }
             }
-            const transcript = readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
-            const persistedBinding = nativeResumeId(runtimeId, row);
             const legacyBinding = existingChatId
                 ? getNodeSessionBinding(existingChatId, michiUserId)
                 : null;
             const hasResumeBinding = !!persistedBinding || legacyBinding?.nodeId === nodeId;
             const existingSignature = boundSignature ?? readExistingSignature(row, body, nodeId);
-            const liveSession = sessionRegistry.getSessionForOwner(nodeId, { kind: 'chat_node', nodeId }, req.user?.id ?? null)
-                ?? (existingChatId ? sessionRegistry.getSessionForOwner(existingChatId, { kind: 'chat_node', nodeId }, req.user?.id ?? null) : undefined);
             const nativeResumeAvailable =
                 runtime.capabilities.nativeResume &&
                 typeof runtime.loadSession === "function" &&
@@ -1336,6 +1365,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 }
             }
 
+            // History is only needed for a fresh/fallback reconstruction. Live
+            // and exact continuations already retain the runtime's conversation.
+            const transcript = session ? [] : readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
             if (!session && !hasResumeBinding && transcript.length === 0) {
                 session = await tryForkChatSession(runtime, {
                     cwd, parentChatId, mergeContexts, extraContexts, contextManifest, enableFollowUps,
@@ -1435,7 +1467,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             }
 
             try {
-                await persistResumeBinding(nodeId, session, targetSignature, null);
+                await persistResumeBinding(nodeId, session, targetSignature, null, session === liveSession);
             } catch (error) {
                 // Do not let a subsequent ensure reuse an uncommitted replacement.
                 if (session !== liveSession) await retireLiveSession(session);

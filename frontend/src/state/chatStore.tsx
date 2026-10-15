@@ -587,8 +587,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // invokes it immediately.
   const pendingCancels = useRef<Set<string>>(new Set());
   const assistantTextBufs = useRef<Record<string, string>>({});
-  /** Tracks chatIds that have been bound to the current backend process
-   *  (via ensureSession). Reset on app restart (ref starts empty). */
+  /** Nodes ensured in this renderer. Follow-ups still validate with the backend,
+   *  but can use its durable history instead of uploading the transcript again. */
   const boundSessionsRef = useRef<Set<string>>(new Set());
   const backgroundTransportRef = useRef<Map<string, ReturnType<typeof createBackgroundTurnTransport>>>(new Map());
   // Direct replay streams installed after a renderer reload. Kept separate
@@ -1379,12 +1379,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       startupMarkOnce('first_message_send', { nodeId, textLen: text.length });
       const n = nodesRef.current[nodeId];
       if (!n) return;
-      const priorMessagesForResume = n.messages
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({
-          role: m.role,
-          text: visibleMessageText(m),
-        }));
+      const priorMessagesForResume = n.chatId && boundSessionsRef.current.has(nodeId)
+        ? undefined
+        : n.messages
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({
+            role: m.role,
+            text: visibleMessageText(m),
+          }));
 
       // Create assistant message synchronously first so status flips to 'streaming'
       // immediately, blocking concurrent submits on the same node.

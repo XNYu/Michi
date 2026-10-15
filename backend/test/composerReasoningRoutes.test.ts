@@ -13,6 +13,8 @@ import { getAgentConfig, loadAgentConfig, updateAgentConfig } from '../src/servi
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions } from '../src/agents/sessionRegistry';
 import { getModelReasoningOptions } from '../src/agents/modelReasoning';
+import * as dbRepository from '../src/services/dbRepository';
+import * as dbWorkerClient from '../src/services/dbWorkerClient';
 import type { AgentRuntimeWithProviders, ModelInfo, NewAgentSessionOptions } from '../src/agents/types';
 
 let directory: string;
@@ -27,7 +29,7 @@ const models: ModelInfo[] = [
   { id: 'fixed', supportedReasoningLevels: ['high'] },
   { id: 'instant', supportsReasoning: false, supportedReasoningLevels: [] },
 ];
-const runtime: AgentRuntimeWithProviders = {
+const runtime: AgentRuntimeWithProviders & { listModels(): Promise<ModelInfo[]> } = {
   id: 'composer-test', label: 'Composer Test',
   capabilities: { modes: false, permissions: false, models: true, providerModels: true, reasoning: true,
     supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'], apiKeys: true,
@@ -92,6 +94,68 @@ test('unsupported models clear effort in the session and durable binding', async
   assert.equal(result.body.reasoning, null);
   const row = getDb().prepare('SELECT reasoning FROM nodes WHERE id=?').get('node') as { reasoning: string | null };
   assert.equal(row.reasoning, null);
+});
+
+test('unchanged live follow-ups do not wait on catalogs, history, or redundant binding writes', async (t) => {
+  const first = await post('/nodes/node/ensure-session', {
+    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'max',
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.reasoning, 'low');
+  const unavailable = async () => { throw new Error('catalog unavailable'); };
+  const providers = t.mock.method(runtime, 'listProviders', unavailable);
+  const catalog = t.mock.method(runtime, 'listModels', unavailable);
+  const history = t.mock.method(dbRepository, 'listMessages', () => { throw new Error('history must remain lazy'); });
+  t.mock.method(dbWorkerClient, 'isDbWorkerReady', () => true);
+  const persistence = t.mock.method(dbWorkerClient.dbWorker, 'persistResumeBinding', async () => { throw new Error('worker busy'); });
+
+  const followUp = await post('/nodes/node/ensure-session', {
+    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'low',
+  });
+  assert.equal(followUp.status, 200, JSON.stringify(followUp.body));
+  assert.equal(followUp.body.resumeStrategy, 'live');
+  assert.equal(followUp.body.reasoning, 'low');
+  assert.equal(captured.length, 1);
+  for (const operation of [providers, catalog, history, persistence]) {
+    assert.equal(operation.mock.callCount(), 0);
+  }
+});
+
+test('changing live settings still validates the selected model and effort', async (t) => {
+  await post('/nodes/node/ensure-session', {
+    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'flexible', reasoning: 'high',
+  });
+  const catalog = t.mock.method(runtime, 'listModels', async () => models);
+  const changed = await post('/nodes/node/ensure-session', {
+    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'max',
+  });
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+  assert.equal(changed.body.modelId, 'limited');
+  assert.equal(changed.body.reasoning, 'low');
+  assert.equal(catalog.mock.callCount(), 1);
+  assert.equal(captured.at(-1)?.reasoning, 'low');
+});
+
+test('a cold fallback restores durable history when the renderer omits its transcript', async (t) => {
+  await post('/nodes/node/ensure-session', {
+    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'low',
+  });
+  getDb().prepare(`INSERT INTO messages (id,node_id,role,content,seq,created_at)
+    VALUES ('prior-user','node','user','Remember the original decision',0,1),
+           ('prior-answer','node','assistant','The decision was to keep SQLite',1,1)`).run();
+  clearAllSessions();
+  const catalog = t.mock.method(runtime, 'listModels', async () => models);
+
+  const restored = await post('/nodes/node/ensure-session', {
+    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'low',
+  });
+
+  assert.equal(restored.status, 200, JSON.stringify(restored.body));
+  assert.equal(restored.body.resumeStrategy, 'compatible');
+  assert.equal(catalog.mock.callCount(), 1);
+  assert.equal(captured.length, 2);
+  assert.match(captured[1].mergeContexts?.join('\n') ?? '', /Remember the original decision/);
+  assert.match(captured[1].mergeContexts?.join('\n') ?? '', /The decision was to keep SQLite/);
 });
 
 test('provider opt-out hides effort even for a reasoning-capable model', async () => {

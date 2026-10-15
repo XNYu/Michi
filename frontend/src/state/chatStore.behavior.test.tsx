@@ -223,6 +223,47 @@ describe('auto-branch behavior (real provider)', () => {
     await waitFor(() => expect(result.current.nodes[rootId].status).toBe('streaming'));
   });
 
+  it('validates follow-ups without uploading the already-bound transcript again', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test', undefined); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    await act(async () => { result.current.store.sendMessage(nodeId, 'first prompt'); });
+    expect(mockEnsureSession.mock.calls[0][0].priorMessages).toEqual([]);
+    act(() => {
+      const handlers = mockStreamMessage.mock.calls[0][2] as api.StreamHandlers;
+      handlers.onChunk?.('first answer');
+      handlers.onDone?.();
+    });
+
+    await act(async () => { result.current.store.sendMessage(nodeId, 'follow-up'); });
+
+    expect(mockEnsureSession).toHaveBeenCalledTimes(2);
+    expect(mockEnsureSession.mock.calls[1][0].priorMessages).toBeUndefined();
+    expect(mockEnsureSession.mock.calls[1][0].nodeId).toBe(nodeId);
+    expect(mockStreamMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains recovery history after a stream failure', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test', undefined); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    await act(async () => { result.current.store.sendMessage(nodeId, 'remember this'); });
+    act(() => {
+      const handlers = mockStreamMessage.mock.calls[0][2] as api.StreamHandlers;
+      handlers.onChunk?.('partial answer');
+      handlers.onError?.('runtime disconnected');
+    });
+
+    await act(async () => { result.current.store.sendMessage(nodeId, 'retry'); });
+
+    expect(mockEnsureSession.mock.calls[1][0].priorMessages).toEqual([
+      { role: 'user', text: 'remember this' },
+      { role: 'assistant', text: 'partial answer' },
+    ]);
+  });
+
   it.each([
     ['resolve', 'setup'],
     ['reject', 'setup'],
