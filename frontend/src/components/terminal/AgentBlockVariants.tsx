@@ -284,7 +284,13 @@ function CardPayload({ t }: { t: ToolCallState }) {
   );
 }
 
-function CardToolRow({ t }: { t: ToolCallState }) {
+/**
+ * `standalone` marks a row rendered as the whole card (single-tool group).
+ * Its title then matches the other card headers (Worked for…, N tools) in
+ * size and weight instead of the smaller in-list row style.
+ */
+function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?: boolean }) {
+  const titleSize = standalone ? 'var(--fs-md)' : 'var(--fs-sm)';
   const failed = isFailedStatus(t.status);
   const running = isRunningStatus(t.status);
   const hasPayload = !!(t.inputJson || t.output);
@@ -324,7 +330,8 @@ function CardToolRow({ t }: { t: ToolCallState }) {
             <span
               style={{
                 display: 'block',
-                fontSize: 'var(--fs-sm)',
+                fontSize: titleSize,
+                ...(standalone ? { fontWeight: 500 } : null),
                 lineHeight: '16px',
                 color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
                 overflowWrap: 'anywhere',
@@ -354,7 +361,7 @@ function CardToolRow({ t }: { t: ToolCallState }) {
             {/* No purpose — use current single-line layout: Name + detail */}
             <span
               style={{
-                fontSize: 'var(--fs-sm)',
+                fontSize: titleSize,
                 fontWeight: 500,
                 color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
                 flexShrink: 0,
@@ -504,7 +511,7 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
     return (
       <div style={container}>
         <div style={{ border: CARD_BORDER, background: 'var(--term-surface)', overflow: 'hidden' }}>
-          <CardToolRow t={normal[0]} />
+          <CardToolRow t={normal[0]} standalone />
         </div>
       </div>
     );
@@ -624,7 +631,7 @@ function CollapsedCardRow({
       }}
     >
       {running ? <CardSpinner /> : <ToolTypeIcon kind="bash" color="var(--term-muted)" />}
-      <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {summarizeToolsBase(tools)}
         {failed > 0 && (
           <span style={{ color: 'var(--term-danger)' }}>
