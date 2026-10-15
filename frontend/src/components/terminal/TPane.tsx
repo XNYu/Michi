@@ -26,6 +26,7 @@ import { executeChatCommand } from '../../services/api/sessions';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
 import { useRuntimeCatalog } from '../../hooks/useRuntimeCatalog';
 import { resolveNodeBinding, type PendingNodeBindingOverride } from '../../state/nodeBindingResolution';
+import type { SendBindingMeta } from '../../state/chatTypes';
 import UploadProgressBar, { type UploadProgressViewState } from '../UploadProgressBar';
 import PermissionBanner from './PermissionBanner';
 import MergeBanner from './MergeBanner';
@@ -459,6 +460,20 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride,
     catalogProviders.length > 0 ? catalogProviders : undefined);
   const composerEffort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, catalogProviders);
+  // Snapshot the composer's runtime/model/effort for a send or retry, and
+  // clear the pending chip override that this call consumes.
+  const consumeBindingMeta = (): SendBindingMeta => {
+    if (pendingBindingOverride) setPendingBindingOverride(null);
+    return {
+      runtimeId: resolvedBinding.runtime || undefined,
+      providerId: resolvedBinding.provider || undefined,
+      modelId: resolvedBinding.model || undefined,
+      reasoning: composerEffort.known ? composerEffort.value ?? null : resolvedBinding.reasoning,
+    };
+  };
+  // Memoized message-list callbacks read the latest binding through this ref.
+  const consumeBindingMetaRef = useRef(consumeBindingMeta);
+  consumeBindingMetaRef.current = consumeBindingMeta;
   // NB: do NOT call this `pending` — `onSubmit` already has a local
   // `const pending = n.pendingComments ?? []`.
   const [pendingAttachments, setPendingAttachments] = useState<PanePendingAttachment[]>([]);
@@ -1654,7 +1669,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   }, [focusPane, mentionContexts, openArtifactPane]);
 
   const handleRetryTurn = useCallback((userIdx: number) => {
-    retryLastTurn(nodeId, userIdx);
+    retryLastTurn(nodeId, userIdx, consumeBindingMetaRef.current());
   }, [nodeId, retryLastTurn]);
 
   const handleEditUserMessage = useCallback((text: string) => {
@@ -1945,14 +1960,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         : undefined,
       // Per-node runtime binding: pass resolved binding to ensureSession
       // so it uses the right runtime/model/effort instead of the global config.
-      runtimeId: resolvedBinding.runtime || undefined,
-      providerId: resolvedBinding.provider || undefined,
-      modelId: resolvedBinding.model || undefined,
-      reasoning: composerEffort.known ? composerEffort.value ?? null : resolvedBinding.reasoning,
+      ...consumeBindingMeta(),
     };
-
-    // Clear the pending override — it's been consumed by this send.
-    if (pendingBindingOverride) setPendingBindingOverride(null);
 
     // Comment-only sends do not branch: branching semantics tie to the user's
     // current turn, and flushing pending reply-to-selection comments is the
@@ -2326,7 +2335,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             onBranch={() => void onSubmit(true)}
             onSend={() => void onSubmit()}
             onStop={() => cancelStream(nodeId)}
-            onRetry={() => retryLastTurn(nodeId)}
+            onRetry={() => retryLastTurn(nodeId, undefined, consumeBindingMeta())}
             contextUsagePercentage={n.contextUsagePercentage}
             usageSummary={n.usageSummary}
           />

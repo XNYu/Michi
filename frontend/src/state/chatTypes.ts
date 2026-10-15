@@ -127,6 +127,9 @@ export interface UserSendMeta {
   reasoning?: AgentReasoning | null;
 }
 
+/** Runtime binding fields a send or retry passes through to ensureSession. */
+export type SendBindingMeta = Pick<UserSendMeta, 'runtimeId' | 'providerId' | 'modelId' | 'reasoning'>;
+
 export interface CreateChildChatOptions {
   anchorMessageId?: string;
   /** Defaults to true. Background branches may opt out of taking focus. */
@@ -902,7 +905,7 @@ export interface ChatContextValue {
     meta?: UserSendMeta,
   ) => void;
   /** Trim from a given message index (or the last turn) and resend the user text for a fresh reply. */
-  retryLastTurn: (nodeId: string, fromIndex?: number) => void;
+  retryLastTurn: (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => void;
   /** Trim from a given user message index and resend with new (edited) text. */
   editAndResend: (nodeId: string, fromIndex: number, newText: string) => void;
   createChildChat: (

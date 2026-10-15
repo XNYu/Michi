@@ -50,7 +50,7 @@ import {
   setActiveBackendConnectionId,
 } from '../config/backendConnections';
 import { toast } from 'sonner';
-import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, ChatPaneValue, ChatProjectsValue, ComposerDraft, MessageAttachment, PendingQueuedMessage, Project, ProjectEdge, Theme, UserSendMeta } from './chatTypes';
+import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, ChatPaneValue, ChatProjectsValue, ComposerDraft, MessageAttachment, PendingQueuedMessage, Project, ProjectEdge, SendBindingMeta, Theme, UserSendMeta } from './chatTypes';
 import { computeSurvivingMessageIds, cleanupOrphanedAnchors } from './branchAnchors';
 import { sleep } from '../utils/sleep';
 import { reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
@@ -1871,7 +1871,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   sendMessageRef.current = sendMessage;
 
   const retryLastTurn = useCallback(
-    (nodeId: string, fromIndex?: number) => {
+    (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => {
       const n = nodesRef.current[nodeId];
       if (!n) return;
       let sourceMsg: typeof n.messages[number] | undefined;
@@ -1913,6 +1913,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         attachments: reAttach.length > 0 ? reAttach.map(a => ({ ...a })) : undefined,
         comments: reComments,
         displayText: reText,
+        // A model/effort picked after the failure applies to the retry,
+        // the same way it would to a fresh send.
+        ...binding,
       });
     },
     [dispatch, setProjects, startStream],
