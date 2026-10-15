@@ -1,3 +1,4 @@
+import { parseChatCommand, nextQueuedBatch, executeComposerCommand } from './chatCommands';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus, type SessionMode } from '../services/api';
@@ -343,6 +344,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // lands instead of failing once and leaving the agent picker stuck on
   // "Loading…" (Kiro-CLI agents never appearing).
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const agentStatusRef = useRef(agentStatus);
+  agentStatusRef.current = agentStatus;
   const [availableModes, setAvailableModes] = useState<SessionMode[]>([]);
   /** The mode ACP assigns to a brand-new session. Null when unavailable. */
   const [defaultModeId, setDefaultModeId] = useState<string | null>(null);
@@ -607,6 +610,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // lands on the Dashboard. Assigned below, once the nav actions exist; held in
   // a ref because the stream handlers are built earlier in this component.
   const revealNodeRef = useRef<(nodeId: string) => void>(() => {});
+  const commandsInFlightRef = useRef(new Set<string>());
   const sendMessageRef = useRef<(nodeId: string, text: string, meta?: UserSendMeta) => void>(() => {});
 
   const nodesRef = useRef(nodes);
@@ -1334,7 +1338,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       boundSessionsRef.current.delete(endedNodeId);
     }
     if (!ended) return;
-    const queue = ended.pendingQueued ?? [];
+    const queue = nextQueuedBatch(ended.pendingQueued ?? [], ended.runtimeId ?? agentStatusRef.current?.runtime, ended.sessionState?.nativeEngine);
     if (queue.length === 0) return;
     if (reason === 'error') {
       dispatch({ type: 'mark-queue-errored', nodeId: endedNodeId });
@@ -1343,7 +1347,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
     const payload = buildFlushPayload(queue);
     if (!payload) return;
-    dispatch({ type: 'flush-queue', nodeId: endedNodeId });
+    for (const entry of queue) dispatch({ type: 'dequeue-message', nodeId: endedNodeId, messageId: entry.id });
     const commentBlocks = queue
       .map((entry) => entry.commentBlock)
       .filter((block): block is string => !!block);
@@ -1379,6 +1383,30 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       startupMarkOnce('first_message_send', { nodeId, textLen: text.length });
       const n = nodesRef.current[nodeId];
       if (!n) return;
+      if (commandsInFlightRef.current.has(nodeId)) {
+        dispatch({ type: 'set-composer-draft', nodeId,
+          draft: meta?.rejectedDraft ?? { value: text, mentions: [] }, preserveExisting: true });
+        meta?.onRejected?.();
+        return;
+      }
+      const command = parseChatCommand(text, meta?.runtimeId ?? n.runtimeId ?? agentStatusRef.current?.runtime, n.sessionState?.nativeEngine);
+      if (command) {
+        commandsInFlightRef.current.add(nodeId);
+        dispatch({ type: 'command-result', nodeId, result: { command: command.name, status: 'running', message: 'Running…' } });
+        void executeComposerCommand(nodeId, command).then((result) => {
+          if (result.sessionState) dispatch({ type: 'session-state', nodeId, state: result.sessionState });
+          dispatch({ type: 'command-result', nodeId, result: { command: command.name,
+            status: result.success ? 'completed' : 'error', message: result.message } });
+          commandsInFlightRef.current.delete(nodeId);
+          turnEndHandlerRef.current(result.success ? 'done' : 'error', nodeId);
+        }).catch((error) => {
+          dispatch({ type: 'command-result', nodeId, result: { command: command.name, status: 'error',
+            message: String(error instanceof Error ? error.message : error) } });
+          commandsInFlightRef.current.delete(nodeId);
+          turnEndHandlerRef.current('error', nodeId);
+        });
+        return;
+      }
       const priorMessagesForResume = n.chatId && boundSessionsRef.current.has(nodeId)
         ? undefined
         : n.messages

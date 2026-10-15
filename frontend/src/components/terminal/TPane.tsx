@@ -1,3 +1,4 @@
+import { ChatCommandResult } from './ChatCommandResult';
 import { usePermissionPreferences } from '../../hooks/usePermissionPreferences';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
 import { ComposerPermissionControl } from './ComposerPermissionControl';
@@ -22,7 +23,6 @@ import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, copyWo
 import { toast } from 'sonner';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
 import { checkRuntimeHealth } from '../../services/api';
-import { executeChatCommand } from '../../services/api/sessions';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
 import { useRuntimeCatalog } from '../../hooks/useRuntimeCatalog';
 import { resolveNodeBinding, type PendingNodeBindingOverride } from '../../state/nodeBindingResolution';
@@ -336,7 +336,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     clearPendingComments,
     queueMessage,
     steerMessage,
-    compactContext,
     dequeueMessage,
     setComposerDraft,
     reorderPane,
@@ -1834,68 +1833,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       }
     }
 
-    // Kiro command-execute path: when the user submits a bare slash command
-    // that is in the allowlist and the session supports `executeCommand`,
-    // dispatch it via the dedicated ACP RPC instead of consuming a prompt
-    // turn. Commands not in the allowlist (or commands with args that the
-    // allowlist doesn't cover) fall through to the normal prompt-text path.
-    //
-    // Commands submitted during streaming are NOT queued here — they fall
-    // through to the normal queue path below, which sends them as prompt
-    // text on the next idle turn. This matches kiro-cli's native behavior:
-    // commands are deferred while streaming and executed once idle.
-    // `/compact` is runtime-agnostic: it goes through chatHub.compact(), which
-    // drives whatever native compaction the active runtime has (Codex
-    // thread/compact/start, Kiro's ACP compact command). Previously this whole
-    // block was gated on `runtime === 'kiro'`, so a Codex user typing /compact
-    // just sent the literal string to the model. A 409 means the active runtime
-    // cannot compact, in which case we fall through to the paths below.
-    if (raw && !streaming) {
-      const compactMatch = raw.match(/^\/compact(?:\s+(.*))?$/);
-      if (compactMatch) {
-        const instructions = compactMatch[1]?.trim();
-        try {
-          const result = await compactContext(nodeId, instructions || undefined);
-          if (result.started) return;
-          if (resolvedBinding.runtime !== 'kiro') {
-            toast.error('/compact is not supported by this runtime', { description: result.detail });
-            return;
-          }
-          if (result.detail !== 'unsupported' && result.detail !== 'No live session') {
-            toast.error('/compact failed', { description: result.detail });
-            return;
-          }
-          // Kiro with no live session yet — fall through to executeCommand.
-        } catch (err) {
-          toast.error('/compact failed', { description: (err as Error).message });
-          return;
-        }
-      }
-    }
-
-    if (raw && !streaming && resolvedBinding.runtime === 'kiro') {
-      const EXECUTE_ALLOWLIST = new Set(['compact', 'tools', 'context', 'effort', 'clear']);
-      const cmdMatch = raw.match(/^\/(\S+)(?:\s+(.*))?$/);
-      if (cmdMatch) {
-        const cmdName = cmdMatch[1];
-        const cmdArgs = cmdMatch[2]?.trim();
-        if (EXECUTE_ALLOWLIST.has(cmdName)) {
-          try {
-            const args = cmdArgs ? { value: cmdArgs } : undefined;
-            const result = await executeChatCommand(nodeId, cmdName, args);
-            if (!result.success && result.message) {
-              toast.error(`/${cmdName} failed`, { description: result.message });
-            }
-          } catch (err) {
-            // Fallback: if execute fails (e.g. session gone), the user can
-            // retry or send as a normal prompt.
-            toast.error(`/${cmdName} failed`, { description: (err as Error).message });
-          }
-          return;
-        }
-      }
-    }
-
     const { branched: slashBranched, text } = raw
       ? stripBranchPrefix(raw)
       : { branched: false, text: '' };
@@ -2243,6 +2180,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }}
         preBlocks={
           <>
+            {n.commandResult && <ChatCommandResult result={n.commandResult} />}
             <UploadProgressBar progress={uploadProgress} />
             <PaneComposerPreBlocks
               node={n}

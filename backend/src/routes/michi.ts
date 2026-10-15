@@ -1,3 +1,4 @@
+import { resetKiroContext } from '../services/resetKiroContext';
 import { subscribeSessionStates } from '../agents/sessionStateFeed';
 import express from "express";
 import path from "path";
@@ -2036,10 +2037,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
     /**
      * Execute a runtime-native command (e.g. Kiro slash command) without
-     * consuming a prompt turn. The command is dispatched via the ACP
-     * `_kiro.dev/commands/execute` RPC. Only allowlisted commands are
-     * routed here; the frontend falls back to prompt text for unknown
-     * or unsupported commands.
+     * consuming a prompt turn. V2 uses its command RPC; V3 uses negotiated
+     * extensions or session configuration. Unsupported V3 commands return
+     * an explicit failure rather than becoming a model prompt.
      *
      * Side effects (e.g. compaction/clear notifications) arrive on the
      * session queue and are delivered as SSE events during the next turn
@@ -2054,9 +2054,18 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (!session?.executeCommand) {
             return res.status(400).json({ error: "Active session does not support command execution" });
         }
+        if (chatHub.isActive(session.id)) return res.status(409).json({ error: 'Wait for the active turn to finish before executing a command.' });
         try {
+            if (command === 'clear' && session.runtimeId === 'kiro' && session.nativeEngine === 'v3') {
+                const primaryAgent = await chatManager.resolvePrimaryAgentBinding({
+                    ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
+                    workspaceId: getNode(session.id)?.workspace_id ?? null, nodeId: session.id,
+                });
+                const replacement = await resetKiroContext(session, req.user?.id ?? null, primaryAgentSessionOptions(primaryAgent));
+                return res.json({ success: true, message: 'Started a new Kiro context. Previous messages remain in Michi.', sessionState: replacement.getSessionState?.() });
+            }
             const result = await session.executeCommand(command, args ?? undefined);
-            res.json(result);
+            res.json({ ...result, sessionState: session.getSessionState?.() });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }

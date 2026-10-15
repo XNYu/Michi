@@ -288,6 +288,7 @@ export interface ChatNodeState {
   reasoning?: AgentReasoning | null;
   /** Live catalog for this session; refreshed on reconnect, never a global default. */
   sessionState?: AgentSessionState;
+  commandResult?: { command: string; status: 'running' | 'completed' | 'error'; message: string };
   /** @deprecated Fingerprint check removed. Field retained for DB hydration compatibility only; always null for new nodes. */
   resumeFingerprint?: string | null;
   projectId: string;
@@ -773,6 +774,7 @@ export type ChatAction =
   | { type: 'set-follow-ups'; nodeId: string; followUps: string[] }
   | { type: 'visible-response-complete'; nodeId: string; assistantId: string }
   | { type: 'follow-ups-status'; nodeId: string; status: 'in_progress' | 'completed' | 'failed' }
+  | { type: 'command-result'; nodeId: string; result: NonNullable<ChatNodeState['commandResult']> }
   | { type: 'session-state'; nodeId: string; state: AgentSessionState }
   | { type: 'set-commands'; nodeId: string; commands: AgentCommand[] }
   | { type: 'set-current-mode'; nodeId: string; currentModeId: string }

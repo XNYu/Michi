@@ -1257,6 +1257,10 @@ export function reduceNodes(
       if ((n.followUpsGenerating ?? false) === next) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, followUpsGenerating: next } };
     }
+    case 'command-result': {
+      const n = nodes[action.nodeId];
+      return n ? { ...nodes, [action.nodeId]: { ...n, commandResult: action.result } } : nodes;
+    }
     case 'session-state': {
       const n = nodes[action.nodeId];
       const state = action.state;
