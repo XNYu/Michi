@@ -52,6 +52,7 @@ export interface StreamHandlers {
   onArtifactSaved?: (name: string, filePath: string, size?: number, contextId?: string) => void;
   onArtifactUpdated?: (name: string, filePath: string, size?: number, contextId?: string) => void;
   onImage?: (data: ChatStreamPayloads['image']) => void;
+  onPermissionResolved?: (data: ChatStreamPayloads['permission_resolved']) => void;
   onPermissionRequest?: (data: ChatStreamPayloads['permission_request']) => void;
   onUserInputRequest?: (data: ChatStreamPayloads['user_input_request']) => void;
   onUserInputResolved?: (data: ChatStreamPayloads['user_input_resolved']) => void;
@@ -151,6 +152,9 @@ export function dispatchChatStreamEvent(
       return;
     case CHAT_STREAM_EVENTS.image:
       handlers.onImage?.(streamEvent.data);
+      return;
+    case CHAT_STREAM_EVENTS.permissionResolved:
+      handlers.onPermissionResolved?.(streamEvent.data);
       return;
     case CHAT_STREAM_EVENTS.permissionRequest:
       handlers.onPermissionRequest?.(streamEvent.data);

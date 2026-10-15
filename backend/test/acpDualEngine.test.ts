@@ -34,6 +34,18 @@ async function nextTurnUpdate(stream: AsyncIterableIterator<any>) {
     return result;
 }
 
+test('Crew v2 override forks with standard RPC and stable message id without changing Kiro v2 rewind', async () => {
+    const c = new AcpClient('/bin/false', '/tmp', undefined, 'v2', { bin: '/bin/false', args: () => [], standardFork: true });
+    const internal = c as any;
+    const calls: any[] = [];
+    internal.initialization = { agentCapabilities: { sessionCapabilities: { fork: {} } } };
+    internal.send = async (method: string, params: any) => { calls.push({ method, params }); return { sessionId: 'child' }; };
+    assert.equal(await c.forkSession('parent', { messageId: 'stable-id' }), 'child');
+    assert.deepEqual(calls, [{ method: 'session/fork', params: { sessionId: 'parent', cwd: '/tmp', _meta: { kiro: { messageId: 'stable-id' } } } }]);
+    internal.initialization = {};
+    await assert.rejects(c.forkSession('parent'), /did not advertise/);
+});
+
 for (const engine of ['v2', 'v3'] as const) {
     test(`${engine}: numeric handshake, session config, and model switch use the correct wire API`, async () => {
         const { c, calls } = fixture(engine);

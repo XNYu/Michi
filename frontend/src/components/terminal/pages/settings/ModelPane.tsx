@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '../../../../config/env';
+import { CrewMemorySettings } from '../../CrewMemoryControl';
 import { usePermissionPreferences } from '../../../../hooks/usePermissionPreferences';
 import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { toast } from 'sonner';
@@ -131,6 +133,7 @@ export function ModelPane({
       {agentStatus && <WebSearchControls status={agentStatus} onChanged={refreshAgentStatus} />}
 
       {showKiroSidecarTitles && <KiroSidecarTitleToggle />}
+      {agentStatus?.runtime === 'crew' && <CrewMemorySettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : API_BASE_URL} />}
       <FollowUpsToggle />
       <PermissionSettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : undefined}
         runtimeIds={[...(agentStatus ? [agentStatus.runtime] : []), ...visibleRuntimes.map((runtime) => runtime.id)]} />
@@ -194,8 +197,8 @@ function RuntimePicker({
     : '';
   return (
     <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>runtime</div>
       <select
+        aria-label="Runtime"
         value={selectedRuntime}
         disabled={saving}
         onChange={async (e) => {
@@ -1014,7 +1017,7 @@ function PermissionSettings({ apiBase, runtimeIds }: { apiBase?: string; runtime
     {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error}</p>}
     <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 10 }}>
       {supportsYolo
-        ? 'Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Kiro and Pi use Trust for YOLO. Agent Runs use their own permissions.'
+        ? 'Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Kiro, Crew and Pi use Trust for YOLO. Agent Runs use their own permissions.'
         : 'Changes apply to the next turn. Ask requests approval; Trust approves tools automatically. Agent Runs use their own permissions.'}
     </p>
   </div>;

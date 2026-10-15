@@ -1,7 +1,7 @@
 import type { AgentRuntimeOption } from '../services/api';
 import { RESTRICTED_RUNTIME_BUILD } from '../state/featureFlags';
 
-const RESTRICTED_RUNTIME_IDS = new Set(['kiro', 'claude', 'codex', 'pi']);
+const RESTRICTED_RUNTIME_IDS = new Set(['kiro', 'crew', 'claude', 'codex', 'pi']);
 
 /**
  * Restricted builds keep every backend runtime registered, but only

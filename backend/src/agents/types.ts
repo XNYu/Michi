@@ -165,6 +165,7 @@ export interface RuntimeSessionBootstrapOptions {
 }
 
 export interface NewAgentSessionOptions extends RuntimeSessionBootstrapOptions {
+  crewMemoryMode?: import("michi-shared").CrewMemoryMode;
   cwd: string;
   parentChatId?: string;
   mergeContexts?: string[];

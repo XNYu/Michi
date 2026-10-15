@@ -302,3 +302,12 @@ describe('reduceNodes pin-node / unpin-node', () => {
     expect(reduceNodes(before, { type: 'unpin-node', nodeId: 'missing' })).toBe(before);
   });
 });
+
+
+describe('permission expiry', () => {
+  it('only closes the matching card, preserving a newer pending request', () => {
+    const before = { n1: makeNode({ pendingPermission: { requestId: 9, title: 'Current tool', options: [] } }) };
+    expect(reduceNodes(before, { type: 'permission-resolved', nodeId: 'n1', requestId: 8 })).toBe(before);
+    expect(reduceNodes(before, { type: 'permission-resolved', nodeId: 'n1', requestId: 9 }).n1.pendingPermission).toBeNull();
+  });
+});

@@ -73,6 +73,8 @@ export function toChatStreamEvent(ev: NormalizedEvent): ChatStreamEvent {
                 event: CHAT_STREAM_EVENTS.image,
                 data: { path: ev.path, caption: ev.caption, mimeType: ev.mimeType, size: ev.size },
             };
+        case "permission_resolved":
+            return { event: CHAT_STREAM_EVENTS.permissionResolved, data: { requestId: ev.requestId } };
         case "permission_request":
             return {
                 event: CHAT_STREAM_EVENTS.permissionRequest,

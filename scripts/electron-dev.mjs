@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findOpenPort } from "./find-open-port.mjs";
+import { electronDevEnvironment } from "./electron-dev-env.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -34,19 +34,13 @@ if (!Number.isInteger(port) || port < 1) {
   throw new Error("MICHI_RENDERER_PORT must be a positive integer");
 }
 
-const instanceId = process.env.MICHI_DEV_INSTANCE_ID || path.basename(root);
-const dataDir = process.env.MICHI_DATA_DIR || path.join(os.homedir(), ".michi-dev");
-const env = {
+const env = electronDevEnvironment(root, {
   ...process.env,
   MICHI_RENDERER_PORT: String(port),
   MICHI_RENDERER_URL: process.env.MICHI_RENDERER_URL || `http://127.0.0.1:${port}`,
-  MICHI_DATA_DIR: dataDir,
-  MICHI_DEV_INSTANCE_ID: instanceId,
-  MICHI_ELECTRON_USER_DATA_DIR:
-    process.env.MICHI_ELECTRON_USER_DATA_DIR || path.join(dataDir, `electron-${instanceId}`),
-};
+});
 
-console.log(`[electron:dev] renderer ${env.MICHI_RENDERER_URL} instance ${instanceId}`);
+console.log(`[electron:dev] renderer ${env.MICHI_RENDERER_URL} instance ${env.MICHI_DEV_INSTANCE_ID}`);
 
 const children = [
   spawn(npm, ["run", "dev:raw"], {

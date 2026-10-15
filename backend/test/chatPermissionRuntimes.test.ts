@@ -81,7 +81,9 @@ for (const mode of ['ask', 'trust', 'yolo'] as const) {
     const permission = events.find((event) => event.kind === 'permission_request');
     if (mode === 'ask') {
       assert.ok(permission);
-      assert.equal(permission.options.some((option) => option.kind === 'allow_always'), false, 'native persistent grants cannot survive switching back to Ask');
+      assert.equal(permission.options.some((option) => option.optionId === 'native-persist'), false, 'native persistent grants cannot survive switching back to Ask');
+      assert.equal(permission.options.length, 4);
+      assert.equal(permission.options.find((option) => option.kind === 'allow_session')?.optionId, 'michi:allow_session');
       assert.deepEqual(approved, []);
     } else {
       assert.equal(permission, undefined);

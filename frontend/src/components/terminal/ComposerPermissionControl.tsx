@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import type { ChatPermissionMode } from 'michi-shared';
+import { useCrewIntegration } from './CrewIntegrationStatus';
+import { activeBackendApiBase } from '../../config/backendConnections';
 import ContextMenu from '../ContextMenu';
 import { ShieldIcon, ShieldOffIcon } from './icons';
 import type { PaneMenuAnchor } from './PaneComposerToolbarLeft';
@@ -13,7 +15,8 @@ export const PERMISSION_CHOICES: ReadonlyArray<{ mode: ChatPermissionMode; label
 ];
 
 /** Same chip, anchor and ContextMenu used by the Composer agent picker. */
-export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled = false, compact = false, scope = 'chat' }: {
+export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled = false, compact = false, scope = 'chat', apiBase = activeBackendApiBase() }: {
+  apiBase?: string;
   mode: ChatPermissionMode;
   /** One chat's runtime, or all registered runtimes for the global setting. */
   runtimeIds: readonly string[];
@@ -24,6 +27,9 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
 }) {
   const [anchor, setAnchor] = useState<PaneMenuAnchor | null>(null);
   const [saving, setSaving] = useState(false);
+  const crewOnly = runtimeIds.length === 1 && runtimeIds[0] === 'crew';
+  const crewStatus = useCrewIntegration(apiBase, crewOnly);
+  if (crewOnly && !crewStatus?.approvals) return <span className="t-toolbar-chip" title="Approvals are handled in Kiro Crew. Enable the optional sessionApproval grant for Michi Ask / Trust.">Crew approvals</span>;
   const supportsYolo = runtimeIds.some(supportsChatYolo);
   const displayedMode = mode === 'yolo' && !supportsYolo ? 'trust' : mode;
   const choices = PERMISSION_CHOICES.filter((choice) => supportsYolo || choice.mode !== 'yolo');

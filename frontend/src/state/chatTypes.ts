@@ -5,7 +5,7 @@ import type { MentionRecord } from '../components/mentions';
 import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
-import type { BranchOverviewEntry, SteeringReport } from 'michi-shared';
+import type { BranchOverviewEntry, SteeringReport, PermissionOption } from 'michi-shared';
 import type { PaneItem, PaneLauncherChoice } from './paneItems';
 
 export type { AgentStatus } from '../services/api';
@@ -105,6 +105,7 @@ export interface UserSendMeta {
   rejectedDraft?: ComposerDraft;
   /** Restore transient composer attachments/comments after a rejected start. */
   onRejected?: () => void;
+  crewMemoryMode?: import('michi-shared').CrewMemoryMode;
   permissionMode?: import('michi-shared').ChatPermissionMode;
   /** Quoted passage for this turn. Rendered as a chip in the bubble. */
   quotedText?: string;
@@ -192,7 +193,7 @@ export interface PermissionRequest {
   toolCallId?: string;
   title: string;
   detail?: string;
-  options: Array<{ optionId: string; name: string; kind: string }>;
+  options: PermissionOption[];
   source?: string;
 }
 
@@ -787,7 +788,7 @@ export type ChatAction =
     }
   | { type: 'spawn-prompt-started'; nodeId: string }
   | { type: 'permission-request'; nodeId: string; permission: PermissionRequest }
-  | { type: 'permission-resolved'; nodeId: string }
+  | { type: 'permission-resolved'; nodeId: string; requestId?: number }
   | { type: 'user-input-request'; nodeId: string; userInput: UserInputRequest }
   | { type: 'user-input-resolved'; nodeId: string; answers?: UserInputAnswer[] }
   | { type: 'subagent-list-update'; nodeId: string; subagents: SubagentInfo[] }

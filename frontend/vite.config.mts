@@ -2,7 +2,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
 import { frontendManualChunk } from './viteChunks';
+
+const packageRequire = createRequire(import.meta.url);
+const fontAssetDirectories = ['@fontsource/geist', '@fontsource/geist-mono', '@fontsource/ibm-plex-mono']
+  .map(name => dirname(packageRequire.resolve(`${name}/package.json`)));
 
 function restrictedRuntimeBuildFlag(): string {
   return process.env.VITE_MICHI_RESTRICTED_RUNTIMES ?? '0';
@@ -28,6 +34,8 @@ export default defineConfig({
   server: {
     port: 3001,
     strictPort: true,
+    // A worktree can link individual font packages to the primary checkout.
+    fs: { allow: [fileURLToPath(new URL('..', import.meta.url)), ...fontAssetDirectories] },
   },
   build: {
     outDir: 'build',

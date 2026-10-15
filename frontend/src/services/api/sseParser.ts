@@ -12,8 +12,8 @@
  * `.status` to decide whether a reconnect is worthwhile.
  */
 export class SseHttpError extends Error {
-  constructor(public readonly status: number, prefix = 'subscribe failed') {
-    super(`${prefix}: ${status}`);
+  constructor(public readonly status: number, prefix = 'subscribe failed', public readonly code?: string, message?: string) {
+    super(message || `${prefix}: ${status}`);
   }
 }
 

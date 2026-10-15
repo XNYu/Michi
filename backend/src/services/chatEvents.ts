@@ -29,6 +29,7 @@ export type NormalizedEvent =
     | { kind: "artifact_saved"; contextId?: string; name: string; filePath: string; size?: number }
     | { kind: "artifact_updated"; contextId?: string; name: string; filePath: string; size?: number }
     | { kind: "image"; path: string; caption?: string; mimeType: string; size: number }
+    | { kind: "permission_resolved"; requestId: number }
     | { kind: "permission_request"; requestId: number; toolCallId?: string; title: string; detail?: string; options: PermissionOption[]; source?: string }
     | { kind: "user_input_request"; requestId: number; questions: UserInputQuestion[] }
     | { kind: "user_input_resolved"; requestId: number; answers: UserInputAnswer[] }

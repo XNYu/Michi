@@ -4,6 +4,9 @@ import type { McpSlotRegistry } from "../services/mcpServer";
 import { PiRuntime } from "./pi/PiRuntime";
 import { ClaudeRuntime } from "./claude/ClaudeRuntime";
 import { KiroRuntime } from "./kiro/KiroRuntime";
+import { CREW_DESCRIPTOR } from "./capabilityDescriptors";
+import { crewAvailability, resolveCrewAcpLaunch } from "./crew/crewLaunch";
+import type { AcpLaunch } from "../services/acpClient";
 import { CodexRuntime } from "./codex";
 import { AntigravityRuntime } from "./antigravity";
 import { CursorRuntime } from "./cursor/CursorRuntime";
@@ -61,6 +64,46 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
         ),
     },
     {
+        id: "crew",
+        label: "Kiro Crew",
+        create: (deps) => new KiroRuntime(
+            deps.bridge,
+            deps.mcpRegistry,
+            deps.mcpPort ?? 3000,
+            deps.defaultCwd,
+            deps.modelCache,
+            {
+                // Pinned: one adapter process per cwd, sessions multiplexed.
+                // MICHI_KIRO_ENGINE=v3 must not flip Crew to per-session workers.
+                engine: "v2",
+                id: "crew",
+                label: "Kiro Crew",
+                launch: CREW_LAUNCH,
+                // The sidecar would open an extra Crew session per chat title.
+                sidecarTitles: false,
+                descriptorOverride: CREW_DESCRIPTOR,
+                capabilitiesOverride: {
+                    // ACP modes select Crew templates; member identities and
+                    // approval policy are deliberately not agent modes.
+                    modes: true,
+                    // Official sessionApproval consent gates the adapter at each turn.
+                    permissions: true,
+                    // Only drives boot warm, /warm and the per-cwd warm pool. Off keeps the
+                    // adapter from spawning at boot; it creates Crew slots lazily anyway.
+                    warmSessions: false,
+                    // Available through the optional official App stdio relay.
+                    saveContext: true,
+                    spawnBranches: true,
+                    // Kept: nativeResume (session/load), models (adapter's models block),
+                    // reasoning (v2 sends `effort`; errors remain visible).
+                },
+                // Offline: adapter resolves and the app secret file exists. When this
+                // fails, KiroRuntime refuses to spawn the adapter at all.
+                checkAvailability: () => crewAvailability(),
+            },
+        ),
+    },
+    {
         id: "pi",
         label: "Pi (multi-provider)",
         envBindings: getProviderEnvBindings(),
@@ -114,6 +157,33 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
         ),
     },
 ];
+
+/**
+ * Placeholder when no adapter resolves at spawn time. KiroRuntime never reaches it
+ * while crewAvailability() is false; if the adapter vanishes later, the child
+ * exits at once with a readable stderr line instead of a spawn ENOENT.
+ */
+const MISSING_CREW_LAUNCH: AcpLaunch = {
+    bin: process.execPath,
+    args: () => ["-e", "process.stderr.write('Kiro Crew ACP adapter not found; set MICHI_CREW_ACP_BIN\\n'); process.exit(1)"],
+};
+
+/**
+ * Resolved at each spawn, not at boot, so building the adapter bundle or
+ * setting MICHI_CREW_ACP_BIN after Michi started takes effect without a
+ * restart. AcpClient reads `bin` once in its constructor and calls `args`
+ * once per start.
+ */
+const CREW_LAUNCH: AcpLaunch = {
+    standardFork: true,
+    get bin() {
+        return (resolveCrewAcpLaunch() ?? MISSING_CREW_LAUNCH).bin;
+    },
+    args: (model) => (resolveCrewAcpLaunch() ?? MISSING_CREW_LAUNCH).args(model),
+    // Gateway can keep a stopped slot draining for several seconds (6.8s in
+    // the live probe); give the adapter's 10s idle wait room to finish.
+    cancelTimeoutMs: 15_000,
+};
 
 /**
  * Filter RUNTIME_FACTORIES by the MICHI_ENABLED_RUNTIMES env var (comma

@@ -33,6 +33,7 @@ export function michiMcpServer(engine: KiroEngine, baseUrl: string, slotId: stri
 }
 
 export interface AcpSessionOptions {
+    metadata?: Record<string, unknown>;
     modelId?: string;
     modeId?: string;
 }
@@ -54,6 +55,7 @@ export interface AcpConfigOption {
 }
 
 export interface AcpSessionInfo {
+    _meta?: Record<string, unknown>;
     modes?: any;
     models?: any;
     configOptions?: AcpConfigOption[];
@@ -105,6 +107,8 @@ export function kiroSessionMeta(engine: KiroEngine, options: AcpSessionOptions):
 
 export interface KiroForkPoint {
     logIndex: number;
+    /** Optional stable row identity supplied by the Crew Gateway adapter. */
+    messageId?: string;
     label?: string;
     responseSnippet?: string;
 }

@@ -1058,6 +1058,30 @@ describe('ClaudeSession', () => {
     }
   });
 
+  test('session trust approves later Claude tools in the same turn without a native grant', async () => {
+    const child = new MockClaudeChild();
+    stubSpawnClaude(() => child);
+    setTimeout(() => child.emitInit('session-trust'), 20);
+    const { ClaudeSession } = freshClaudeSession();
+    const mcpReg = makeMcpRegistry() as any;
+    let onApprove: Function;
+    const create = mcpReg.create.bind(mcpReg);
+    mcpReg.create = (...args: any[]) => { onApprove = args[3].onApprove; return create(...args); };
+    const session = new ClaudeSession('session-trust', makeSessionDeps({ mcpRegistry: mcpReg }) as any);
+    await session.spawnFresh();
+    try {
+      let event: any;
+      mock.method((session as any).queue, 'push', (value: any) => { event = value; });
+      const pending = onApprove!({ toolName: 'Bash', input: { command: 'echo test' }, toolUseId: 'one' });
+      assert.equal(event.options.length, 4);
+      session.respondToPermission(event.requestId, 'allow_session');
+      assert.equal((await pending).behavior, 'allow');
+      const next = await onApprove!({ toolName: 'Edit', input: {}, toolUseId: 'two' });
+      assert.equal(next.behavior, 'allow');
+      assert.equal((session as any).pendingPermissions.size, 0);
+    } finally { await session.dispose(); }
+  });
+
   test('metadata hook POC blocks once, then passes after overview and follow-ups are set', async () => {
     const previous = process.env.MICHI_CLAUDE_FOLLOW_UPS_HOOK_POC;
     const previousMode = process.env.MICHI_FOLLOW_UPS_EXPERIMENT_MODE;

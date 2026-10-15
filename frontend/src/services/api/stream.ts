@@ -126,7 +126,8 @@ export function streamMessage(
         resumeCancel = null;
         if (terminalSeen || cancelledByUser || settled) return;
         if (!result.retryable) {
-          settleError(result.error?.message ?? 'turn replay unavailable');
+          settleError(result.error?.message ?? 'turn replay unavailable',
+            result.error instanceof SseHttpError ? result.error.code : undefined);
           return;
         }
         const delay = Math.min(5_000, 250 * (2 ** resumeAttempt++));
@@ -467,7 +468,12 @@ export function subscribeChat(
       const res = await fetchStream(`${nodeBackendApiBase(chatId)}/chats/${chatId}/stream?${query.toString()}`, {
         signal: controller.signal,
       });
-      if (!res.ok) throw new SseHttpError(res.status);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new SseHttpError(res.status, 'subscribe failed',
+          typeof body?.code === 'string' ? body.code : undefined,
+          typeof body?.error === 'string' ? body.error : undefined);
+      }
       if (!res.body) throw new Error('subscribe response has no body');
       opts.onOpen?.();
       const reader = res.body.getReader();

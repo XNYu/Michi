@@ -553,3 +553,56 @@ test('chat session approval does not persist legacy workspace grants', async (t)
 
   await runtime.shutdown();
 });
+
+for (const choice of ['allow_always', 'allow_session']) {
+  test(`chat ${choice} grants affect later native requests in the same turn`, async (t) => {
+    const { configureRuntimeDeps, __resetRuntimeDeps } = await import('../src/agents/runtimeDeps');
+    const grants = new Set<string>();
+    let token = '0';
+    configureRuntimeDeps({
+      dataDir: '/tmp/michi-codex-approval-tests',
+      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} },
+      agentConfig: { getAgentConfig: () => ({ runtime: 'codex', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
+      chatPermissions: { getMode: () => 'ask', hasGrant: (id, tool) => grants.has(`${id}:${tool}`), grant: (id, tool) => { grants.add(`${id}:${tool}`); }, resetToken: () => token },
+    });
+    t.after(__resetRuntimeDeps);
+    const { session, client } = await makeRuntimeWithSession(t);
+    const ask = (method: string) => client._fireServerRequest(method, { threadId: session.threadId, turnId: 'turn-1', command: 'echo test' });
+    const first = ask(CODEX_SERVER_REQUESTS.commandApproval);
+    await new Promise((resolve) => setImmediate(resolve));
+    const [id] = session.pendingPermissions.keys();
+    session.respondToPermission(id, choice);
+    assert.deepEqual(await first, { decision: 'accept' });
+    assert.deepEqual(await ask(CODEX_SERVER_REQUESTS.commandApproval), { decision: 'accept' });
+    const otherTool = ask(CODEX_SERVER_REQUESTS.fileChangeApproval);
+    await new Promise((resolve) => setImmediate(resolve));
+    if (choice === 'allow_always') {
+      const [otherId] = session.pendingPermissions.keys();
+      assert.ok(otherId != null, 'a different tool must still ask');
+      session.respondToPermission(otherId, 'reject_once');
+      assert.deepEqual(await otherTool, { decision: 'decline' });
+    } else {
+      assert.equal(session.pendingPermissions.size, 0);
+      assert.deepEqual(await otherTool, { decision: 'accept' });
+      token = '1';
+      const revoked = ask(CODEX_SERVER_REQUESTS.commandApproval);
+      await new Promise((resolve) => setImmediate(resolve));
+      const [revokedId] = session.pendingPermissions.keys();
+      assert.ok(revokedId != null, 'Ask revokes temporary session trust during the turn');
+      session.respondToPermission(revokedId, 'reject_once');
+      assert.deepEqual(await revoked, { decision: 'decline' });
+    }
+  });
+}
+
+for (const choice of ['allow_always', 'allow_session']) test(`Codex ${choice} drains matching queued tool approvals`, async (t) => {
+  const { session, client } = await makeRuntimeWithSession(t);
+  const command = client._fireServerRequest(CODEX_SERVER_REQUESTS.commandApproval, { threadId: session.threadId, turnId: 'turn-1' });
+  const edit = client._fireServerRequest(choice === 'allow_always' ? CODEX_SERVER_REQUESTS.commandApproval : CODEX_SERVER_REQUESTS.fileChangeApproval, { threadId: session.threadId, turnId: 'turn-1' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const ids = [...session.pendingPermissions.keys()];
+  assert.equal(ids.length, 2);
+  session.respondToPermission(ids[1], choice);
+  assert.deepEqual(await Promise.all([command, edit]), [{ decision: 'accept' }, { decision: 'accept' }]);
+  assert.equal(session.pendingPermissions.size, 0);
+});

@@ -385,3 +385,16 @@ describe('AcpClient subagent routing (per-tool-call Map)', () => {
     assert.equal(bUpdates.length, 1);
   });
 });
+
+
+test('adapter permission expiry is bound to session and request ID', () => {
+  const client = new AcpClient('/bin/false', '/tmp') as any;
+  const events: unknown[] = [];
+  client.pendingPermissions.set(7, { sessionId: 'one' });
+  client.sessionQueues.set('one', { push: (event: unknown) => events.push(event) });
+  client.dispatch({ method: '_michi/permission_resolved', params: { sessionId: 'two', requestId: 7 } });
+  assert.equal(client.pendingPermissions.has(7), true);
+  client.dispatch({ method: '_michi/permission_resolved', params: { sessionId: 'one', requestId: 7 } });
+  assert.equal(client.pendingPermissions.has(7), false);
+  assert.deepEqual(events, [{ update: { sessionUpdate: 'permission_resolved', requestId: 7 } }]);
+});

@@ -1266,6 +1266,8 @@ export class ChatHub {
   private trackPendingInteraction(log: TurnLog, event: ChatStreamEvent): void {
     if (event.event === CHAT_STREAM_EVENTS.permissionRequest) {
       log.pendingPermission = event;
+    } else if (event.event === CHAT_STREAM_EVENTS.permissionResolved) {
+      if (log.pendingPermission?.event === CHAT_STREAM_EVENTS.permissionRequest && log.pendingPermission.data.requestId === event.data.requestId) log.pendingPermission = undefined;
     } else if (event.event === CHAT_STREAM_EVENTS.userInputRequest) {
       log.pendingUserInput = event;
     } else if (

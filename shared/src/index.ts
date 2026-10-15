@@ -9,5 +9,6 @@ export * from './reasoning';
 export * from './paneInspection';
 export * from './kiroSteering';
 export * from './chatPermissions';
+export * from './crew';
 export * from './composerDrafts';
 export * from './sessionState';

@@ -1,3 +1,4 @@
+import { ChatApprovalState, chatApprovalOptions, approvalCoversTool } from '../chatApprovalState';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
@@ -22,7 +23,7 @@ import { abortable } from '../runtimeLifecycle';
 import { createCodexTranslator } from './codexEventTranslator';
 import { resolveShowImage } from '../claude/showImage';
 import { prepareAttachments } from '../attachments';
-import { canonicalPermissionToolName, grantChatPermission, chatPermissionMode, codexChatTurnPolicy } from '../permissionPolicy';
+import { canonicalPermissionToolName, chatPermissionMode, codexChatTurnPolicy } from '../permissionPolicy';
 import { log } from '../../services/logger';
 import { buildCodexFollowUpsHookPocInstruction } from './codexFollowUpsHookPoc';
 import { buildCodexTurnMetadataInstruction } from './codexTurnMetadata';
@@ -96,6 +97,7 @@ export interface CodexSessionDeps {
 export class CodexSession implements AgentSession {
   public readonly id: string;
   public readonly runtimeId = 'codex';
+  private readonly approvals = new ChatApprovalState();
   public permissionModeForTurn: import('michi-shared').ChatPermissionMode | undefined;
   public readonly parentChatId: string | undefined;
   /** Explicit product owner. Chat sessions default to `{ kind: 'chat_node', nodeId }`. */
@@ -190,7 +192,7 @@ export class CodexSession implements AgentSession {
   /** Exposed for test inspection (security contract tests). Do not mutate externally. */
   public readonly pendingPermissions = new Map<
     number,
-    { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout }
+    { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout; toolName?: string }
   >();
 
   // User input state — same pattern as permissions
@@ -597,7 +599,8 @@ export class CodexSession implements AgentSession {
   }
 
   respondToPermission(requestId: number, optionId: string): void {
-    if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'reject_once') throw new Error('Invalid permission option');
+    if (this.owner.kind === 'agent_run' && optionId === 'allow_session') throw new Error('Invalid permission option');
+    if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'allow_session' && optionId !== 'reject_once') throw new Error('Invalid permission option');
     const entry = this.pendingPermissions.get(requestId);
     if (!entry) return;
     clearTimeout(entry.timer);
@@ -793,14 +796,16 @@ export class CodexSession implements AgentSession {
       }
     }
 
+    // Grants are evaluated for every request, including later tools in this turn.
+    if (this.approvals.policy(this.owner, this.ownerUserId, toolName, true, this.permissionModeForTurn) === 'allow') {
+      respond({ decision: 'accept' });
+      return;
+    }
+
     // Chat session: existing user-facing permission request flow.
     const requestId = ++this.nextRequestId;
 
-    const options: PermissionOption[] = [
-      { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
-      { optionId: 'allow_always', name: 'Always allow this tool in this chat', kind: 'allow_always' },
-      { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
-    ];
+    const options = chatApprovalOptions(toolName);
 
     this.queue.push({
       kind: 'permission_request',
@@ -811,25 +816,21 @@ export class CodexSession implements AgentSession {
       source: 'codex_approval',
     });
 
-    const result = await this.awaitPermission(requestId, signal);
+    const result = await this.awaitPermission(requestId, signal, toolName);
 
     if (!isCurrent()) { respond({ decision: 'decline' }); return; }
 
-    if (result === 'allow_always') {
-      const canonical = canonicalPermissionToolName(toolName);
-      grantChatPermission(this.owner, canonical, this.ownerUserId);
-      // Keep the native grant single-use, so returning to Ask can revoke it.
-      respond({ decision: 'accept' });
-      return;
-    }
-    if (result === 'allow_once') {
+    if (this.approvals.accept(result, this.owner, toolName, this.ownerUserId)) {
+      for (const [id, request] of this.pendingPermissions) {
+        if (approvalCoversTool(result, toolName, request.toolName)) this.respondToPermission(id, 'allow_once');
+      }
       respond({ decision: 'accept' });
       return;
     }
     respond({ decision: 'decline' });
   }
 
-  private awaitPermission(requestId: number, signal?: AbortSignal): Promise<string | null> {
+  private awaitPermission(requestId: number, signal?: AbortSignal, toolName?: string): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
       const onAbort = () => this.cancelPermission(requestId);
       const finish = (value: string | null) => {
@@ -840,7 +841,7 @@ export class CodexSession implements AgentSession {
         this.pendingPermissions.delete(requestId);
         finish(null);
       }, APPROVE_TIMEOUT_MS);
-      this.pendingPermissions.set(requestId, { resolve: finish, timer });
+      this.pendingPermissions.set(requestId, { resolve: finish, timer, toolName });
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) onAbort();
     });

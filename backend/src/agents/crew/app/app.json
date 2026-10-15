@@ -1,0 +1,16 @@
+{
+  "name": "michi-crew-runtime",
+  "version": "0.4.0",
+  "displayName": "Michi Crew Runtime",
+  "description": "Michi ACP runtime adapter for official Kiro Crew. Native sessions, Memory, tools and optional Michi MCP relay.",
+  "author": "yonghuyu",
+  "agents": ["agents/michi.json"],
+  "permissions": {
+    "api": [
+      "/api/chat",
+      "/api/models",
+      "/api/agents/catalog"
+    ],
+    "events": []
+  }
+}

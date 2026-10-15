@@ -84,6 +84,16 @@ test('Kiro missing-session classification uses the exact observed error envelope
   assert.equal(isNativeSessionUnavailable(new ACPError('Method not found', { ...details, rpcCode: -32601 }), 'native-id'), true);
 });
 
+test('Crew missing sessions do not opt into Kiro history reconstruction with a different memory identity', () => {
+  const details = { method: 'session/load', sessionId: 'native-id', rpcCode: -32602,
+    rpcData: { code: 'crew_session_unavailable' } };
+  const error = new ACPError('Crew session unavailable', details);
+  assert.equal(isNativeSessionUnavailable(error, 'native-id'), false);
+  for (const changed of [{ method: 'session/prompt' }, { sessionId: 'another' }, { rpcData: { code: 'access_denied' } }, { rpcCode: -32603 }]) {
+    assert.equal(isNativeSessionUnavailable(new ACPError('not found', { ...details, ...changed }), 'native-id'), false);
+  }
+});
+
 test('Kiro retries dead processes and service throttling but not auth, MCP or ambiguous idle timeouts', () => {
   const retryable = KiroRuntime.prototype.isNativeResumeRetryable;
   assert.equal(retryable(new ACPNotRunningError('not running')), true);

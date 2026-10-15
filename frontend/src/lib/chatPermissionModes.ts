@@ -1,8 +1,10 @@
 import type { ChatPermissionMode } from 'michi-shared';
 
-/** Kiro and Pi have no separate full-access mode beyond Trust. */
+/** Legacy mode normalization. Crew's actual approval policy lives in its Gateway. */
+const NO_YOLO_RUNTIME_IDS = new Set(['kiro', 'crew', 'pi']);
+
 export function supportsChatYolo(runtimeId: string): boolean {
-  return runtimeId !== 'kiro' && runtimeId !== 'pi';
+  return !NO_YOLO_RUNTIME_IDS.has(runtimeId);
 }
 
 /** Preserve saved choices; present legacy YOLO as its equivalent on this runtime. */

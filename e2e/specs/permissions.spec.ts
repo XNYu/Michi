@@ -11,7 +11,8 @@ declare global {
 }
 const options: PermissionOption[] = [
   { optionId: 'provider-allow-once', name: 'Allow once', kind: 'allow_once' },
-  { optionId: 'provider-allow-always', name: 'Always allow', kind: 'allow_always' },
+  { optionId: 'provider-allow-always', name: 'Trust this tool', kind: 'allow_always' },
+  { optionId: 'allow_session', name: 'Trust all tools for this session', kind: 'allow_session' },
   { optionId: 'provider-deny', name: 'Deny', kind: 'reject_once' },
 ];
 
@@ -136,7 +137,7 @@ for (const source of ['acp_permission', 'claude_prompt_tool', 'codex_approval', 
     await expect.poll(() => state.responses).toEqual([{ requestId: 401, optionId: 'provider-deny' }]);
   });
 }
-for (const [button, optionId] of [['Allow once', 'provider-allow-once'], ['Always allow', 'provider-allow-always']]) {
+for (const [button, optionId] of [['Allow Once', 'provider-allow-once'], ['Trust this tool', 'provider-allow-always'], ['Trust all tools for this session', 'allow_session']]) {
   test(`manual ${button} preserves the provider option ID`, async ({ page }) => {
     const state = await fixture(page); await send(page);
     await requestPermission(page, 'michi_policy');

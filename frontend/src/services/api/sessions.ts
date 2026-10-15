@@ -142,6 +142,7 @@ export interface EnsureSessionOptions {
   modeId?: string | null;
   graphPrerequisite?: Record<string, unknown>;
   agentDefinitionId?: string;
+  crewMemoryMode?: import('michi-shared').CrewMemoryMode;
   permissionMode?: import('michi-shared').ChatPermissionMode;
 }
 
@@ -264,6 +265,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.priorMessages) body.priorMessages = opts.priorMessages;
   if (opts.runtimeId) body.runtimeId = opts.runtimeId;
   if (opts.modeId) body.modeId = opts.modeId;
+  if (opts.crewMemoryMode) body.crewMemoryMode = opts.crewMemoryMode;
   if (opts.permissionMode) body.permissionMode = opts.permissionMode;
   if (opts.providerId) body.providerId = opts.providerId;
   if (opts.modelId) body.modelId = opts.modelId;

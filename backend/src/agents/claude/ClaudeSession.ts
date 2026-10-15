@@ -1,3 +1,4 @@
+import { ChatApprovalState, chatApprovalOptions, approvalCoversTool } from '../chatApprovalState';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -13,7 +14,7 @@ import type {
   RuntimeSessionOwner,
   RuntimeToolProfile,
 } from '../types';
-import type { NormalizedEvent, PermissionOption } from '../../services/chatEvents';
+import type { NormalizedEvent } from '../../services/chatEvents';
 import type { McpSlotRegistry } from '../../services/mcpServer';
 import type { AgentToolBridge } from '../toolBridge';
 import { resolveAgentRunToolsForSession } from '../toolBridge';
@@ -31,7 +32,7 @@ import { getClaudeJsonlPath } from './claudeProjectsPath';
 import { buildClaudeMcpConfig } from './claudeMcpConfig';
 import { resolveShowImage } from './showImage';
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from '../attachments';
-import { canonicalPermissionToolName, resolveChatPolicy, grantChatPermission, chatPermissionMode } from '../permissionPolicy';
+import { canonicalPermissionToolName, chatPermissionMode } from '../permissionPolicy';
 import { setNodeExternalSessionId } from '../../services/dbRepository';
 import { resolveReasoning, resolveClaudeConfigDir } from '../../services/agentConfig';
 import * as perf from '../../services/perf';
@@ -157,6 +158,7 @@ export class ClaudeSession implements AgentSession {
    *  --append-system-prompt is unaffected; only the per-turn reminder is. */
   private enableFollowUps = true;
 
+  private readonly approvals = new ChatApprovalState();
   private turnPermissionMode: import('michi-shared').ChatPermissionMode | undefined;
   private nativePermissionMode: 'default' | 'bypassPermissions' = 'default';
   private nodeId: string;
@@ -229,7 +231,7 @@ export class ClaudeSession implements AgentSession {
   private nextRequestId = 0;
   private readonly pendingPermissions = new Map<
     number,
-    { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout }
+    { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout; toolName?: string }
   >();
   private readonly pendingUserInputs = new Map<
     number,
@@ -724,7 +726,8 @@ export class ClaudeSession implements AgentSession {
   }
 
   respondToPermission(requestId: number, optionId: string): void {
-    if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'reject_once') throw new Error('Invalid permission option');
+    if (this.owner.kind === 'agent_run' && optionId === 'allow_session') throw new Error('Invalid permission option');
+    if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'allow_session' && optionId !== 'reject_once') throw new Error('Invalid permission option');
     const entry = this.pendingPermissions.get(requestId);
     if (!entry) return;
     clearTimeout(entry.timer);
@@ -1656,17 +1659,14 @@ export class ClaudeSession implements AgentSession {
           ? { behavior: 'allow', updatedInput: params.input }
           : { behavior: 'deny', message: 'denied by Run permission policy' };
       }
-      const policy = resolveChatPolicy(this.owner, this.ownerUserId, params.toolName, true, this.turnPermissionMode);
+      const policy = this.approvals.policy(this.owner, this.ownerUserId, params.toolName, true, this.turnPermissionMode);
       if (policy === 'allow') return { behavior: 'allow', updatedInput: params.input };
       if (policy === 'deny') return { behavior: 'deny', message: 'policy denied' };
 
       // 'ask': push permission_request, await user decision
+      const permissionTurn = this.turnAbort;
       const requestId = ++this.nextRequestId;
-      const options: PermissionOption[] = [
-        { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
-        { optionId: 'allow_always', name: 'Always allow this tool in this chat', kind: 'allow_always' },
-        { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
-      ];
+      const options = chatApprovalOptions(params.toolName);
 
       this.queue.push({
         kind: 'permission_request',
@@ -1677,13 +1677,15 @@ export class ClaudeSession implements AgentSession {
         source: 'claude_prompt_tool',
       });
 
-      const result = await this.awaitPermission(requestId);
-
-      if (result === 'allow_always') {
-        grantChatPermission(this.owner, params.toolName, this.ownerUserId);
-        return { behavior: 'allow', updatedInput: params.input };
+      const result = await this.awaitPermission(requestId, params.toolName);
+      if (permissionTurn?.signal.aborted || this.turnAbort !== permissionTurn || this.state === 'disposed' || this.state === 'crashed') {
+        return { behavior: 'deny', message: 'permission request is no longer active' };
       }
-      if (result === 'allow_once') {
+
+      if (this.approvals.accept(result, this.owner, params.toolName, this.ownerUserId)) {
+        for (const [id, request] of this.pendingPermissions) {
+          if (approvalCoversTool(result, params.toolName, request.toolName)) this.respondToPermission(id, 'allow_once');
+        }
         return { behavior: 'allow', updatedInput: params.input };
       }
       return { behavior: 'deny', message: 'denied by user' };
@@ -1697,13 +1699,13 @@ export class ClaudeSession implements AgentSession {
     return allowed.includes(toolName) || allowed.includes(canonical);
   }
 
-  private awaitPermission(requestId: number): Promise<string | null> {
+  private awaitPermission(requestId: number, toolName?: string): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingPermissions.delete(requestId);
         resolve(null);
       }, APPROVE_TIMEOUT_MS);
-      this.pendingPermissions.set(requestId, { resolve, timer });
+      this.pendingPermissions.set(requestId, { resolve, timer, toolName });
     });
   }
 

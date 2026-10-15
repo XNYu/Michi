@@ -39,6 +39,16 @@ describe('buildStableSystemPrompt', () => {
             else process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE = previous;
         }
     });
+    test('Crew combines Michi tools with native memory guidance', () => {
+        const crew = buildPreamble({ cwd: '/tmp', enableFollowUps: false, toolCapabilities: 'crew' });
+        const kiro = buildPreamble({ cwd: '/tmp', enableFollowUps: false });
+        assert.match(crew, /memory_recall/);
+        assert.match(crew, /Temporary disables memory reads and writes/);
+        assert.match(crew, /\[BRANCH-OVERVIEW:/);
+        for (const name of ['michi_list_tools', 'michi_call_tool']) assert.ok(crew.includes(name));
+        assert.doesNotMatch(crew, /tools are not attached/);
+        assert.match(kiro, /`list_threads`/);
+    });
     test('returns identical string on every call (pure constant)', () => {
         const a = buildStableSystemPrompt();
         const b = buildStableSystemPrompt();

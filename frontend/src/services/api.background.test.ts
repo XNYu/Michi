@@ -131,6 +131,28 @@ describe('background SSE', () => {
     expect(String(fetchMock.mock.calls[1][0])).not.toContain('/background/');
   });
 
+  it('shows the exact restart reason when a foreground replay is no longer available', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.turnStart,
+          data: { turnId: 'interrupted', seq: 0, assistantId: 'a-interrupted', nodeId: 'node', userText: 'hello' } }),
+      ]))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: 'Michi restarted while this task was running. Check the conversation before retrying.',
+        code: 'backend_restarted',
+      }), { status: 410, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const error = vi.fn(), done = vi.fn();
+    streamMessage('node', 'hello', { onError: error, onDone: done });
+    await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1));
+    expect(error).toHaveBeenCalledWith(
+      'Michi restarted while this task was running. Check the conversation before retrying.',
+      undefined, undefined, 'backend_restarted',
+    );
+    expect(done).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('replays the client-stamped turn when POST disconnects before its first SSE envelope', async () => {
     const replay = sseResponse([
       encodeChatStreamEvent({

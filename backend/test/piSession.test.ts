@@ -174,4 +174,19 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
     reason: 'denied by Run permission policy',
   });
   assert.equal(brokerOwnerUserId, 'local-user');
+  assert.equal(permissionEvent.options.some((option: any) => option.kind === 'allow_session'), false, 'Run decisions remain separate');
+
+  const chat = new PiSession('pi-chat', {
+    bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+    preamble: '', cwd: process.cwd(), enableFollowUps: false, workspaceId: 'workspace-1', ownerUserId: null,
+  });
+  for await (const event of chat.send('permission test')) { if (event.kind === 'turn_end') break; }
+  (chat as any).activePush = (event: unknown) => { permissionEvent = event; };
+  const chatPending = beforeToolCall!({ toolCall: { name: 'write' }, args: { path: 'test' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(permissionEvent.options.length, 4);
+  chat.respondToPermission(permissionEvent.requestId, 'allow_session');
+  assert.equal(await chatPending, undefined);
+  assert.equal(await beforeToolCall!({ toolCall: { name: 'bash' }, args: {} }), undefined, 'later Pi tools inherit session trust');
+  assert.equal((chat as any).pendingPermissions.size, 0);
 });

@@ -329,7 +329,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setFocusedNodeId,
     switchAgent,
     resolvePermission,
-    denyPermission,
     addPendingComment,
     editPendingComment,
     removePendingComment,
@@ -2253,7 +2252,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         toolbarRight={
           <>
-          {!permissionPreferences.global && <ComposerPermissionControl mode={n.permissionMode ?? 'ask'}
+          {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(n.projectId)} mode={n.permissionMode ?? 'ask'}
             runtimeIds={[resolvedBinding.runtime]}
             compact={toolbarTier > 0} disabled={streaming || permissionPreferences.loading}
             onChange={(mode) => setChatPermissionMode(nodeId, mode)} />}
@@ -2310,7 +2309,6 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         <PermissionBanner
           permission={n.pendingPermission}
           onRespond={(optionId) => resolvePermission(nodeId, optionId)}
-          onCancel={() => denyPermission(nodeId)}
         />
       )}
       {/* The ask_user card renders inline in the message flow (see

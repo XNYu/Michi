@@ -1,4 +1,5 @@
 import { chatPermissionMode } from '../permissionPolicy';
+import { ChatApprovalState, chatApprovalOptions, acpPermissionToolName, approvalCoversTool } from '../chatApprovalState';
 import * as fs from "node:fs";
 import { extractToolUsePurpose, KiroSteeringParser, type SteeringSegment } from "michi-shared";
 import type {
@@ -17,6 +18,7 @@ import { ACPRequestNotSentError, type AcpClient, type AcpPromptBlock } from "../
 import type { KiroRuntime } from "./KiroRuntime";
 import { followUpReminder } from "../preamble";
 import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "../nodeSummaryExperiment";
+import { crewTurnFormat } from '../crew/crewPrompt';
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../attachments";
 import { classifyAcpError, isRetryable, needsRespawn, retryReason, toErrorKind } from "./acpErrors";
 
@@ -154,9 +156,14 @@ const FULL_BRANCH_OVERVIEW_TOOL_REMINDER = `
  *   - Perf timing of `first_chunk` (ChatManager — needs the original `tStart`).
  */
 export class KiroSession implements AgentSession {
-    public readonly runtimeId = "kiro";
+    /** Owning runtime id; chatHub resolves the runtime by it. Default "kiro". */
+    public readonly runtimeId: string;
     public readonly owner?: RuntimeSessionOwner;
     private turnPermissionMode: import('michi-shared').ChatPermissionMode = 'ask';
+    private readonly approvals = new ChatApprovalState();
+    private readonly pendingChatPermissions = new Map<number, {
+        toolName?: string; allowOptionId?: string; options: import('michi-shared').PermissionOption[]; signal: AbortSignal;
+    }>();
     public readonly runtimeProfileHash?: string | null;
     public parentChatId?: string;
     private history: ChatMessage[] = [];
@@ -178,6 +185,7 @@ export class KiroSession implements AgentSession {
         private readonly runtime: KiroRuntime,
         private readonly cwd: string,
         opts?: {
+            runtimeId?: string;
             parentChatId?: string;
             enableFollowUps?: boolean;
             owner?: RuntimeSessionOwner;
@@ -186,6 +194,7 @@ export class KiroSession implements AgentSession {
             permissionBroker?: RuntimePermissionBroker;
         },
     ) {
+        this.runtimeId = opts?.runtimeId ?? "kiro";
         this.parentChatId = opts?.parentChatId;
         this.enableFollowUps = opts?.enableFollowUps !== false;
         this.owner = opts?.owner;
@@ -259,14 +268,16 @@ export class KiroSession implements AgentSession {
 
         // Append follow-up reminder for the model only — history stays clean.
         const userTurnCount = this.history.filter(m => m.role === "user").length;
-        const reminder = followUpReminder(userTurnCount, this.enableFollowUps);
+        const reminder = this.runtime.id === 'crew' ? '' : followUpReminder(userTurnCount, this.enableFollowUps);
         // Non-image attachments have no ACP block type, so name them by path
         // instead of dropping them silently; kiro-cli can read them itself.
         const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
-        const textForModel = text + promptNote + (reminder || "")
-            + (fullNodeSummaryExperimentEnabled()
+        const overviewReminder = this.runtime.id === 'crew'
+            ? (this.owner?.kind === 'agent_run' ? '' : crewTurnFormat(this.enableFollowUps))
+            : (fullNodeSummaryExperimentEnabled()
                 ? FULL_BRANCH_OVERVIEW_TOOL_REMINDER
                 : BRANCH_OVERVIEW_TOOL_REMINDER);
+        const textForModel = text + promptNote + (reminder || "") + overviewReminder;
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`
@@ -285,6 +296,7 @@ export class KiroSession implements AgentSession {
                 if (ev.kind === "turn_end") break;
             }
         } finally {
+            this.pendingChatPermissions.clear();
             if (buf.length > 0) {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
@@ -407,6 +419,7 @@ export class KiroSession implements AgentSession {
      * observable to the wrapper (which then declines to retry).
      */
     private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
+        this.pendingChatPermissions.clear();
         if (signal.aborted) {
             yield { kind: "turn_end", stopReason: "cancelled" };
             return;
@@ -457,6 +470,8 @@ export class KiroSession implements AgentSession {
                         yield { kind: "thought", text: b.text };
                     }
                 }
+            } else if (kind === 'session_info_update' && this.runtime.id === 'crew') {
+                if (typeof update.title === 'string' && update.title.trim()) yield { kind: 'title', title: update.title.trim() };
             } else if (kind === "plan") {
                 const entries = Array.isArray(update.entries) ? update.entries : [];
                 yield {
@@ -536,7 +551,11 @@ export class KiroSession implements AgentSession {
                 if (followUps.length > 0) {
                     yield { kind: "follow_ups" as const, followUps };
                 }
+            } else if (kind === "permission_resolved") {
+                this.pendingChatPermissions.delete(update.requestId);
+                yield { kind: "permission_resolved" as const, requestId: update.requestId };
             } else if (kind === "permission_request") {
+                if (signal.aborted) { this.runtime.cancelPermission(this.nativeSessionId, update.requestId); continue; }
                 // Incoming permission request from kiro-cli — agent_run owners
                 // route through the Run permission broker; chat_node owners
                 // forward to SSE for the frontend approval dialog.
@@ -586,15 +605,24 @@ export class KiroSession implements AgentSession {
                         (option: { kind?: string }) => option.kind !== 'allow_always' && option.kind !== 'reject_always',
                     );
                     const allow = options.find((option: { kind?: string }) => option.kind === 'allow_once');
-                    if (this.turnPermissionMode !== 'ask' && allow) {
+                    const toolName = acpPermissionToolName(update.toolCall, update._meta);
+                    const owner = this.owner ?? { kind: 'chat_node' as const, nodeId: this.id };
+                    if (allow && this.approvals.policy(owner, null, toolName ?? '', true, this.turnPermissionMode) === 'allow') {
                         this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allow.optionId);
                         continue;
                     }
+                    if (allow && owner.kind === 'chat_node') {
+                        options.push(...chatApprovalOptions(toolName).filter((option) => option.kind === 'allow_always' || option.kind === 'allow_session')
+                            .map((option) => ({ ...option, optionId: `michi:${option.optionId}` })));
+                    }
+                    this.pendingChatPermissions.set(update.requestId, { toolName, allowOptionId: allow?.optionId, options, signal });
                     yield {
                         kind: "permission_request" as const,
                         requestId: update.requestId,
                         toolCallId: update.toolCall?.toolCallId,
-                        title: update.toolCall?.title ?? "Tool call",
+                        title: toolName ? `Approve ${toolName}?` : update.toolCall?.title ?? "Tool call",
+                        detail: typeof update.toolCall?.rawInput === 'string' ? update.toolCall.rawInput
+                            : update.toolCall?.rawInput != null ? JSON.stringify(update.toolCall.rawInput) : undefined,
                         options,
                         source: "acp_permission",
                     };
@@ -793,10 +821,25 @@ export class KiroSession implements AgentSession {
             c?.respondToPermissionKind(requestId, optionId === 'allow_once' || optionId === 'allow_always' ? 'allow_once' : 'reject_once');
             return;
         }
-        this.runtime.respondToPermission(this.nativeSessionId, requestId, optionId);
+        const pending = this.pendingChatPermissions.get(requestId);
+        if (!pending || pending.signal.aborted) return;
+        const option = pending.options.find((candidate) => candidate.optionId === optionId && !candidate.disabled);
+        if (!option) throw new Error('Invalid permission option');
+        this.pendingChatPermissions.delete(requestId);
+        const owner = this.owner ?? { kind: 'chat_node' as const, nodeId: this.id };
+        const allow = pending.allowOptionId && this.approvals.accept(option.kind, owner, pending.toolName);
+        this.runtime.respondToPermission(this.nativeSessionId, requestId, allow ? pending.allowOptionId! : optionId);
+        if (allow && (option.kind === 'allow_session' || option.kind === 'allow_always')) {
+            for (const [id, request] of this.pendingChatPermissions) {
+                if (request.allowOptionId && !request.signal.aborted && approvalCoversTool(option.kind, pending.toolName, request.toolName)) {
+                    this.respondToPermission(id, request.allowOptionId);
+                }
+            }
+        }
     }
 
     cancelPermission(requestId: number): void {
+        this.pendingChatPermissions.delete(requestId);
         this.runtime.cancelPermission(this.nativeSessionId, requestId);
     }
 

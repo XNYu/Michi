@@ -15,13 +15,27 @@ Capabilities — you have these tools available and should use them proactively:
 
 Use tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.`;
 
+const CREW_CAPABILITIES_SECTION = `
+You run inside Kiro Crew, with the tools exposed by the selected Crew agent.
+Use the actual tool schemas to discover available filesystem, research and Crew capabilities.
+Michi integration uses michi_list_tools to discover this conversation's tool schemas, then
+michi_call_tool with {tool, arguments} to invoke them (thread search, panes, artifacts, branching,
+Agent Runs and branch overviews). If these two tools are absent or refuse the session identity,
+Michi MCP is not configured; do not invent calls or substitute a different conversation.
+Use Crew's native tools for files and research.
+When Crew memory tools are available, use memory_recall for relevant prior decisions and learn_add only
+for reusable user corrections or preferences. Memory belongs to the Crew identity bound to this session;
+do not select another identity or memory store. Persistent mode permits learning, Incognito reads existing
+memory without learning, and Temporary disables memory reads and writes. Conversation history and forked
+transcripts are separate from learned memory. Respect the current mode and any tool refusal.`;
+
 const PREAMBLE_TEMPLATE = `You are a knowledge-exploration assistant inside a visual "workspace" app.
 The user is diving deep into topics and wants thoughtful, structured answers.
 
 Style:
 - Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.
 - Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.
-${TOOL_CAPABILITIES_SECTION}
+{{TOOL_CAPABILITIES}}
 
 Required final answer metadata:
 - In your final answer only, after all tool use and intermediate commentary is complete,
@@ -170,6 +184,7 @@ export type MetadataOutputMode =
 function renderHead(
     enableFollowUps: boolean,
     metadataOutputMode: MetadataOutputMode = 'sentinel',
+    toolCapabilities: 'michi' | 'crew' = 'michi',
 ): string {
     const structured = metadataOutputMode === 'structured-tool';
     const toolOverview = metadataOutputMode !== 'sentinel';
@@ -187,6 +202,7 @@ function renderHead(
         ? structured ? STRUCTURED_FOLLOW_UPS_INSTRUCTION : FOLLOW_UPS_INSTRUCTION
         : FOLLOW_UPS_DISABLED;
     return PREAMBLE_TEMPLATE
+        .replace("{{TOOL_CAPABILITIES}}", toolCapabilities === 'crew' ? CREW_CAPABILITIES_SECTION : TOOL_CAPABILITIES_SECTION)
         .replace("{{BRANCH_OVERVIEW_INSTRUCTIONS}}", branchOverviewLine)
         .replace("{{METADATA_SCOPE_INSTRUCTIONS}}", metadataScopeLine)
         .replace("{{FOLLOW_UPS_INSTRUCTIONS}}", followUpsLine);
@@ -367,6 +383,7 @@ function renderAncestors(ancestors: AgentSession[]): string {
 
 export interface PreambleInput extends FirstTurnPrefixInput {
     enableFollowUps: boolean;
+    toolCapabilities?: 'michi' | 'crew';
 }
 
 /**
@@ -378,7 +395,7 @@ export interface PreambleInput extends FirstTurnPrefixInput {
  * buildFirstTurnPrefix() to the first real user message.
  */
 export function buildPreamble(input: PreambleInput): string {
-    const head = renderHead(input.enableFollowUps);
+    const head = renderHead(input.enableFollowUps, 'sentinel', input.toolCapabilities);
     const variable = buildFirstTurnPrefix(input);
     return variable
         ? `${head}\n${variable}${USER_SPEAK_TAIL}`

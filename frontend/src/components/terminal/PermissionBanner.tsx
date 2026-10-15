@@ -1,52 +1,28 @@
 import React, { useEffect, useRef } from 'react';
 import { permissionSourceLabel } from 'michi-shared';
 import type { PermissionRequest } from '../../state/chatTypes';
-import { KBD } from './primitives';
 import { Button } from '../ui/controls';
-import { kbd } from '../../lib/platform';
 
 interface PermissionBannerProps {
   permission: PermissionRequest;
   onRespond: (optionId: string) => void;
-  onCancel: () => void;
   readOnly?: boolean;
 }
 
-export default function PermissionBanner({ permission, onRespond, onCancel, readOnly = false }: PermissionBannerProps) {
+export default function PermissionBanner({ permission, onRespond, readOnly = false }: PermissionBannerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     containerRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (readOnly) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        const reject = permission.options.find((o) => o.kind === 'reject_once');
-        if (reject) onRespond(reject.optionId);
-        else onCancel();
-      } else if (e.key === 'Enter' && e.metaKey && e.shiftKey) {
-        e.preventDefault();
-        const opt = permission.options.find((o) => o.kind === 'allow_once');
-        if (opt) onRespond(opt.optionId);
-      } else if (e.key === 'Enter' && e.metaKey && !e.shiftKey) {
-        e.preventDefault();
-        const opt = permission.options.find((o) => o.kind === 'allow_always');
-        if (opt) onRespond(opt.optionId);
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [permission, onRespond, onCancel, readOnly]);
-
   const rejectOptions = permission.options.filter(
     (o) => o.kind === 'reject_once' || o.kind === 'reject_always',
   );
   const allowOptions = permission.options.filter(
-    (o) => o.kind === 'allow_once' || o.kind === 'allow_always',
+    (o) => o.kind === 'allow_once' || o.kind === 'allow_always' || o.kind === 'allow_session',
   );
+  const hasTrustChoices = allowOptions.some((o) => o.kind === 'allow_session');
 
   return (
     <div
@@ -100,7 +76,7 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
           {permission.detail}
         </pre>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         {readOnly ? (
           <div
             style={{
@@ -118,26 +94,28 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
             <Button
               key={o.optionId}
               variant="secondary"
-              danger
+              className="t-permission-choice t-permission-choice--deny"
+              disabled={o.disabled}
               onClick={() => onRespond(o.optionId)}
             >
               {o.kind === 'reject_once' ? 'Deny' : 'Never allow'}
-              {o.kind === 'reject_once' && <KBD>esc</KBD>}
             </Button>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {allowOptions.map((o) => {
             const isAlways = o.kind === 'allow_always';
+            const isOnce = o.kind === 'allow_once';
             return (
               <Button
                 key={o.optionId}
-                variant={isAlways ? 'primary' : 'secondary'}
+                variant="secondary"
+                className="t-permission-choice"
+                disabled={o.disabled}
+                title={o.disabled ? 'The runtime did not provide a stable tool name. Allow this request once or trust this session.' : undefined}
                 onClick={() => onRespond(o.optionId)}
-                style={isAlways ? undefined : { color: 'var(--term-accent)', borderColor: 'var(--term-accent)' }}
               >
-                {isAlways ? 'Always allow' : 'Allow once'}
-                <KBD>{isAlways ? kbd('mod', 'enter') : kbd('mod', 'shift', 'enter')}</KBD>
+                {isAlways ? 'Trust this tool' : isOnce ? 'Allow Once' : 'Trust all tools for this session'}
               </Button>
             );
           })}
@@ -145,6 +123,9 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
         </>
         )}
       </div>
+      {hasTrustChoices && <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
+        Trust applies only to this conversation. Session trust ends when the runtime session is recreated. Select Ask to clear trust.
+      </div>}
     </div>
   );
 }

@@ -1299,6 +1299,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         for (const child of spawned) appendPaneInTree(projectId, treeId, child.nodeId);
       }
     },
+    onPermissionResolved: (data) => dispatch({ type: 'permission-resolved', nodeId, requestId: data.requestId }),
     onPermissionRequest: (data) => {
       dispatch({ type: 'permission-request', nodeId, permission: data });
       if (prefsRef.current.notifications !== 'off' && !document.hasFocus()) {
@@ -1530,6 +1531,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           // Applied server-side after the fresh session is created, before this
           // first prompt streams. Ignored on resume (node already has a chatId).
           permissionMode: meta?.permissionMode ?? n.permissionMode,
+          crewMemoryMode: meta?.crewMemoryMode,
           modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
           graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
         });
@@ -2030,7 +2032,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const node = nodesRef.current[nodeId];
     if (!node?.chatId || !node.pendingPermission) return;
     const requestId = node.pendingPermission.requestId;
-    if (!node.pendingPermission.options.some((option) => option.optionId === optionId)) return;
+    if (!node.pendingPermission.options.some((option) => option.optionId === optionId && !option.disabled)) return;
     void respondToPermission(node.chatId, requestId, optionId)
       .then(() => {
         if (nodesRef.current[nodeId]?.pendingPermission?.requestId === requestId) dispatch({ type: 'permission-resolved', nodeId });

@@ -3,6 +3,23 @@ import { getDb } from './db';
 import { getNode, getWorkspace } from './dbRepository';
 import { readPrefs } from './prefsConfig';
 
+// Weak keys keep reset generations bounded to the lifetime of each database.
+const resetGenerations = new WeakMap<object, Map<string, number>>();
+function generations(): Map<string, number> {
+  const db = getDb();
+  let values = resetGenerations.get(db);
+  if (!values) { values = new Map(); resetGenerations.set(db, values); }
+  return values;
+}
+function revokeSessionTrust(key: string): void {
+  const values = generations();
+  values.set(key, (values.get(key) ?? 0) + 1);
+}
+export function chatPermissionResetToken(nodeId: string, userId?: string | null): string {
+  const values = generations();
+  return `${values.get(settingsKey(userId)) ?? 0}:${values.get(`node:${nodeId}`) ?? 0}`;
+}
+
 function settingsKey(userId?: string | null): string {
   if (process.env.MICHI_CLOUD === '1') {
     if (!userId) throw new Error('Permission settings require an authenticated owner');
@@ -31,6 +48,7 @@ export function readChatPermissionSettings(userId?: string | null): ChatPermissi
 export function writeChatPermissionSettings(settings: ChatPermissionSettings, userId?: string | null): void {
   if (!isChatPermissionSettings(settings)) throw new Error('Invalid permission settings');
   getDb().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(settingsKey(userId), JSON.stringify({ global: settings.global, mode: settings.mode }));
+  revokeSessionTrust(settingsKey(userId));
   if (settings.mode === 'ask') {
     if (process.env.MICHI_CLOUD === '1') {
       getDb().prepare('DELETE FROM chat_permission_grants WHERE node_id IN (SELECT n.id FROM nodes n JOIN workspaces w ON w.id = n.workspace_id WHERE w.owner_user_id = ?)').run(userId!);
@@ -49,6 +67,7 @@ export function writeNodePermissionMode(nodeId: string, mode: ChatPermissionMode
   // rows takes SQLite's writer lock, so avoid it during ordinary session setup.
   if (initialOnly && node.permission_mode != null) return;
   getDb().prepare(`UPDATE nodes SET permission_mode = ? WHERE id = ?${initialOnly ? ' AND permission_mode IS NULL' : ''}`).run(mode, nodeId);
+  if (!initialOnly) revokeSessionTrust(`node:${nodeId}`);
   if (mode === 'ask' && !initialOnly) getDb().prepare('DELETE FROM chat_permission_grants WHERE node_id = ?').run(nodeId);
 }
 

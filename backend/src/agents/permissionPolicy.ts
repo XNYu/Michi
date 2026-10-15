@@ -18,7 +18,7 @@ export function chatPermissionMode(owner: RuntimeSessionOwner | undefined, owner
     return deps.chatPermissions?.getMode(owner.nodeId, userId) ?? 'ask';
 }
 
-function permissionOwnerUserId(owner: RuntimeSessionOwner, ownerUserId?: string | null): string | null | undefined {
+export function permissionOwnerUserId(owner: RuntimeSessionOwner, ownerUserId?: string | null): string | null | undefined {
     if (ownerUserId || owner.kind !== 'chat_node') return ownerUserId;
     const deps = permissionDeps();
     const node = deps?.chatPermissions ? deps.historyStore.getNode(owner.nodeId) : null;

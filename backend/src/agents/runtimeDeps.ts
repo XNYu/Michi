@@ -23,6 +23,8 @@ export interface RuntimeDeps {
     getMode(nodeId: string, ownerUserId?: string | null): ChatPermissionMode;
     hasGrant(nodeId: string, toolKey: string, ownerUserId?: string | null): boolean;
     grant(nodeId: string, toolKey: string, ownerUserId?: string | null): void;
+    /** Changes on explicit permission updates, revoking temporary session trust. */
+    resetToken?(nodeId: string, ownerUserId?: string | null): string;
   };
 }
 

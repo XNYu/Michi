@@ -28,6 +28,11 @@ describe('filterVisibleRuntimes', () => {
     ]);
   });
 
+  it('keeps Kiro Crew visible in Restricted builds', () => {
+    const withCrew: AgentRuntimeOption[] = [...runtimes, { id: 'crew', label: 'Kiro Crew', available: false }];
+    expect(filterVisibleRuntimes(withCrew, true).map((runtime) => runtime.id)).toContain('crew');
+  });
+
   it('returns a new array without mutating the backend status payload', () => {
     const before = [...runtimes];
     const result = filterVisibleRuntimes(runtimes, true);

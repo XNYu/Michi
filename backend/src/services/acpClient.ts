@@ -139,6 +139,19 @@ function newestVersionDirs(toolsDir: string): string[] {
     }
 }
 
+/**
+ * Launch override for an ACP agent that speaks Kiro's protocol but is not
+ * kiro-cli (e.g. the Kiro Crew adapter). `args` receives the cold-start model.
+ */
+export interface AcpLaunch {
+    bin: string;
+    args: (model?: string) => string[];
+    /** Cancel watchdog for this agent. Defaults to 5 seconds for kiro-cli. */
+    cancelTimeoutMs?: number;
+    /** A v2-compatible adapter with standard session/fork (kiro-cli v2 uses rewind). */
+    standardFork?: boolean;
+}
+
 function findKiroCli(): string {
     const env = process.env.KIRO_CLI_BIN;
     if (env && existsSync(env)) return env;
@@ -250,7 +263,7 @@ export class AcpClient {
     private sessionInFlight = new Map<string, Promise<void>>();
     private readonly quarantinedSessions = new Set<string>();
     private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    private readonly cancelTimeoutMs = 5_000;
+    private readonly cancelTimeoutMs: number;
     private stopped = false;
     private exitError: Error | null = null;
     private exitListeners: Array<(err: Error) => void> = [];
@@ -348,12 +361,19 @@ export class AcpClient {
         return bestToolCallId ? this.subagentOwners.get(bestToolCallId) ?? null : null;
     }
 
+    private readonly binaryPath: string;
+
     constructor(
-        private readonly binaryPath: string = findKiroCli(),
+        binaryPath?: string,
         private readonly cwd: string = process.cwd(),
         private readonly model?: string,
         public readonly engine: KiroEngine = 'v2',
-    ) {}
+        /** Replaces the kiro-cli binary and argv. Absent → kiro-cli + kiroArgs. */
+        private readonly launch?: AcpLaunch,
+    ) {
+        this.binaryPath = launch?.bin ?? binaryPath ?? findKiroCli();
+        this.cancelTimeoutMs = launch?.cancelTimeoutMs ?? 5_000;
+    }
 
     get capabilities(): AcpInitializeResult['agentCapabilities'] {
         return this.initialization?.agentCapabilities;
@@ -447,7 +467,7 @@ export class AcpClient {
         this.stopped = false;
         this.exitError = null;
 
-        const args = kiroArgs(this.engine, this.model);
+        const args = this.launch ? this.launch.args(this.model) : kiroArgs(this.engine, this.model);
 
         startupMark("kiro_spawn_start", { cwd: this.cwd, binaryPath: this.binaryPath });
         this.proc = spawnAgentProcess(this.binaryPath, args, {
@@ -528,6 +548,15 @@ export class AcpClient {
     }
 
     private dispatch(msg: any): void {
+        if (msg?.method === '_michi/permission_resolved') {
+            const { sessionId, requestId } = msg.params ?? {};
+            if (this.pendingPermissions.get(requestId)?.sessionId === sessionId) {
+                this.pendingPermissions.delete(requestId);
+                this.sessionQueues.get(sessionId)?.push({ update: { sessionUpdate: 'permission_resolved', requestId } });
+            }
+            return;
+        }
+
 
         // An expired cancellation has no safe event boundary. Never let late
         // chunks/permissions from that native session enter another turn.
@@ -989,6 +1018,7 @@ export class AcpClient {
         startupMark("kiro_session_new_start", { cwd: this.cwd, mcpServerCount: mcpServers.length });
         const result = await this.send("session/new", { cwd: this.cwd, mcpServers,
             ...kiroSessionMeta(this.engine, { modelId: this.model, ...options }),
+            ...(options.metadata ? { _meta: { ...(kiroSessionMeta(this.engine, options)._meta as object), ...options.metadata } } : {}),
         });
         const sid = result.sessionId as string;
         if (typeof sid !== 'string' || !sid) throw new ACPError('session/new returned no sessionId');
@@ -1026,7 +1056,7 @@ export class AcpClient {
         try {
             result = await this.send(
                 "session/load",
-                { sessionId, cwd, mcpServers, ...kiroSessionMeta(this.engine, options) },
+                { sessionId, cwd, mcpServers, ...kiroSessionMeta(this.engine, options), ...(options.metadata ? { _meta: { ...(kiroSessionMeta(this.engine, options)._meta as object), ...options.metadata } } : {}) },
                 timeoutMs ?? DEFAULT_TIMEOUT_MS,
                 sessionId,
                 timeoutMs !== undefined,
@@ -1115,7 +1145,13 @@ export class AcpClient {
         this.sessionInFlight.set(sessionId, lock);
         try {
             let childId: unknown;
-            if (this.engine === 'v2') {
+            if (this.engine === 'v2' && this.launch?.standardFork) {
+                if (!this.capabilities?.sessionCapabilities?.fork) throw new ACPError('Crew did not advertise session/fork');
+                const result = await this.send('session/fork', { sessionId, cwd: this.cwd,
+                    ...(point?.messageId ? { _meta: { kiro: { messageId: point.messageId } } } : {}),
+                }, DEFAULT_TIMEOUT_MS, sessionId);
+                childId = result?.sessionId;
+            } else if (this.engine === 'v2') {
                 const catalog = await this.executeCommand(sessionId, 'rewind', {});
                 if (!catalog.success) throw new ACPError(catalog.message ?? 'Kiro rewind failed');
                 const points = rewindPoints(catalog);

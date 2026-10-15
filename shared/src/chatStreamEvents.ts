@@ -34,6 +34,7 @@ export interface PermissionOption {
   optionId: string;
   name: string;
   kind: string;
+  disabled?: boolean;
 }
 
 export interface SubagentInfo {
@@ -88,6 +89,7 @@ export const CHAT_STREAM_EVENTS = {
   artifactSaved: "artifact_saved",
   artifactUpdated: "artifact_updated",
   permissionRequest: "permission_request",
+  permissionResolved: "permission_resolved",
   userInputRequest: "user_input_request",
   userInputResolved: "user_input_resolved",
   subagentListUpdate: "subagent_list_update",
@@ -129,6 +131,7 @@ export interface ChatStreamPayloads {
   session_state: AgentSessionState;
   artifact_saved: { contextId?: string; name: string; filePath: string; size?: number };
   artifact_updated: { contextId?: string; name: string; filePath: string; size?: number };
+  permission_resolved: { requestId: number };
   permission_request: {
     requestId: number;
     toolCallId?: string;
@@ -314,12 +317,14 @@ const parsers = {
     filePath: stringOrEmpty(data.filePath),
     size: optionalFiniteNumber(data.size),
   }),
+  permission_resolved: (data) => ({ requestId: optionalFiniteNumber(data.requestId) ?? 0 }),
   permission_request: (data) => {
     const options = Array.isArray(data.options)
       ? (data.options as Array<Record<string, unknown>>).map((option) => ({
           optionId: stringOrEmpty(option.optionId),
           name: stringOrEmpty(option.name),
           kind: stringOrEmpty(option.kind),
+          ...(option.disabled === true ? { disabled: true } : {}),
         }))
       : [];
     return {

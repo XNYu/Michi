@@ -93,6 +93,20 @@ const workerBuildOptions = {
   ],
 };
 
+// Crew ACP adapter — its own process, launched by the `crew` runtime as
+// `node dist/crewAcp.js acp ...` (see src/agents/crew/crewLaunch.ts).
+const crewAcpBuildOptions = {
+  ...workerBuildOptions,
+  entryPoints: [resolve(root, "src/agents/crew/acp/main.ts")],
+  outfile: resolve(dist, "crewAcp.js"),
+};
+
+const crewMcpBuildOptions = {
+  ...workerBuildOptions,
+  entryPoints: [resolve(root, "src/agents/crew/crewMcpRelay.ts")],
+  outfile: resolve(dist, "crewMcp.js"),
+};
+
 if (WATCH) {
   // Dev: watch + run in one process. esbuild rebuilds dist/server.js on each
   // source change (incremental, fast); after every successful rebuild we
@@ -180,15 +194,24 @@ if (WATCH) {
   // trigger — the main server's Worker constructor loads the fresh file.
   const workerCtx = await context(workerBuildOptions);
   await workerCtx.watch();
+  // Crew ACP adapter: same as the worker, picked up on the next adapter spawn.
+  const crewAcpCtx = await context(crewAcpBuildOptions);
+  await crewAcpCtx.watch();
+  const crewMcpCtx = await context(crewMcpBuildOptions);
+  await crewMcpCtx.watch();
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    void stopChild().then(() => Promise.all([ctx.dispose(), workerCtx.dispose()])).finally(() => process.exit(0));
+    void stopChild()
+      .then(() => Promise.all([ctx.dispose(), workerCtx.dispose(), crewAcpCtx.dispose(), crewMcpCtx.dispose()]))
+      .finally(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 } else {
   await build(workerBuildOptions);
+  await build(crewAcpBuildOptions);
+  await build(crewMcpBuildOptions);
   await build(buildOptions);
   if (stagedOutfile !== outfile) {
     copyTree(stagedOutfile, outfile);

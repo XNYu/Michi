@@ -1,3 +1,4 @@
+import { ChatApprovalState, chatApprovalOptions, approvalCoversTool } from '../chatApprovalState';
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -25,7 +26,7 @@ import { buildPiTools, piToolResultErrorOverride } from "./piTools";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
 import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
-import { resolveChatPolicy, grantChatPermission, chatPermissionMode } from "../permissionPolicy";
+import { chatPermissionMode } from "../permissionPolicy";
 import { followUpReminder } from "../preamble";
 import { normalizeWorkspaceCwd } from "../tools/pathSandbox";
 import { resolveBedrockCredentials } from "../../services/bedrockCredentials";
@@ -210,9 +211,10 @@ export class PiSession implements AgentSession {
      */
     private readonly pendingPermissions = new Map<
         number,
-        { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout }
+        { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout; toolName?: string }
     >();
     private nextRequestId = 1;
+    private readonly approvals = new ChatApprovalState();
     private turnPermissionMode: import('michi-shared').ChatPermissionMode | undefined;
 
     constructor(id: string, deps: PiSessionDeps) {
@@ -471,15 +473,16 @@ export class PiSession implements AgentSession {
                             ? undefined
                             : { block: true, reason: "denied by Run permission policy" };
                     }
-                    const policy = resolveChatPolicy(this.owner, this.ownerUserId, bcCtx.toolCall.name, false, this.turnPermissionMode);
+                    const policy = this.approvals.policy(this.owner, this.ownerUserId, bcCtx.toolCall.name, false, this.turnPermissionMode);
                     if (policy === "allow") return undefined;
                     if (policy === "deny") return { block: true, reason: "denied by policy" };
                     const decision = await this.requestPermission(bcCtx.toolCall.name, bcCtx.args, signal);
-                    if (decision === "allow_always") {
-                        grantChatPermission(this.owner, bcCtx.toolCall.name, this.ownerUserId);
-                    }
-                    if (decision !== "allow_once" && decision !== "allow_always") {
+                    signal?.throwIfAborted();
+                    if (!this.approvals.accept(decision, this.owner, bcCtx.toolCall.name, this.ownerUserId)) {
                         return { block: true, reason: "user denied" };
+                    }
+                    for (const [id, request] of this.pendingPermissions) {
+                        if (approvalCoversTool(decision, bcCtx.toolCall.name, request.toolName)) this.respondToPermission(id, 'allow_once');
                     }
                     return undefined;
                 },
@@ -645,9 +648,8 @@ export class PiSession implements AgentSession {
     ): Promise<string | null> {
         if (!this.activePush || signal?.aborted) return null;
         const requestId = this.nextRequestId++;
-        const options: PermissionOption[] = [
+        const options: PermissionOption[] = this.owner.kind === 'chat_node' ? chatApprovalOptions(toolName) : [
             { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
-            { optionId: "allow_always", name: "Always allow this tool in this chat", kind: "allow_always" },
             { optionId: "reject_once", name: "Deny", kind: "reject_once" },
         ];
         const title = formatPermissionTitle(toolName, args);
@@ -657,7 +659,7 @@ export class PiSession implements AgentSession {
                 this.pendingPermissions.delete(requestId);
                 resolve(null);
             }, 5 * 60 * 1000);
-            this.pendingPermissions.set(requestId, { resolve, timer });
+            this.pendingPermissions.set(requestId, { resolve, timer, toolName });
 
             signal?.addEventListener(
                 "abort",
@@ -682,7 +684,8 @@ export class PiSession implements AgentSession {
     }
 
     respondToPermission(requestId: number, optionId: string): void {
-        if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'reject_once') throw new Error('Invalid permission option');
+        if (this.owner.kind === 'agent_run' && optionId === 'allow_session') throw new Error('Invalid permission option');
+        if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'allow_session' && optionId !== 'reject_once') throw new Error('Invalid permission option');
         const entry = this.pendingPermissions.get(requestId);
         if (!entry) return;
         clearTimeout(entry.timer);

@@ -821,7 +821,7 @@ export function reduceNodes(
     }
     case 'permission-resolved': {
       const n = nodes[action.nodeId];
-      if (!n) return nodes;
+      if (!n || (action.requestId !== undefined && n.pendingPermission?.requestId !== action.requestId)) return nodes;
       return { ...nodes, [action.nodeId]: { ...n, pendingPermission: null } };
     }
     case 'user-input-request': {

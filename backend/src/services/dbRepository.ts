@@ -95,6 +95,7 @@ export interface NodeRow {
   current_mode_id?: string | null;
   /** Written only by the ordinary chat permission API. Graph snapshots cannot overwrite it. */
   permission_mode?: string | null;
+  crew_memory_mode?: string | null;
   pane_width?: number | null;
   digest?: string | null;
   follow_ups?: string | null;
@@ -537,7 +538,7 @@ export function getNode(id: string): NodeRow | null {
 }
 
 export function saveNode(node: NodeRow, userId?: string): void {
-  const { permission_mode: _permissionMode, ...graphNode } = node;
+  const { permission_mode: _permissionMode, crew_memory_mode: _crewMemoryMode, ...graphNode } = node;
   if (process.env.MICHI_CLOUD === '1' && userId) {
     const owned = getDb().prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(node.workspace_id, userId);
     if (!owned) return;

@@ -135,6 +135,7 @@ export function createBackgroundTurnBinding({
       onFollowUpsStatus: (status) => dispatch({ type: 'follow-ups-status', nodeId, status }),
       onSessionState: (state) => dispatch({ type: 'session-state', nodeId, state }),
       onCommands: (commands) => dispatch({ type: 'set-commands', nodeId, commands }),
+      onPermissionResolved: (data) => dispatch({ type: 'permission-resolved', nodeId, requestId: data.requestId }),
       onPermissionRequest: (permission) => dispatch({ type: 'permission-request', nodeId, permission }),
       onUserInputRequest: (data) =>
         dispatch({ type: 'user-input-request', nodeId, userInput: { requestId: data.requestId, questions: data.questions, answers: [] } }),

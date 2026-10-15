@@ -15,6 +15,8 @@ export function describeRuntimeCapabilities(runtimeId: string): CapabilityDescri
       return CLAUDE_DESCRIPTOR;
     case "kiro":
       return KIRO_DESCRIPTOR;
+    case "crew":
+      return CREW_DESCRIPTOR;
     case "cursor":
       return CURSOR_DESCRIPTOR;
     case "grok":
@@ -108,6 +110,20 @@ export const CURSOR_DESCRIPTOR: CapabilityDescriptor = {
   sessionFork: slot("michi_simulated", "projected"),
   compact: invisibleSlot("Cursor ACP does not advertise Kiro compaction extensions"),
   subagents: invisibleSlot(),
+};
+
+/**
+ * Kiro Crew through its ACP adapter. Kiro's private steering/compaction
+ * extensions remain unavailable. Fork copies the Gateway
+ * transcript into an independent slot; the provider reconstructs its context.
+ */
+export const CREW_DESCRIPTOR: CapabilityDescriptor = {
+  ...KIRO_DESCRIPTOR,
+  permissions: slot("native", "projected", "Official sessionApproval grant required; pending tool requests forwarded to Michi Ask/Trust"),
+  steer: invisibleSlot("Official Crew Gateway excludes App callers from same-turn steer"),
+  compact: invisibleSlot("Kiro Crew adapter does not support Kiro compaction"),
+  sessionFork: slot("native", "projected", "Gateway transcript fork with inherited memory identity and context replay; not a kiro-cli checkpoint"),
+  subagents: invisibleSlot("Kiro Crew adapter does not stream subagent updates"),
 };
 
 export const GROK_DESCRIPTOR: CapabilityDescriptor = {

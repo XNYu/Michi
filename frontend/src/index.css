@@ -3637,6 +3637,23 @@ html[data-vibrancy="on"],
   color: var(--term-muted);
 }
 
+/* Approval choices stay neutral until hover or keyboard focus. */
+.ui-btn.t-permission-choice {
+  --permission-tone: var(--term-accent);
+  color: var(--term-mid);
+}
+.ui-btn.t-permission-choice--deny {
+  --permission-tone: var(--term-danger);
+}
+.ui-btn.t-permission-choice:not(:disabled):is(:hover, :focus-visible) {
+  color: var(--permission-tone);
+  border-color: color-mix(in srgb, var(--permission-tone) 50%, var(--term-line));
+  background: color-mix(in srgb, var(--permission-tone) 9%, var(--term-surface));
+}
+.ui-btn.t-permission-choice:focus-visible {
+  outline-color: color-mix(in srgb, var(--permission-tone) 60%, transparent);
+}
+
 /* ── Text input / select primitive · .ui-input / .ui-select ──────────────────
    The --term-alt + --term-line recipe that recurred across ~13 files, with one
    consistent focus ring (call sites disagreed on outline handling). */

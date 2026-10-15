@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { crewRoutes } from "./crew";
 import {
   getAgentConfig,
   updateAgentConfig,
@@ -75,6 +76,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   const catalogCache = opts?.catalogCache ?? null;
   const isCustomAgentsEnabled = () => opts?.customAgents?.isEnabled() ?? opts?.customAgentsEnabled ?? false;
   const router = Router();
+  router.use(crewRoutes());
 
   // Custom Agents has no toggle route on purpose: the feature is switched on
   // only by the backend's environment (see customAgentsFeatureGate). Status

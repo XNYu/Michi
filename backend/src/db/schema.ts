@@ -133,6 +133,7 @@ export const nodes = sqliteTable('nodes', {
   followUps:          text('follow_ups'),
   composerDraft:      text('composer_draft'),
   acpSessionId:       text('acp_session_id'),
+  crewMemoryMode:     text('crew_memory_mode'),
   externalSessionId:  text('external_session_id'),
   runtimeId:          text('runtime_id'),
   runtimeEngine:      text('runtime_engine'),

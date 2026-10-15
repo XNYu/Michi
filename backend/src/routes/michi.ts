@@ -13,6 +13,7 @@ import {
 import { ChatManager, ExtraContext, PrimaryAgentBindingError, primaryAgentSessionOptions } from "../services/chatManager";
 import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
+import { chatReplayUnavailable } from './chatReplay';
 import { getRuntime } from "../agents/registry";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider, recordLastUsedProviderModel } from "../services/agentConfig";
@@ -24,6 +25,7 @@ import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
 import { isChatPermissionMode } from 'michi-shared';
 import { writeNodePermissionMode } from '../services/chatPermissions';
+import { isCrewMemoryMode } from 'michi-shared';
 // getSessionForUser enforces ownership in cloud mode; getSession is for internal callers.
 const { getSessionForUser } = sessionRegistry;
 import type { AgentSession } from "../agents/types";
@@ -1064,6 +1066,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const routeStart = Date.now();
         startupMark("ensure_session_route_start", { nodeId });
         const body = (req.body ?? {}) as Record<string, unknown>;
+        if (body.crewMemoryMode !== undefined && !isCrewMemoryMode(body.crewMemoryMode)) {
+            return res.status(400).json({ error: "Invalid Crew memory mode" });
+        }
         if (body.permissionMode !== undefined && !isChatPermissionMode(body.permissionMode)) {
             return res.status(400).json({ error: 'permissionMode must be ask, trust, or yolo' });
         }
@@ -1432,6 +1437,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     ...mergeContexts,
                 ];
                 session = await runtime.newSession({
+                    ...(isCrewMemoryMode(body.crewMemoryMode) ? { crewMemoryMode: body.crewMemoryMode } : {}),
                     cwd,
                     parentChatId,
                     ...(runtime.id === 'pi' ? { replayHistory: transcript } : {}),
@@ -1808,7 +1814,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         // Validate the replay cursor before committing HTTP/SSE headers so a
         // gap remains an actionable 410 response rather than a hung stream.
         const probe = chatHub.subscribeTurn(nodeId, fromTurnId, { send: () => {}, close: () => {} }, Number.isFinite(fromSeq) ? fromSeq : 0);
-        if (!probe) return res.status(410).json({ error: 'turn replay unavailable', code: 'turn_replay_unavailable' });
+        if (!probe) return res.status(410).json(chatReplayUnavailable(nodeId, fromTurnId));
         probe();
 
         res.setHeader("Content-Type", "text/event-stream");
@@ -1887,7 +1893,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (typeof optionId !== "string") {
             return res.status(400).json({ error: "optionId (string) required when not cancelling" });
         }
-        if (!pending.options.some((option) => option.optionId === optionId)) {
+        if (!pending.options.some((option) => option.optionId === optionId && !option.disabled)) {
             return res.status(400).json({ error: 'Invalid permission option' });
         }
         if (!session.respondToPermission) {

@@ -585,7 +585,8 @@ function ScopedManageComposer({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const permissionMeta = permissionPreferences.global || effectivePermissionMode === 'ask' ? meta : { ...meta, permissionMode: effectivePermissionMode };
+      const overrides = permissionPreferences.global || effectivePermissionMode === 'ask' ? {} : { permissionMode: effectivePermissionMode };
+      const permissionMeta = Object.keys(overrides).length ? { ...meta, ...overrides } : meta;
       const modeId = pendingPrimaryAgent ? undefined : currentModeId;
       const primaryAgent = pendingPrimaryAgent ? {
         backendConnectionId: pendingPrimaryAgent.backendConnectionId,
@@ -755,7 +756,7 @@ function ScopedManageComposer({
         </div>}
         toolbarRight={
           <>
-          {!permissionPreferences.global && <ComposerPermissionControl mode={permissionMode}
+          {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(workspaceId)} mode={permissionMode}
             runtimeIds={[permissionRuntime]}
             disabled={submitting || permissionPreferences.loading} onChange={setPermissionMode} />}
           <ComposerModelTrigger

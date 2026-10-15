@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { saveNode, saveWorkspace, getNode } from '../src/services/dbRepository';
 import * as prefsConfig from '../src/services/prefsConfig';
-import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode, grantChatTool, hasChatToolGrant } from '../src/services/chatPermissions';
+import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode, grantChatTool, hasChatToolGrant, chatPermissionResetToken } from '../src/services/chatPermissions';
 import { setupPersistenceRoutes } from '../src/routes/persistence';
 
 const originalReadPrefs = prefsConfig.readPrefs;
@@ -88,6 +88,23 @@ test('always-allow grants stay in one chat and returning to Ask revokes them', (
   writeChatPermissionSettings({ global: true, mode: 'ask' });
   assert.equal(hasChatToolGrant('a', 'edit'), false);
   assert.equal(hasChatToolGrant('b', 'bash'), false);
+});
+
+test('permission updates revoke temporary session trust without affecting another owner or chat', () => {
+  readChatPermissionSettings();
+  const a = chatPermissionResetToken('a'), b = chatPermissionResetToken('b');
+  writeNodePermissionMode('a', 'ask');
+  assert.notEqual(chatPermissionResetToken('a'), a);
+  assert.equal(chatPermissionResetToken('b'), b);
+  writeNodePermissionMode('b', 'ask', null, true);
+  assert.equal(chatPermissionResetToken('b'), b, 'initialization is not revocation');
+  writeChatPermissionSettings({ global: true, mode: 'ask' });
+  assert.notEqual(chatPermissionResetToken('b'), b);
+  process.env.MICHI_CLOUD = '1';
+  const alice = chatPermissionResetToken('a', 'alice'), bob = chatPermissionResetToken('a', 'bob');
+  writeChatPermissionSettings({ global: true, mode: 'ask' }, 'alice');
+  assert.notEqual(chatPermissionResetToken('a', 'alice'), alice);
+  assert.equal(chatPermissionResetToken('a', 'bob'), bob);
 });
 
 test('cloud settings and grants are isolated by authenticated owner', () => {

@@ -1347,6 +1347,7 @@ async function installDevExtensions(): Promise<void> {
 // of spawning a duplicate backend + window. Acquired before whenReady so
 // rejected instances exit cleanly without booting the backend.
 if (!app.requestSingleInstanceLock()) {
+  elog('INFO', 'boot', 'another instance owns the Electron profile; forwarded launch', { userData: app.getPath('userData') });
   app.exit(0);
 }
 
