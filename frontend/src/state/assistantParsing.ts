@@ -194,11 +194,10 @@ export function parseTitle(fullText: string): { title: string | null; rest: stri
 
 /**
  * Derive a persisted node title from the first user message when the agent
- * never emitted a `[TITLE:]` sentinel or a structured title event. Codex
- * generates a title on the first turn; this gives Claude/Kiro (which have no
- * such generator) an equivalent persisted title so a node is never stored
- * untitled. Mirrors the display-only `chatLabel` derivation (strip quoted
- * lines, collapse whitespace, cap length).
+ * never emitted a `[TITLE:]` sentinel or a structured title event. Also used
+ * for display-only labels while waiting for the main response; those labels
+ * must not fill the durable title before agent metadata arrives. Strip quoted
+ * lines, collapse whitespace, and cap length.
  */
 export function deriveTitleFromUserText(userText: string | undefined | null): string | null {
   if (!userText) return null;

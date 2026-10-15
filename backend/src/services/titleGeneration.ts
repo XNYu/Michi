@@ -1,8 +1,8 @@
 /**
  * Runtime-neutral helpers for sidecar thread-title generation.
  *
- * Every runtime that can run a cheap one-shot prompt (Kiro, Claude, Codex)
- * shares the same instruction text, output cleaning and plain-text fallback
+ * Runtimes that run a cheap one-shot prompt (Kiro, Codex)
+ * share the same instruction text, output cleaning and plain-text fallback
  * so the sidebar title looks the same regardless of which model produced it.
  * The runtime-specific transport lives next to each runtime; this module
  * only owns the pure pieces.
@@ -94,12 +94,10 @@ function readModel(envName: string, fallback: string): string | null {
  * entry so a user who only has one CLI installed still gets titles from the
  * credentials they already have. Set the env var to `off` to disable.
  */
-export function titleModelConfig(runtimeId: 'kiro' | 'claude' | 'codex'): TitleModelConfig {
+export function titleModelConfig(runtimeId: 'kiro' | 'codex'): TitleModelConfig {
   switch (runtimeId) {
     case 'kiro':
       return { model: readModel('MICHI_TITLE_MODEL_KIRO', 'gpt-5.6-luna'), timeoutMs: readTimeout('MICHI_TITLE_TIMEOUT_MS') };
-    case 'claude':
-      return { model: readModel('MICHI_TITLE_MODEL_CLAUDE', 'haiku'), timeoutMs: readTimeout('MICHI_TITLE_TIMEOUT_MS') };
     case 'codex':
       return { model: readModel('MICHI_TITLE_MODEL_CODEX', 'gpt-5.6-luna'), timeoutMs: readTimeout('MICHI_CODEX_TITLE_TIMEOUT_MS') };
   }

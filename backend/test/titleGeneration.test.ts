@@ -8,7 +8,6 @@ import {
   withTitleTimeout,
 } from '../src/services/titleGeneration';
 import { KiroTitleGenerator, type KiroTitleClient } from '../src/agents/kiro/kiroTitleGenerator';
-import { buildClaudeTitleArgv } from '../src/agents/claude/claudeTitleGenerator';
 
 describe('titleGeneration helpers', () => {
   it('cleans the usual ways a model ignores "output only the title"', () => {
@@ -60,7 +59,6 @@ describe('titleGeneration helpers', () => {
     try {
       delete process.env.MICHI_TITLE_MODEL_KIRO;
       assert.equal(titleModelConfig('kiro').model, 'gpt-5.6-luna');
-      assert.equal(titleModelConfig('claude').model, 'haiku');
       assert.equal(titleModelConfig('codex').model, 'gpt-5.6-luna');
       process.env.MICHI_TITLE_MODEL_KIRO = 'off';
       assert.equal(titleModelConfig('kiro').model, null);
@@ -82,19 +80,6 @@ describe('titleGeneration helpers', () => {
       /timed out after 20ms/,
     );
     assert.equal(aborted, true);
-  });
-});
-
-describe('buildClaudeTitleArgv', () => {
-  it('runs a stateless text-only print call on the resolved cheap model', () => {
-    const argv = buildClaudeTitleArgv('haiku');
-    assert.ok(argv.includes('--print'));
-    assert.ok(argv.includes('--bare'));
-    assert.ok(argv.includes('--no-session-persistence'));
-    assert.equal(argv[argv.indexOf('--output-format') + 1], 'text');
-    assert.equal(argv[argv.indexOf('--tools') + 1], '');
-    assert.equal(argv[argv.indexOf('--model') + 1], 'claude-haiku-4-5');
-    assert.ok(!argv.includes('--resume'));
   });
 });
 

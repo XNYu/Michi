@@ -614,11 +614,10 @@ export function reduceNodes(
       // first turn (no title yet). See `set-title` for the same rule on
       // mid-stream title updates.
       const hasTitle = !!(n.title && n.title.trim().length > 0);
-      // Fallback for runtimes without a title generator (Claude/Kiro): if this
-      // turn produced no title and the node has none, derive one from the first
-      // user message so the node is never persisted untitled — parity with
-      // Codex's first-turn title generation. Only chat nodes; digests title
-      // themselves from regenerated content.
+      // If the main response (or an enabled sidecar) produced no title, derive
+      // one from the first user message at completion. Display-only labels do
+      // not fill n.title while streaming, so they cannot block agent metadata.
+      // Only chat nodes; digests title themselves from regenerated content.
       const fallbackTitle =
         !hasTitle && !extractedTitle && n.kind === 'chat'
           ? deriveTitleFromUserText(n.messages.find((m) => m.role === 'user')?.text)

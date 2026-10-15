@@ -9,6 +9,9 @@ import { test, describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, PassThrough } from 'node:stream';
 import * as sessionRegistry from '../src/agents/sessionRegistry';
+import { ChatHub } from '../src/agents/chatHub';
+import type { AgentRuntime } from '../src/agents/types';
+import type { DurableTurnSnapshot } from 'michi-shared';
 
 // ---- MockClaudeChild --------------------------------------------------------
 
@@ -223,6 +226,41 @@ describe('ClaudeRuntime', () => {
     assert.equal(rt.capabilities.warmSessions, true);
     assert.equal(rt.capabilities.saveContext, true);
     assert.equal(rt.capabilities.spawnBranches, true);
+  });
+
+  test('uses title metadata from the main Claude response without a sidecar model', async () => {
+    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    let snapshot: DurableTurnSnapshot | undefined;
+    const hub = new ChatHub({
+      retentionMs: 100,
+      workspaceIdForNode: () => 'ws-title',
+      persistence: {
+        begin: () => {},
+        checkpoint: () => {},
+        finalize: (value) => { snapshot = value; },
+      },
+    });
+    try {
+      assert.equal((rt as AgentRuntime).generateTitle, undefined);
+      const session = await rt.newSession({ cwd: '/tmp', sessionId: 'main-title' } as any);
+      const { done } = await hub.startTurn({
+        chatId: 'main-title', nodeId: 'main-title', text: 'How does Claude title generation work?', session,
+      });
+      mockChild.send({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta', index: 0,
+          delta: { type: 'text_delta', text: '[TITLE: Claude title generation]\nThe main response supplies the title.' },
+        },
+      });
+      mockChild.emitResult();
+      await done;
+      assert.equal(snapshot?.status, 'completed');
+      assert.equal(snapshot?.nodeMetadata.title, 'Claude title generation');
+      assert.equal(snapshot?.assistantMessage.content, 'The main response supplies the title.');
+    } finally {
+      await rt.shutdown();
+    }
   });
 
   // ── Case 2: warm() with pool disabled is a no-op ────────────────────────────

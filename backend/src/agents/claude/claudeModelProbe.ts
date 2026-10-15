@@ -1,10 +1,12 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { isReasoningLevel, sanitizeReasoningLevels } from 'michi-shared';
 import type { ModelInfo } from '../types';
 import { findClaudeBinary, preflightClaudeAuth } from './claudeBinary';
-import { defaultClaudeTitleCwd } from './claudeTitleGenerator';
 import { spawnAgentProcess, killProcessTree } from '../processTree';
 import { resolveClaudeConfigDir } from '../../services/agentConfig';
+import { getMichiDataDir } from '../../services/dataDir';
 
 /**
  * Asks the installed Claude CLI which models the current account can use.
@@ -29,10 +31,9 @@ const PROBE_REQUEST_ID = 'michi-model-probe';
 
 /**
  * `--bare` skips hooks, plugins and CLAUDE.md discovery so the probe has no
- * side effects (SessionStart hooks would otherwise run on every Michi start);
- * the title generator relies on the same mode for auth. The model list is the
- * same with and without it. `--no-session-persistence` keeps the probe out of
- * `~/.claude` session storage.
+ * side effects (SessionStart hooks would otherwise run on every Michi start).
+ * The model list is the same with and without it. `--no-session-persistence`
+ * keeps the probe out of `~/.claude` session storage.
  */
 export const CLAUDE_MODEL_PROBE_ARGV: readonly string[] = [
   '--input-format', 'stream-json',
@@ -45,7 +46,7 @@ export const CLAUDE_MODEL_PROBE_ARGV: readonly string[] = [
 
 export interface ClaudeModelProbeOptions {
   timeoutMs?: number;
-  /** Neutral cwd; defaults to the title generator's empty folder. */
+  /** Neutral cwd; defaults to an empty folder under the Michi data dir. */
   cwd?: string;
   /** Test seam. */
   spawn?: (binary: string, argv: string[], cwd: string) => ChildProcessWithoutNullStreams;
@@ -118,6 +119,16 @@ function defaultSpawn(binary: string, argv: string[], cwd: string): ChildProcess
 }
 
 /**
+ * Keep model discovery away from workspace settings and CLAUDE.md. Use a
+ * stable data-dir folder because the toolbox CLI can stall in the OS temp dir.
+ */
+function defaultClaudeModelProbeCwd(): string {
+  const dir = path.join(getMichiDataDir(), 'model-probe-cwd');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/**
  * Spawn the CLI, send `initialize`, and resolve with the parsed model list.
  * The process is always killed once the response (or a failure) arrives.
  */
@@ -125,7 +136,7 @@ export async function probeClaudeModels(opts: ClaudeModelProbeOptions = {}): Pro
   preflightClaudeAuth(resolveClaudeConfigDir());
   const binary = findClaudeBinary();
   const spawn = opts.spawn ?? defaultSpawn;
-  const cwd = opts.cwd ?? defaultClaudeTitleCwd();
+  const cwd = opts.cwd ?? defaultClaudeModelProbeCwd();
   const timeoutMs = opts.timeoutMs ?? CLAUDE_MODEL_PROBE_TIMEOUT_MS;
 
   const child = spawn(binary, [...CLAUDE_MODEL_PROBE_ARGV], cwd);

@@ -13,6 +13,7 @@ import { treeHasUnread, buildBranchChildrenOf } from '../../state/sidebarSelecto
 import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
 import { useNewPanePulse } from './useNewPanePulse';
 import { useTreePrefetchIntent } from '../../state/treePrefetch';
+import { deriveTitleFromUserText } from '../../state/assistantParsing';
 
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 
@@ -145,7 +146,11 @@ export default function ThreadRow({
   const renameBaseRef = useRef('');
   const renameRef = useRef<HTMLInputElement>(null);
   const suppressNextBlurCommitRef = useRef(false);
-  const label = tree.name || n?.title || 'Untitled';
+  // This display fallback never fills n.title, so the main response can still
+  // provide the first durable title while the user sees a useful sidebar label.
+  const label = tree.name || n?.title
+    || deriveTitleFromUserText(n?.messages.find((m) => m.role === 'user')?.text)
+    || 'Untitled';
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const newPanePulse = useNewPanePulse(tree.rootNodeId);
   // Same rule in every mode: the rail is a SUMMARY for a collapsed subtree, so

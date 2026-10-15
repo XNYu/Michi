@@ -2,10 +2,20 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ThreadRow from './ThreadRow';
+import { reduceNodes } from '../../state/chatReducers';
+import type { ChatNodeState } from '../../state/chatTypes';
+
+function makeNode(): ChatNodeState {
+  return {
+    nodeId: 'n1', kind: 'chat', chatId: 'c1', projectId: 'p1',
+    title: 'Root title', messages: [], followUps: [], status: 'idle', runtimeId: 'claude',
+  };
+}
 
 const mockStoreState = {
   treeSelection: new Set<string>(),
   focusedNodeId: null as string | null,
+  node: makeNode(),
 };
 const structuralSelectors: Array<(nodes: Record<string, unknown>) => unknown> = [];
 
@@ -18,7 +28,7 @@ vi.mock('../../state/prefs', () => ({
 // select vs. activate. These mocks only need to cover what ThreadRow reads for
 // display (treeSelection / focusedNodeId / projects).
 vi.mock('../../state/chatStore', () => ({
-  useChatNode: () => ({ title: 'Root title' }),
+  useChatNode: () => mockStoreState.node,
   useChatActions: () => ({
     clearTreeSelection: vi.fn(),
   }),
@@ -70,6 +80,37 @@ describe('ThreadRow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     structuralSelectors.length = 0;
+    mockStoreState.node = makeNode();
+  });
+
+  it('shows the first message while waiting, then accepts the main response title', () => {
+    const initial = { n1: { ...makeNode(), title: undefined } };
+    const streaming = reduceNodes(initial, {
+      type: 'user-send', nodeId: 'n1', userText: '/btw Claude 标题应该如何生成？', assistantId: 'a1',
+    });
+    mockStoreState.node = streaming.n1;
+    const { rerender } = renderThreadRow();
+
+    expect(screen.getByText('Claude 标题应该如何生成？')).toBeTruthy();
+    expect(mockStoreState.node.title).toBeUndefined();
+    expect(mockStoreState.node.titleNeedsPersistence).toBeUndefined();
+
+    const titled = reduceNodes(streaming, { type: 'set-title', nodeId: 'n1', title: 'Claude 主对话标题生成' });
+    mockStoreState.node = titled.n1;
+    rerender({});
+
+    expect(screen.getByText('Claude 主对话标题生成')).toBeTruthy();
+    expect(screen.queryByText('Claude 标题应该如何生成？')).toBeNull();
+  });
+
+  it('keeps an explicitly renamed thread ahead of a temporary message label', () => {
+    mockStoreState.node = reduceNodes({ n1: { ...makeNode(), title: undefined } }, {
+      type: 'user-send', nodeId: 'n1', userText: 'Hello', assistantId: 'a1',
+    }).n1;
+    renderThreadRow({ tree: { id: 't1', rootNodeId: 'n1', name: 'My research', createdAt: 0, lastActiveAt: 0 } });
+
+    expect(screen.getByText('My research')).toBeTruthy();
+    expect(screen.queryByText('Hello')).toBeNull();
   });
 
   it('keeps its unread selector stable across local-state renders', () => {

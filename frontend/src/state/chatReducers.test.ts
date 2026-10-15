@@ -27,6 +27,39 @@ describe('reduceNodes done — unread', () => {
   });
 });
 
+describe('reduceNodes main-response titles', () => {
+  function firstTurn() {
+    return reduceNodes({ n1: makeNode({ runtimeId: 'claude', messages: [], status: 'idle' }) }, {
+      type: 'user-send', nodeId: 'n1', userText: '/btw Claude 标题应该如何生成？', assistantId: 'a1',
+    });
+  }
+
+  it('persists a title from the main response when no sidecar supplied one', () => {
+    const streaming = firstTurn();
+    expect(streaming.n1.title).toBeUndefined();
+    const answered = reduceNodes(streaming, {
+      type: 'chunk', nodeId: 'n1', assistantId: 'a1', text: '[TITLE: Claude 主对话标题生成]\n回答内容',
+    });
+    const done = reduceNodes(answered, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
+    expect(done.n1.title).toBe('Claude 主对话标题生成');
+    expect(done.n1.titleNeedsPersistence).toBeUndefined();
+  });
+
+  it('persists the user-message fallback only after a response omits title metadata', () => {
+    const streaming = firstTurn();
+    expect(streaming.n1.title).toBeUndefined();
+    const answered = reduceNodes(streaming, {
+      type: 'chunk', nodeId: 'n1', assistantId: 'a1', text: '回答内容',
+    });
+    const done = reduceNodes(answered, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
+    expect(done.n1.title).toBe('Claude 标题应该如何生成？');
+    expect(done.n1.titleNeedsPersistence).toBe(true);
+
+    const later = reduceNodes(done, { type: 'set-title', nodeId: 'n1', title: 'Later title' });
+    expect(later.n1.title).toBe(done.n1.title);
+  });
+});
+
 describe('reduceNodes visible-response-complete', () => {
   it('makes the node interactive while tracking the hidden backend tail separately', () => {
     const before = {
