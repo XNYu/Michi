@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
 import { isRunningStatus, formatDurationMs, toolSpanMs } from './toolCallGrouping';
 import { ToolCallGroup } from './ToolCallGroup';
@@ -877,7 +877,9 @@ function AnswerRunViewInner({
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const { segments, isSmoothing } = useAnswerRunStream(blocks, toolsById, incomingCarry, runtimeId);
   const streaming = blocks.some((b) => b.kind === 'answer' && b.streaming);
-  useEffect(() => {
+  // Update follow-up visibility before paint, including a short answer whose
+  // final text and metadata arrive together while the parent still sees false.
+  useLayoutEffect(() => {
     onSmoothingChange?.(isSmoothing);
   }, [isSmoothing, onSmoothingChange]);
   return (
@@ -1072,7 +1074,7 @@ function LegacyAssistantBody({
   onSmoothingChange?: (isSmoothing: boolean) => void;
 }) {
   const { segments, isSmoothing } = useVisibleStream(m, runtimeId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onSmoothingChange?.(isSmoothing);
   }, [isSmoothing, onSmoothingChange]);
   return (
@@ -1127,7 +1129,7 @@ function BlockAssistantBody({
     }
     return undefined;
   }, [runs]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!tailAnswerRunId) onSmoothingChange?.(false);
   }, [onSmoothingChange, tailAnswerRunId]);
   return (

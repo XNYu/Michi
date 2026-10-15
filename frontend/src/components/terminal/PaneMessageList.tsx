@@ -117,12 +117,13 @@ function PaneMessageListInner({
     ? false
     : turnStillRunning
     ? false
-    : node.visibleResponseComplete
-    ? node.followUps.length > 0
     : shouldShowFollowUps(
         node.followUps.length,
         tailAnswerSmoothing,
-        !!node.followUpsGenerating,
+        // The runtime boundary only marks received text as complete. Its
+        // typewriter backlog must finish before follow-ups appear, including
+        // while a hidden metadata tail drains and after the final done event.
+        !!node.followUpsGenerating && !node.visibleResponseComplete,
       );
 
   countRender('PaneMessageList', node.nodeId, {
