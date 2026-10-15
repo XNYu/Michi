@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { ChatNodeState } from '../../state/chatTypes';
+import type { AssistantBlock, ChatNodeState } from '../../state/chatTypes';
 import type { PlanEntry } from '../../services/api';
+import { type AgentBlockStyle, useAgentBlockStyle } from '../../state/prefs';
+import { splitAssistantRuns, tailRunsFormAgentCluster } from '../../state/streamingProjection';
 import { isRunningStatus, isHiddenInternalTool } from './toolCallGrouping';
 
 /**
@@ -16,7 +18,8 @@ import { isRunningStatus, isHiddenInternalTool } from './toolCallGrouping';
  *
  * Deliberately returns null while visible answer text is streaming (the cursor
  * already shows that), while the turn is brand-new and empty (MessageBlock's
- * ThinkingIndicator owns that), and while Kiro subagents are working
+ * ThinkingIndicator owns that), while the tail thought block's header already
+ * shows a live Thinking…/Working… status, and while Kiro subagents are working
  * (SubagentStatus renders richer per-agent detail).
  */
 
@@ -58,10 +61,44 @@ function planStepActivity(plan: PlanEntry[] | undefined): StreamActivity | null 
 }
 
 /**
+ * How the message list renders thoughts. When omitted, no thought block is
+ * assumed to be visible and the fallback labels always render.
+ */
+export interface StreamActivityRenderContext {
+  /** prefs.showThoughts — thought blocks render at all. */
+  showThoughts: boolean;
+  agentBlockStyle: AgentBlockStyle;
+}
+
+/**
+ * True when the tail thought block's header is already showing a live
+ * "Thinking…"/"Working…" status, making the bare fallback row a duplicate.
+ * Mirrors BlockAssistantBody: card/terminal styles keep the tail agent
+ * cluster live for the whole streaming message; plain style's
+ * ThinkingRunView is live only while its thinking tokens stream (running
+ * tools are already handled before this is consulted).
+ */
+function thoughtHeaderIsLive(
+  blocks: readonly AssistantBlock[],
+  messageStreaming: boolean,
+  ctx: StreamActivityRenderContext | undefined,
+): boolean {
+  if (!ctx?.showThoughts || !messageStreaming) return false;
+  if (ctx.agentBlockStyle === 'plain') {
+    const tail = blocks[blocks.length - 1];
+    return tail?.kind === 'thinking' && !!tail.streaming;
+  }
+  return tailRunsFormAgentCluster(splitAssistantRuns(blocks));
+}
+
+/**
  * Pure label derivation. Returns null when no standalone row should render.
  * Exported for unit testing — keep it free of React/timing concerns.
  */
-export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null {
+export function deriveStreamActivity(
+  node: ChatNodeState,
+  ctx?: StreamActivityRenderContext,
+): StreamActivity | null {
   if (node.status === 'idle' && node.runtimeActivity) return { label: node.runtimeActivity };
   if (node.status !== 'streaming' || node.visibleResponseComplete) return null;
   if (node.cancelPhase === 'requested') return { label: 'Cancel requested' };
@@ -116,6 +153,10 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
   const planStep = planStepActivity(last.plan);
   if (planStep) return planStep;
 
+  // The thought block's own header already says "Thinking…"/"Working…" with a
+  // live timer; a second bare row underneath repeats it.
+  if (thoughtHeaderIsLive(blocks, !!last.streaming, ctx)) return null;
+
   // Tail block tells us what the model is mid-producing.
   if (tail?.kind === 'thinking' && tail.streaming) return { label: 'Thinking' };
 
@@ -128,8 +169,16 @@ export function deriveStreamActivity(node: ChatNodeState): StreamActivity | null
 /** Only surface an elapsed counter once a turn has run long enough to matter. */
 const ELAPSED_GRACE_MS = 3000;
 
-function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
-  const activity = deriveStreamActivity(node);
+function StreamActivityIndicatorInner({
+  node,
+  showThoughts = false,
+}: {
+  node: ChatNodeState;
+  /** prefs.showThoughts; defaults off so the fallback row stays visible. */
+  showThoughts?: boolean;
+}) {
+  const agentBlockStyle = useAgentBlockStyle();
+  const activity = deriveStreamActivity(node, { showThoughts, agentBlockStyle });
 
   // Elapsed ticker. Seeded from the store's streamingStartedAt so the timer
   // survives unmount/remount cycles (e.g. switching threads and back). Falls

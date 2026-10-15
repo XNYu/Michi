@@ -278,6 +278,69 @@ describe('deriveStreamActivity — Kiro plan steps', () => {
   });
 });
 
+describe('deriveStreamActivity — live thought header', () => {
+  const card = { showThoughts: true, agentBlockStyle: 'card' as const };
+  const plain = { showThoughts: true, agentBlockStyle: 'plain' as const };
+
+  const streamingThought = () => node({
+    messages: [assistant({
+      blocks: [{ id: 'b0', kind: 'thinking', rawText: 'reasoning', streaming: true }],
+    })],
+  });
+  const betweenSteps = () => node({
+    messages: [assistant({
+      blocks: [
+        { id: 'b0', kind: 'thinking', rawText: 'done reasoning', streaming: false },
+        { id: 'b1', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 0 },
+      ],
+      toolCalls: [tool('t1', 'bash', 'completed')],
+    })],
+  });
+
+  it('defers to the card header while thinking streams', () => {
+    expect(deriveStreamActivity(streamingThought(), card)).toBeNull();
+    expect(deriveStreamActivity(streamingThought(), { ...card, agentBlockStyle: 'terminal' })).toBeNull();
+  });
+
+  it('defers to the card header in a between-steps gap', () => {
+    expect(deriveStreamActivity(betweenSteps(), card)).toBeNull();
+  });
+
+  it('keeps the fallback row when thoughts are hidden', () => {
+    expect(deriveStreamActivity(streamingThought(), { ...card, showThoughts: false })?.label).toBe('Thinking');
+    expect(deriveStreamActivity(betweenSteps(), { ...card, showThoughts: false })?.label).toBe('Working');
+  });
+
+  it('keeps Working once answer prose ends the agent cluster', () => {
+    const n = node({
+      messages: [assistant({
+        blocks: [
+          { id: 'b0', kind: 'thinking', rawText: 'x', streaming: false },
+          { id: 'b1', kind: 'answer', rawText: 'Here is the answer', streaming: false },
+        ],
+      })],
+    });
+    expect(deriveStreamActivity(n, card)?.label).toBe('Working');
+  });
+
+  it('plain style defers only while thinking streams', () => {
+    expect(deriveStreamActivity(streamingThought(), plain)).toBeNull();
+    // Plain ThinkingRunView collapses to "Thought for …" between steps, so
+    // the Working row is still the only liveness signal.
+    expect(deriveStreamActivity(betweenSteps(), plain)?.label).toBe('Working');
+  });
+
+  it('still surfaces plan steps under a live card header', () => {
+    const n = node({
+      messages: [assistant({
+        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'x', streaming: true }],
+        plan: [planEntry('parse tokens', 'in_progress')],
+      })],
+    });
+    expect(deriveStreamActivity(n, card)?.detail).toBe('Step 1/1');
+  });
+});
+
 describe('StreamActivityIndicator (render)', () => {
   it('shows post-cancel cleanup on an idle node without a streaming elapsed timer', () => {
     const n = { ...node({ status: 'idle' }), runtimeActivity: 'Waiting for cancellation to finish', streamingStartedAt: Date.now() - 30_000 };

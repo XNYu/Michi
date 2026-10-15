@@ -304,7 +304,7 @@ function PaneMessageListInner({
         );
       })}
 
-      <StreamActivityIndicator node={node} />
+      <StreamActivityIndicator node={node} showThoughts={prefs.showThoughts} />
       <McpServerError node={node} />
       <FollowUpsSection
         node={node}

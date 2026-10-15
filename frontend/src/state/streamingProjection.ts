@@ -94,6 +94,33 @@ export function splitAssistantRuns(blocks: readonly AssistantBlock[] | undefined
   });
 }
 
+/**
+ * An answer run is "clusterable" if it has no visible prose — i.e. it consists
+ * entirely of tool blocks, or all its answer-text blocks are empty/whitespace.
+ * These runs merge into the adjacent thinking cluster rather than breaking it.
+ */
+export function isClusterableAnswerRun(run: AssistantRun): boolean {
+  if (run.kind !== 'answer' || run.blocks.length === 0) return false;
+  return run.blocks.every(
+    (b) => b.kind === 'tool' || (b.kind === 'answer' && !b.rawText?.trim()),
+  );
+}
+
+/**
+ * True when the message's trailing runs merge into one agent cluster (the
+ * card/terminal thought block): a tail of thinking/clusterable runs that
+ * contains at least one thinking run. Mirrors how MessageBlock's
+ * clusterAgentRuns groups the final buffer.
+ */
+export function tailRunsFormAgentCluster(runs: readonly AssistantRun[]): boolean {
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const run = runs[i];
+    if (run.kind === 'thinking') return true;
+    if (!isClusterableAnswerRun(run)) return false;
+  }
+  return false;
+}
+
 export function answerRunRawText(blocks: readonly AssistantBlock[]): string {
   return blocks.map((b) => (b.kind === 'answer' ? b.rawText : '')).join('');
 }

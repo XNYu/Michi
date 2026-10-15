@@ -11,6 +11,7 @@ import { AttachmentPills } from './AttachmentPills';
 import { CommentChips } from './CommentChips';
 import {
   carryEqual,
+  isClusterableAnswerRun,
   sameBlockRefs,
   sameToolRefs,
   splitAssistantRuns,
@@ -960,19 +961,6 @@ function isToolOnlyAnswerRun(run: AssistantRun): boolean {
   return run.kind === 'answer' && run.blocks.length > 0 && run.blocks.every((b) => b.kind === 'tool');
 }
 
-/**
- * An answer run is "clusterable" if it has no visible prose — i.e. it consists
- * entirely of tool blocks, or all its answer-text blocks are empty/whitespace.
- * These runs merge into the adjacent thinking cluster rather than breaking it.
- */
-function isClusterableAnswerRun(run: AssistantRun): boolean {
-  if (run.kind !== 'answer' || run.blocks.length === 0) return false;
-  // Every block is either a tool or an answer block with no meaningful text
-  return run.blocks.every(
-    (b) => b.kind === 'tool' || (b.kind === 'answer' && !b.rawText?.trim()),
-  );
-}
-
 function clusterAgentRuns(runs: AssistantRun[]): RenderCluster[] {
   const out: RenderCluster[] = [];
   let buf: AssistantRun[] = [];
@@ -1165,11 +1153,10 @@ function BlockAssistantBody({
           }
           // Keep the block live (tail body visible) while thought tokens or
           // one of its tools are active. Also keep the tail agent cluster live
-          // during a between-steps gap: StreamActivityIndicator reports that
-          // same message-level state as Working, so collapsing this header to
-          // "Thought for …" would make the two liveness signals disagree.
-          // Once a later answer/image run exists, this cluster is no longer the
-          // tail and remains completed.
+          // during a between-steps gap: its "Working…" header is then the only
+          // liveness signal (StreamActivityIndicator defers to it via
+          // tailRunsFormAgentCluster). Once a later answer/image run exists,
+          // this cluster is no longer the tail and remains completed.
           const isTailAgentCluster = clusterIndex === clusters.length - 1;
           const isThinking =
             isTailAgentCluster && cluster.runs.some((r) => r.id === liveThinkingId);
