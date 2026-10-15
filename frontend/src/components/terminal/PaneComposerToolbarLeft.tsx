@@ -68,7 +68,7 @@ export function PaneComposerToolbarLeft({
           e.stopPropagation();
           if (canAttach) onPickFile();
         }}
-        style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 26px)', justifyContent: 'center', lineHeight: 1 }}
+        style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
       >
         +
       </span>
@@ -77,7 +77,7 @@ export function PaneComposerToolbarLeft({
         className="t-toolbar-chip"
         title="Mention context or node"
         onClick={onInsertMentionTrigger}
-        style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 26px)', justifyContent: 'center', lineHeight: 1 }}
+        style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
       >
         @
       </span>

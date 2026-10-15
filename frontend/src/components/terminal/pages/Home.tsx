@@ -118,11 +118,11 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
           style={{
             ['--message-body-size' as string]: '17px',
             ['--message-body-leading' as string]: '1.55',
-            ['--composer-chrome-size' as string]: '13px',
+            ['--composer-chrome-size' as string]: 'var(--fs-lg)',
             // Hero chips: bigger font, but tighter horizontal padding and
             // letter-spacing so the row stays compact rather than sprawling.
             // Icon-only chips track --composer-chip-height for square sizing.
-            ['--composer-chip-size' as string]: '13px',
+            ['--composer-chip-size' as string]: 'var(--fs-lg)',
             ['--composer-chip-height' as string]: '30px',
             ['--composer-chip-h-pad' as string]: '8px',
             ['--composer-chip-gap' as string]: '5px',

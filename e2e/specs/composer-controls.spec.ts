@@ -19,10 +19,12 @@ async function finishHover(control: Locator) {
     .filter((animation) => animation.playState === 'running').length)).toBe(0);
 }
 
-async function assertSendUnchanged(composer: Locator) {
+// Send keeps its own fill but sits on the toolbar chips' geometry: the same
+// corners (--ui-radius) and a square at the chip height.
+async function assertSendMatchesChips(composer: Locator) {
   const send = composer.getByRole('button', { name: 'Send (Enter)', exact: true });
   await expect(send).toHaveClass('t-action-btn is-primary');
-  await expect(send).toHaveCSS('border-radius', '2px');
+  await expect(send).toHaveCSS('border-radius', '4px');
   await expect(send).toHaveCSS('border-width', '1px');
   await expect(send).toHaveCSS('width', '30px');
   await expect(send).toHaveCSS('height', '30px');
@@ -53,7 +55,7 @@ async function assertControls(page: Page, info: TestInfo, stage: string) {
     expect(await control.boundingBox()).toEqual(restingBounds);
     await composer.screenshot({ path: info.outputPath(`${stage}-hover-${index}.png`) });
   }
-  await assertSendUnchanged(composer);
+  await assertSendMatchesChips(composer);
   return fill;
 }
 
@@ -113,7 +115,7 @@ test('compact controls keep their geometry and respect reduced motion', async ({
     expect(bounds.x).toBeGreaterThanOrEqual(frame.x);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(frame.x + frame.width);
   }
-  await assertSendUnchanged(composer);
+  await assertSendMatchesChips(composer);
   await page.screenshot({ path: info.outputPath('composer-hover-mobile.png'), fullPage: true });
 });
 
@@ -136,7 +138,7 @@ test('disabled model settings stay quiet while stop and queued Send keep their s
     const stop = composer.getByRole('button', { name: 'Stop stream', exact: true });
     await expect(stop).toBeVisible();
     await expect(stop).toHaveClass('t-action-btn is-primary');
-    await expect(stop).toHaveCSS('border-radius', '2px');
+    await expect(stop).toHaveCSS('border-radius', '4px');
     const model = composer.getByRole('button', { name: /^Model settings:/ });
     await expect(model).toBeDisabled();
     await finishHover(model);
@@ -146,7 +148,7 @@ test('disabled model settings stay quiet while stop and queued Send keep their s
     await editor.fill('Queue the next turn');
     const queue = composer.getByRole('button', { name: /^Send next/ });
     await expect(queue).toHaveClass('t-action-btn is-queue');
-    await expect(queue).toHaveCSS('border-radius', '2px');
+    await expect(queue).toHaveCSS('border-radius', '4px');
     await expect(queue).toHaveCSS('border-width', '1px');
     await composer.screenshot({ path: info.outputPath('streaming-controls.png') });
   } finally {

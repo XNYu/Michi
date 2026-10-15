@@ -2482,8 +2482,9 @@ html[data-vibrancy="on"],
   100% { transform: translateX(433%); }
 }
 
-/* Composer controls share the model trigger's quiet fill and the topbar's
-   4px corners. Send/stop/queue buttons keep their existing treatment. */
+/* Composer controls share the model trigger's quiet fill and the corner-radius
+   setting (--ui-radius). Send/stop/queue buttons keep their own fills but use
+   the same corners and height (see .t-action-btn). */
 .t-toolbar-chip,
 .t-action-btn.is-outline {
   background: transparent;
@@ -2499,16 +2500,18 @@ html[data-vibrancy="on"],
 .t-toolbar-chip {
   /* Sizing tokens are CSS vars so Home (and any future hero composer) can
      scale chips up — bigger font, tighter padding — without prop drilling
-     or a wider class. Defaults reproduce the historical hard-coded values. */
+     or a wider class. --composer-chip-height is shared with .t-action-btn so
+     chip hover boxes and the send button stay the same height at any chip
+     font size. */
   display: inline-flex;
   align-items: center;
   gap: var(--composer-chip-gap, 6px);
-  height: var(--composer-chip-height, 26px);
+  height: var(--composer-chip-height, 30px);
   padding: 0 var(--composer-chip-h-pad, 12px);
   font-family: var(--ui-font);
-  font-size: var(--fs-sm);
+  font-size: var(--composer-chip-size, var(--fs-sm));
   font-weight: var(--composer-chip-weight, 500);
-  letter-spacing: var(--ls-wide);
+  letter-spacing: var(--composer-chip-tracking, var(--ls-wide));
   color: var(--term-mid);
   cursor: pointer;
   user-select: none;
@@ -2535,7 +2538,7 @@ html[data-vibrancy="on"],
 }
 .t-toolbar-chip[data-icononly="true"] {
   padding: 0;
-  width: var(--composer-chip-height, 26px);
+  width: var(--composer-chip-height, 30px);
   justify-content: center;
   flex-shrink: 0;
 }
@@ -2554,11 +2557,12 @@ html[data-vibrancy="on"],
 /* Composer action buttons — icon-only, fixed size. Three roles:
    primary (Send, accent fill), outline (Branch, borderless neutral), and queue
    (streaming-state Send: accent border + surface fill, no fill weight).
-   Hover reveals the kbd badge that lives inside the button. */
+   Hover reveals the kbd badge that lives inside the button. Square at the
+   toolbar chip height, with the chips' corners, so the row lines up. */
 .t-action-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--ui-radius-sm);
+  width: var(--composer-chip-height, 30px);
+  height: var(--composer-chip-height, 30px);
+  border-radius: var(--ui-radius);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2607,9 +2611,9 @@ html[data-vibrancy="on"],
   align-items: center;
   gap: 5px;
   font-family: var(--ui-font);
-  font-size: var(--fs-sm);
+  font-size: var(--composer-chip-size, var(--fs-sm));
   font-weight: var(--composer-chip-weight, 500);
-  letter-spacing: var(--ls-wide);
+  letter-spacing: var(--composer-chip-tracking, var(--ls-wide));
   color: var(--term-fg);
   background: var(--term-surface);
   border: 1px solid var(--term-line);

@@ -124,11 +124,10 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
             ? 'var(--term-composer-shadow, 0 1px 0 rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.10))'
             : 'var(--term-composer-shadow-muted, 0 1px 0 rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.06))',
           transition: 'background var(--t-soft) ease-out, border-color var(--t-soft) ease-out, box-shadow var(--t-soft) ease-out',
-          // Toolbar chips and action buttons inherit this font size. Defaults
-          // to 11.5px (matches the historical hard-coded value) but Home
+          // Shell chrome inherits this font size. Defaults to --fs-md; Home
           // overrides via --composer-chrome-size to scale the whole shell up
           // for its hero composer.
-          fontSize: 'var(--fs-md)',
+          fontSize: 'var(--composer-chrome-size, var(--fs-md))',
           display: 'flex',
           flexDirection: 'column',
         }}
