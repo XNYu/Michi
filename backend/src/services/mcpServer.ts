@@ -639,9 +639,9 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
     // args) so a model cannot forge ownerUserId/workspaceId/runOwner via a tool argument.
     const executionRefSchema = z.object({
         kind: z.enum(["chat_turn", "agent_run"]),
-        nodeId: z.string().optional(),
-        turnId: z.string().optional(),
-        runId: z.string().optional(),
+        nodeId: z.string().optional().describe("The chat node id. May be omitted when nodeId or paneId is given at the top level."),
+        turnId: z.string().optional().describe("Required when kind is chat_turn."),
+        runId: z.string().optional().describe("The Agent Run id. May be omitted when runId or paneId is given at the top level."),
     });
 
     function paneInspectionBinding(): PaneInspectionToolBinding {
@@ -662,10 +662,11 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                 "exactly one of those three locates it. Returns identity, current activity, message/turn counts, " +
                 "lineage, runtime binding, and a short latest-output preview. Read-only; does not load full " +
                 "conversation history — use read_pane_output for that. Optionally pass executionRef to inspect a " +
-                "specific historical turn/run instead of the most recent one.",
+                "specific historical turn/run instead of the most recent one; an executionRef names its own pane, " +
+                "so paneId/nodeId/runId may then be omitted.",
             inputSchema: {
                 paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
-                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId)."),
+                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId). Not needed when executionRef is given."),
                 runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
                 executionRef: executionRefSchema.optional().describe("Inspect this specific historical execution instead of the latest one."),
             },
@@ -689,11 +690,12 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                 "Read the (possibly paginated) output text of one pane's chat turn or Agent Run — the content " +
                 "behind inspect_pane's short preview. selection picks 'latest' (default, may be partial/streaming), " +
                 "'last_completed' (only a successfully committed execution), or 'execution' (a specific historical " +
-                "execution named by executionRef). Use pageCursor from a prior call's nextPageCursor to continue " +
-                "reading; a changed nextPageCursor means the underlying output moved on and must be re-read fresh.",
+                "execution named by executionRef; paneId/nodeId/runId may then be omitted). Use pageCursor from a " +
+                "prior call's nextPageCursor to continue reading; a changed nextPageCursor means the underlying " +
+                "output moved on and must be re-read fresh.",
             inputSchema: {
                 paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
-                nodeId: z.string().optional().describe("A chat node id (mutually exclusive with paneId/runId)."),
+                nodeId: z.string().optional().describe("A chat node id (mutually exclusive with paneId/runId). Not needed when executionRef is given."),
                 runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
                 selection: z.enum(["latest", "last_completed", "execution"]).optional().describe("Default 'latest'."),
                 executionRef: executionRefSchema.optional().describe("Required when selection is 'execution'."),
@@ -764,12 +766,13 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                 "from that cursor's snapshot, immediately if it already has. until='terminal' requires " +
                 "executionRef naming a turn/run that has already started (a still-queued chat has no turnId yet " +
                 "and can only use 'changed') and returns once THAT execution completes/fails/is cancelled — a " +
-                "later execution starting on the same pane does not satisfy it. timeoutMs defaults to 20000ms, " +
-                "max 30000ms; on timeout, reason is 'timed_out' and nothing is cancelled — call again to keep " +
-                "waiting. At most 8 concurrent waits are allowed per caller.",
+                "later execution starting on the same pane does not satisfy it; the executionRef also locates the " +
+                "pane, so paneId/nodeId/runId may be omitted. timeoutMs defaults to 20000ms, max 30000ms; on " +
+                "timeout, reason is 'timed_out' and nothing is cancelled — call again to keep waiting. At most 8 " +
+                "concurrent waits are allowed per caller.",
             inputSchema: {
                 paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
-                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId)."),
+                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId). Not needed when executionRef is given."),
                 runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
                 until: z.enum(["changed", "terminal"]).describe("Which condition ends the wait."),
                 cursor: z.string().optional().describe("Required when until is 'changed'."),

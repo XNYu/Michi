@@ -9,7 +9,9 @@ import {
   parsePaneKind,
   parsePaneListScope,
   parsePaneLocator,
+  parsePaneTargetArgs,
   parseReadOutputLimitBytes,
+  parseReadPaneOutputRequestV1,
   parseWaitPaneRequestV1,
   parseWaitTimeoutMs,
   parseWaitUntil,
@@ -247,6 +249,45 @@ describe('parseWaitPaneRequestV1', () => {
       timeoutMs: PANE_INSPECTION_LIMITS.waitTimeoutMaxMs + 1_000,
     });
     expect(parsed.timeoutMs).toBe(PANE_INSPECTION_LIMITS.waitTimeoutMaxMs);
+  });
+});
+
+describe('parsePaneTargetArgs: an executionRef and a locator complete each other', () => {
+  const chatRef = { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' } as const;
+
+  test('an executionRef alone supplies the locator', () => {
+    expect(parsePaneTargetArgs({ executionRef: chatRef })).toEqual({ locator: { nodeId: 'n-1' }, executionRef: chatRef });
+    expect(parsePaneTargetArgs({ executionRef: { kind: 'agent_run', runId: 'run-1' } })).toEqual({
+      locator: { runId: 'run-1' }, executionRef: { kind: 'agent_run', runId: 'run-1' },
+    });
+  });
+
+  test('a locator supplies the id an executionRef omits', () => {
+    expect(parsePaneTargetArgs({ nodeId: 'n-1', executionRef: { kind: 'chat_turn', turnId: 't-1' } }).executionRef).toEqual(chatRef);
+    expect(parsePaneTargetArgs({ paneId: 'node:n-1', executionRef: { kind: 'chat_turn', turnId: 't-1' } }).executionRef).toEqual(chatRef);
+    expect(parsePaneTargetArgs({ paneId: 'run:run-1', executionRef: { kind: 'agent_run' } }).executionRef)
+      .toEqual({ kind: 'agent_run', runId: 'run-1' });
+  });
+
+  test('keeps rejecting what cannot be completed', () => {
+    expect(() => parsePaneTargetArgs({})).toThrow(/or an executionRef/);
+    expect(() => parsePaneTargetArgs({ nodeId: 'n-1', runId: 'run-1', executionRef: chatRef })).toThrow(/exactly one/);
+    expect(() => parsePaneTargetArgs({ runId: 'run-1', executionRef: { kind: 'chat_turn', turnId: 't-1' } }))
+      .toThrow(/executionRef\.nodeId/);
+    expect(() => parsePaneTargetArgs({ executionRef: { kind: 'chat_turn', turnId: 't-1' } })).toThrow(/executionRef\.nodeId/);
+    expect(() => parsePaneTargetArgs({ paneId: 'node:n-1', executionRef: { kind: 'chat_turn' } })).toThrow(/executionRef\.turnId/);
+  });
+
+  test('passes a conflicting locator and executionRef through for the service to reject', () => {
+    expect(parsePaneTargetArgs({ nodeId: 'n-2', executionRef: chatRef })).toEqual({ locator: { nodeId: 'n-2' }, executionRef: chatRef });
+  });
+
+  test('all three request parsers accept the executionRef-only form', () => {
+    expect(parseInspectPaneRequestV1({ executionRef: chatRef }).locator).toEqual({ nodeId: 'n-1' });
+    expect(parseReadPaneOutputRequestV1({ selection: 'execution', executionRef: chatRef }).locator).toEqual({ nodeId: 'n-1' });
+    expect(parseWaitPaneRequestV1({ until: 'terminal', executionRef: chatRef })).toMatchObject({
+      locator: { nodeId: 'n-1' }, executionRef: chatRef,
+    });
   });
 });
 

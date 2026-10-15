@@ -470,6 +470,53 @@ export function parseExecutionRef(value: unknown, path = 'executionRef'): Execut
   return { kind, runId: str(raw.runId, `${path}.runId`) };
 }
 
+function locatorTargetIds(locator: PaneLocator): { nodeId?: string; runId?: string } {
+  if ('nodeId' in locator) return { nodeId: locator.nodeId };
+  if ('runId' in locator) return { runId: locator.runId };
+  // A malformed paneId contributes nothing here; target resolution rejects it later.
+  try {
+    const target = decodePaneId(locator.paneId);
+    if (target.kind === 'node') return { nodeId: target.nodeId };
+    if (target.kind === 'agent_run') return { runId: target.runId };
+  } catch { /* validated by resolvePaneTarget */ }
+  return {};
+}
+
+function executionRefWithLocatorIds(value: unknown, locator: PaneLocator | null): unknown {
+  if (!locator || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const raw = value as Record<string, unknown>;
+  const ids = locatorTargetIds(locator);
+  if (raw.kind === 'chat_turn' && raw.nodeId == null && ids.nodeId) return { ...raw, nodeId: ids.nodeId };
+  if (raw.kind === 'agent_run' && raw.runId == null && ids.runId) return { ...raw, runId: ids.runId };
+  return value;
+}
+
+/**
+ * The target of inspect/output/wait: a locator plus an optional executionRef. An executionRef
+ * already names its object, so each side may supply what the other omits: without
+ * paneId/nodeId/runId the locator comes from the executionRef (chat_turn → nodeId,
+ * agent_run → runId), and an executionRef without its nodeId/runId takes it from the locator.
+ * Two locators are still rejected, and a locator naming a different object than its
+ * executionRef is rejected by the service ("does not belong to the target object").
+ */
+export function parsePaneTargetArgs(value: unknown, path = 'request'): { locator: PaneLocator; executionRef?: ExecutionRef } {
+  const raw = obj(value, path);
+  const provided = (['paneId', 'nodeId', 'runId'] as const).filter((key) => raw[key] !== undefined && raw[key] !== null);
+  if (provided.length > 1) fail('INVALID_ARGUMENT', path, 'requires exactly one of paneId, nodeId, or runId');
+  const locator = provided.length === 1 ? parsePaneLocator(raw, path) : null;
+  if (raw.executionRef == null) {
+    if (!locator) {
+      fail('INVALID_ARGUMENT', path, 'requires exactly one of paneId, nodeId, or runId, or an executionRef that names the pane');
+    }
+    return { locator };
+  }
+  const executionRef = parseExecutionRef(executionRefWithLocatorIds(raw.executionRef, locator), `${path}.executionRef`);
+  return {
+    locator: locator ?? (executionRef.kind === 'chat_turn' ? { nodeId: executionRef.nodeId } : { runId: executionRef.runId }),
+    executionRef,
+  };
+}
+
 export function parsePaneListScope(value: unknown, path = 'scope'): PaneListScope {
   return choice(value, ['open', 'all'] as const, path);
 }
@@ -515,25 +562,26 @@ export function parseListPanesRequestV1(value: unknown, path = 'request'): ListP
 }
 
 export function parseInspectPaneRequestV1(value: unknown, path = 'request'): InspectPaneRequestV1 {
-  const raw = obj(value, path);
-  const out: InspectPaneRequestV1 = { version: 1, locator: parsePaneLocator(raw, path) };
-  if (raw.executionRef !== undefined) out.executionRef = parseExecutionRef(raw.executionRef, `${path}.executionRef`);
+  const { locator, executionRef } = parsePaneTargetArgs(value, path);
+  const out: InspectPaneRequestV1 = { version: 1, locator };
+  if (executionRef) out.executionRef = executionRef;
   return out;
 }
 
 export function parseReadPaneOutputRequestV1(value: unknown, path = 'request'): ReadPaneOutputRequestV1 {
   const raw = obj(value, path);
   const selection = parseExecutionSelection(raw.selection, `${path}.selection`);
-  if (selection === 'execution' && raw.executionRef === undefined) {
+  if (selection === 'execution' && raw.executionRef == null) {
     fail('INVALID_ARGUMENT', `${path}.executionRef`, 'is required when selection is "execution"');
   }
+  const { locator, executionRef } = parsePaneTargetArgs(raw, path);
   const out: ReadPaneOutputRequestV1 = {
     version: 1,
-    locator: parsePaneLocator(raw, path),
+    locator,
     selection,
     limitBytes: parseReadOutputLimitBytes(raw.limitBytes, `${path}.limitBytes`),
   };
-  if (raw.executionRef !== undefined) out.executionRef = parseExecutionRef(raw.executionRef, `${path}.executionRef`);
+  if (executionRef) out.executionRef = executionRef;
   if (raw.outputId !== undefined) out.outputId = str(raw.outputId, `${path}.outputId`);
   if (raw.pageCursor !== undefined) out.pageCursor = str(raw.pageCursor, `${path}.pageCursor`);
   return out;
@@ -562,16 +610,17 @@ export function parseWaitPaneRequestV1(value: unknown, path = 'request'): WaitPa
   if (until === 'changed' && raw.cursor === undefined) {
     fail('INVALID_ARGUMENT', `${path}.cursor`, 'is required when until is "changed"');
   }
-  if (until === 'terminal' && raw.executionRef === undefined) {
+  if (until === 'terminal' && raw.executionRef == null) {
     fail('INVALID_ARGUMENT', `${path}.executionRef`, 'is required when until is "terminal"');
   }
+  const { locator, executionRef } = parsePaneTargetArgs(raw, path);
   const out: WaitPaneRequestV1 = {
     version: 1,
-    locator: parsePaneLocator(raw, path),
+    locator,
     until,
     timeoutMs: parseWaitTimeoutMs(raw.timeoutMs, `${path}.timeoutMs`),
   };
   if (raw.cursor !== undefined) out.cursor = str(raw.cursor, `${path}.cursor`);
-  if (raw.executionRef !== undefined) out.executionRef = parseExecutionRef(raw.executionRef, `${path}.executionRef`);
+  if (executionRef) out.executionRef = executionRef;
   return out;
 }

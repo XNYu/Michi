@@ -179,6 +179,17 @@ describe('Pane Inspection HTTP routes', () => {
     assert.deepEqual(capture.inspectCalls[0].input, { locator: { nodeId: 'n-1' }, executionRef: ref });
   });
 
+  test('inspect and output accept an executionRef in place of the locator', async () => {
+    const capture = start();
+    const ref: ExecutionRef = { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' };
+    const encoded = encodeURIComponent(JSON.stringify(ref));
+    assert.equal((await get(`/panes/inspect?executionRef=${encoded}`)).status, 200);
+    assert.deepEqual(capture.inspectCalls[0].input, { locator: { nodeId: 'n-1' }, executionRef: ref });
+    assert.equal((await get(`/panes/output?selection=execution&executionRef=${encoded}`)).status, 200);
+    assert.deepEqual(capture.outputCalls[0].input.locator, { nodeId: 'n-1' });
+    assert.deepEqual(capture.outputCalls[0].input.executionRef, ref);
+  });
+
   test('missing locator -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
     const capture = start();
     const res = await get('/panes/inspect');

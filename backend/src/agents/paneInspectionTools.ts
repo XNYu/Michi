@@ -43,10 +43,9 @@ import {
   type WaitPaneResultV1,
   PANE_INSPECTION_LIMITS,
   PaneInspectionError,
-  parseExecutionRef,
   parseExecutionSelection,
   parseListPanesRequestV1,
-  parsePaneLocator,
+  parsePaneTargetArgs,
   parseReadOutputLimitBytes,
   parseWaitPaneRequestV1,
 } from "michi-shared";
@@ -172,21 +171,20 @@ export interface PaneInspectionToolResult {
   isError?: true;
 }
 
-function locatorFromArgs(args: { paneId?: string; nodeId?: string; runId?: string }): PaneLocator {
-  // parsePaneLocator enforces "exactly one of paneId | nodeId | runId" (shared/src/paneInspection.ts)
-  // — the same runtime parser the HTTP route will use, so a tool call and an HTTP call reject
-  // identically (brief: "Use the shared parsers so a tool call and an HTTP call reject
-  // identically").
-  const raw: Record<string, unknown> = {};
-  if (args.paneId !== undefined) raw.paneId = args.paneId;
-  if (args.nodeId !== undefined) raw.nodeId = args.nodeId;
-  if (args.runId !== undefined) raw.runId = args.runId;
-  return parsePaneLocator(raw);
-}
-
-function optionalExecutionRef(value: unknown): ExecutionRef | undefined {
-  if (value === undefined || value === null) return undefined;
-  return parseExecutionRef(value);
+function targetFromArgs(args: { paneId?: string; nodeId?: string; runId?: string; executionRef?: unknown }): {
+  locator: PaneLocator;
+  executionRef?: ExecutionRef;
+} {
+  // parsePaneTargetArgs (shared/src/paneInspection.ts) is the same runtime parser the HTTP
+  // routes use, so a tool call and an HTTP call reject identically (brief: "Use the shared
+  // parsers so a tool call and an HTTP call reject identically"). It enforces at most one of
+  // paneId | nodeId | runId and lets an executionRef supply the locator (or vice versa).
+  return parsePaneTargetArgs({
+    paneId: args.paneId,
+    nodeId: args.nodeId,
+    runId: args.runId,
+    executionRef: args.executionRef,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -353,8 +351,7 @@ export function inspectPaneTool(
 ): PaneInspectionToolResult {
   try {
     const caller = buildPaneInspectionCaller(binding);
-    const locator = locatorFromArgs(args);
-    const executionRef = optionalExecutionRef(args.executionRef);
+    const { locator, executionRef } = targetFromArgs(args);
     const descriptor = inspect(caller, { locator, executionRef });
     return { content: [{ type: "text", text: renderDescriptor(descriptor) }] };
   } catch (error) {
@@ -372,11 +369,10 @@ export function readPaneOutputTool(
 ): PaneInspectionToolResult {
   try {
     const caller = buildPaneInspectionCaller(binding);
-    const locator = locatorFromArgs(args);
     const selection: ExecutionSelection = args.selection !== undefined
       ? parseExecutionSelection(args.selection)
       : "latest";
-    const executionRef = optionalExecutionRef(args.executionRef);
+    const { locator, executionRef } = targetFromArgs(args);
     const limitBytes = args.limitBytes !== undefined
       ? parseReadOutputLimitBytes(args.limitBytes)
       : PANE_INSPECTION_LIMITS.readOutputDefaultBytes;

@@ -51,7 +51,6 @@ import express, { type Request, type Response } from 'express';
 import {
   parseInspectPaneRequestV1,
   parseListPanesRequestV1,
-  parsePaneLocator,
   parseReadPaneOutputRequestV1,
   parseSubscribePanesRequestV1,
   parseWaitPaneRequestV1,
@@ -310,6 +309,11 @@ function resolvePresenceWorkspaceId(deps: PaneInspectionRouteDeps, req: Request,
  *  requirement does not guarantee round-trips identically across query-parsing configurations.
  *  Returns `undefined` when the param is absent so the shared parsers' own
  *  `raw.executionRef !== undefined` checks behave exactly as they do for a JSON request body. */
+/** Only the locator keys of a query string; the request parsers validate their values. */
+function locatorQuery(query: Request['query']): { paneId?: unknown; nodeId?: unknown; runId?: unknown } {
+  return { paneId: query.paneId, nodeId: query.nodeId, runId: query.runId };
+}
+
 function parseJsonQueryParam(value: unknown, path: string): unknown {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !value) {
@@ -335,8 +339,14 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
   router.get('/panes/inspect', (req, res) => {
     try {
       const ownerUserId = resolveOwnerUserId(req);
-      const locator = parsePaneLocator(req.query);
-      const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, locator);
+      const executionRef = parseJsonQueryParam(req.query.executionRef, 'request.executionRef');
+      // parseInspectPaneRequestV1 takes the locator fields FLAT (query params are flat) and
+      // RETURNS them nested under `locator`. Passing an already-nested { locator } made it see
+      // zero of paneId/nodeId/runId and reject every otherwise-valid request as INVALID_ARGUMENT.
+      // Parsing first (rather than parsePaneLocator alone) lets an executionRef supply the
+      // locator, exactly as the inspect_pane tool accepts it.
+      const parsed = parseInspectPaneRequestV1({ ...locatorQuery(req.query), executionRef });
+      const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, parsed.locator);
       if (workspaceId === null) {
         // Mirrors the service's own NOT_FOUND message/shape exactly (see sendError's doc
         // comment) — this is the same "does not exist or is not owned by this caller" case
@@ -345,11 +355,6 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
         // null) avoids passing a non-string into PaneInspectionCaller.
         throw new PaneInspectionError('NOT_FOUND', 'inspect', 'target not found');
       }
-      const executionRef = parseJsonQueryParam(req.query.executionRef, 'request.executionRef');
-      // parseInspectPaneRequestV1 takes the locator fields FLAT (query params are flat) and
-      // RETURNS them nested under `locator`. Passing an already-nested { locator } made it see
-      // zero of paneId/nodeId/runId and reject every otherwise-valid request as INVALID_ARGUMENT.
-      const parsed = parseInspectPaneRequestV1({ ...locator, executionRef });
       const caller = buildInspectionCaller(ownerUserId, workspaceId);
       const descriptor = deps.inspect(caller, { locator: parsed.locator, executionRef: parsed.executionRef });
       res.status(200).json(descriptor);
@@ -364,20 +369,19 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
   router.get('/panes/output', (req, res) => {
     try {
       const ownerUserId = resolveOwnerUserId(req);
-      const locator = parsePaneLocator(req.query);
-      const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, locator);
-      if (workspaceId === null) {
-        throw new PaneInspectionError('NOT_FOUND', 'output', 'target not found');
-      }
       const executionRef = parseJsonQueryParam(req.query.executionRef, 'request.executionRef');
       const parsed = parseReadPaneOutputRequestV1({
-        ...locator,
+        ...locatorQuery(req.query),
         executionRef,
         selection: req.query.selection,
         outputId: req.query.outputId,
         pageCursor: req.query.pageCursor,
         limitBytes: req.query.limitBytes,
       });
+      const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, parsed.locator);
+      if (workspaceId === null) {
+        throw new PaneInspectionError('NOT_FOUND', 'output', 'target not found');
+      }
       const caller = buildInspectionCaller(ownerUserId, workspaceId);
       const result = deps.readOutput(caller, {
         locator: parsed.locator,
@@ -500,14 +504,14 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
     void (async () => {
       try {
         const ownerUserId = resolveOwnerUserId(req);
-        const locator = parsePaneLocator(req.body);
-        const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, locator);
+        // parseWaitPaneRequestV1 takes the locator fields FLAT (mirrors parseInspectPaneRequestV1
+        // above — see that handler's comment) and returns them nested under `locator`; an
+        // executionRef alone also supplies the locator.
+        const parsed = parseWaitPaneRequestV1(req.body);
+        const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, parsed.locator);
         if (workspaceId === null) {
           throw new PaneInspectionError('NOT_FOUND', 'wait', 'target not found');
         }
-        // parseWaitPaneRequestV1 takes the locator fields FLAT (mirrors parseInspectPaneRequestV1
-        // above — see that handler's comment) and returns them nested under `locator`.
-        const parsed = parseWaitPaneRequestV1(req.body);
         const caller = buildInspectionCaller(ownerUserId, workspaceId);
         const outcome = await deps.waitPane(caller, {
           locator: parsed.locator,

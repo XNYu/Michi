@@ -153,6 +153,23 @@ describe('POST /api/panes/wait', () => {
     assert.equal(capture.waitCalls.length, 0);
   });
 
+  test('an executionRef alone locates the pane, like the wait_pane tool', async () => {
+    const capture = start();
+    const executionRef = { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' };
+    const res = await post({ until: 'terminal', executionRef });
+    assert.equal(res.status, 200);
+    assert.deepEqual(capture.waitCalls[0].input.locator, { nodeId: 'n-1' });
+    assert.deepEqual(capture.waitCalls[0].input.executionRef, executionRef);
+    assert.equal(capture.waitCalls[0].caller.workspaceId, 'ws-a');
+  });
+
+  test('an executionRef alone still resolves to NOT_FOUND for an unknown node', async () => {
+    const capture = start();
+    const res = await post({ until: 'terminal', executionRef: { kind: 'chat_turn', nodeId: 'missing', turnId: 't-1' } });
+    assert.equal(res.status, 404);
+    assert.equal(capture.waitCalls.length, 0);
+  });
+
   test('two locators (nodeId + runId) -> 400 INVALID_ARGUMENT, and never reaches the service', async () => {
     const capture = start();
     const res = await post({ nodeId: 'n-1', runId: 'run-1', until: 'changed', cursor: 'c1' });
