@@ -1,5 +1,6 @@
 import { usePermissionPreferences } from '../../../hooks/usePermissionPreferences';
 import { ComposerPermissionControl } from '../ComposerPermissionControl';
+import { chatPermissionModeForRuntime } from '../../../lib/chatPermissionModes';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { MentionEditorHandle } from '../../MentionEditor';
@@ -235,6 +236,8 @@ function ScopedManageComposer({
   // ManageComposer creates new threads — use global agentStatus as the binding
   // (no node exists yet). resolveNodeBinding(null, agentStatus) returns source: 'global'.
   const manageResolvedBinding = resolveNodeBinding(null, agentStatus);
+  const permissionRuntime = pendingPrimaryAgent?.definition.runtimeProfile.runtimeId ?? manageResolvedBinding.runtime;
+  const effectivePermissionMode = chatPermissionModeForRuntime(permissionMode, permissionRuntime);
   const composerEffort = resolveComposerReasoning(manageResolvedBinding, agentStatus, null, providerModels, agentStatus?.providers);
 
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -582,7 +585,7 @@ function ScopedManageComposer({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const permissionMeta = permissionPreferences.global || permissionMode === 'ask' ? meta : { ...meta, permissionMode };
+      const permissionMeta = permissionPreferences.global || effectivePermissionMode === 'ask' ? meta : { ...meta, permissionMode: effectivePermissionMode };
       const modeId = pendingPrimaryAgent ? undefined : currentModeId;
       const primaryAgent = pendingPrimaryAgent ? {
         backendConnectionId: pendingPrimaryAgent.backendConnectionId,
@@ -753,6 +756,7 @@ function ScopedManageComposer({
         toolbarRight={
           <>
           {!permissionPreferences.global && <ComposerPermissionControl mode={permissionMode}
+            runtimeIds={[permissionRuntime]}
             disabled={submitting || permissionPreferences.loading} onChange={setPermissionMode} />}
           <ComposerModelTrigger
             toolbarTier={0}

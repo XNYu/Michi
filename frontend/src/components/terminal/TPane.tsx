@@ -2306,6 +2306,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         toolbarRight={
           <>
           {!permissionPreferences.global && <ComposerPermissionControl mode={n.permissionMode ?? 'ask'}
+            runtimeIds={[resolvedBinding.runtime]}
             compact={toolbarTier > 0} disabled={streaming || observing || permissionPreferences.loading}
             onChange={(mode) => setChatPermissionMode(nodeId, mode)} />}
           <ComposerModelTrigger

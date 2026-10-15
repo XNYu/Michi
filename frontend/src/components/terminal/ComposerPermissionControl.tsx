@@ -4,6 +4,7 @@ import ContextMenu from '../ContextMenu';
 import { ShieldIcon, ShieldOffIcon } from './icons';
 import type { PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import { toast } from 'sonner';
+import { supportsChatYolo } from '../../lib/chatPermissionModes';
 
 export const PERMISSION_CHOICES: ReadonlyArray<{ mode: ChatPermissionMode; label: string; description: string }> = [
   { mode: 'ask', label: 'Ask', description: 'Ask before changes and tools that require approval. Read-only tools may run automatically.' },
@@ -12,8 +13,10 @@ export const PERMISSION_CHOICES: ReadonlyArray<{ mode: ChatPermissionMode; label
 ];
 
 /** Same chip, anchor and ContextMenu used by the Composer agent picker. */
-export function ComposerPermissionControl({ mode, onChange, disabled = false, compact = false, scope = 'chat' }: {
+export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled = false, compact = false, scope = 'chat' }: {
   mode: ChatPermissionMode;
+  /** One chat's runtime, or all registered runtimes for the global setting. */
+  runtimeIds: readonly string[];
   onChange: (mode: ChatPermissionMode) => void | Promise<void>;
   disabled?: boolean;
   compact?: boolean;
@@ -21,7 +24,10 @@ export function ComposerPermissionControl({ mode, onChange, disabled = false, co
 }) {
   const [anchor, setAnchor] = useState<PaneMenuAnchor | null>(null);
   const [saving, setSaving] = useState(false);
-  const label = PERMISSION_CHOICES.find((choice) => choice.mode === mode)?.label ?? 'Ask';
+  const supportsYolo = runtimeIds.some(supportsChatYolo);
+  const displayedMode = mode === 'yolo' && !supportsYolo ? 'trust' : mode;
+  const choices = PERMISSION_CHOICES.filter((choice) => supportsYolo || choice.mode !== 'yolo');
+  const label = PERMISSION_CHOICES.find((choice) => choice.mode === displayedMode)?.label ?? 'Ask';
   return <>
     <button type="button" className="t-toolbar-chip" data-icononly={compact || undefined}
       aria-label={`Permissions: ${label}`} title={`Permissions: ${label} · ${scope === 'global' ? 'all chats' : 'this chat'}`}
@@ -36,12 +42,14 @@ export function ComposerPermissionControl({ mode, onChange, disabled = false, co
           if (!anchor) event.currentTarget.click();
         }
       }}>
-      {mode === 'ask' ? <ShieldIcon /> : <ShieldOffIcon />}
+      {displayedMode === 'ask' ? <ShieldIcon /> : <ShieldOffIcon />}
       <span className="t-chip-label">{saving ? 'Saving…' : label}</span>
     </button>
     {anchor && !disabled && <ContextMenu {...anchor} menuKind="agents" width={300}
-      onClose={() => setAnchor(null)} sections={[{ label: scope === 'global' ? 'Permissions · all chats' : 'Permissions · this chat', items: PERMISSION_CHOICES.map((choice) => ({
-        id: choice.mode, label: choice.label, sublabel: choice.description, glyph: choice.mode === mode ? '✓' : undefined,
+      onClose={() => setAnchor(null)} sections={[{ label: scope === 'global' ? 'Permissions · all chats' : 'Permissions · this chat', items: choices.map((choice) => ({
+        id: choice.mode, label: choice.label,
+        sublabel: choice.mode === 'trust' && !supportsYolo ? 'Approve tool requests automatically.' : choice.description,
+        glyph: choice.mode === displayedMode ? '✓' : undefined,
         run: () => {
           setSaving(true);
           void Promise.resolve().then(() => onChange(choice.mode))

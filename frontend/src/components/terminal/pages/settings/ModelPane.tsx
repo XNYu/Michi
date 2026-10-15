@@ -31,6 +31,7 @@ import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
 import { filterModelCatalog } from './modelCatalogFilter';
 import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 import { BedrockConfigPanel } from './BedrockConfigPanel';
+import { supportsChatYolo } from '../../../../lib/chatPermissionModes';
 
 export function ModelPane({
   activeProjectId,
@@ -131,7 +132,8 @@ export function ModelPane({
 
       {showKiroSidecarTitles && <KiroSidecarTitleToggle />}
       <FollowUpsToggle />
-      <PermissionSettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : undefined} />
+      <PermissionSettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : undefined}
+        runtimeIds={[...(agentStatus ? [agentStatus.runtime] : []), ...visibleRuntimes.map((runtime) => runtime.id)]} />
 
 
     </div>
@@ -981,8 +983,9 @@ function FollowUpsToggle() {
   );
 }
 
-function PermissionSettings({ apiBase }: { apiBase?: string }) {
+function PermissionSettings({ apiBase, runtimeIds }: { apiBase?: string; runtimeIds: readonly string[] }) {
   const permissions = usePermissionPreferences(apiBase);
+  const supportsYolo = runtimeIds.some(supportsChatYolo);
   const [saving, setSaving] = useState(false);
   const save = async (global: boolean, mode = permissions.mode) => {
     setSaving(true);
@@ -1005,11 +1008,14 @@ function PermissionSettings({ apiBase }: { apiBase?: string }) {
     </ClickableRow>
     {permissions.global && <div style={{ marginTop: 10 }}>
       <ComposerPermissionControl scope="global" mode={permissions.mode} disabled={saving || permissions.loading}
+        runtimeIds={runtimeIds}
         onChange={(mode) => save(true, mode)} />
     </div>}
     {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error}</p>}
     <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 10 }}>
-      Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Agent Runs use their own permissions.
+      {supportsYolo
+        ? 'Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Kiro and Pi use Trust for YOLO. Agent Runs use their own permissions.'
+        : 'Changes apply to the next turn. Ask requests approval; Trust approves tools automatically. Agent Runs use their own permissions.'}
     </p>
   </div>;
 }
