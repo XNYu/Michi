@@ -745,72 +745,134 @@ test('Codex metadata Hook POC requires overview and follow-ups while hiding repa
   assert.equal(session.getHistory()[1].content, 'ORIGINAL');
 });
 
-test('Codex sentinel experiment reminds every turn and Hook requires only Overview', async () => {
-  let callbacks: Record<string, (...args: any[]) => any> = {};
-  const capturedTurnStartParams: Record<string, unknown>[] = [];
-  const client = makeStubClient({
-    request: async (method: string, params: unknown) => {
-      if (method === 'turn/start') capturedTurnStartParams.push(params as Record<string, unknown>);
+for (const hookEnabled of [false, true]) {
+  test(`Codex overview tool delivers hidden metadata with sentinel follow-ups, Hook enabled: ${hookEnabled}`, async () => {
+    let callbacks: Record<string, (...args: any[]) => any> = {};
+    const capturedTurnStartParams: Record<string, unknown>[] = [];
+    const client = makeStubClient({
+      request: async (method: string, params: unknown) => {
+        if (method === 'turn/start') capturedTurnStartParams.push(params as Record<string, unknown>);
+        return {};
+      },
+    });
+    const registry = {
+      create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, cbs: typeof callbacks) => {
+        callbacks = cbs;
+        return { slotId: 'codex-sentinel-slot', ...cbs };
+      },
+      dispose: async () => {},
+      get: () => undefined,
+    } as unknown as McpSlotRegistry;
+    const session = new CodexSession({
+      nodeId: 'node-sentinel',
+      threadId: 'thread-sentinel',
+      cwd: '/tmp/test',
+      workspaceId: null,
+      client,
+      mcpRegistry: registry,
+      bridge: makeStubBridge(),
+      mcpPort: 3001,
+      followUpsHookPocEnabled: hookEnabled,
+      followUpsExperimentMode: 'sentinel',
+    });
+    session.createMcpSlot();
+    session.wireNotifications();
+
+    const emitted: Array<Record<string, unknown>> = [];
+    const turnPromise = (async () => {
+      for await (const event of session.send('hello')) emitted.push(event as unknown as Record<string, unknown>);
+    })();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const prompt = String(
+      ((capturedTurnStartParams[0].input as Array<{ text: string }> | undefined)?.[0]?.text) ?? '',
+    );
+    assert.match(prompt, /do not call set_follow_ups/i);
+    assert.match(prompt, /FOLLOW-UP 1\/3/);
+    assert.match(prompt, /FOLLOW-UP 3\/3/);
+    assert.match(prompt, /call mcp____michi_internal____set_branch_overview exactly once/);
+    assert.doesNotMatch(prompt, /\[BRANCH-OVERVIEW:/);
+    assert.equal(callbacks.onSetFollowUps, undefined);
+    assert.equal(typeof callbacks.onSetBranchOverview, 'function');
+    assert.equal(typeof callbacks.onValidateFollowUps, hookEnabled ? 'function' : 'undefined');
+    (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
+      threadId: 'thread-sentinel',
+      delta: 'answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]',
+    });
+    callbacks.onSetBranchOverview('Sentinel experiment overview.');
+    if (hookEnabled) assert.deepEqual(callbacks.onValidateFollowUps(), {});
+    (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
+      threadId: 'thread-sentinel',
+      delta: 'SHOULD STAY HIDDEN',
+    });
+
+    (client as any)._emit('thread-sentinel', 'turn/completed', {
+      threadId: 'thread-sentinel',
+      turn: { status: 'completed' },
+    });
+    await turnPromise;
+    assert.deepEqual(
+      emitted.filter((event) => event.kind === 'chunk').map((event) => event.text),
+      ['answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]'],
+    );
+    assert.deepEqual(
+      emitted.filter((event) => event.kind === 'branch_overview').map((event) => event.overview),
+      ['Sentinel experiment overview.'],
+    );
+    assert.equal(session.getHistory()[0].content, 'hello');
+    assert.doesNotMatch(session.getHistory()[1].content, /SHOULD STAY HIDDEN/);
+
+    // The next turn must release the previous turn's silent overview tail.
+    const nextTurn = (async () => {
+      for await (const event of session.send('second question')) emitted.push(event as unknown as Record<string, unknown>);
+    })();
+    await new Promise((resolve) => setImmediate(resolve));
+    (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', { delta: 'NEXT ANSWER' });
+    (client as any)._emit('thread-sentinel', 'turn/completed', { turn: { status: 'completed' } });
+    await nextTurn;
+    assert.equal(session.getHistory()[3].content, 'NEXT ANSWER');
+  });
+}
+
+for (const hookEnabled of [false, true]) {
+  test(`Codex overview tool works with follow-ups disabled, Hook enabled: ${hookEnabled}`, async () => {
+    let callbacks: Record<string, (...args: any[]) => any> = {};
+    const starts: any[] = [];
+    const client = makeStubClient({ request: async (method, params) => {
+      if (method === 'turn/start') starts.push(params);
       return {};
-    },
+    } });
+    const registry = {
+      create: (_id: string, _cwd: string, _owner: unknown, cbs: typeof callbacks) => {
+        callbacks = cbs;
+        return { slotId: 'overview-only-slot', ...cbs };
+      },
+      dispose: async () => {},
+      get: () => undefined,
+    } as unknown as McpSlotRegistry;
+    const session = new CodexSession({ nodeId: 'overview-only', threadId: 'overview-only-thread',
+      cwd: '/tmp', workspaceId: null, client, mcpRegistry: registry, bridge: makeStubBridge(), mcpPort: 3001,
+      enableFollowUps: false, followUpsHookPocEnabled: hookEnabled, followUpsExperimentMode: 'hook-tool' });
+    session.createMcpSlot();
+    session.wireNotifications();
+    const events: any[] = [];
+    const turn = (async () => {
+      for await (const event of session.send('hello')) events.push(event);
+    })();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(callbacks.onSetFollowUps, undefined);
+    assert.match(starts[0].input[0].text, /Follow-ups are disabled/);
+    assert.doesNotMatch(starts[0].input[0].text, /\[FOLLOW-UP|\[BRANCH-OVERVIEW:/);
+    callbacks.onSetBranchOverview(' Overview without follow-ups. ');
+    if (hookEnabled) assert.deepEqual(callbacks.onValidateFollowUps(), {});
+    (client as any)._emit(session.threadId, 'item/agentMessage/delta', { delta: 'Visible answer' });
+    (client as any)._emit(session.threadId, 'turn/completed', { turn: { status: 'completed' } });
+    await turn;
+    assert.equal(events.find((event) => event.kind === 'branch_overview')?.overview, 'Overview without follow-ups.');
+    assert.equal(session.getHistory()[1].content, 'Visible answer');
+    await session.dispose();
   });
-  const registry = {
-    create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, cbs: typeof callbacks) => {
-      callbacks = cbs;
-      return { slotId: 'codex-sentinel-slot', ...cbs };
-    },
-    dispose: async () => {},
-    get: () => undefined,
-  } as unknown as McpSlotRegistry;
-  const session = new CodexSession({
-    nodeId: 'node-sentinel',
-    threadId: 'thread-sentinel',
-    cwd: '/tmp/test',
-    workspaceId: null,
-    client,
-    mcpRegistry: registry,
-    bridge: makeStubBridge(),
-    mcpPort: 3001,
-    followUpsHookPocEnabled: true,
-    followUpsExperimentMode: 'sentinel',
-  });
-  session.createMcpSlot();
-  session.wireNotifications();
-
-  const emitted: Array<Record<string, unknown>> = [];
-  const turnPromise = (async () => {
-    for await (const event of session.send('hello')) emitted.push(event as unknown as Record<string, unknown>);
-  })();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  const prompt = String(
-    ((capturedTurnStartParams[0].input as Array<{ text: string }> | undefined)?.[0]?.text) ?? '',
-  );
-  assert.match(prompt, /do not call set_follow_ups/i);
-  assert.match(prompt, /FOLLOW-UP 1\/3/);
-  assert.match(prompt, /FOLLOW-UP 3\/3/);
-  assert.equal(callbacks.onSetFollowUps, undefined);
-  (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
-    threadId: 'thread-sentinel',
-    delta: 'answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]',
-  });
-  callbacks.onSetBranchOverview('Sentinel experiment overview.');
-  assert.deepEqual(callbacks.onValidateFollowUps(), {});
-  (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
-    threadId: 'thread-sentinel',
-    delta: 'SHOULD STAY HIDDEN',
-  });
-
-  (client as any)._emit('thread-sentinel', 'turn/completed', {
-    threadId: 'thread-sentinel',
-    turn: { status: 'completed' },
-  });
-  await turnPromise;
-  assert.deepEqual(
-    emitted.filter((event) => event.kind === 'chunk').map((event) => event.text),
-    ['answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]'],
-  );
-});
+}
 
 test('Codex follow-ups Hook POC fails open after one missing repair attempt', async () => {
   let callbacks: Record<string, (...args: any[]) => any> = {};

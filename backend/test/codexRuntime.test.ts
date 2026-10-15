@@ -139,6 +139,8 @@ test('native fork binds the child thread, uses its MCP configuration, and does n
     assert.match(JSON.stringify(fork.params.config), /slot-/);
     assert.equal(fork.params.approvalPolicy, 'on-request');
     assert.equal(fork.params.sandbox, 'workspace-write');
+    assert.match(fork.params.developerInstructions, /call mcp____michi_internal____set_branch_overview exactly once/);
+    assert.doesNotMatch(fork.params.developerInstructions, /\[BRANCH-OVERVIEW: 1-3/);
     assert.equal(calls.some((call) => call.method === 'thread/start'), false);
     assert.equal(await runtime.forkSession(opts), child);
     assert.equal(calls.filter((call) => call.method === 'thread/fork').length, 1);
@@ -273,6 +275,8 @@ test('newSession with empty model resolves isDefault from model/list', async () 
   const defaultConfig = startParams['config'] as Record<string, unknown>;
   assert.equal(defaultConfig['hooks'], undefined, 'Hook POC must stay off by default');
   assert.equal(defaultConfig['bypass_hook_trust'], undefined);
+  assert.match(String(startParams.developerInstructions), /call mcp____michi_internal____set_branch_overview exactly once/);
+  assert.doesNotMatch(String(startParams.developerInstructions), /\[BRANCH-OVERVIEW: 1-3/);
 
   await runtime.shutdown();
 });
@@ -542,7 +546,7 @@ test('scheduled idle cleanup preserves durable binding and resumes the original 
   saveWorkspace({ id: 'idle-ws', name: 'Idle test', created_at: 1, updated_at: 1 } as any);
   saveNode({ id: 'idle-node', workspace_id: 'idle-ws', title: 'Idle test', kind: 'chat',
     status: 'idle', minimized: 0, spawned_by_agent: 0, created_at: 1 } as any);
-  const opts = { sessionId: 'idle-node', cwd: '/tmp', model: 'm1', reasoning: 'high' as const };
+  const opts = { sessionId: 'idle-node', cwd: '/tmp', model: 'm1', reasoning: 'high' as const, enableFollowUps: false };
   const original = await runtime.newSession(opts);
   updateNodeResumeBinding('idle-node', { acp_session_id: original.nativeSessionId!, runtime_id: 'codex',
     model_id: 'm1', provider_id: null, reasoning: 'high', resume_fingerprint: null, current_mode_id: null });
@@ -559,6 +563,11 @@ test('scheduled idle cleanup preserves durable binding and resumes the original 
   assert.equal(resumed.nativeSessionId, original.nativeSessionId);
   assert.equal(calls.filter((call) => call.method === 'thread/start').length, 1);
   assert.equal(calls.filter((call) => call.method === 'thread/resume').length, 1);
+  const resume = calls.find((call) => call.method === 'thread/resume')!;
+  assert.match(resume.params.developerInstructions, /call mcp____michi_internal____set_branch_overview exactly once/);
+  assert.doesNotMatch(resume.params.developerInstructions, /\[BRANCH-OVERVIEW: 1-3/);
+  assert.match(resume.params.developerInstructions, /Follow-ups are disabled/);
+  assert.equal((resumed as any).enableFollowUps, false);
   assert.equal(sessionRegistry.getSession('idle-node'), resumed);
 });
 

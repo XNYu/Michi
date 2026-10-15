@@ -40,6 +40,7 @@ import {
   resolveFollowUpsExperimentMode,
   type FollowUpsExperimentMode,
 } from '../followUpsExperiment';
+import { buildCodexTurnMetadataInstruction, codexMetadataOutputMode } from './codexTurnMetadata';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -383,13 +384,7 @@ export class CodexRuntime implements AgentRuntime {
       ...(forkFrom ? { threadId: forkFrom } : {}),
       model: modelId || undefined,
       cwd: opts.cwd,
-      developerInstructions: buildStableSystemPrompt(
-        followUpsMetadataOutputMode(
-          this.followUpsHookPocEnabled,
-          this.followUpsExperimentMode,
-        ),
-        enableFollowUps,
-      ) || undefined,
+      developerInstructions: this.buildDeveloperInstructions(enableFollowUps, owner),
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user',
       sandbox: 'workspace-write',
@@ -492,6 +487,7 @@ export class CodexRuntime implements AgentRuntime {
       ownerUserId: opts.ownerUserId ?? null,
       effort: effort ? String(effort) : null,
       model: modelId || null,
+      enableFollowUps: opts.enableFollowUps !== false,
       followUpsHookPocEnabled: this.followUpsHookPocEnabled,
       followUpsExperimentMode: this.followUpsExperimentMode,
       owner,
@@ -511,6 +507,7 @@ export class CodexRuntime implements AgentRuntime {
         threadId,
         model: modelId || undefined,
         cwd: opts.cwd,
+        developerInstructions: this.buildDeveloperInstructions(session.enableFollowUps, owner),
         approvalPolicy: 'on-request',
         approvalsReviewer: 'user',
         sandbox: 'workspace-write',
@@ -592,6 +589,7 @@ export class CodexRuntime implements AgentRuntime {
       const result = await this.client.request('thread/resume', {
         threadId: session.threadId, cwd: session.cwd,
         model: session.currentModelId || undefined,
+        developerInstructions: this.buildDeveloperInstructions(session.enableFollowUps, session.owner),
         approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
         config: this.buildThreadConfig(slotId),
         ...(session.effort ? { reasoningEffort: session.effort } : {}),
@@ -606,6 +604,25 @@ export class CodexRuntime implements AgentRuntime {
     // Later callers still have bounded waits, and late work checks its deadline.
     void work.finally(() => { if (this.recovery === work) this.recovery = null; }).catch(() => {});
     await withDeadline(work, remaining(), RECOVERY_TIMEOUT_MESSAGE);
+  }
+
+  private buildDeveloperInstructions(enableFollowUps: boolean, owner: RuntimeSessionOwner): string {
+    // Run workers keep their Executor-owned tool profile and metadata behavior.
+    if (owner.kind === 'agent_run') {
+      return buildStableSystemPrompt(
+        followUpsMetadataOutputMode(this.followUpsHookPocEnabled, this.followUpsExperimentMode),
+        enableFollowUps,
+      );
+    }
+    const metadataMode = codexMetadataOutputMode(
+      this.followUpsHookPocEnabled,
+      this.followUpsExperimentMode,
+    );
+    return buildStableSystemPrompt(metadataMode, enableFollowUps)
+      + buildCodexTurnMetadataInstruction(
+        metadataMode === 'structured-tool' ? 'hook-tool' : 'sentinel',
+        enableFollowUps,
+      );
   }
 
   private buildThreadConfig(slotId: string): Record<string, unknown> {

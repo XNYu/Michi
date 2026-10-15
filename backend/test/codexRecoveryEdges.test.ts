@@ -103,6 +103,25 @@ function complete(client: Client, session: CodexSession, status = 'completed'): 
   client.emit(session.threadId, 'turn/completed', { turn: { id: currentTurn(session), status } });
 }
 
+test('chat crash recovery refreshes tool overview instructions and preserves disabled follow-ups', async (t) => {
+  const { runtime: value, client } = runtime(t);
+  const session = await value.newSession({ sessionId: 'chat-overview-recovery', cwd: '/tmp',
+    model: 'test-model', enableFollowUps: false }) as CodexSession;
+  const originalThreadId = session.threadId;
+  session.markCrashed('injected transport loss');
+  await (value as any).recoverSession(session);
+  const resume = client.calls.find((call) => call.method === 'thread/resume')!;
+  assert.equal(resume.params.threadId, originalThreadId);
+  assert.match(String(resume.params.developerInstructions), /call mcp____michi_internal____set_branch_overview exactly once/);
+  assert.match(String(resume.params.developerInstructions), /replaces any older instructions/);
+  assert.match(String(resume.params.developerInstructions), /Follow-ups are disabled/);
+  assert.doesNotMatch(String(resume.params.developerInstructions), /\[BRANCH-OVERVIEW: 1-3/);
+  assert.match(JSON.stringify(resume.params.config), /slot-2/);
+  assert.equal(session.enableFollowUps, false);
+  assert.equal(session.nativeSessionId, originalThreadId);
+  assert.equal(session.needsRecovery(), false);
+});
+
 test('queued recovery waiters serialize and each resumes its original thread', async (t) => {
   const { runtime: value, client } = runtime(t);
   const sessions = await Promise.all(['a', 'b', 'c'].map((id) => create(value, id)));
@@ -221,7 +240,7 @@ for (const status of ['interrupted', 'failed']) {
   test(`cancelled ${status} completion settles before a missing start response without restarting`, async (t) => {
     const client = new Client();
     const gate = deferred<unknown>();
-    client.respond = ({ method, params }) => method === 'turn/start' && (params.input as Array<{ text: string }>)[0].text === 'A'
+    client.respond = ({ method, params }) => method === 'turn/start' && (params.input as Array<{ text: string }>)[0].text.startsWith('A\n')
       ? gate.promise : undefined;
     const session = new CodexSession({ nodeId: 'node', threadId: 'original', cwd: '/tmp', workspaceId: null,
       client: client.transport, bridge, mcpRegistry: registry(), mcpPort: 1, cancelTimeoutMs: 10 });

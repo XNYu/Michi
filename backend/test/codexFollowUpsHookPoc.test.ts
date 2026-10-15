@@ -40,7 +40,8 @@ test('sentinel instruction puts the hidden overview tool after body follow-ups',
   const instruction = buildCodexFollowUpsHookPocInstruction('sentinel');
   assert.match(instruction, /Do not call set_follow_ups/);
   assert.match(instruction, /Emit all three follow-up sentinel lines before calling set_branch_overview/);
-  assert.match(instruction, /Never emit a \[BRANCH-OVERVIEW/);
+  assert.match(instruction, /Do not duplicate the overview as textual fallback metadata/);
+  assert.doesNotMatch(instruction, /\[BRANCH-OVERVIEW:/);
   assert.match(instruction, /after \[FOLLOW-UP 3\/3/);
   assert.match(instruction, /emit no more visible text/);
 });

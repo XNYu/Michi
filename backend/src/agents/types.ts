@@ -203,6 +203,8 @@ export interface NewAgentSessionOptions extends RuntimeSessionBootstrapOptions {
 
 export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions {
   nativeEngine?: string | null;
+  /** Keep the same follow-up setting when restoring a native session. */
+  enableFollowUps?: boolean;
   sessionId: string;
   /** Michi node id for this runtime session, when distinct from sessionId. */
   nodeId?: string | null;

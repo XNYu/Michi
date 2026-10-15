@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { FollowUpsExperimentMode } from '../followUpsExperiment';
 import { resolveFollowUpsExperimentMode } from '../followUpsExperiment';
+import { buildCodexTurnMetadataInstruction } from './codexTurnMetadata';
 
 export const CODEX_FOLLOW_UPS_HOOK_POC_ENV = 'MICHI_CODEX_FOLLOW_UPS_HOOK_POC';
 export const CODEX_FOLLOW_UPS_HOOK_HOME_ENV = 'MICHI_CODEX_FOLLOW_UPS_HOOK_HOME';
@@ -19,28 +20,9 @@ export function isCodexFollowUpsHookPocEnabled(
 
 export function buildCodexFollowUpsHookPocInstruction(
   mode: FollowUpsExperimentMode = resolveFollowUpsExperimentMode(),
+  enableFollowUps: boolean = true,
 ): string {
-  const followUpsInstruction = mode === 'hook-tool'
-    ? `- Before ending every real user turn, call mcp____michi_internal____set_follow_ups exactly once.
-- Pass {"follow_ups":["...","...","..."]}: exactly three concise questions written in the user's voice and language.
-- The structured tool call is canonical. Do not duplicate the follow-ups as textual fallback metadata.`
-    : `- Do not call set_follow_ups. Follow-ups are delivered only through the three [FOLLOW-UP n/3: ...] sentinel lines.
-- A strict sentinel reminder is appended to every real user turn.
-- Emit all three follow-up sentinel lines before calling set_branch_overview.`;
-
-  const overviewFallbackInstruction = mode === 'hook-tool'
-    ? '- The structured overview tool call is canonical. Do not duplicate the overview as textual fallback metadata.'
-    : `- Never emit a [BRANCH-OVERVIEW: ...] sentinel or put the overview in visible answer text.
-- Call set_branch_overview only after [FOLLOW-UP 3/3: ...] has been emitted and closed.
-- After the set_branch_overview tool result, emit no more visible text. The overview tail is background metadata work.`;
-
-  return `
-
-Codex Stop-hook POC — structured turn metadata:
-- Before ending every real user turn, call mcp____michi_internal____set_branch_overview exactly once.
-- Pass {"overview":"..."}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.
-${overviewFallbackInstruction}
-${followUpsInstruction}
+  return `${buildCodexTurnMetadataInstruction(mode, enableFollowUps)}
 - Do not call the Stop-hook validator yourself; Michi invokes it automatically.`;
 }
 
