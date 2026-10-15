@@ -919,11 +919,12 @@ function SectionLabel({ label }: { label: string }) {
         display: 'flex',
         alignItems: 'center',
         // Card modes: the workspace row is itself a sentence-case group header,
-        // so this outer section stays UPPERCASE and a notch smaller to keep the
-        // two tiers apart instead of reading as two labels of the same rank.
+        // so this outer section stays UPPERCASE with wider caps tracking to
+        // keep the two tiers apart instead of reading as two labels of the
+        // same rank. Size stays on --fs-sm in both modes for legibility.
         fontSize: 'var(--fs-sm)',
         fontWeight: 600,
-        letterSpacing: 'var(--ls-wide)',
+        letterSpacing: geom.isCard ? 'var(--ls-caps)' : 'var(--ls-wide)',
         textTransform: 'uppercase',
         color: 'var(--term-muted)',
         // Classic: match ActivityView's time-label exactly — same padding, same
