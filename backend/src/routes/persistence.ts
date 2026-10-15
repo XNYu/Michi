@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { log } from '../services/logger';
 import { getDb, runInTransaction } from '../services/db';
 import { readPrefs, writePrefs, migrateFromSqlite } from '../services/prefsConfig';
+import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode } from '../services/chatPermissions';
+import { isChatPermissionMode, isChatPermissionSettings } from 'michi-shared';
+import { getNode } from '../services/dbRepository';
 import {
   listWorkspaces, getWorkspace, saveWorkspace, deleteWorkspace,
   listTrees, saveTree, listNodes, saveNode, updateNodeTitle,
@@ -23,6 +26,31 @@ import { loadProfileActivity } from '../services/profileActivity';
 
 export function setupPersistenceRoutes(): express.Router {
   const router = express.Router();
+
+  router.get('/permissions/settings', (req, res) => {
+    if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });
+    res.json(readChatPermissionSettings(req.user?.id));
+  });
+  router.put('/permissions/settings', (req, res) => {
+    if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });
+    if (!isChatPermissionSettings(req.body)) return res.status(400).json({ error: 'global (boolean) and mode (ask, trust, yolo) required' });
+    writeChatPermissionSettings(req.body, req.user?.id);
+    res.json(readChatPermissionSettings(req.user?.id));
+  });
+  router.put('/nodes/:nodeId/permissions', requireNodeOwner, (req, res) => {
+    if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });
+    const { nodeId } = req.params;
+    if (!isChatPermissionMode(req.body?.mode)) return res.status(400).json({ error: 'mode must be ask, trust, or yolo' });
+    try {
+      if (!getNode(nodeId)) {
+        const prerequisite = req.body?.graphPrerequisite;
+        if (prerequisite?.node?.id !== nodeId) return res.status(409).json({ error: 'durable node prerequisite required' });
+        ensureDurableGraphNode({ ...prerequisite, ownerUserId: process.env.MICHI_CLOUD === '1' ? req.user!.id : null });
+      }
+      writeNodePermissionMode(nodeId, req.body.mode, req.user?.id);
+      res.json({ mode: req.body.mode, effectiveMode: resolveChatPermissionMode(nodeId, req.user?.id) });
+    } catch (err) { res.status(409).json({ error: (err as Error).message }); }
+  });
 
   router.get('/persistence/capabilities', (_req, res) => {
     res.json({
@@ -498,6 +526,8 @@ export function setupPersistenceRoutes(): express.Router {
   // ── User preferences (persisted to ~/.michi/config.json) ────────────────
   router.get('/prefs', (req, res) => {
     try {
+      const permissions = readChatPermissionSettings(req.user?.id);
+      const permissionPrefs = { globalPermissions: permissions.global, permissionMode: permissions.mode, bypassPermissions: false };
       const prefs = readPrefs();
       if (!prefs) {
         // One-time migration: if config.json has no prefs yet, seed from SQLite.
@@ -506,11 +536,11 @@ export function setupPersistenceRoutes(): express.Router {
         if (row) {
           const legacy = JSON.parse(row.value);
           migrateFromSqlite(legacy);
-          return res.json({ prefs: readPrefs() });
+          return res.json({ prefs: { ...readPrefs(), ...permissionPrefs } });
         }
-        return res.json({ prefs: null });
+        return res.json({ prefs: permissionPrefs });
       }
-      res.json({ prefs });
+      res.json({ prefs: { ...prefs, ...permissionPrefs } });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

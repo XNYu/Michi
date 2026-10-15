@@ -100,6 +100,7 @@ export interface MessageAttachment {
  * display representation from the wire payload sent to the agent.
  */
 export interface UserSendMeta {
+  permissionMode?: import('michi-shared').ChatPermissionMode;
   /** Quoted passage for this turn. Rendered as a chip in the bubble. */
   quotedText?: string;
   /** File attachments for this turn. Rendered as decorative pills. */
@@ -261,6 +262,7 @@ export interface TrimSnapshot {
 }
 
 export interface ChatNodeState {
+  permissionMode?: import('michi-shared').ChatPermissionMode;
   /** Stable id used as the key in the nodes map. */
   nodeId: string;
   /** 'chat' for normal agent-backed threads; 'digest' for generated markdown docs. */
@@ -659,6 +661,7 @@ export interface Project {
 
 export type ChatAction =
   | { type: 'create'; nodeId: string; projectId: string; parentNodeId?: string; mergeSources?: string[]; modeId?: string }
+  | { type: 'set-permission-mode'; nodeId: string; mode: import('michi-shared').ChatPermissionMode }
   | {
       type: 'bind-chat';
       nodeId: string;
@@ -1067,6 +1070,7 @@ export interface ChatContextValue {
   toggleSelection: (nodeId: string) => void;
   clearSelection: () => void;
   createThread: (modeId?: string) => string | null;
+  setChatPermissionMode: (nodeId: string, mode: import('michi-shared').ChatPermissionMode) => Promise<void>;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
   pinTree: (treeId: string) => void;
@@ -1254,6 +1258,7 @@ export type ChatActionsValue = Pick<
   | 'setFocusedNodeId'
   | 'createDigest'
   | 'resolvePermission'
+  | 'setChatPermissionMode'
   | 'denyPermission'
   | 'resolveUserInputRequest'
   | 'skipUserInputRequest'

@@ -79,7 +79,7 @@ export function makeBranchEdge(params: {
   };
 }
 
-function durableNodePrerequisite(project: Project, node: ChatNodeState): Record<string, unknown> {
+export function durableNodePrerequisite(project: Project, node: ChatNodeState): Record<string, unknown> {
   const directTreeId = findTreeIdForNode(node.nodeId, project);
   const parentTreeId = node.parentNodeId ? findTreeIdForNode(node.parentNodeId, project) : null;
   const treeId = directTreeId ?? parentTreeId;
@@ -715,10 +715,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     }),
     [],
   );
-
-  // Per-session map remembering 'always allow' / 'never allow' choices for
-  // tool-call permission requests. Key = permission title, value = optionId.
-  const toolPermissionsRef = useRef<Map<string, string>>(new Map());
 
   const prefsRef = useRef(prefs);
   useEffect(() => { prefsRef.current = prefs; }, [prefs]);
@@ -1449,20 +1445,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       }
     },
     onPermissionRequest: (data) => {
-      if (prefsRef.current.bypassPermissions) {
-        const allowOption = data.options.find((option) => option.kind === 'allow_once');
-        const chatId = nodesRef.current[nodeId]?.chatId;
-        if (chatId && allowOption) {
-          void respondToPermission(chatId, data.requestId, allowOption.optionId);
-          return;
-        }
-      }
-      const autoOption = toolPermissionsRef.current.get(data.title);
-      const chatId = nodesRef.current[nodeId]?.chatId;
-      if (autoOption && chatId) {
-        void respondToPermission(chatId, data.requestId, autoOption);
-        return;
-      }
       dispatch({ type: 'permission-request', nodeId, permission: data });
       if (prefsRef.current.notifications !== 'off' && !document.hasFocus()) {
         notify({ title: 'Tool approval needed', body: data.title });
@@ -1654,6 +1636,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelFns.current[nodeId] = cancelSetup;
       try {
         if (!owningProject) throw new Error('workspace not found for node');
+        if (meta?.permissionMode && !n.permissionMode) dispatch({ type: 'set-permission-mode', nodeId, mode: meta.permissionMode });
         const ensured = await ensureSession({
           nodeId,
           signal: setupController.signal,
@@ -1673,6 +1656,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           // Desired agent for a brand-new thread (Home composer pre-selection).
           // Applied server-side after the fresh session is created, before this
           // first prompt streams. Ignored on resume (node already has a chatId).
+          permissionMode: meta?.permissionMode ?? n.permissionMode,
           modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
           graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
         });
@@ -2160,25 +2144,39 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     [dispatch],
   );
 
+  const setChatPermissionMode = useCallback(async (nodeId: string, mode: import('michi-shared').ChatPermissionMode) => {
+    const node = nodesRef.current[nodeId];
+    const project = projectsRef.current.find((candidate) => candidate.id === node?.projectId);
+    if (!node || !project) throw new Error('Chat not found');
+    const res = await fetch(`${nodeBackendApiBase(nodeId)}/nodes/${encodeURIComponent(nodeId)}/permissions`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, graphPrerequisite: durableNodePrerequisite(project, node) }),
+    });
+    if (!res.ok) throw new Error('Failed to save chat permissions');
+    dispatch({ type: 'set-permission-mode', nodeId, mode });
+  }, [dispatch]);
+
   const resolvePermission = useCallback((nodeId: string, optionId: string) => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId || !node.pendingPermission) return;
-    // Store 'always' choices for auto-approve on future requests
-    const option = node.pendingPermission.options.find(o => o.optionId === optionId);
-    if (option && (option.kind === 'allow_always' || option.kind === 'reject_always')) {
-      toolPermissionsRef.current.set(node.pendingPermission.title, optionId);
-    }
-    respondToPermission(node.chatId, node.pendingPermission.requestId, optionId)
+    const requestId = node.pendingPermission.requestId;
+    if (!node.pendingPermission.options.some((option) => option.optionId === optionId)) return;
+    void respondToPermission(node.chatId, requestId, optionId)
+      .then(() => {
+        if (nodesRef.current[nodeId]?.pendingPermission?.requestId === requestId) dispatch({ type: 'permission-resolved', nodeId });
+      })
       .catch(() => toast.error('Failed to send permission response'));
-    dispatch({ type: 'permission-resolved', nodeId });
   }, [dispatch]);
 
   const denyPermission = useCallback((nodeId: string) => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId || !node.pendingPermission) return;
-    cancelPermission(node.chatId, node.pendingPermission.requestId)
+    const requestId = node.pendingPermission.requestId;
+    void cancelPermission(node.chatId, requestId)
+      .then(() => {
+        if (nodesRef.current[nodeId]?.pendingPermission?.requestId === requestId) dispatch({ type: 'permission-resolved', nodeId });
+      })
       .catch(() => toast.error('Failed to send permission denial'));
-    dispatch({ type: 'permission-resolved', nodeId });
   }, [dispatch]);
 
   const resolveUserInputRequest = useCallback((nodeId: string, answers: Array<{ question: string; answer: string }>) => {
@@ -3063,6 +3061,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       unarchiveProject,
       selectProject,
       sendMessage,
+      setChatPermissionMode,
       retryLastTurn,
       editAndResend,
       createChildChat,
@@ -3195,6 +3194,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       unarchiveProject,
       selectProject,
       sendMessage,
+      setChatPermissionMode,
       retryLastTurn,
       editAndResend,
       createChildChat,
@@ -3318,6 +3318,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       unarchiveProject,
       deleteProject,
       sendMessage,
+      setChatPermissionMode,
       retryLastTurn,
       editAndResend,
       createChildChat,
@@ -3400,6 +3401,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       unarchiveProject,
       deleteProject,
       sendMessage,
+      setChatPermissionMode,
       retryLastTurn,
       editAndResend,
       createChildChat,

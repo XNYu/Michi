@@ -1,3 +1,4 @@
+import { isChatPermissionMode } from 'michi-shared';
 import { finalizeAssistantBlocks, migrateAssistantToBlocks, parseAssistantBlocks } from './assistantBlocks';
 import type {
   ChatMessage,
@@ -474,6 +475,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     trimSnapshot: parseTrimSnapshot(row.trim_snapshot),
     pinnedAt: asOptionalNumber(row.pinned_at),
     currentModeId: asString(row.current_mode_id) ?? null,
+    permissionMode: isChatPermissionMode(row.permission_mode) ? row.permission_mode : undefined,
     paneWidth: asOptionalNumber(row.pane_width),
     composerDraft: parseComposerDraft(row.composer_draft),
   };

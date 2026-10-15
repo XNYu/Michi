@@ -1,3 +1,7 @@
+vi.mock('../../../state/prefs', async () => {
+  const actual = await vi.importActual<typeof import('../../../state/prefs')>('../../../state/prefs');
+  return { ...actual, usePrefs: () => ({ prefs: actual.DEFAULT_PREFS }) };
+});
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

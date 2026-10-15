@@ -21,6 +21,8 @@ import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/ch
 import { paneOwnership } from "../agents/paneOwnership";
 import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
+import { isChatPermissionMode } from 'michi-shared';
+import { writeNodePermissionMode } from '../services/chatPermissions';
 // getSessionForUser enforces ownership in cloud mode; getSession is for internal callers.
 const { getSessionForUser } = sessionRegistry;
 import type { AgentSession } from "../agents/types";
@@ -1042,6 +1044,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const routeStart = Date.now();
         startupMark("ensure_session_route_start", { nodeId });
         const body = (req.body ?? {}) as Record<string, unknown>;
+        if (body.permissionMode !== undefined && !isChatPermissionMode(body.permissionMode)) {
+            return res.status(400).json({ error: 'permissionMode must be ask, trust, or yolo' });
+        }
         if (!nodeId || nodeId.length > 128) {
             return res.status(400).json({ error: "nodeId must be a non-empty string <=128 chars" });
         }
@@ -1080,6 +1085,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (body.workspaceId && body.workspaceId !== durableNode.workspace_id) {
             return res.status(409).json({ code: 'IDENTITY_MISMATCH', error: 'node and workspace do not match' });
         }
+        writeNodePermissionMode(nodeId, isChatPermissionMode(body.permissionMode) ? body.permissionMode : 'ask', req.user?.id, true);
 
         // In cloud mode, derive cwd server-side from the node's workspace ownership.
         // Desktop trusts client-supplied cwd.
@@ -1854,6 +1860,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (typeof requestId !== "number") {
             return res.status(400).json({ error: "requestId (number) is required" });
         }
+        const pending = chatHub.getPendingPermission(nodeId);
+        if (!pending || pending.requestId !== requestId) {
+            return res.status(409).json({ error: 'Permission request is no longer pending' });
+        }
         if (cancel === true) {
             session.cancelPermission?.(requestId);
             chatHub.resolvePermission(nodeId, requestId);
@@ -1861,6 +1871,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
         if (typeof optionId !== "string") {
             return res.status(400).json({ error: "optionId (string) required when not cancelling" });
+        }
+        if (!pending.options.some((option) => option.optionId === optionId)) {
+            return res.status(400).json({ error: 'Invalid permission option' });
         }
         if (!session.respondToPermission) {
             return res.status(400).json({ error: "Session does not support permissions" });

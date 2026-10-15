@@ -3,13 +3,11 @@
  *
  * These tests lock the contract described in spec §5.1:
  *
- *   - Only `CODEX_APPROVAL_ALIASES` methods may consult resolvePolicy.
- *   - Unsupported methods never consult resolvePolicy (which defaults
- *     to "allow" for any tool not in ASK_TOOLS, so feeding unknown methods
- *     directly would silently auto-approve them).
+ *   - Only `CODEX_APPROVAL_ALIASES` methods may consult the chat tool policy.
+ *   - Unsupported methods never consult the tool policy.
  *   - allow_once  → { decision: 'accept' }
  *   - reject_once → { decision: 'decline' }
- *   - allow_always → { decision: 'acceptForSession' } + onAlwaysAllow(canonical)
+ *   - chat allow_always → { decision: 'accept' } + revocable chat grant
  *   - cancelPermission / markCrashed → { decision: 'cancel' }
  *     (null resolve is mapped to 'decline' in askPermission — tested as fail-safe)
  *   - Approval for unknown threadId → immediate { decision: 'decline' }
@@ -278,7 +276,7 @@ test('reject_once → { decision: decline }', async (t) => {
   await runtime.shutdown();
 });
 
-test('allow_always → { decision: acceptForSession } and onAlwaysAllow called with canonical tool name', async (t) => {
+test('chat allow_always uses a single native approval without a workspace grant', async (t) => {
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const alwaysAllowCalls: string[] = [];
@@ -294,16 +292,16 @@ test('allow_always → { decision: acceptForSession } and onAlwaysAllow called w
   session.respondToPermission(requestId, 'allow_always');
 
   const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'acceptForSession' }, 'allow_always should produce acceptForSession');
+  assert.deepEqual(result, { decision: 'accept' }, 'chat grants stay in Michi and remain revocable');
   assert.deepEqual(
     alwaysAllowCalls,
-    ['bash'],
-    'onAlwaysAllow should be called with canonical name "bash", not the raw method',
+    [],
+    'chat grants must not invoke the legacy workspace grant hook',
   );
   await runtime.shutdown();
 });
 
-test('allow_always for fileChange calls onAlwaysAllow with "edit"', async (t) => {
+test('chat fileChange approval does not persist a native session-wide grant', async (t) => {
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const alwaysAllowCalls: string[] = [];
@@ -319,8 +317,8 @@ test('allow_always for fileChange calls onAlwaysAllow with "edit"', async (t) =>
   session.respondToPermission(requestId, 'allow_always');
 
   const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'acceptForSession' });
-  assert.deepEqual(alwaysAllowCalls, ['edit'], 'onAlwaysAllow should be called with "edit" for fileChange');
+  assert.deepEqual(result, { decision: 'accept' });
+  assert.deepEqual(alwaysAllowCalls, [], 'chat grants must not invoke the legacy workspace grant hook');
   await runtime.shutdown();
 });
 
@@ -531,7 +529,7 @@ test('agent_run permission profiles fail closed without a generic broker decisio
   await runtime.shutdown();
 });
 
-test('chat session approval still uses resolvePolicy and grantPermission', async (t) => {
+test('chat session approval does not persist legacy workspace grants', async (t) => {
   // This test verifies existing chat behavior is unchanged after T06 changes.
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
@@ -550,8 +548,8 @@ test('chat session approval still uses resolvePolicy and grantPermission', async
   session.respondToPermission(requestId, 'allow_always');
 
   const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'acceptForSession' });
-  assert.deepEqual(alwaysAllowCalls, ['bash'], 'chat session should call onAlwaysAllow');
+  assert.deepEqual(result, { decision: 'accept' });
+  assert.deepEqual(alwaysAllowCalls, [], 'chat session must not persist a workspace grant');
 
   await runtime.shutdown();
 });

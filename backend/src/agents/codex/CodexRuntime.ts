@@ -23,9 +23,9 @@ import { buildCodexMcpConfig, CODEX_SERVER_REQUESTS } from './codexProtocol';
 import { CodexSession } from './CodexSession';
 import * as sessionRegistry from '../sessionRegistry';
 import { buildFirstTurnPrefix, buildStableSystemPrompt } from '../preamble';
-import { getNode, grantPermission, getWorkspaceInstructions } from '../../services/dbRepository';
+import { getNode, getWorkspaceInstructions } from '../../services/dbRepository';
 import { resolveModel, resolveReasoning } from '../../services/agentConfig';
-import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
+import { resolveChatPolicy } from '../permissionPolicy';
 import { findCodexBinary, preflightCodexAuth } from './codexBinary';
 import { NativeResumeUnavailableError, nativeResumeId } from '../../services/nativeResume';
 import type { RuntimeModelCache } from '../runtimeModelCache';
@@ -787,16 +787,14 @@ export class CodexRuntime implements AgentRuntime {
       return;
     }
 
-    // Chat session: existing workspace policy and grant behavior.
-    // Look up the canonical tool name for policy checks.
-    // CRITICAL: only methods in CODEX_APPROVAL_ALIASES may consult resolvePolicy.
+    // Ordinary chat: use the turn's mode and revocable chat grants.
+    // Only methods in CODEX_APPROVAL_ALIASES may consult the tool policy.
     // The dispatcher only routes command/file approvals here.
     const canonicalTool = CODEX_APPROVAL_ALIASES[method];
 
     if (canonicalTool !== undefined) {
-      // Known method — check workspace policy first.
-      const workspaceId = session?.workspaceId ?? null;
-      const policy = resolvePolicy(workspaceId, canonicalTool, params);
+      // Known method — check the chat policy before requesting user approval.
+      const policy = resolveChatPolicy(session.owner, null, canonicalTool, true, session.permissionModeForTurn);
       if (policy === 'allow') {
         respond({ decision: 'accept' });
         return;

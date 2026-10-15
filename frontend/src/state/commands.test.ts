@@ -23,8 +23,6 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     activeTreeId: null,
     liveTrees: [],
     archivedTrees: [],
-    bypassPermissions: false,
-    toggleBypassPermissions: vi.fn(),
     customAgentsEnabled: true,
     ...overrides,
   };
@@ -50,10 +48,10 @@ describe('buildCommands', () => {
 
   it('omits selection action commands when selection is empty', () => {
     const cmds = buildCommands(baseCtx);
-    // Selection actions only. `action.bypass-permissions` is an always-present
+    // Selection actions only. `action.permissions` is an always-present
     // global toggle that shares the `action.` prefix but is not selection-scoped.
     const selectionActions = cmds.filter(
-      (c) => c.group === 'action' && c.id.startsWith('action.') && c.id !== 'action.bypass-permissions',
+      (c) => c.group === 'action' && c.id.startsWith('action.') && c.id !== 'action.permissions',
     );
     expect(selectionActions).toHaveLength(0);
   });

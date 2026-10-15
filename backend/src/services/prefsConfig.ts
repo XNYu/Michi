@@ -35,7 +35,6 @@ const PERSISTED_KEYS: ReadonlySet<string> = new Set([
   "notifications",
   "enableKiroSidecarTitles",
   "enableFollowUps",
-  "bypassPermissions",
 ]);
 
 function readDiskFile(): Record<string, any> | null {

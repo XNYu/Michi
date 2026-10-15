@@ -1,3 +1,6 @@
+import { usePermissionPreferences } from '../../hooks/usePermissionPreferences';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { ComposerPermissionControl } from './ComposerPermissionControl';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatActions, useChatNode, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
 import type { ChatNodeState, ArtifactEntry, ProjectEdge } from '../../state/chatStore';
@@ -318,6 +321,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     retryLastTurn,
     editAndResend,
     cancelStream,
+    setChatPermissionMode,
     isObserver,
     createChildChat,
     createBlankChild,
@@ -349,6 +353,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const { prefs } = usePrefs();
   const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
+  const permissionPreferences = usePermissionPreferences(n ? workspaceBackendApiBase(n.projectId) : undefined);
   // Latest node state for callbacks that outlive their render closure — the
   // unmount-time scroll save reads messages through this.
   const nLatestRef = useRef(n);
@@ -2300,6 +2305,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         toolbarRight={
           <>
+          {!permissionPreferences.global && <ComposerPermissionControl mode={n.permissionMode ?? 'ask'}
+            compact={toolbarTier > 0} disabled={streaming || observing || permissionPreferences.loading}
+            onChange={(mode) => setChatPermissionMode(nodeId, mode)} />}
           <ComposerModelTrigger
             toolbarTier={toolbarTier}
             agentStatus={agentStatus}

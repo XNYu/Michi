@@ -1,3 +1,4 @@
+import { chatPermissionMode } from '../permissionPolicy';
 import * as fs from "node:fs";
 import { extractToolUsePurpose, KiroSteeringParser, type SteeringSegment } from "michi-shared";
 import type {
@@ -150,6 +151,7 @@ const BRANCH_OVERVIEW_TOOL_REMINDER = `
 export class KiroSession implements AgentSession {
     public readonly runtimeId = "kiro";
     public readonly owner?: RuntimeSessionOwner;
+    private turnPermissionMode: import('michi-shared').ChatPermissionMode = 'ask';
     public readonly runtimeProfileHash?: string | null;
     public parentChatId?: string;
     private history: ChatMessage[] = [];
@@ -219,6 +221,7 @@ export class KiroSession implements AgentSession {
     private firstMessagePreamble: string | null = null;
 
     async *send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
+        this.turnPermissionMode = chatPermissionMode(this.owner);
         const turn = new AbortController();
         this.activeTurn = turn;
         this.history.push({ role: "user", content: text });
@@ -535,12 +538,20 @@ export class KiroSession implements AgentSession {
                         };
                     }
                 } else {
+                    const options = (Array.isArray(update.options) ? update.options : []).filter(
+                        (option: { kind?: string }) => option.kind !== 'allow_always' && option.kind !== 'reject_always',
+                    );
+                    const allow = options.find((option: { kind?: string }) => option.kind === 'allow_once');
+                    if (this.turnPermissionMode !== 'ask' && allow) {
+                        this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allow.optionId);
+                        continue;
+                    }
                     yield {
                         kind: "permission_request" as const,
                         requestId: update.requestId,
                         toolCallId: update.toolCall?.toolCallId,
                         title: update.toolCall?.title ?? "Tool call",
-                        options: Array.isArray(update.options) ? update.options : [],
+                        options,
                         source: "acp_permission",
                     };
                 }

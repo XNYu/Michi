@@ -34,6 +34,7 @@ async function assertControls(page: Page, info: TestInfo, stage: string) {
   const model = composer.getByRole('button', { name: /^Model settings:/ });
   await finishHover(model);
   const fill = await model.evaluate((element) => getComputedStyle(element).backgroundColor);
+  const duration = await model.evaluate((element) => getComputedStyle(element).transitionDuration.split(',')[0].trim());
   expect(fill).not.toBe('rgba(0, 0, 0, 0)');
   const controls = composer.locator('.t-toolbar-chip, .t-action-btn.is-outline');
   for (const [index, control] of (await controls.all()).entries()) {
@@ -42,7 +43,9 @@ async function assertControls(page: Page, info: TestInfo, stage: string) {
     const restingBounds = await control.boundingBox();
     await expect(control).toHaveCSS('border-radius', '4px');
     await expect(control).toHaveCSS('border-width', '0px');
-    await expect(control).toHaveCSS('transition-duration', '0.12s, 0.12s, 0.12s');
+    expect(await control.evaluate((element) => getComputedStyle(element).transitionDuration.split(',').map((value) => value.trim())))
+      .toEqual(expect.arrayContaining([duration]));
+    expect(await control.evaluate((element) => new Set(getComputedStyle(element).transitionDuration.split(',').map((value) => value.trim())).size)).toBe(1);
     await finishHover(control);
     await expect(control).toHaveCSS('background-color', fill);
     await expect(control).toHaveCSS('border-width', '0px');
@@ -61,7 +64,8 @@ for (const palette of ['bone', 'monokai'] as const) {
     const composer = page.locator('.terminal-composer').first();
     const editor = composer.locator('[contenteditable="true"]');
     await editor.fill('Review the Composer controls');
-    await expect(composer.locator('.t-toolbar-chip')).toHaveCount(5);
+    await expect(composer.locator('.t-toolbar-chip')).toHaveCount(6);
+    await expect(composer.getByRole('button', { name: 'Permissions: Ask', exact: true })).toHaveClass('t-toolbar-chip');
     await expect(page.getByRole('button', { name: 'Search', exact: true })).toHaveCSS('border-radius', '4px');
     const fill = await assertControls(page, info, 'home');
 

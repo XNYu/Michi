@@ -1,3 +1,5 @@
+import { usePermissionPreferences } from '../../../hooks/usePermissionPreferences';
+import { ComposerPermissionControl } from '../ComposerPermissionControl';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { MentionEditorHandle } from '../../MentionEditor';
@@ -44,6 +46,7 @@ interface PendingAttachment {
 // In-memory draft survives unmount within a session, but successful sends
 // reset it. Cleared on full reload.
 const composerDrafts = new Map<string, ComposerDraft>();
+const draftPermissionModes = new Map<string, import('michi-shared').ChatPermissionMode>();
 // Last pre-picked agent, sticky across unmounts within a session (mirrors how
 // composer drafts persist). Lets the Home composer remember the chosen agent after
 // you send and come back. A stale id (e.g. after a runtime switch) is dropped at
@@ -53,6 +56,7 @@ const manageStickyPrimaryAgent = new Map<string, PrimaryAgentDefinitionOption>()
 
 export function __resetManageComposerSessionStateForTests() {
   composerDrafts.clear();
+  draftPermissionModes.clear();
   manageStickyModeId = undefined;
   manageStickyPrimaryAgent.clear();
 }
@@ -120,6 +124,7 @@ function ScopedManageComposer({
   } = useChatStore();
 
   const workspaceId = fixedWorkspaceId ?? activeProject?.id ?? '';
+  const permissionPreferences = usePermissionPreferences(workspaceBackendApiBase(workspaceId));
   const project = projects.find((p) => p.id === workspaceId);
   const usesActiveBackend = workspaceBackendApiBase(workspaceId) === activeBackendApiBase();
   const customAgentsEnabled = agentStatus?.customAgentsEnabled === true;
@@ -146,6 +151,13 @@ function ScopedManageComposer({
 
   const [agentMenu, setAgentMenu] = useState<PaneMenuAnchor | null>(null);
   const [modelMenu, setModelMenu] = useState<PaneMenuAnchor | null>(null);
+  const permissionDraftKey = `${workspaceId}:${parentNodeId ?? '__new__'}`;
+  const [, setPermissionModeRevision] = useState(0);
+  const permissionMode = draftPermissionModes.get(permissionDraftKey) ?? 'ask';
+  const setPermissionMode = (mode: import('michi-shared').ChatPermissionMode) => {
+    draftPermissionModes.set(permissionDraftKey, mode);
+    setPermissionModeRevision((revision) => revision + 1);
+  };
   // Pre-session agent pick. Only meaningful when enableAgentSelect is on; the
   // chosen mode is stamped onto the new thread in submit() and applied to its
   // session at ensure-session time so the first message runs under it. Seeded
@@ -570,13 +582,14 @@ function ScopedManageComposer({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      const permissionMeta = permissionPreferences.global || permissionMode === 'ask' ? meta : { ...meta, permissionMode };
       const modeId = pendingPrimaryAgent ? undefined : currentModeId;
       const primaryAgent = pendingPrimaryAgent ? {
         backendConnectionId: pendingPrimaryAgent.backendConnectionId,
         definitionId: pendingPrimaryAgent.definition.id,
       } : undefined;
       if (parentNodeId) {
-        await createChildChat(parentNodeId, finalText, meta, { modeId, primaryAgent });
+        await createChildChat(parentNodeId, finalText, permissionMeta, { modeId, primaryAgent });
       } else {
         let nodeId: string | null;
         try {
@@ -589,9 +602,10 @@ function ScopedManageComposer({
         if (primaryAgent) {
           bindPendingPrimaryAgent(nodeId, { workspaceId, ...primaryAgent });
         }
-        sendMessage(nodeId, finalText, meta);
+        sendMessage(nodeId, finalText, permissionMeta);
       }
       setDraft({ value: '', mentions: [] });
+      setPermissionMode('ask');
       setPendingAttachments([]);
       onSubmitted();
     } catch (error) {
@@ -738,6 +752,8 @@ function ScopedManageComposer({
         </div>}
         toolbarRight={
           <>
+          {!permissionPreferences.global && <ComposerPermissionControl mode={permissionMode}
+            disabled={submitting || permissionPreferences.loading} onChange={setPermissionMode} />}
           <ComposerModelTrigger
             toolbarTier={0}
             agentStatus={agentStatus}

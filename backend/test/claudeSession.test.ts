@@ -323,6 +323,45 @@ describe('ClaudeSession', () => {
 
   // ── warmInit ────────────────────────────────────────────────────────────────
 
+  test('send freezes native permission mode while retiring a process and resumes in Ask on the next turn', async () => {
+    const policy = require('../src/agents/permissionPolicy');
+    const originalMode = policy.chatPermissionMode;
+    let mode = 'ask';
+    policy.chatPermissionMode = () => mode;
+    const registry = makeMcpRegistry();
+    const originalDispose = registry.dispose.bind(registry);
+    let changeDuringRetirement = false;
+    registry.dispose = async (id: string) => {
+      if (changeDuringRetirement) { mode = 'ask'; changeDuringRetirement = false; }
+      await originalDispose(id);
+    };
+    stubSpawnClaude(() => {
+      const child = new MockClaudeChild();
+      child.stdin.on('data', () => {
+        process.nextTick(() => {
+          child.emitInit('ext-permission-snapshot');
+          child.emitChunk('reply');
+          child.emitResult();
+        });
+      });
+      return child;
+    });
+    const { ClaudeSession } = freshClaudeSession();
+    const session = new ClaudeSession('node-001', makeSessionDeps({ mcpRegistry: registry as any }));
+    try {
+      await session.spawnFresh();
+      for await (const _event of session.send('initial Ask')) { /* drain */ }
+      mode = 'yolo'; changeDuringRetirement = true;
+      for await (const _event of session.send('YOLO turn')) { /* drain */ }
+      assert.equal((capturedSpawnArgs[1] as any).permissionMode, 'bypassPermissions');
+      assert.equal((capturedSpawnArgs[1] as any).resumeSessionId, 'ext-permission-snapshot');
+      for await (const _event of session.send('back to Ask')) { /* drain */ }
+      assert.equal((capturedSpawnArgs[2] as any).permissionMode, 'default');
+      assert.equal((capturedSpawnArgs[2] as any).resumeSessionId, 'ext-permission-snapshot');
+      assert.deepEqual(session.getHistory().filter((message) => message.role === 'user').map((message) => message.content), ['initial Ask', 'YOLO turn', 'back to Ask']);
+    } finally { policy.chatPermissionMode = originalMode; await session.dispose(); }
+  });
+
   test('warmInit(): writes shouldQuery:false envelope and resolves on result/success', async () => {
     const child = new MockClaudeChild();
     stubSpawnClaude(() => child);
@@ -886,8 +925,8 @@ describe('ClaudeSession', () => {
 
     // Stub resolvePolicy to return 'allow'
     const policyMod = require('../src/agents/permissionPolicy');
-    const origResolve = policyMod.resolvePolicy;
-    policyMod.resolvePolicy = () => 'allow';
+    const origResolve = policyMod.resolveChatPolicy;
+    policyMod.resolveChatPolicy = () => 'allow';
 
     const { ClaudeSession } = freshClaudeSession();
     const session = new ClaudeSession('session-approve', makeSessionDeps({ workspaceId: 'ws-1' }) as any);
@@ -924,7 +963,7 @@ describe('ClaudeSession', () => {
         assert.fail('onApprove callback was not captured');
       }
     } finally {
-      policyMod.resolvePolicy = origResolve;
+      policyMod.resolveChatPolicy = origResolve;
       require('../src/agents/claude/claudeBinary').spawnClaude = origSpawn;
       await session.dispose();
     }
@@ -938,8 +977,8 @@ describe('ClaudeSession', () => {
     setTimeout(() => child.emitInit('ext-deny-001'), 20);
 
     const policyMod = require('../src/agents/permissionPolicy');
-    const origResolve = policyMod.resolvePolicy;
-    policyMod.resolvePolicy = () => 'deny';
+    const origResolve = policyMod.resolveChatPolicy;
+    policyMod.resolveChatPolicy = () => 'deny';
 
     const { ClaudeSession } = freshClaudeSession();
     const mcpReg = makeMcpRegistry() as any;
@@ -958,7 +997,7 @@ describe('ClaudeSession', () => {
       const result = await capturedOnApprove!({ toolName: 'bash', input: {}, toolUseId: 'tc-deny' });
       assert.equal(result.behavior, 'deny');
     } finally {
-      policyMod.resolvePolicy = origResolve;
+      policyMod.resolveChatPolicy = origResolve;
       await session.dispose();
     }
   });
@@ -971,8 +1010,8 @@ describe('ClaudeSession', () => {
     setTimeout(() => child.emitInit('ext-ask-001'), 20);
 
     const policyMod = require('../src/agents/permissionPolicy');
-    const origResolve = policyMod.resolvePolicy;
-    policyMod.resolvePolicy = () => 'ask';
+    const origResolve = policyMod.resolveChatPolicy;
+    policyMod.resolveChatPolicy = () => 'ask';
 
     const { ClaudeSession } = freshClaudeSession();
     const mcpReg = makeMcpRegistry() as any;
@@ -1012,9 +1051,9 @@ describe('ClaudeSession', () => {
       const result = await approvePromise;
       assert.equal(result.behavior, 'allow');
       const dbRepoMod = require('../src/services/dbRepository');
-      assert.deepEqual(dbRepoMod._grantCalls, [['ws-ask', 'bash']]);
+      assert.deepEqual(dbRepoMod._grantCalls, [], 'ordinary chat grants never authorize other chats in the workspace');
     } finally {
-      policyMod.resolvePolicy = origResolve;
+      policyMod.resolveChatPolicy = origResolve;
       await session.dispose();
     }
   });

@@ -6,6 +6,7 @@ import type {
   HistoryStore, GlobalContextProvider, ProviderKeyStore, AgentConfigResolver,
 } from "./ports";
 import type { RuntimeSessionOwner } from "./types";
+import type { ChatPermissionMode } from 'michi-shared';
 
 export interface RuntimeDeps {
   historyStore: HistoryStore;
@@ -17,6 +18,11 @@ export interface RuntimeDeps {
   agentConfig: AgentConfigResolver;
   /** Optional audit hook for live runtime ownership changes. */
   onSessionOwnerBound?: (sessionId: string, owner: RuntimeSessionOwner) => void;
+  chatPermissions?: {
+    getMode(nodeId: string, ownerUserId?: string | null): ChatPermissionMode;
+    hasGrant(nodeId: string, toolKey: string, ownerUserId?: string | null): boolean;
+    grant(nodeId: string, toolKey: string, ownerUserId?: string | null): void;
+  };
 }
 
 let deps: RuntimeDeps | undefined;
@@ -28,6 +34,7 @@ export function configureRuntimeDeps(next: {
   providerKeys?: ProviderKeyStore;
   agentConfig: AgentConfigResolver;
   onSessionOwnerBound?: (sessionId: string, owner: RuntimeSessionOwner) => void;
+  chatPermissions?: RuntimeDeps['chatPermissions'];
 }): void {
   deps = {
     historyStore: next.historyStore,
@@ -36,6 +43,7 @@ export function configureRuntimeDeps(next: {
     providerKeys: next.providerKeys ?? { getProviderApiKey: (p) => process.env[`${p.toUpperCase().replace(/-/g, "_")}_API_KEY`] ?? null },
     agentConfig: next.agentConfig,
     onSessionOwnerBound: next.onSessionOwnerBound,
+    chatPermissions: next.chatPermissions,
   };
   fs.mkdirSync(deps.dataDir, { recursive: true });
 }

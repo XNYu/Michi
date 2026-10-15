@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PALETTES } from '../components/terminal/tokens';
 import { fetchPrefs, savePrefs } from '../services/api';
+import { savePermissionSettings } from '../services/api/prefs';
+import { isChatPermissionMode, type ChatPermissionSettings, type ChatPermissionMode } from 'michi-shared';
 import type { VibrancyMaterial } from '../lib/electronBridge';
 import { SIDEBAR_ROW_STYLES, type SidebarRowStyle } from '../components/terminal/sidebarRowStyle';
 import { normalizePaneWidthMode, type PaneWidthMode } from './paneLayout';
@@ -168,8 +170,9 @@ export interface Prefs {
    *  scroll-to-view). Acts as an app-level override on top of the OS-level
    *  `prefers-reduced-motion` media query. Default false. */
   reduceMotion: boolean;
-  /** When true, auto-approve all tool permission requests without showing the banner. */
-  bypassPermissions: boolean;
+  /** Shared backend permission setting. Per-chat choices live on durable nodes. */
+  globalPermissions: boolean;
+  permissionMode: ChatPermissionMode;
   /** Number of unpinned threads to show per workspace before "Show more".
    *  Must be ≥1. Default 5. */
   sidebarThreadLimit: number;
@@ -233,7 +236,8 @@ export const DEFAULT_PREFS: Prefs = {
   enableKiroSidecarTitles: false,
   enableFollowUps: true,
   reduceMotion: false,
-  bypassPermissions: false,
+  globalPermissions: false,
+  permissionMode: 'ask',
   sidebarExpanded: { workspaces: {}, threads: {}, branches: {} },
   sidebarThreadLimit: 5,
   workspaceOrder: [],
@@ -277,6 +281,9 @@ function readInitial(): Prefs {
   try {
     const parsed = JSON.parse(raw);
     const merged = { ...DEFAULT_PREFS, ...parsed };
+    merged.globalPermissions = typeof parsed.globalPermissions === 'boolean' ? parsed.globalPermissions : parsed.bypassPermissions === true;
+    merged.permissionMode = isChatPermissionMode(parsed.permissionMode) ? parsed.permissionMode : parsed.bypassPermissions === true ? 'trust' : 'ask';
+    delete (merged as { bypassPermissions?: unknown }).bypassPermissions;
     merged.paneWidthMode = normalizePaneWidthMode(merged.paneWidthMode);
     merged.paneSpawnAnimation = normalizePaneMotion(merged.paneSpawnAnimation);
     delete (merged as { theme?: string }).theme;
@@ -417,6 +424,7 @@ function readInitial(): Prefs {
 interface PrefsContextValue {
   prefs: Prefs;
   setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): void;
+  setPermissionSettings(settings: ChatPermissionSettings): Promise<void>;
   reset(): void;
   /** Reset only the terminal appearance fields to defaults. */
   resetTerminal(): void;
@@ -427,6 +435,7 @@ const PrefsContext = createContext<PrefsContextValue | null>(null);
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState<Prefs>(readInitial);
   const hydratedFromBackend = useRef(false);
+  const permissionWriteRevision = useRef(0);
 
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
@@ -435,9 +444,16 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     if (hydratedFromBackend.current) return;
     hydratedFromBackend.current = true;
     const hadLocal = !!window.localStorage.getItem(PREFS_KEY);
+    const permissionRevision = permissionWriteRevision.current;
     fetchPrefs().then((remote) => {
-      if (!remote) return;
-      if (hadLocal) return;
+      if (!remote || permissionRevision !== permissionWriteRevision.current) return;
+      if (hadLocal) {
+        setPrefs((prev) => ({ ...prev,
+          globalPermissions: typeof remote.globalPermissions === 'boolean' ? remote.globalPermissions : remote.bypassPermissions === true,
+          permissionMode: isChatPermissionMode(remote.permissionMode) ? remote.permissionMode : remote.bypassPermissions === true ? 'trust' : 'ask',
+        }));
+        return;
+      }
       const merged = {
         ...DEFAULT_PREFS,
         ...remote,
@@ -447,8 +463,30 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       merged.enableKiroSidecarTitles = normalizeKiroSidecarTitlesPreference(
         remote.enableKiroSidecarTitles,
       );
+      merged.globalPermissions = typeof remote.globalPermissions === 'boolean' ? remote.globalPermissions : remote.bypassPermissions === true;
+      merged.permissionMode = isChatPermissionMode(remote.permissionMode) ? remote.permissionMode : remote.bypassPermissions === true ? 'trust' : 'ask';
+      delete (merged as { bypassPermissions?: unknown }).bypassPermissions;
       setPrefs(merged);
     });
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const refresh = () => {
+      const revision = permissionWriteRevision.current;
+      void fetchPrefs().then((remote) => {
+        if (disposed || !remote || revision !== permissionWriteRevision.current) return;
+        const global = remote.globalPermissions;
+        const mode = remote.permissionMode;
+        if (typeof global !== 'boolean' || !isChatPermissionMode(mode)) return;
+        setPrefs((prev) => prev.globalPermissions === global && prev.permissionMode === mode
+          ? prev : { ...prev, globalPermissions: global, permissionMode: mode });
+      });
+    };
+    const onStorage = (event: StorageEvent) => { if (event.key === PREFS_KEY) refresh(); };
+    window.addEventListener('focus', refresh);
+    window.addEventListener('storage', onStorage);
+    return () => { disposed = true; window.removeEventListener('focus', refresh); window.removeEventListener('storage', onStorage); };
   }, []);
 
   useEffect(() => {
@@ -586,8 +624,14 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
     setPrefs((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const setPermissionSettings = useCallback(async (settings: ChatPermissionSettings) => {
+    permissionWriteRevision.current += 1;
+    const saved = await savePermissionSettings(settings).finally(() => { permissionWriteRevision.current += 1; });
+    setPrefs((prev) => ({ ...prev, globalPermissions: saved.global, permissionMode: saved.mode }));
+  }, []);
+
   const reset = useCallback(() => {
-    setPrefs({ ...DEFAULT_PREFS });
+    setPrefs((prev) => ({ ...DEFAULT_PREFS, globalPermissions: prev.globalPermissions, permissionMode: prev.permissionMode }));
   }, []);
 
   const resetTerminal = useCallback(() => {
@@ -618,8 +662,8 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ prefs, setPref, reset, resetTerminal }),
-    [prefs, setPref, reset, resetTerminal],
+    () => ({ prefs, setPref, setPermissionSettings, reset, resetTerminal }),
+    [prefs, setPref, setPermissionSettings, reset, resetTerminal],
   );
 
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;

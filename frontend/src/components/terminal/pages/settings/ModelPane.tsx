@@ -1,3 +1,7 @@
+import { usePermissionPreferences } from '../../../../hooks/usePermissionPreferences';
+import { workspaceBackendApiBase } from '../../../../config/backendConnections';
+import { toast } from 'sonner';
+import { ComposerPermissionControl } from '../../ComposerPermissionControl';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '../../../../state/chatStore';
 import { usePrefs } from '../../../../state/prefs';
@@ -24,7 +28,6 @@ import {
   shouldPromptForProviderKey,
 } from '../../../../lib/providerCapabilities';
 import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
-import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { filterModelCatalog } from './modelCatalogFilter';
 import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 import { BedrockConfigPanel } from './BedrockConfigPanel';
@@ -128,13 +131,9 @@ export function ModelPane({
 
       {showKiroSidecarTitles && <KiroSidecarTitleToggle />}
       <FollowUpsToggle />
-      <BypassPermissionsToggle />
+      <PermissionSettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : undefined} />
 
-      {activeProjectId && (
-        <div style={{ marginTop: 28 }}>
-          <PermissionGrantsList projectId={activeProjectId} />
-        </div>
-      )}
+
     </div>
   );
 }
@@ -982,180 +981,35 @@ function FollowUpsToggle() {
   );
 }
 
-function BypassPermissionsToggle() {
-  const { prefs, setPref } = usePrefs();
-  const enabled = prefs.bypassPermissions;
-  return (
-    <div
-      style={{
-        paddingTop: 18,
-        paddingBottom: 4,
-        borderTop: '1px solid var(--term-line)',
-        marginTop: 18,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 'var(--fs-xs)',
-          color: 'var(--term-muted)',
-          letterSpacing: 'var(--ls-caps-wide)',
-          marginBottom: 10,
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        ▸ PERMISSIONS
-      </div>
-      <ClickableRow
-        onClick={() => setPref('bypassPermissions', !enabled)}
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 10,
-          padding: '6px 6px',
-          margin: '0 -6px',
-        }}
-      >
-        <span style={{ marginTop: 1 }}>
-          <Switch on={enabled} onChange={(v) => setPref('bypassPermissions', v)} aria-label="Bypass all permissions" />
+function PermissionSettings({ apiBase }: { apiBase?: string }) {
+  const permissions = usePermissionPreferences(apiBase);
+  const [saving, setSaving] = useState(false);
+  const save = async (global: boolean, mode = permissions.mode) => {
+    setSaving(true);
+    try { await permissions.save({ global, mode }); }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Failed to save permission settings'); }
+    finally { setSaving(false); }
+  };
+  return <div style={{ paddingTop: 18, paddingBottom: 4, borderTop: '1px solid var(--term-line)', marginTop: 18 }}>
+    <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', letterSpacing: 'var(--ls-caps-wide)', marginBottom: 10, fontFamily: 'var(--ui-font)' }}>▸ PERMISSIONS</div>
+    <ClickableRow onClick={() => { if (!saving && !permissions.loading) void save(!permissions.global); }}
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 6px', margin: '0 -6px' }}>
+      <span style={{ marginTop: 1 }}><Switch on={permissions.global} disabled={saving || permissions.loading}
+        onChange={(global) => { if (!saving && !permissions.loading) void save(global); }} aria-label="Use global permissions" /></span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+        <span style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontWeight: 600 }}>Use global permissions</span>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
+          {permissions.global ? 'One permission mode for all chats. Permission controls are hidden in the Composer.' : 'Set permissions separately in each chat’s Composer. New chats start in Ask.'}
         </span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <span
-            style={{
-              fontSize: 'var(--fs-lg)',
-              color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)',
-              fontWeight: 600,
-            }}
-          >
-            Bypass all permissions
-          </span>
-          <span
-            style={{
-              fontSize: 'var(--fs-sm)',
-              color: 'var(--term-muted)',
-              fontFamily: 'var(--ui-font)',
-            }}
-          >
-            Auto-approve all tool calls without showing the permission banner.
-          </span>
-        </div>
-      </ClickableRow>
-    </div>
-  );
-}
-
-interface PermissionGrant {
-  workspace_id: string;
-  tool_name: string;
-  granted_at: number;
-}
-
-function PermissionGrantsList({ projectId }: { projectId: string }) {
-  const [grants, setGrants] = useState<PermissionGrant[] | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-
-  const load = React.useCallback(async () => {
-    try {
-      const res = await fetch(`${workspaceBackendApiBase(projectId)}/workspaces/${projectId}/permission-grants`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { grants: PermissionGrant[] };
-      setGrants(data.grants ?? []);
-    } catch {
-      setGrants([]);
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function revoke(toolName: string) {
-    setBusy(toolName);
-    try {
-      await fetch(
-        `${workspaceBackendApiBase(projectId)}/workspaces/${projectId}/permission-grants/${encodeURIComponent(toolName)}`,
-        { method: 'DELETE' },
-      );
-      await load();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <div style={{ paddingTop: 18, borderTop: '1px solid var(--term-line)' }}>
-      <div
-        style={{
-          fontSize: 'var(--fs-xs)',
-          color: 'var(--term-muted)',
-          letterSpacing: 'var(--ls-caps-wide)',
-          marginBottom: 10,
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        ▸ ALWAYS-ALLOW GRANTS
       </div>
-      <div
-        style={{
-          fontSize: 'var(--fs-sm)',
-          color: 'var(--term-muted)',
-          fontFamily: 'var(--ui-font)',
-          lineHeight: 1.5,
-          maxWidth: 460,
-          marginBottom: 10,
-        }}
-      >
-        Tools you've allowed to run without prompting in this workspace.
-        Revoke any to be asked again on the next call.
-      </div>
-      {grants === null ? (
-        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)', color: 'var(--term-muted)' }}>
-          loading…
-        </div>
-      ) : grants.length === 0 ? (
-        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)', color: 'var(--term-muted)' }}>
-          No always-allow grants yet.
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--term-line)' }}>
-          {grants.map((g, i) => (
-            <div
-              key={g.tool_name}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '8px 12px',
-                borderBottom: i < grants.length - 1 ? '1px solid var(--term-line)' : 'none',
-                background: 'var(--term-surface-glass)',
-                fontFamily: 'var(--ui-font)',
-                fontSize: 'var(--fs-md)',
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ color: 'var(--term-fg)', fontWeight: 600 }}>{g.tool_name}</span>
-                <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
-                  granted {new Date(g.granted_at).toLocaleString()}
-                </span>
-              </div>
-              <BorderBtn
-                onClick={() => !busy && void revoke(g.tool_name)}
-                style={{
-                  padding: '4px 10px',
-                  fontSize: 'var(--fs-sm)',
-                  border: '1px solid var(--term-line)',
-                  color: 'var(--term-danger)',
-                  background: 'transparent',
-                  fontFamily: 'var(--ui-font)',
-                  opacity: busy === g.tool_name ? 0.5 : 1,
-                }}
-              >
-                revoke
-              </BorderBtn>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+    </ClickableRow>
+    {permissions.global && <div style={{ marginTop: 10 }}>
+      <ComposerPermissionControl scope="global" mode={permissions.mode} disabled={saving || permissions.loading}
+        onChange={(mode) => save(true, mode)} />
+    </div>}
+    {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error}</p>}
+    <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 10 }}>
+      Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Agent Runs use their own permissions.
+    </p>
+  </div>;
 }

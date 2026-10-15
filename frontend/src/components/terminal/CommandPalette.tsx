@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useChatStore, useChatNodesSnapshot, selectAllChats } from '../../state/chatStore';
-import { usePrefs } from '../../state/prefs';
 import { buildCommands, filterCommands, Command, PageId } from '../../state/commands';
 import { type MessageMatch } from '../../state/search';
 import { useServerSearch } from '../../state/useServerSearch';
@@ -188,7 +187,6 @@ export default function CommandPalette({
     setSearchHighlightTerm,
   } = useChatStore();
   const nodesSnapshot = useChatNodesSnapshot();
-  const { prefs, setPref } = usePrefs();
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -328,11 +326,9 @@ export default function CommandPalette({
         activeTreeId: activeProject?.activeTreeId ?? null,
         liveTrees,
         archivedTrees,
-        bypassPermissions: prefs.bypassPermissions,
-        toggleBypassPermissions: () => { setPref('bypassPermissions', !prefs.bypassPermissions); },
         customAgentsEnabled: agentStatus?.customAgentsEnabled === true,
       }),
-    [activePage, selection, allChats, navDeps, selectProject, activeProject, agentStatus?.customAgentsEnabled, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace, prefs.bypassPermissions, setPref],
+    [activePage, selection, allChats, navDeps, selectProject, activeProject, agentStatus?.customAgentsEnabled, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace],
   );
   const visible = useMemo(() => {
     const q = query.trim();

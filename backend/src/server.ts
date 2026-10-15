@@ -46,6 +46,7 @@ import type { KiroRuntime } from './agents/kiro/KiroRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
+import { resolveChatPermissionMode, hasChatToolGrant, grantChatTool } from './services/chatPermissions';
 import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns, updateNodeResumeBinding, upsertAgentContextMetadata } from './services/dbRepository';
 import { ensureDurableGraphNode, rollbackProvisionalSpawnNode } from './services/graphCommands';
 import { getMichiDataDir } from './services/dataDir';
@@ -152,6 +153,7 @@ log.info('boot', 'agent config loaded');
 // seam. MUST run before any runtime is constructed or warmed, since the
 // runtime modules read getRuntimeDeps() at call-time and throw if unconfigured.
 configureRuntimeDeps({
+  chatPermissions: { getMode: resolveChatPermissionMode, hasGrant: hasChatToolGrant, grant: grantChatTool },
   historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission },
   dataDir: getMichiDataDir(),
   providerKeys: { getProviderApiKey },

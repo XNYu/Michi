@@ -1,28 +1,60 @@
-/**
- * Permission policy resolver.
- *
- * Strategy "B" (read-default-allow, write/exec-default-ask):
- *   - read / ls / grep / find: allow by default — they cannot mutate state.
- *   - list_threads / search_messages / read_node: allow — read-only db scans.
- *   - spawn_branches / save_artifact / update_artifact: allow — they mutate the chat graph but
- *     are intentional first-class agent moves the user is asking for.
- *   - write / edit / bash: ask by default — destructive or arbitrary.
- *
- * A persisted always-allow grant (workspace_permission_grants) flips an
- * "ask" tool to "allow" for that workspace. There are no persisted denies
- * for now: every "ask" round-trips to the user.
- *
- * Tool-name normalization: the policy categories use the Pi runtime's
- * lowercase builtin names (write/edit/bash). The Claude runtime feeds in
- * Claude's own PascalCase tool names (Bash/Edit/Write/MultiEdit/NotebookEdit)
- * via its permission-prompt-tool, so we map those to the same categories
- * here — otherwise an exact-match set would silently classify every Claude
- * write/exec call as "allow".
- *
+/** Ordinary chats resolve Ask / Trust / YOLO on the backend for each turn.
+ * Native approval requests are gated by mode; Pi also checks tools before
+ * execution. Always-allow grants belong to one chat and are revocable.
+ * The legacy workspace resolver remains available to existing embedders.
  */
 
 import { getRuntimeDeps } from "./runtimeDeps";
+import type { RuntimeDeps } from './runtimeDeps';
 import type { BuiltinToolName } from "./builtinTools";
+import type { RuntimeSessionOwner } from './types';
+import type { ChatPermissionMode } from 'michi-shared';
+
+export function chatPermissionMode(owner: RuntimeSessionOwner | undefined, ownerUserId?: string | null): ChatPermissionMode {
+    if (owner?.kind !== 'chat_node') return 'ask';
+    const deps = permissionDeps();
+    if (!deps?.chatPermissions) return 'ask';
+    const userId = permissionOwnerUserId(owner, ownerUserId);
+    return deps.chatPermissions?.getMode(owner.nodeId, userId) ?? 'ask';
+}
+
+function permissionOwnerUserId(owner: RuntimeSessionOwner, ownerUserId?: string | null): string | null | undefined {
+    if (ownerUserId || owner.kind !== 'chat_node') return ownerUserId;
+    const deps = permissionDeps();
+    const node = deps?.chatPermissions ? deps.historyStore.getNode(owner.nodeId) : null;
+    return node?.workspace_id ? deps?.historyStore.getWorkspace(node.workspace_id)?.owner_user_id : null;
+}
+
+/** Embedders without the optional chat permission port keep Ask semantics. */
+function permissionDeps(): RuntimeDeps | undefined {
+    try { return getRuntimeDeps(); } catch { return undefined; }
+}
+
+const READ_TOOLS = new Set(['read', 'ls', 'grep', 'find', 'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
+    'list_threads', 'search_messages', 'read_node', 'read_node_overview', 'set_follow_ups',
+    'spawn_branches', 'save_artifact', 'update_artifact']);
+
+/** Ordinary chat approvals ignore legacy workspace-wide grants. Native
+ * requests always ask in Ask mode; Pi gates unknown/MCP tools before execution. */
+export function resolveChatPolicy(owner: RuntimeSessionOwner, ownerUserId: string | null, toolName: string, nativeRequest = false, mode = chatPermissionMode(owner, ownerUserId)): PermissionDecision {
+    if (mode !== 'ask') return 'allow';
+    if (owner.kind === 'chat_node' && permissionDeps()?.chatPermissions?.hasGrant(owner.nodeId, canonicalPermissionToolName(toolName), permissionOwnerUserId(owner, ownerUserId))) return 'allow';
+    return !nativeRequest && READ_TOOLS.has(toolName) ? 'allow' : 'ask';
+}
+
+export function grantChatPermission(owner: RuntimeSessionOwner, toolName: string, ownerUserId?: string | null): void {
+    if (owner.kind === 'chat_node') permissionDeps()?.chatPermissions?.grant(owner.nodeId, canonicalPermissionToolName(toolName), permissionOwnerUserId(owner, ownerUserId));
+}
+
+export function codexChatTurnPolicy(mode: ChatPermissionMode, cwd: string) {
+    if (mode === 'yolo') return { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } };
+    if (mode === 'trust') return { approvalPolicy: 'never', sandboxPolicy: {
+        type: 'workspaceWrite', writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false,
+    } };
+    // Unlike on-request, untrusted asks before non-read-only commands without
+    // relying on the model to request escalation after a sandbox failure.
+    return { approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly', networkAccess: false } };
+}
 
 export type PermissionDecision = "allow" | "ask" | "deny";
 

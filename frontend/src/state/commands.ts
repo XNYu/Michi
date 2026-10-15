@@ -64,8 +64,6 @@ export interface CommandContext {
   activeTreeId: string | null;
   liveTrees: Array<{ id: string; name: string }>;
   archivedTrees: Array<{ id: string; name: string }>;
-  bypassPermissions: boolean;
-  toggleBypassPermissions: () => void;
   customAgentsEnabled: boolean;
 }
 
@@ -94,11 +92,11 @@ export function buildCommands(ctx: CommandContext): Command[] {
     }
     out.push({ id: 'thread.new', group: 'action', icon: 'plus', label: 'New thread', keys: kbd('mod', 'T'), run: ctx.createThread });
     out.push({
-      id: 'action.bypass-permissions',
+      id: 'action.permissions',
       group: 'action',
-      icon: ctx.bypassPermissions ? 'shield-off' : 'shield',
-      label: ctx.bypassPermissions ? 'Bypass permissions: ON' : 'Bypass permissions: OFF',
-      run: ctx.toggleBypassPermissions,
+      icon: 'shield',
+      label: 'Permission settings',
+      run: () => ctx.setPage('settings'),
     });
     for (const t of ctx.liveTrees) {
       out.push({ id: `thread.switch.${t.id}`, group: 'nav', icon: 'thread', label: `Switch to thread ▸ ${t.name}`, run: () => ctx.activateTree(t.id) });

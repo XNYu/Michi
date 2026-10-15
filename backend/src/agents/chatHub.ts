@@ -925,6 +925,11 @@ export class ChatHub {
     if (pending.data.requestId === requestId) log!.pendingPermission = undefined;
   }
 
+  getPendingPermission(chatId: string) {
+    const event = this.turns.get(chatId)?.pendingPermission;
+    return event?.event === CHAT_STREAM_EVENTS.permissionRequest ? event.data : null;
+  }
+
   resolveUserInput(chatId: string, requestId: number): void {
     const log = this.turns.get(chatId);
     const pending = log?.pendingUserInput;

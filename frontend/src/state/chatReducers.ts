@@ -256,6 +256,10 @@ export function reduceNodes(
   action: ChatAction,
 ): Record<string, ChatNodeState> {
   switch (action.type) {
+    case 'set-permission-mode': {
+      const node = nodes[action.nodeId];
+      return node ? { ...nodes, [action.nodeId]: { ...node, permissionMode: action.mode } } : nodes;
+    }
     case 'create': {
       return {
         ...nodes,

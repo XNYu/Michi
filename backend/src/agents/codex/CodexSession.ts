@@ -22,8 +22,7 @@ import { abortable } from '../runtimeLifecycle';
 import { createCodexTranslator } from './codexEventTranslator';
 import { resolveShowImage } from '../claude/showImage';
 import { prepareAttachments } from '../attachments';
-import { canonicalPermissionToolName, resolvePolicy } from '../permissionPolicy';
-import { grantPermission } from '../../services/dbRepository';
+import { canonicalPermissionToolName, grantChatPermission, chatPermissionMode, codexChatTurnPolicy } from '../permissionPolicy';
 import { log } from '../../services/logger';
 import { buildCodexFollowUpsHookPocInstruction } from './codexFollowUpsHookPoc';
 import {
@@ -96,6 +95,7 @@ export interface CodexSessionDeps {
 export class CodexSession implements AgentSession {
   public readonly id: string;
   public readonly runtimeId = 'codex';
+  public permissionModeForTurn: import('michi-shared').ChatPermissionMode | undefined;
   public readonly parentChatId: string | undefined;
   /** Explicit product owner. Chat sessions default to `{ kind: 'chat_node', nodeId }`. */
   public readonly owner: RuntimeSessionOwner;
@@ -350,7 +350,9 @@ export class CodexSession implements AgentSession {
       const nativeCompletion = new Promise<{ ok: true }>((resolve) => {
         this.settleNativeTurn = () => resolve({ ok: true });
       });
+      if (this.owner.kind === 'chat_node') this.permissionModeForTurn = chatPermissionMode(this.owner, this.ownerUserId);
       const mainTurnStart = this.client.request('turn/start', {
+        ...(this.owner.kind === 'chat_node' ? codexChatTurnPolicy(this.permissionModeForTurn!, this.cwd) : {}),
         threadId: this.threadId,
         input: turnInput,
         ...(this.effort ? { effort: this.effort } : {}),
@@ -591,6 +593,7 @@ export class CodexSession implements AgentSession {
   }
 
   respondToPermission(requestId: number, optionId: string): void {
+    if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'reject_once') throw new Error('Invalid permission option');
     const entry = this.pendingPermissions.get(requestId);
     if (!entry) return;
     clearTimeout(entry.timer);
@@ -776,7 +779,7 @@ export class CodexSession implements AgentSession {
           });
           const result = await this.awaitPermission(requestId, signal);
           if (!isCurrent()) { respond({ decision: 'decline' }); return; }
-          if (result !== null && result.startsWith('allow')) {
+          if (result === 'allow_once') {
             respond({ decision: 'accept' });
             return;
           }
@@ -791,7 +794,7 @@ export class CodexSession implements AgentSession {
 
     const options: PermissionOption[] = [
       { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
-      { optionId: 'allow_always', name: 'Always allow this tool', kind: 'allow_always' },
+      { optionId: 'allow_always', name: 'Always allow this tool in this chat', kind: 'allow_always' },
       { optionId: 'reject_once', name: 'Deny', kind: 'reject_once' },
     ];
 
@@ -810,14 +813,12 @@ export class CodexSession implements AgentSession {
 
     if (result === 'allow_always') {
       const canonical = canonicalPermissionToolName(toolName);
-      if (this.workspaceId) {
-        grantPermission(this.workspaceId, canonical);
-      }
-      this.onAlwaysAllow?.(canonical);
-      respond({ decision: 'acceptForSession' });
+      grantChatPermission(this.owner, canonical, this.ownerUserId);
+      // Keep the native grant single-use, so returning to Ask can revoke it.
+      respond({ decision: 'accept' });
       return;
     }
-    if (result !== null && result.startsWith('allow')) {
+    if (result === 'allow_once') {
       respond({ decision: 'accept' });
       return;
     }
