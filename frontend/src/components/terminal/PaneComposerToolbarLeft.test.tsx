@@ -96,7 +96,7 @@ describe('PaneComposerToolbarLeft', () => {
     expect(screen.getByTitle('Switch agent — Agent').getAttribute('aria-expanded')).toBe('true');
   });
 
-  test('shows Codex default effort in the composer', () => {
+  test('shows Codex default effort after its model catalog loads', () => {
     renderToolbar({
       agentStatus: {
         ...STATUS,
@@ -116,6 +116,11 @@ describe('PaneComposerToolbarLeft', () => {
         reasoning: 'xhigh',
         source: 'global',
       },
+      providerModels: [{
+        id: 'gpt-5-codex',
+        label: 'GPT-5 Codex',
+        supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+      }],
     });
 
     expect(screen.getByRole('button', { name: /Extra high effort/ })).toBeTruthy();
