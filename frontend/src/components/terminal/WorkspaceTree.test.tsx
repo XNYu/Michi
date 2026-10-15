@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, cleanup, within } from '@testing-library/react';
 import WorkspaceTree from './WorkspaceTree';
 import { ChatProvider } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
@@ -111,6 +111,72 @@ describe('WorkspaceTree', () => {
   it('renders the active thread\'s direct branches but not its grandchildren', async () => {
     renderTree();
     expect(await screen.findByText('Child of A')).toBeTruthy();
+  });
+
+  it('marks each workspace with a folder glyph that opens with the workspace', async () => {
+    renderTree();
+    await screen.findByText('Active thread');
+    const folderOf = (projectId: string) =>
+      within(screen.getByTestId(`workspace-row-${projectId}`)).getByTestId('workspace-folder-icon');
+    expect(folderOf('p1').getAttribute('data-open')).toBe('true');
+    expect(folderOf('p2').getAttribute('data-open')).toBe('false');
+
+    fireEvent.click(screen.getByText('Other workspace'));
+    await screen.findByText('P2 thread');
+    expect(folderOf('p2').getAttribute('data-open')).toBe('true');
+  });
+
+  it('steps a workspace\'s threads and branches in under the workspace name', async () => {
+    renderTree();
+    await screen.findByText('Child of A');
+    const row = (nodeId: string) =>
+      document.querySelector<HTMLElement>(`[data-sidebar-row="${nodeId}"]`)!;
+    // Default row style (square-full): the folder glyph sits at 20, the name
+    // at 41. Threads share the name's edge; a branch is one 16px step further.
+    expect(row('rootA').style.paddingLeft).toBe('41px');
+    expect(row('rootB').style.paddingLeft).toBe('41px');
+    expect(row('childA').style.paddingLeft).toBe('57px');
+  });
+
+  it('leaves the classic row style without the neutral folder glyph', async () => {
+    localStorage.setItem('michi:v1:prefs', JSON.stringify({ sidebarRowStyle: 'classic' }));
+    renderTree();
+    await screen.findByText('Child of A');
+    expect(screen.queryByTestId('workspace-folder-icon')).toBeNull();
+  });
+
+  it('hangs branches off their thread by indent alone, one step per level', async () => {
+    // rootA → [childA → [grand], second]: two sibling branches, the first with
+    // a branch of its own.
+    const { nodes, projects } = fixture();
+    const extra = (nodeId: string, title: string): ChatNodeState => ({
+      nodeId, chatId: null, projectId: 'p1', kind: 'chat',
+      title, messages: [], followUps: [], status: 'idle',
+    });
+    nodes.second = extra('second', 'Second child');
+    nodes.grand = extra('grand', 'Grandchild');
+    projects[0].chatIds.push('second', 'grand');
+    projects[0].edges.push(
+      { source: 'rootA', target: 'second', kind: 'branch' },
+      { source: 'childA', target: 'grand', kind: 'branch' },
+    );
+    renderTreeWith({ nodes, projects });
+    await screen.findByText('Second child');
+    fireEvent.click(screen.getByText('Child of A'));
+    await screen.findByText('Grandchild');
+
+    const row = (nodeId: string) =>
+      document.querySelector<HTMLElement>(`[data-sidebar-row="${nodeId}"]`)!;
+    expect(row('childA').style.paddingLeft).toBe('57px');
+    expect(row('second').style.paddingLeft).toBe('57px');
+    expect(row('grand').style.paddingLeft).toBe('73px');
+    // No connector lines: nothing bordered sits in front of a branch title.
+    for (const id of ['childA', 'second', 'grand']) {
+      const lines = [...row(id).querySelectorAll<HTMLElement>('[aria-hidden]')].filter(
+        (el) => el.style.borderLeft !== '' || el.style.borderBottom !== '' || el.style.borderTop !== '',
+      );
+      expect(lines).toHaveLength(0);
+    }
   });
 
   // This test passes in isolation but is flaky when run with other tests in this

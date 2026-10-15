@@ -74,6 +74,26 @@ export function WorkspacesIcon({ size = 14, className }: IconProps) {
   );
 }
 
+export function FolderIcon({ size = 14, className }: IconProps) {
+  // Closed folder — a collapsed workspace in the sidebar.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2 4.5a1 1 0 0 1 1-1h3.2a1 1 0 0 1 .7.3l1 1a1 1 0 0 0 .7.3H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5Z" />
+    </svg>
+  );
+}
+
+export function FolderOpenIcon({ size = 14, className }: IconProps) {
+  // Open folder — FolderIcon's back panel with the front flap swung forward:
+  // an expanded workspace.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2 12V4.5a1 1 0 0 1 1-1h3.2a1 1 0 0 1 .7.3l1 1a1 1 0 0 0 .7.3H12a1 1 0 0 1 1 1v1.3" />
+      <path d="M2 12l1.6-3.9a1 1 0 0 1 .9-.7h8.8a.9.9 0 0 1 .8 1.3l-1.4 3.6a1 1 0 0 1-.9.7H3a1 1 0 0 1-1-1Z" />
+    </svg>
+  );
+}
+
 export function ArtifactsIcon({ size = 14, className }: IconProps) {
   // Stacked layers — reads as "a collection of things" (the artifact shelf).
   return (

@@ -43,6 +43,11 @@ interface Props {
   onRenameNode?: (nodeId: string, title: string) => void;
   /** Clear the renaming state. */
   onRenameEnd?: () => void;
+  /** Extra left indent in px that the whole branch block inherits, card modes
+   *  only. Structure view passes the workspace header's folder-glyph slot so
+   *  branches keep stepping in from their thread, which itself sits under the
+   *  workspace name. */
+  baseIndent?: number;
 }
 
 export default function BranchRow({
@@ -61,6 +66,7 @@ export default function BranchRow({
   renamingNodeId,
   onRenameNode,
   onRenameEnd,
+  baseIndent = 0,
 }: Props) {
   const n = useChatNode(node.nodeId);
   const prefetchIntent = useTreePrefetchIntent(node.nodeId);
@@ -78,6 +84,7 @@ export default function BranchRow({
   const { focusedNodeId } = useChatProjects();
   const unread = !!n && isNodeUnread(n, focusedNodeId);
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
+  const cardPaddingLeft = rowPadding(geom, baseIndent + depth * geom.indentStep).paddingLeft;
 
   const renaming = renamingNodeId === node.nodeId;
   const [draftName, setDraftName] = useState('');
@@ -166,7 +173,7 @@ export default function BranchRow({
             : 'calc(10px + var(--sb-inset, 0px))',
           paddingBottom: 'var(--sb-row-py, 4px)',
           paddingLeft: geom.isCard
-            ? rowPadding(geom, depth * geom.indentStep).paddingLeft
+            ? cardPaddingLeft
             : `calc(${8 + depth * 10}px + var(--sb-inset, 0px))`,
           // Translucent in card modes so a selected branch keeps the sidebar's
           // glass — see CARD_FILL in ThreadRow.
@@ -332,6 +339,7 @@ export default function BranchRow({
             renamingNodeId={renamingNodeId}
             onRenameNode={onRenameNode}
             onRenameEnd={onRenameEnd}
+            baseIndent={baseIndent}
           />
         ))}
     </>

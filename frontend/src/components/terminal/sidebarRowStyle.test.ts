@@ -205,6 +205,29 @@ describe('caretKebabClearance', () => {
   });
 });
 
+describe('workspace header folder slot', () => {
+  /** The header puts a folder glyph at the title spine and the name after it.
+   *  A workspace's threads and branches step in by the same slot, so they sit
+   *  under the NAME and the glyph hangs alone in the gutter. */
+  it('lands threads on 41 and branches on 57 / 73 under a workspace in every B mode', () => {
+    for (const m of B_MODES) {
+      const g = rowGeom(m, 2);
+      expect(g.workspaceIconSlot).toBe(21);
+      expect(resolvedTextX(m, 2, g.workspaceIconSlot)).toBe(41);
+      expect(resolvedTextX(m, 2, g.workspaceIconSlot + 1 * g.indentStep)).toBe(57);
+      expect(resolvedTextX(m, 2, g.workspaceIconSlot + 2 * g.indentStep)).toBe(73);
+      // The row box does not move — only the text steps in.
+      expect(resolvedRightEdge(m, 2, 300)).toBe(300 - 16);
+    }
+  });
+
+  it('leaves classic without a slot', () => {
+    for (const insetPref of [0, 2, 12]) {
+      expect(rowGeom('classic', insetPref).workspaceIconSlot).toBe(0);
+    }
+  });
+});
+
 describe('spinePadding', () => {
   it('puts plain elements on an absolute spine by subtracting the inset', () => {
     // Section labels / Show more are children of the inset container with no

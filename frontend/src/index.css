@@ -1059,18 +1059,6 @@ html[data-vibrancy='on'] {
   padding-right: 6px !important;
 }
 
-/* Card modes: the accent rail marking a workspace in Structure view. Spans the
-   full height of the HEADER row, so it reads as a title-bar marker rather than
-   a stray dot next to the name. */
-.sb-ws-rail {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  pointer-events: none;
-}
-
 /* Respect users who ask the OS to reduce transparency: fall back to the solid
    surface and drop the blur entirely. */
 @media (prefers-reduced-transparency: reduce) {

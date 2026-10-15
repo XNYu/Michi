@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import ContextMenu, { type MenuSection } from '../ContextMenu';
-import { FolderIcon } from './WorkspaceMenuButton';
+import { FolderIcon } from './icons';
 
 interface MinimalProject {
   id: string;

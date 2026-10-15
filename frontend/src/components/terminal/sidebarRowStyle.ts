@@ -68,11 +68,18 @@ export interface RowGeom {
   subtitleInRow: boolean;
   /** Reserved: a vertical guide line down the branch block. Off everywhere —
    *  in practice it read as a stray rule next to the indent it was reinforcing,
-   *  and the indent alone carries depth fine. */
+   *  and the indent alone carries depth fine. Two more connectors were tried
+   *  and dropped for the same reason: a short corner in front of each branch,
+   *  and those corners joined into one tee/corner trunk per thread. */
   guideLine: boolean;
   /** Structure view renders the workspace as a quiet group header (same shape
    *  as Activity's Today/Yesterday) rather than a clickable row. */
   workspaceAsHeader: boolean;
+  /** Width the workspace header's folder glyph takes up before the name: glyph
+   *  + gap. A workspace's threads and branches step in by the same amount, so
+   *  they line up under the workspace NAME and the glyph hangs in the gutter.
+   *  0 in classic, which lays its own folder glyph out with inline literals. */
+  workspaceIconSlot: number;
 }
 
 /** Shared spine ladder for every B mode. Keep in sync with the mock at
@@ -80,6 +87,9 @@ export interface RowGeom {
 const B_TITLE_X = 20;
 const B_INDENT_STEP = 16;
 const B_RIGHT_GAP = 16;
+/** Folder glyph in the workspace header (see WorkspaceRow) and the gap after it. */
+export const WORKSPACE_ICON_SIZE = 15;
+export const WORKSPACE_ICON_GAP = 6;
 
 function bMode(style: SidebarRowStyle, inset: number, radius: number): RowGeom {
   return {
@@ -98,6 +108,7 @@ function bMode(style: SidebarRowStyle, inset: number, radius: number): RowGeom {
     subtitleInRow: true,
     guideLine: false,
     workspaceAsHeader: true,
+    workspaceIconSlot: WORKSPACE_ICON_SIZE + WORKSPACE_ICON_GAP,
   };
 }
 
@@ -133,6 +144,7 @@ export function rowGeom(style: SidebarRowStyle, insetPref: number): RowGeom {
         subtitleInRow: false,
         guideLine: false,
         workspaceAsHeader: false,
+        workspaceIconSlot: 0,
       };
   }
 }
