@@ -239,6 +239,16 @@ test('a competing message is rejected without cancelling or replacing the runnin
   await (await first).text();
 });
 
+test('a queued self-turn (e.g. a cross-thread message) makes a new message wait as turn_active', async (t) => {
+  await ensure();
+  t.mock.method(chatHub, 'hasPendingSelfTurn', (chatId: string) => chatId === 'cancel-node');
+  const response = await post('/chats/cancel-node/message', { text: 'user text', turnId: 'behind-queued-self-turn' });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json() as any).code, 'turn_active');
+  assert.equal(prompts.length, 0);
+  assert.equal(listMessages('cancel-node').filter((message) => message.role === 'user').length, 0);
+});
+
 test('simultaneous starts produce one running task and a recoverable conflict', async () => {
   await ensure();
   const responses = await Promise.all([

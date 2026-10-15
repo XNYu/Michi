@@ -1,5 +1,6 @@
 import { parseSessionState, type AgentSessionState } from './sessionState';
 import { parseSteeringReports, type SteeringReport } from './kiroSteering';
+import type { DurableMessageMetadata } from './turnProjection';
 
 export interface PlanEntry {
   content: string;
@@ -172,7 +173,16 @@ export interface ChatStreamPayloads {
   mcp_server_error: { serverName: string; error: string };
   done: { stopReason?: string; persisted?: boolean; completedAt?: number };
   error: { message: string; code?: string; recoverable?: boolean; completedAt?: number };
-  turn_start: { turnId: string; assistantId: string; nodeId: string; userText: string; selfInitiated?: boolean; startedAt?: number };
+  turn_start: {
+    turnId: string;
+    assistantId: string;
+    nodeId: string;
+    userText: string;
+    selfInitiated?: boolean;
+    startedAt?: number;
+    /** Present when the turn carries a visible user message with metadata (e.g. a cross-thread message). */
+    userMetadata?: DurableMessageMetadata;
+  };
   image: { path: string; caption?: string; mimeType: string; size: number };
 }
 
@@ -417,6 +427,8 @@ const parsers = {
     userText: stringOrEmpty(data.userText),
     ...(data.selfInitiated ? { selfInitiated: true } : {}),
     startedAt: optionalFiniteNumber(data.startedAt),
+    ...(data.userMetadata && typeof data.userMetadata === 'object' && !Array.isArray(data.userMetadata)
+      ? { userMetadata: data.userMetadata as DurableMessageMetadata } : {}),
   }),
   image: (d) => ({
     path: stringOrEmpty(d.path),

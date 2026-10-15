@@ -1585,6 +1585,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 });
             }
         }
+        // A queued self-turn (e.g. a cross-thread message waiting to start)
+        // means this turn provably never began; let the client wait silently.
+        if (chatHub.hasPendingSelfTurn(nodeId)) {
+            return res.status(409).json({
+                error: "Waiting for the previous response to finish.",
+                code: "turn_active",
+            });
+        }
 
         const releaseRestore = await acquireSessionRestoreLock(nodeId);
         let started;
@@ -1593,7 +1601,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!currentSession || currentSession.id !== nodeId) throw new Error('Session changed before turn start; retry the message');
             // Another request may have started while this one waited for the
             // restore lock, or its iterator may still be releasing the runtime.
-            if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId)) {
+            if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId) || chatHub.hasPendingSelfTurn(nodeId)) {
                 return res.status(409).json({
                     error: "Waiting for the previous response to finish.",
                     code: "turn_active",

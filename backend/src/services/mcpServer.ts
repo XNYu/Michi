@@ -19,6 +19,11 @@ import {
     waitPaneTool,
     type PaneInspectionToolBinding,
 } from "../agents/paneInspectionTools";
+import {
+    SEND_TO_THREAD_TOOL,
+    askUserThreadMessageApprover,
+    sendToThreadTool,
+} from "../agents/threadMessageTool";
 import type { BridgeContextResult } from "../agents/toolBridge";
 import {
     AGENT_RUN_TOOL_NAMES,
@@ -792,6 +797,29 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                 executionRef: args?.executionRef,
                 timeoutMs: args?.timeoutMs,
             });
+        },
+    );
+
+    // Cross-thread messaging. Chat slots only: the caller identity is the
+    // slot's bound node/workspace, and every message is approved by the user
+    // through this slot's own ask_user channel inside the tool itself, so a
+    // Trust/YOLO permission mode cannot skip it.
+    const sendToThreadSpec = listEnabledBuiltinTools().find((tool) => tool.name === SEND_TO_THREAD_TOOL);
+    if (sendToThreadSpec && slot.owner?.kind !== "agent_run" && isToolExposed(slot, SEND_TO_THREAD_TOOL)) registerTool(
+        SEND_TO_THREAD_TOOL,
+        { description: sendToThreadSpec.description, inputSchema: builtinToZodShape(sendToThreadSpec) },
+        async (args) => {
+            const binding = resolveSlotBinding(slot);
+            return sendToThreadTool(
+                {
+                    ownerUserId: slot.ownerUserId,
+                    workspaceId: binding.workspaceId,
+                    nodeId: binding.nodeId,
+                    isAgentRun: slot.owner?.kind === "agent_run",
+                },
+                { nodeId: args?.nodeId, text: args?.text },
+                askUserThreadMessageApprover(slot.onAskUser),
+            );
         },
     );
 

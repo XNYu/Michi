@@ -746,6 +746,28 @@
 .terminal-message-user[data-density='dense'] { padding: 6px 13px 7px; }
 .terminal-message-user[data-density='compact'] { padding: 8px 15px 9px; }
 
+.terminal-message-thread-source {
+  margin-bottom: 4px;
+  color: var(--term-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  font-weight: 500;
+}
+.terminal-message-thread-link {
+  all: unset;
+  cursor: pointer;
+  color: var(--term-fg);
+  text-decoration: underline;
+  text-decoration-color: var(--term-line, currentColor);
+  text-underline-offset: 2px;
+}
+.terminal-message-thread-link:hover { text-decoration-color: currentColor; }
+.terminal-message-thread-link:focus-visible {
+  outline: 1px solid var(--term-fg);
+  outline-offset: 2px;
+  border-radius: var(--ui-radius-sm);
+}
+
 /* In-place edit state */
 .terminal-message-user-editing {
   all: unset;

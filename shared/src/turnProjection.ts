@@ -1,5 +1,6 @@
 import type { ChatStreamEvent, PlanEntry, ToolCallStreamPayload } from './chatStreamEvents';
 import { extractKiroSteering, mergeSteeringReports, type SteeringReport } from './kiroSteering';
+import type { ThreadMessageSource } from './threadMessage';
 
 export interface DurableToolCall {
   id: string;
@@ -28,6 +29,8 @@ export interface DurableMessageMetadata {
   quotedText?: string;
   attachments?: Array<{ name: string; absPath: string }>;
   comments?: Array<Record<string, unknown>>;
+  /** This user message was relayed, with user approval, from another thread. */
+  threadMessage?: ThreadMessageSource;
 }
 
 export interface DurableMessage {
@@ -70,6 +73,9 @@ export interface CreateDurableTurnInput {
   displayUserText: string;
   userMetadata?: DurableMessageMetadata;
   selfInitiated?: boolean;
+  /** Self-initiated turns normally have no user message. A cross-thread
+   * message keeps one so the receiving thread shows what it was asked. */
+  keepUserMessage?: boolean;
   startedAt: number;
 }
 
@@ -236,7 +242,7 @@ export function createDurableTurn(input: CreateDurableTurnInput): DurableTurnSna
     nodeId: input.nodeId,
     workspaceId: input.workspaceId,
     assistantId: input.assistantId,
-    userMessage: input.selfInitiated
+    userMessage: input.selfInitiated && !input.keepUserMessage
       ? null
       : {
           id: `u-${input.assistantId}`,

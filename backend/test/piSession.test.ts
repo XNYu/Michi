@@ -190,3 +190,80 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
   assert.equal(await beforeToolCall!({ toolCall: { name: 'bash' }, args: {} }), undefined, 'later Pi tools inherit session trust');
   assert.equal((chat as any).pendingPermissions.size, 0);
 });
+
+test('PiSession send_to_thread approval is single-use and never covered by grants or session trust', async () => {
+  delete process.env.MICHI_CLOUD;
+  const piAiPath = require.resolve('../src/agents/pi/piAi');
+  const piToolsPath = require.resolve('../src/agents/pi/piTools');
+  let toolOpts: any;
+  let beforeToolCall: ((context: { toolCall: { name: string }; args: unknown }) => Promise<{ block: boolean; reason?: string } | undefined>) | undefined;
+  configureRuntimeDeps({
+    historyStore: {
+      getNode: () => null, listMessages: () => [], getWorkspace: () => null,
+      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+    },
+    providerKeys: { getProviderApiKey: () => 'test-key' },
+    agentConfig: {
+      getAgentConfig: () => ({ runtime: 'pi', provider: 'deepseek', modelByRuntime: {}, reasoningByRuntime: {} }),
+      resolveModel: () => 'pi-model',
+      resolveReasoning: () => undefined,
+    },
+    dataDir: '/tmp/agent-runtime-test',
+  });
+  patchModule(piToolsPath, 'buildPiTools', (opts: any) => { toolOpts = opts; return []; });
+  patchModule(require.resolve('../src/services/piMcpConfig'), 'readPiMcpServers', () => []);
+  patchModule(piAiPath, 'loadPiAi', async () => ({
+    Type: {},
+    clampThinkingLevel: (_model: unknown, level: string) => level,
+    getModel: () => ({ contextWindow: 1000 }),
+    streamSimple: () => { throw new Error('not used'); },
+  }));
+  patchModule(piAiPath, 'loadPiAgentCore', async () => ({
+    Agent: class {
+      state = { messages: [] };
+      private subscriber: ((event: any) => void) | undefined;
+      constructor(opts: any) { beforeToolCall = opts.beforeToolCall; }
+      subscribe(fn: (event: any) => void) { this.subscriber = fn; return () => { this.subscriber = undefined; }; }
+      async prompt() { this.subscriber?.({ type: 'agent_end' }); }
+    },
+  }));
+
+  const { PiSession } = require('../src/agents/pi/PiSession') as typeof import('../src/agents/pi/PiSession');
+  const chat = new PiSession('pi-thread-chat', {
+    bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+    preamble: '', cwd: process.cwd(), enableFollowUps: false, workspaceId: 'workspace-1', ownerUserId: null,
+    owner: { kind: 'chat_node', nodeId: 'n-a' },
+  });
+  for await (const event of chat.send('build tools')) { if (event.kind === 'turn_end') break; }
+  assert.equal(typeof toolOpts?.requestThreadMessageApproval, 'function');
+
+  const events: any[] = [];
+  (chat as any).activePush = (event: unknown) => { events.push(event); };
+  const request = { targetNodeId: 'n-b', targetTitle: 'Implementation', text: 'Please review' };
+
+  const approval = toolOpts.requestThreadMessageApproval(request);
+  await new Promise((resolve) => setImmediate(resolve));
+  const explicit = events.at(-1);
+  assert.equal(explicit.kind, 'permission_request');
+  assert.equal(explicit.title, 'Send a message to "Implementation"?');
+  assert.equal(explicit.detail, 'Please review');
+  assert.deepEqual(explicit.options.map((option: any) => option.optionId).sort(), ['allow_once', 'reject_once']);
+
+  // Granting session trust to another tool must not approve the pending message.
+  const other = beforeToolCall!({ toolCall: { name: 'write' }, args: { path: 'x' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  chat.respondToPermission(events.at(-1).requestId, 'allow_session');
+  assert.equal(await other, undefined);
+  assert.equal((chat as any).pendingPermissions.has(explicit.requestId), true, 'explicit approval must still be pending');
+
+  chat.respondToPermission(explicit.requestId, 'allow_once');
+  assert.deepEqual(await approval, { approved: true });
+
+  // Session trust does not pre-approve the next message, and only allow_once approves.
+  const next = toolOpts.requestThreadMessageApproval(request);
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = events.at(-1);
+  assert.notEqual(second.requestId, explicit.requestId);
+  chat.respondToPermission(second.requestId, 'allow_always');
+  assert.deepEqual(await next, { approved: false, reason: 'declined' });
+});

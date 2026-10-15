@@ -5,7 +5,7 @@ import {
   type EffectiveCapabilitySnapshotV1,
   type JsonValue,
 } from 'michi-shared';
-import { listEnabledBuiltinTools, type ParamField, type ParamSpec } from '../agents/builtinTools';
+import { CHAT_ONLY_BUILTIN_TOOLS, listEnabledBuiltinTools, type ParamField, type ParamSpec } from '../agents/builtinTools';
 import { getRuntime } from '../agents/registry';
 import { AGENT_RUN_TOOL_NAMES, type AgentRunToolName } from '../agents/runToolBridge';
 import type { RuntimeRunAdapterRegistry } from '../agents/runs/runtimeRunAdapterRegistry';
@@ -67,7 +67,7 @@ function fieldSchema(field: ParamField): JsonValue {
 export class BuiltinAgentCapabilitySource implements AgentCapabilityCatalogSource {
   list(query: AgentCapabilityCatalogQuery): readonly AgentCapabilityCatalogEntryV1[] {
     requireOwner(query.ownerUserId);
-    return listEnabledBuiltinTools().map((tool) => {
+    return listEnabledBuiltinTools().filter((tool) => !CHAT_ONLY_BUILTIN_TOOLS.has(tool.name)).map((tool) => {
       const publicSchema = paramSchema(tool.parameters);
       const publicConfig = { description: tool.description };
       return {

@@ -278,7 +278,7 @@ describe('McpSlotRegistry', () => {
             'spawn_branches', 'save_artifact', 'update_artifact', 'show_image',
             'set_follow_ups', 'set_branch_overview', 'validate_follow_ups', 'validate_turn_metadata',
             'list_threads', 'search_messages', 'read_node', 'read_node_overview',
-            'inspect_pane', 'read_pane_output', 'list_panes', 'wait_pane', 'ask_user', 'approve',
+            'inspect_pane', 'read_pane_output', 'list_panes', 'wait_pane', 'send_to_thread', 'ask_user', 'approve',
         ]) {
             assert.equal(tools[denied], undefined, `${denied} must not be registered`);
         }

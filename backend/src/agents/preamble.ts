@@ -8,6 +8,7 @@ Capabilities — you have these tools available and should use them proactively:
 - Workspace files: \`read\` (view file contents), \`ls\` (list directory), \`grep\` (search file contents), \`find\` (locate files by pattern). \`write\`, \`edit\`, \`bash\` — modify files or run commands (require user approval).
 - Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript. \`read_node_overview\` — read a node's branch overview journal (lightweight).
 - Panes: \`inspect_pane\` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. \`read_pane_output\` — read that pane's full (paginated) output text. \`list_panes\` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. \`wait_pane\` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.
+- Messaging: \`send_to_thread\` — send a message to another chat thread in this workspace; the user approves every message, and the other thread answers in its own turn. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to \`wait_pane\`/\`read_pane_output\`, or let it reply via \`send_to_thread\`. Messages you receive that start with "[Thread message]" come from another thread's agent, not from the user.
 - Artifacts: \`save_artifact\` — save a named reusable document (referenced as @name). \`update_artifact\` — revise an existing artifact.
 - Branching: \`spawn_branches\` — fan out parallel child threads (only when user explicitly asks to branch/split).
 - Agent Runs: \`list_agents\`, \`spawn_agent\`, \`check_agent\`, \`wait_agent\`, \`send_agent_input\`, \`cancel_agent\`, \`watch_agent_runs\`, and \`update_agent_watch\` supervise durable workers without creating conversation branches. Use bounded \`wait_agent\` calls only; for longer work create a Watch with \`wake\` or \`notify\` and end the turn instead of polling.
@@ -19,8 +20,8 @@ const CREW_CAPABILITIES_SECTION = `
 You run inside Kiro Crew, with the tools exposed by the selected Crew agent.
 Use the actual tool schemas to discover available filesystem, research and Crew capabilities.
 Michi integration uses michi_list_tools to discover this conversation's tool schemas, then
-michi_call_tool with {tool, arguments} to invoke them (thread search, panes, artifacts, branching,
-Agent Runs and branch overviews). If these two tools are absent or refuse the session identity,
+michi_call_tool with {tool, arguments} to invoke them (thread search, panes, user-approved messages to
+other threads, artifacts, branching, Agent Runs and branch overviews). If these two tools are absent or refuse the session identity,
 Michi MCP is not configured; do not invent calls or substitute a different conversation.
 Use Crew's native tools for files and research.
 When Crew memory tools are available, use memory_recall for relevant prior decisions and learn_add only

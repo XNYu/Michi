@@ -27,6 +27,11 @@ import { executeWrite } from "../tools/write";
 import { executeEdit } from "../tools/edit";
 import { executeBash } from "../tools/bash";
 import { resolveShowImage } from "../claude/showImage";
+import {
+    sendToThreadTool,
+    type ThreadMessageApprovalRequest,
+    type ThreadMessageApprovalResult,
+} from "../threadMessageTool";
 import { formatWebSearchForAgent, isWebSearchEnabled, searchWeb } from "../../services/webSearch";
 import type { NormalizedEvent } from "../../services/chatEvents";
 import type { RuntimeSessionOwner, RuntimeToolProfile } from "../types";
@@ -77,6 +82,14 @@ export interface BuildPiToolsOpts {
      * UI without feeding it into the LLM's context. No-op if no turn is active.
      */
     emitImage?: (ev: NormalizedEvent) => void;
+    /**
+     * Single-use user approval for one send_to_thread message, shown in this
+     * chat. Absent → send_to_thread fails closed without sending.
+     */
+    requestThreadMessageApproval?: (
+        request: ThreadMessageApprovalRequest,
+        signal?: AbortSignal,
+    ) => Promise<ThreadMessageApprovalResult>;
     /** Session-bound generic Agent tools resolved by PiSession. */
     agentRunTools?: AgentRunToolInvoker | null;
     owner?: RuntimeSessionOwner;
@@ -471,6 +484,31 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                             executionRef: args?.executionRef,
                             timeoutMs: typeof args?.timeoutMs === "number" ? args.timeoutMs : undefined,
                         });
+                        return { ...result, details: result };
+                    },
+                };
+            }
+
+            case "send_to_thread": {
+                // Chat-only: an Agent Run (or an unowned session) has no
+                // calling thread to attribute the message to.
+                const owner = opts.owner;
+                if (owner?.kind !== "chat_node") return null;
+                const requestApproval = opts.requestThreadMessageApproval;
+                return {
+                    name: t.name,
+                    label: "Send to thread",
+                    description: t.description,
+                    parameters,
+                    executionMode: "sequential" as const,
+                    execute: async (_id: string, args: any, signal?: AbortSignal) => {
+                        const result = await sendToThreadTool(
+                            { ownerUserId: ownerUserId ?? null, workspaceId, nodeId: owner.nodeId, isAgentRun: false },
+                            { nodeId: args?.nodeId, text: args?.text },
+                            requestApproval
+                                ? (request) => requestApproval(request, signal)
+                                : async () => ({ approved: false, reason: "unavailable" }),
+                        );
                         return { ...result, details: result };
                     },
                 };

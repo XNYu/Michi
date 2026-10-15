@@ -6,6 +6,7 @@ import type { AttachmentRef } from '../lib/composerAttachments';
 import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
 import type { BranchOverviewEntry, SteeringReport, PermissionOption } from 'michi-shared';
+import type { DurableMessageMetadata, ThreadMessageSource } from 'michi-shared';
 import type { PaneItem, PaneLauncherChoice } from './paneItems';
 
 export type { AgentStatus } from '../services/api';
@@ -186,6 +187,11 @@ export interface ChatMessage {
    * Optional — historical messages rely on text-based matching as fallback.
    */
   mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
+  /**
+   * Set when this user message was relayed, with user approval, from another
+   * thread's agent (send_to_thread). `text` then holds only the relayed body.
+   */
+  threadMessage?: ThreadMessageSource;
 }
 
 export interface PermissionRequest {
@@ -713,7 +719,17 @@ export type ChatAction =
       aborted?: boolean;
     }
   | { type: 'error'; nodeId: string; assistantId: string; message: string; errorKind?: string }
-  | { type: 'observer-turn-start'; nodeId: string; turnId: string; assistantId: string; userText: string; selfInitiated?: boolean; cursor?: 'foreground' | 'background' }
+  | {
+      type: 'observer-turn-start';
+      nodeId: string;
+      turnId: string;
+      assistantId: string;
+      userText: string;
+      selfInitiated?: boolean;
+      /** Metadata of the turn's visible user message (e.g. a cross-thread message source). */
+      userMetadata?: DurableMessageMetadata;
+      cursor?: 'foreground' | 'background';
+    }
   | { type: 'apply-seq'; nodeId: string; turnId: string; seq: number }
   | { type: 'active-turn'; nodeId: string; assistantId: string; turnId: string }
   | { type: 'apply-background-seq'; nodeId: string; turnId: string; seq: number }

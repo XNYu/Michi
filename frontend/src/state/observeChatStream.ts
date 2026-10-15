@@ -80,6 +80,7 @@ export function createBackgroundTurnBinding({
           assistantId: data.assistantId,
           userText: data.userText,
           ...(data.selfInitiated ? { selfInitiated: true } : {}),
+          ...(data.userMetadata ? { userMetadata: data.userMetadata } : {}),
           cursor,
         });
       },

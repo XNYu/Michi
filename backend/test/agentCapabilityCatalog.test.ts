@@ -108,4 +108,10 @@ describe('AgentCapabilityCatalog', () => {
       else delete process.env.RAILWAY_SERVICE_ID;
     }
   });
+
+  test('chat-only built-ins such as send_to_thread are never Agent capabilities', () => {
+    const ids = new BuiltinAgentCapabilitySource().list({ ownerUserId: 'owner-a', workspaceId: null }).map((item) => item.id);
+    assert.equal(ids.includes('send_to_thread'), false);
+    assert.equal(ids.includes('read_node'), true);
+  });
 });

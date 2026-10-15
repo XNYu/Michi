@@ -47,6 +47,32 @@ describe("buildPiTools pane inspection tools", () => {
   });
 });
 
+describe("buildPiTools send_to_thread", () => {
+  afterEach(() => __resetRuntimeDeps());
+
+  test("is offered only to chat-node sessions", () => {
+    configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
+    const names = (owner: unknown) => buildPiTools({ ...opts(), owner } as any).map((t: any) => t.name);
+    assert.ok(names({ kind: "chat_node", nodeId: "n-a" }).includes("send_to_thread"));
+    assert.ok(!names({ kind: "agent_run", runId: "run-1", attemptId: "attempt-1" }).includes("send_to_thread"));
+    assert.ok(!names(undefined).includes("send_to_thread"));
+  });
+
+  test("refuses before asking when the session has no workspace binding", async () => {
+    configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
+    let asked = 0;
+    const tool = buildPiTools({
+      ...opts(),
+      owner: { kind: "chat_node", nodeId: "n-a" },
+      requestThreadMessageApproval: async () => { asked += 1; return { approved: true }; },
+    } as any).find((t: any) => t.name === "send_to_thread");
+    const result = await tool.execute("call-1", { nodeId: "n-b", text: "hi" });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /^SOURCE_UNAVAILABLE/);
+    assert.equal(asked, 0);
+  });
+});
+
 describe("Pi tool result error propagation", () => {
   test("marks Michi errorResult payloads as failed for pi-agent-core", () => {
     assert.deepEqual(piToolResultErrorOverride({

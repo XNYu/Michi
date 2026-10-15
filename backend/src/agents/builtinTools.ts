@@ -50,6 +50,7 @@ export type BuiltinToolName = "open_url"
     | "read_pane_output"
     | "list_panes"
     | "wait_pane"
+    | "send_to_thread"
     | "read"
     | "ls"
     | "grep"
@@ -310,6 +311,23 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
         },
     },
     {
+        name: "send_to_thread",
+        description:
+            "Send a message to another chat thread in this workspace. The user must approve every message; if " +
+            "they decline, do not retry unless they ask. The target thread answers in its own turn and sees the " +
+            "message as coming from your thread, so it can reply with send_to_thread too. Returns immediately " +
+            "with waitPaneArgs and readPaneOutputArgs: to get the reply, pass them unchanged to wait_pane and " +
+            "then read_pane_output. Status 'queued' means the target is busy and the result says how to wait for " +
+            "the turn to start first. Only for threads that already have a conversation; never the current " +
+            "thread. Find nodeIds with list_threads or list_panes.",
+        parameters: {
+            object: {
+                nodeId: f("string", { description: "Target chat node id (\"n-...\") in this workspace." }),
+                text: f("string", { description: "The message. Self-contained: the target cannot see your thread." }),
+            },
+        },
+    },
+    {
         name: "read",
         description:
             "Read a file in the workspace. Text files return their content (truncated to 5000 lines / 150 KB). Image files (.png/.jpg/.jpeg/.gif/.webp) are returned as inline images, capped at 5 MB each. Use offset/limit for large files.",
@@ -396,6 +414,10 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
         },
     },
 ];
+
+/** Built-ins that need a calling chat node. Agent Runs have none, so these
+ * are never offered as Agent capabilities or registered on Run slots. */
+export const CHAT_ONLY_BUILTIN_TOOLS: ReadonlySet<BuiltinToolName> = new Set(["send_to_thread"]);
 
 /** Deployment-visible built-ins. Keep feature-gated tools out of every tool
  * surface, including Pi sessions, MCP registration, and Agent capability

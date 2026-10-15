@@ -14,7 +14,7 @@ import type {
   TrimSnapshot,
 } from './chatTypes';
 import type { DigestState } from './digest';
-import { parseBranchOverviewEntries, parseSteeringReports } from 'michi-shared';
+import { parseBranchOverviewEntries, parseSteeringReports, parseThreadMessageSource, threadMessageBody } from 'michi-shared';
 
 export const STATE_SCHEMA_VERSION = 6;
 
@@ -395,10 +395,14 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
   const role = row.role === 'assistant' ? 'assistant' : 'user';
   const rawContent = typeof row.content === 'string' ? row.content : '';
   const metadata = parseMessageMetadata(row.metadata);
+  // The stored content of a relayed message is what the receiving runtime
+  // got (attribution header + body); the bubble shows the body.
+  const threadMessage = role === 'user' ? parseThreadMessageSource(metadata.threadMessage) : undefined;
   const baseMsg: ChatMessage = {
     id: asString(row.id) ?? `${nodeId}-${asNumber(row.seq, fallbackSeq)}`,
     role,
-    text: rawContent,
+    text: threadMessage ? threadMessageBody(rawContent) : rawContent,
+    ...(threadMessage ? { threadMessage } : {}),
     toolCalls: parseToolCalls(row.tool_calls),
     blocks: role === 'assistant' ? parseAssistantBlocks(row.blocks) : undefined,
     streaming: false,

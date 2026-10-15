@@ -1,5 +1,5 @@
 import type { ChatAction, ChatNodeState, ComposerDraft, ArtifactEntry, Project, ProjectAction, Tree } from './chatTypes';
-import { applyTreeMessages } from './chatHydration';
+import { applyTreeMessages, mapMessageRow } from './chatHydration';
 import { deriveTitleFromUserText } from './assistantParsing';
 import {
   appendToolBlock,
@@ -368,8 +368,18 @@ export function reduceNodes(
         };
       }
       const now = Date.now();
+      // A self-initiated turn normally has no user side. A cross-thread
+      // message carries one; map it like a hydrated row so live and reloaded
+      // transcripts render the same bubble and source marker.
+      const selfUserMessage = action.selfInitiated && action.userText
+        ? mapMessageRow({
+            id: `u-${action.assistantId}`, role: 'user', content: action.userText,
+            metadata: action.userMetadata, created_at: now,
+          })
+        : null;
       const newMessages = action.selfInitiated
         ? [
+            ...(selfUserMessage ? [selfUserMessage] : []),
             // Self-initiated turn with no prior assistant message: standalone placeholder
             {
               id: action.assistantId,

@@ -237,6 +237,12 @@ export interface StartRequestedSelfTurnArgs {
   turnId: string;
   text: string;
   session: AgentSession;
+  /** When non-empty, the turn keeps a visible, persisted user message with
+   * this text (cross-thread messages). Keep it equivalent to `text` so
+   * history reconstruction matches what the runtime received. Retries with
+   * the same turnId must pass the same value. */
+  displayText?: string;
+  userMetadata?: DurableMessageMetadata;
 }
 
 export interface StartedRequestedSelfTurn extends StartedTurn {
@@ -343,6 +349,13 @@ export class ChatHub {
 
   isOwnerTurnActive(chatId: string): boolean {
     return this.activeSessions.has(chatId);
+  }
+
+  /** A backend-requested or runtime self-turn is queued or running for this
+   * chat. startTurn rejects while this holds, so callers can report a busy
+   * chat as `turn_active` instead of a begin failure. */
+  hasPendingSelfTurn(chatId: string): boolean {
+    return this.pendingSelfTurns.has(chatId);
   }
 
   activeOwnerTurnId(chatId: string): string | undefined {
@@ -1012,14 +1025,18 @@ export class ChatHub {
           const existing = this.lookupDurableTurn(args.turnId);
           if (existing) this.assertRequestedTurnIdentity(existing, args);
           const assistantId = existing?.assistantId ?? `self-${args.nodeId}-${args.turnId}`;
+          const displayText = args.displayText ?? '';
+          const keepUserMessage = displayText.length > 0;
           const log = this.createLog({
             chatId: args.chatId,
             turnId: args.turnId,
             assistantId,
             nodeId: args.nodeId,
             wireText: args.text,
-            displayText: '',
+            displayText,
+            userMetadata: keepUserMessage ? args.userMetadata : undefined,
             selfInitiated: true,
+            keepUserMessage,
             ownerUserId: args.ownerUserId ?? null,
           });
           await this.persistence.begin(log.snapshot);
@@ -1030,12 +1047,19 @@ export class ChatHub {
               turnId: args.turnId,
               assistantId,
               nodeId: args.nodeId,
-              userText: '',
+              userText: displayText,
               selfInitiated: true,
               startedAt: log.snapshot.startedAt,
+              ...(keepUserMessage && args.userMetadata ? { userMetadata: args.userMetadata } : {}),
             },
           } as ChatStreamEvent, false);
-          const done = this.runSelfTurn(args.chatId, log, args.session.send(args.text));
+          const events = keepUserMessage
+            ? args.session.send(args.text, {
+                assistantMessageId: assistantId,
+                userMessageId: log.snapshot.userMessage?.id,
+              })
+            : args.session.send(args.text);
+          const done = this.runSelfTurn(args.chatId, log, events);
           started = { turnId: args.turnId, assistantId, done, existing: !!existing };
           this.requestedSelfTurnCompletions.set(args.turnId, done);
           void done.then(
@@ -1112,6 +1136,7 @@ export class ChatHub {
     displayText: string;
     userMetadata?: DurableMessageMetadata;
     selfInitiated: boolean;
+    keepUserMessage?: boolean;
     ownerUserId: string | null;
   }): TurnLog {
     const workspaceId = this.workspaceIdForNode(input.nodeId);
@@ -1134,6 +1159,7 @@ export class ChatHub {
         displayUserText: input.displayText,
         userMetadata: input.userMetadata,
         selfInitiated: input.selfInitiated,
+        keepUserMessage: input.keepUserMessage,
         startedAt,
       }),
       lastCheckpointAt: startedAt,

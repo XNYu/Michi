@@ -706,3 +706,101 @@ describe('ChatHub.cancel', () => {
     assert.equal(doneEv?.data.stopReason, 'cancelled');
   });
 });
+
+describe('ChatHub.startRequestedSelfTurn with a visible message (send_to_thread)', () => {
+  function requestedHub(begins: DurableTurnSnapshot[]): ChatHub {
+    return new ChatHub({
+      retentionMs: 100,
+      workspaceIdForNode: () => 'ws-test',
+      lookupDurableTurn: () => null,
+      persistence: { begin: (snapshot) => { begins.push(snapshot); }, checkpoint: () => {}, finalize: () => {} },
+    });
+  }
+
+  it('persists the user message and announces it on turn_start', async () => {
+    const begins: DurableTurnSnapshot[] = [];
+    const hub = requestedHub(begins);
+    const background: ChatStreamEvent[] = [];
+    hub.subscribeBackground({ send: (_chatId, event) => background.push(event), close: () => {} });
+    let captured: { text: string; input: Parameters<AgentSession['send']>[1] } | undefined;
+    const session: AgentSession = {
+      ...sessionFrom([]),
+      send: (text, input) => {
+        captured = { text, input };
+        return asyncIteratorFrom([{ kind: 'chunk', text: 'reply' }, { kind: 'turn_end', stopReason: 'end_turn' }]);
+      },
+    };
+    const userMetadata = { threadMessage: { fromNodeId: 'n-a', fromTitle: 'Research notes' } };
+
+    const started = await hub.startRequestedSelfTurn({
+      chatId: 'n-b', nodeId: 'n-b', turnId: 'turn-1',
+      text: 'attributed message', displayText: 'attributed message', userMetadata, session,
+    });
+    await started.done;
+
+    assert.equal(begins.length, 1);
+    assert.deepEqual(begins[0].userMessage && {
+      id: begins[0].userMessage.id, content: begins[0].userMessage.content, metadata: begins[0].userMessage.metadata,
+    }, { id: 'u-self-n-b-turn-1', content: 'attributed message', metadata: userMetadata });
+    const turnStart = background.find((event) => event.event === 'turn_start');
+    assert.ok(turnStart && turnStart.event === 'turn_start');
+    assert.equal(turnStart.data.userText, 'attributed message');
+    assert.equal(turnStart.data.selfInitiated, true);
+    assert.deepEqual(turnStart.data.userMetadata, userMetadata);
+    assert.equal(captured?.text, 'attributed message');
+    assert.equal(captured?.input?.userMessageId, 'u-self-n-b-turn-1');
+    assert.equal(captured?.input?.assistantMessageId, 'self-n-b-turn-1');
+  });
+
+  it('keeps Agent Run wake turns without a user message', async () => {
+    const begins: DurableTurnSnapshot[] = [];
+    const hub = requestedHub(begins);
+    const background: ChatStreamEvent[] = [];
+    hub.subscribeBackground({ send: (_chatId, event) => background.push(event), close: () => {} });
+    let sendInput: unknown = 'unset';
+    const session: AgentSession = {
+      ...sessionFrom([]),
+      send: (_text, input) => {
+        sendInput = input;
+        return asyncIteratorFrom([{ kind: 'turn_end', stopReason: 'end_turn' }]);
+      },
+    };
+
+    const started = await hub.startRequestedSelfTurn({
+      chatId: 'parent', nodeId: 'parent', turnId: 'wake-1', text: 'handoff', session,
+    });
+    await started.done;
+
+    assert.equal(begins[0].userMessage, null);
+    const turnStart = background.find((event) => event.event === 'turn_start');
+    assert.ok(turnStart && turnStart.event === 'turn_start');
+    assert.equal(turnStart.data.userText, '');
+    assert.equal(turnStart.data.userMetadata, undefined);
+    assert.equal(sendInput, undefined);
+  });
+
+  it('reports a requested turn queued behind a foreground turn as pending', async () => {
+    let releaseForeground!: () => void;
+    const foreground = (async function* (): AsyncIterableIterator<NormalizedEvent> {
+      await new Promise<void>((resolve) => { releaseForeground = resolve; });
+      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
+    })();
+    const hub = requestedHub([]);
+    const foregroundSession: AgentSession = { ...sessionFrom([]), send: () => foreground };
+    const { done } = await hub.startTurn({ chatId: 'busy', nodeId: 'busy', text: 'user turn', session: foregroundSession });
+
+    assert.equal(hub.hasPendingSelfTurn('busy'), false);
+    const requested = hub.startRequestedSelfTurn({
+      chatId: 'busy', nodeId: 'busy', turnId: 'queued-1', text: 'from A', displayText: 'from A',
+      session: sessionFrom([{ kind: 'turn_end', stopReason: 'end_turn' }]),
+    });
+    assert.equal(hub.hasPendingSelfTurn('busy'), true);
+
+    releaseForeground();
+    await done;
+    const started = await requested;
+    await started.done;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(hub.hasPendingSelfTurn('busy'), false);
+  });
+});

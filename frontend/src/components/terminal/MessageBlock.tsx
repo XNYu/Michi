@@ -1646,6 +1646,25 @@ function MessageBlockInner({
               wordBreak: 'break-word',
             }}
           >
+            {m.threadMessage && (
+              <div
+                className="terminal-message-thread-source"
+                title="Written by the agent in another thread and delivered with your approval"
+              >
+                From{' '}
+                {onMentionClick ? (
+                  <button
+                    type="button"
+                    className="terminal-message-thread-link"
+                    data-mention={m.threadMessage.fromTitle ?? 'another thread'}
+                    data-mention-kind="node"
+                    data-node-id={m.threadMessage.fromNodeId}
+                  >
+                    {m.threadMessage.fromTitle ?? 'another thread'}
+                  </button>
+                ) : (m.threadMessage.fromTitle ?? 'another thread')}
+              </div>
+            )}
             {m.comments && m.comments.length > 0 && <CommentChips comments={m.comments} />}
             {m.quotedText && <QuoteChip text={m.quotedText} />}
             {m.attachments && m.attachments.length > 0 && (

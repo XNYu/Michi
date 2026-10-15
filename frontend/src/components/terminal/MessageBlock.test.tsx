@@ -52,6 +52,28 @@ function renderMessage(
 }
 
 describe('MessageBlock — role styling', () => {
+  it('marks a relayed thread message and links to the sending thread', () => {
+    const onMentionClick = vi.fn();
+    const { container, getByRole } = render(
+      <MessageBlock
+        m={{ ...baseMsg, text: 'Please review', threadMessage: { fromNodeId: 'n-a', fromTitle: 'Research notes' } }}
+        index={0}
+        isDark={false}
+        onEdit={noop}
+        onCopy={noop}
+        showThoughts={false}
+        fontFamily={'inherit'}
+        density={'comfortable'}
+        onMentionClick={onMentionClick}
+      />,
+    );
+    const marker = container.querySelector('.terminal-message-thread-source');
+    expect(marker?.textContent).toBe('From Research notes');
+    expect(container.querySelector('.terminal-message-user')?.textContent).toContain('Please review');
+    fireEvent.click(getByRole('button', { name: 'Research notes' }));
+    expect(onMentionClick).toHaveBeenCalledWith('Research notes', 'node', 'n-a');
+  });
+
   it('user message carries no role/time label inside or above the card', () => {
     const { container } = renderMessage({ role: 'user', text: 'q?' });
     const block = container.querySelector('.terminal-message-user') as HTMLElement;

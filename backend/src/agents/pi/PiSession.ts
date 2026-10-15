@@ -25,6 +25,12 @@ import { loadPiAi, loadPiAgentCore } from "./piAi";
 import { streamPiModel } from './geminiArgonStream';
 import { isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
 import { buildPiTools, piToolResultErrorOverride } from "./piTools";
+import {
+    SEND_TO_THREAD_TOOL,
+    threadMessageApprovalTitle,
+    type ThreadMessageApprovalRequest,
+    type ThreadMessageApprovalResult,
+} from "../threadMessageTool";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
 import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
@@ -213,7 +219,13 @@ export class PiSession implements AgentSession {
      */
     private readonly pendingPermissions = new Map<
         number,
-        { resolve: (optionId: string | null) => void; timer: NodeJS.Timeout; toolName?: string }
+        {
+            resolve: (optionId: string | null) => void;
+            timer: NodeJS.Timeout;
+            toolName?: string;
+            /** Single-use approval a tool requested itself; grants never cover it. */
+            explicit?: boolean;
+        }
     >();
     private nextRequestId = 1;
     private readonly approvals = new ChatApprovalState();
@@ -405,6 +417,7 @@ export class PiSession implements AgentSession {
                 // Stable closure: tools are built once, but activePush is rebound
                 // each turn. show_image routes its inline image through here.
                 emitImage: (ev) => this.activePush?.(ev),
+                requestThreadMessageApproval: (request, signal) => this.requestThreadMessageApproval(request, signal),
                 agentRunTools: resolveAgentRunToolsForSession(this.bridge, {
                     runtimeId: this.runtimeId,
                     sessionId: this.id,
@@ -485,6 +498,7 @@ export class PiSession implements AgentSession {
                         return { block: true, reason: "user denied" };
                     }
                     for (const [id, request] of this.pendingPermissions) {
+                        if (request.explicit) continue;
                         if (approvalCoversTool(decision, bcCtx.toolCall.name, request.toolName)) this.respondToPermission(id, 'allow_once');
                     }
                     return undefined;
@@ -648,21 +662,22 @@ export class PiSession implements AgentSession {
         toolName: string,
         args: unknown,
         signal: AbortSignal | undefined,
+        explicit?: { title: string; detail?: string; options: PermissionOption[] },
     ): Promise<string | null> {
         if (!this.activePush || signal?.aborted) return null;
         const requestId = this.nextRequestId++;
-        const options: PermissionOption[] = this.owner.kind === 'chat_node' ? chatApprovalOptions(toolName) : [
+        const options: PermissionOption[] = explicit?.options ?? (this.owner.kind === 'chat_node' ? chatApprovalOptions(toolName) : [
             { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
             { optionId: "reject_once", name: "Deny", kind: "reject_once" },
-        ];
-        const title = formatPermissionTitle(toolName, args);
+        ]);
+        const title = explicit?.title ?? formatPermissionTitle(toolName, args);
 
         return new Promise<string | null>((resolve) => {
             const timer = setTimeout(() => {
                 this.pendingPermissions.delete(requestId);
                 resolve(null);
             }, 5 * 60 * 1000);
-            this.pendingPermissions.set(requestId, { resolve, timer, toolName });
+            this.pendingPermissions.set(requestId, { resolve, timer, toolName, ...(explicit ? { explicit: true } : {}) });
 
             signal?.addEventListener(
                 "abort",
@@ -680,10 +695,33 @@ export class PiSession implements AgentSession {
                 kind: "permission_request",
                 requestId,
                 title,
+                ...(explicit?.detail ? { detail: explicit.detail } : {}),
                 options,
                 source: "michi_policy",
             });
         });
+    }
+
+    /**
+     * send_to_thread's own per-message approval. Independent of the chat's
+     * permission mode and grants: only an explicit "allow_once" approves, and
+     * no grant or session trust is recorded.
+     */
+    private async requestThreadMessageApproval(
+        request: ThreadMessageApprovalRequest,
+        signal: AbortSignal | undefined,
+    ): Promise<ThreadMessageApprovalResult> {
+        const { title, detail } = threadMessageApprovalTitle(request);
+        const answer = await this.requestPermission(SEND_TO_THREAD_TOOL, request, signal, {
+            title,
+            detail,
+            options: [
+                { optionId: "reject_once", name: "Don't send", kind: "reject_once" },
+                { optionId: "allow_once", name: "Send", kind: "allow_once" },
+            ],
+        });
+        if (answer === "allow_once") return { approved: true };
+        return { approved: false, reason: answer === null ? "no_answer" : "declined" };
     }
 
     respondToPermission(requestId: number, optionId: string): void {

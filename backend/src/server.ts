@@ -65,6 +65,8 @@ import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
 import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRunAssembly';
 import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
 import { chatHub } from './agents/chatHub';
+import { configureThreadMessaging } from './agents/threadMessageTool';
+import { acquireSessionRestoreLock } from './services/nativeResume';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 import { createStreamTransport } from './services/streamTransport';
 import { CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
@@ -329,6 +331,13 @@ reconcileRuntimeWithRegistered(listRuntimes().map((r) => r.id));
 // kiroRuntime may be undefined in Pi-only / Claude-only deployments;
 // ChatManager guards its Kiro-specific methods accordingly.
 const chatManager = new ChatManager(kiroRuntime, defaultCwd);
+configureThreadMessaging({
+  ensureSession: (input) => chatManager.ensureParentSession(input),
+  startTurn: (args) => chatHub.startRequestedSelfTurn(args),
+  acquireRestoreLock: acquireSessionRestoreLock,
+  newTurnId: () => randomUUID(),
+  startWaitMs: 3_000,
+});
 agentRunAssembly = createAgentRunAssembly({
   isEnabled: () => customAgentsFeature.isEnabled(),
   chatManager,
