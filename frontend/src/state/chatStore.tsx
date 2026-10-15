@@ -1466,10 +1466,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       let outgoingText = text;
       const tEnsureStart = perf.now();
       let connectionStatusShown = false;
+      // Empty-assistant dots cover brief setup; reserve the connection label
+      // for a wait long enough to explain to the user.
       const connectionStatusTimer = setTimeout(() => {
         connectionStatusShown = true;
         dispatch({ type: 'runtime-activity', nodeId, assistantId, detail: 'Connecting to session' });
-      }, 1_000);
+      }, 3_000);
       const setupController = new AbortController();
       let setupCancelled = false;
       const cancelSetup = () => {

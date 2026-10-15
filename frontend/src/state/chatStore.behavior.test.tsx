@@ -264,6 +264,31 @@ describe('auto-branch behavior (real provider)', () => {
     ]);
   });
 
+  it('shows connection status only for a sustained setup wait and clears it on Stop', async () => {
+    const { result, rerender } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test', undefined); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    mockEnsureSession.mockImplementationOnce(() => new Promise(() => {}));
+    vi.useFakeTimers();
+    try {
+      act(() => { result.current.store.sendMessage(nodeId, 'hello'); });
+      act(() => { vi.advanceTimersByTime(2_999); });
+      expect(result.current.nodes[nodeId].runtimeActivity).toBeUndefined();
+      act(() => { vi.advanceTimersByTime(1); });
+      rerender();
+      expect(result.current.nodes[nodeId].runtimeActivity).toBe('Connecting to session');
+      act(() => { result.current.store.cancelStream(nodeId); });
+      expect(result.current.nodes[nodeId].status).toBe('idle');
+      expect(result.current.nodes[nodeId].runtimeActivity).toBeUndefined();
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(result.current.nodes[nodeId].runtimeActivity).toBeUndefined();
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['resolve', 'setup'],
     ['reject', 'setup'],
