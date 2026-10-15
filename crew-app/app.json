@@ -1,0 +1,23 @@
+{
+  "name": "michi-crew-runtime",
+  "version": "0.6.0",
+  "displayName": "Michi Crew Runtime",
+  "description": "Use Michi with official Kiro Crew sessions, Memory, tools and approvals. Install this directory from your Michi installation. Approval access includes user-owned Crew chats; Michi restricts its adapter to its own App sessions.",
+  "author": "yonghuyu",
+  "agents": ["agents/michi.json"],
+  "mcpServers": {
+    "michi": {
+      "command": "python",
+      "args": ["-I", "-c", "import os,runpy;from pathlib import Path;root=Path(os.environ.get('MICHI_CREW_INSTALL_DIR') or Path.home()/'.michi');runpy.run_path(str(root/'crew-app'/'launch.py'),run_name='__main__')"]
+    }
+  },
+  "permissions": {
+    "api": [
+      "/api/chat",
+      "/api/models",
+      "/api/agents/catalog"
+    ],
+    "events": [],
+    "sessionApproval": true
+  }
+}

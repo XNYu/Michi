@@ -10,9 +10,11 @@ import { KIRO_DESCRIPTOR, CREW_DESCRIPTOR, describeRuntimeCapabilities } from '.
 import {
   crewAppSecretPath,
   crewAvailability,
+  crewIntegrationStatus,
   resolveCrewAcpLaunch,
   resolveCrewAcpLaunchDetailed,
 } from '../src/agents/crew/crewLaunch';
+import { CREW_APP_VERSION, crewAppNeedsSync } from '../src/agents/crew/crewAppVersion';
 import { AcpClient } from '../src/services/acpClient';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
@@ -53,7 +55,7 @@ function crewHomeWithSecret(app = 'michi-crew-runtime', enabled = true): string 
   fs.mkdirSync(path.join(home, 'apps', app), { recursive: true });
   fs.writeFileSync(path.join(home, 'apps', app, '.app_secret'), '');
   fs.writeFileSync(path.join(home, 'apps', app, 'installed.json'), JSON.stringify({ name: app, enabled }));
-  fs.writeFileSync(path.join(home, 'apps', app, 'app.json'), JSON.stringify({ permissions: { sessionApproval: true }, mcpServers: { michi: {} } }));
+  fs.writeFileSync(path.join(home, 'apps', app, 'app.json'), JSON.stringify({ version: CREW_APP_VERSION, permissions: { sessionApproval: true }, mcpServers: { michi: {} } }));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: [`${app}:michi`] } }));
   return home;
 }
@@ -212,7 +214,7 @@ describe('crewAvailability', () => {
       const home = crewHomeWithSecret();
       const dir = path.join(home, 'apps/michi-crew-runtime');
       if (pending) fs.writeFileSync(path.join(dir, 'installed.json'), JSON.stringify({ enabled: true, sessionApprovalConsentPending: true }));
-      else fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ mcpServers: { michi: {} } }));
+      else fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ version: CREW_APP_VERSION, mcpServers: { michi: {} } }));
       const result = crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: home } });
       assert.equal(result.available, false);
       assert.match(result.detail ?? '', /setup incomplete.*sessionApproval consent/);
@@ -223,7 +225,7 @@ describe('crewAvailability', () => {
     const bin = executable(tempDir());
     for (const missing of ['declaration', 'route', 'override']) {
       const home = crewHomeWithSecret();
-      if (missing === 'declaration') fs.writeFileSync(path.join(home, 'apps/michi-crew-runtime/app.json'), JSON.stringify({ permissions: { sessionApproval: true } }));
+      if (missing === 'declaration') fs.writeFileSync(path.join(home, 'apps/michi-crew-runtime/app.json'), JSON.stringify({ version: CREW_APP_VERSION, permissions: { sessionApproval: true } }));
       else fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: missing === 'route' ? {} : {
         stub_servers: ['michi-crew-runtime:michi'], stub_overrides: { 'michi-crew-runtime:michi': false },
       } }));
@@ -240,6 +242,22 @@ describe('crewAvailability', () => {
     });
     assert.equal(result.available, false);
     assert.match(result.detail ?? '', /Enable the Kiro Crew app michi-crew-runtime/);
+  });
+
+  test('outdated App is explained without reading credentials and current App recovers', () => {
+    const home = crewHomeWithSecret();
+    const manifestFile = path.join(home, 'apps/michi-crew-runtime/app.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+    fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, version: '0.5.0' }));
+    const status = crewIntegrationStatus({ KIROCREW_HOME: home });
+    assert.equal(status.updateRequired, true);
+    assert.equal(status.expectedVersion, CREW_APP_VERSION);
+    assert.match(crewAvailability({ env: { KIROCREW_HOME: home } }).detail ?? '', /App update required.*Sync/);
+    fs.writeFileSync(manifestFile, JSON.stringify(manifest));
+    assert.equal(crewIntegrationStatus({ KIROCREW_HOME: home }).updateRequired, false);
+    assert.equal(crewAppNeedsSync('0.10.0', '0.6.0'), false);
+    assert.equal(crewAppNeedsSync('0.5.9', '0.6.0'), true);
+    assert.equal(crewAppNeedsSync('malformed'), true);
   });
 
   test('unavailable when no adapter resolves, even with a secret', () => {

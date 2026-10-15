@@ -28,6 +28,18 @@ describe('ComposerPermissionControl runtime ownership', () => {
     expect(screen.queryByRole('button', { name: 'Permissions: Ask' })).toBeNull();
   });
 
+  it('shows Sync when installed App is older and refreshes after returning from Crew', async () => {
+    const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ approvals: true, mcpDeclared: true, mcpRouted: true,
+      updateRequired: true, installedVersion: '0.5.0', expectedVersion: '0.6.0' }) }));
+    vi.stubGlobal('fetch', fetcher);
+    render(<ComposerPermissionControl mode="ask" runtimeIds={['crew']} onChange={vi.fn()} />);
+    expect((await screen.findByText('Sync Crew App')).title).toContain('0.6.0');
+    fetcher.mockImplementation(async () => ({ ok: true, json: async () => ({ approvals: true, mcpDeclared: true, mcpRouted: true,
+      updateRequired: false, installedVersion: '0.6.0', expectedVersion: '0.6.0' }) }));
+    window.dispatchEvent(new Event('focus'));
+    expect(await screen.findByRole('button', { name: 'Permissions: Ask' })).toBeTruthy();
+  });
+
   it('distinguishes status loading from a backend failure', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
     render(<ComposerPermissionControl mode="ask" runtimeIds={['crew']} onChange={vi.fn()} />);

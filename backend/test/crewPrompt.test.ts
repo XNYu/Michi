@@ -32,9 +32,10 @@ function setupFixture() {
     const backend = path.join(root, '.michi/backend');
     fs.mkdirSync(path.join(backend, 'scripts'), { recursive: true });
     fs.copyFileSync(path.join(__dirname, '../scripts/crew-setup.cjs'), path.join(backend, 'scripts/crew-setup.cjs'));
-    fs.cpSync(path.join(__dirname, '../src/agents/crew/app'), path.join(backend, 'src/agents/crew/app'), { recursive: true });
+    fs.cpSync(path.join(__dirname, '../../crew-app'), path.join(root, '.michi/crew-app'), { recursive: true });
     fs.mkdirSync(path.join(backend, 'dist'));
     fs.writeFileSync(path.join(backend, 'dist/crewMcp.js'), '// fixture: never executed\n');
+    fs.writeFileSync(path.join(backend, 'dist/crewMcpHost.js'), '// fixture: never executed\n');
     return { root, backend, script: path.join(backend, 'scripts/crew-setup.cjs') };
 }
 
@@ -55,8 +56,10 @@ test('default App preparation includes Michi MCP and approvals with the concise 
         assert.ok(agent.tools.includes('@kirocrew-core'));
         assert.ok(agent.tools.includes('@michi-crew-runtime:michi'));
         assert.equal(manifest.permissions.sessionApproval, true);
-        assert.equal(manifest.mcpServers.michi.command, process.execPath);
-        assert.deepEqual(manifest.mcpServers.michi.args, [path.join(fs.realpathSync(fixture.backend), 'dist/crewMcp.js')]);
+        assert.equal(manifest.mcpServers.michi.command, 'python');
+        assert.match(manifest.mcpServers.michi.args.at(-1), /launch.py/);
+        assert.equal(manifest.mcpServers.michi.env.MICHI_CREW_INSTALL_DIR, path.dirname(fs.realpathSync(fixture.backend)));
+        assert.ok(fs.existsSync(path.join(dir, 'launch.py')));
         assert.match(result, /complete sessionApproval consent/);
         assert.match(result, /enable Stub\/Routed/);
         assert.match(result, /use Michi for chats, Ask\/Trust and approval cards/);

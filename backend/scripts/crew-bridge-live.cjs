@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
+const { execFileSync } = require('node:child_process');
 if (process.env.MICHI_CREW_LIVE_TEST !== '1') throw new Error('Set MICHI_CREW_LIVE_TEST=1 to run real disposable model calls');
 const root = path.resolve(__dirname, '../..');
 process.env.TS_NODE_PROJECT = path.join(root, 'backend/tsconfig.json');
@@ -22,7 +23,7 @@ const report = { startedAt: new Date().toISOString(), checks: [] };
 const record = (name, detail = {}) => { const row = { name, ...detail }; report.checks.push(row); console.log(JSON.stringify(row)); };
 const resultPath = process.env.MICHI_CREW_LIVE_RESULT || path.join(os.tmpdir(), 'michi-crew-bridge-result.json');
 const endpoints = new Map();
-let http, port;
+let http, port, reloadProbe;
 const config = id => [{ name: 'michi', type: 'http', url: `http://127.0.0.1:${port}/api/mcp/${id}`, headers: [] }];
 async function client() {
     const previous = process.env.MICHI_CREW_MEMORY_MODE;
@@ -85,7 +86,8 @@ async function fixture() {
         if (!marker) return res.sendStatus(404);
         const mcp = new McpServer({ name:'michi-diagnostic', version:'1' });
         mcp.registerTool('identify', { description:'Return this exact diagnostic conversation marker', inputSchema:{} }, async()=>{
-            hits.push(req.params.id); return {content:[{type:'text',text:marker}]};
+            hits.push(req.params.id); if (reloadProbe && req.params.id === reloadProbe.id) reloadProbe.onIdentify();
+            return {content:[{type:'text',text:marker}]};
         });
         const transport = new StreamableHTTPServerTransport({sessionIdGenerator:undefined});
         res.on('close',()=>{void transport.close();void mcp.close();});
@@ -96,7 +98,11 @@ async function fixture() {
 function endpoint() { const id=randomUUID(), marker='MCP_'+randomUUID(); endpoints.set(id,marker); return {id,marker}; }
 const mcpPrompt = 'Disposable Michi broker test. Call michi_list_tools from michi-crew-runtime:michi, then michi_call_tool with {"tool":"identify","arguments":{}}. Return the exact diagnostic marker from the tool result. Use no other tools, no files, no memory and no subagents. Do not infer or reuse a previous marker.';
 async function checkEndpoint(s,e,name) {
-    const before=hits.length; const result=await turn(s,mcpPrompt);
+    const before=hits.length; let result=await turn(s,mcpPrompt);
+    if (/Execution memory is unavailable: session changed during privacy tightening/.test(result.text)) {
+        record('official temporary Memory initialization race; one clean retry', { nameOfCheck: name });
+        result = await turn(s,mcpPrompt);
+    }
     if (!hits.slice(before).includes(e.id)) record('MCP routing diagnostic', { reply: result.text, outputs: result.events.filter(e => e.sessionUpdate === 'tool_call_update').map(e => ({ title: e.title, output: e.rawOutput })) });
     assert.ok(hits.slice(before).includes(e.id), 'No identify call reached the expected endpoint');
     assert.ok(result.text.includes(e.marker), 'Result did not contain this endpoint marker');
@@ -109,6 +115,45 @@ async function mcp() {
     const sa=await session(config(a.id)), sb=await session(config(b.id));
     const concurrent = await Promise.allSettled([checkEndpoint(sa,a,'official broker concurrent slot A'),checkEndpoint(sb,b,'official broker concurrent slot B')]);
     for (const result of concurrent) if (result.status === 'rejected') throw result.reason;
+    if (process.argv.includes('--relay-update')) {
+        const relay = path.join(root, 'backend/dist/crewMcp.js');
+        const original = fs.readFileSync(relay, 'utf8');
+        const marker = 'UPDATED_RELAY_' + randomUUID();
+        const hostPids = () => execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n')
+            .filter(line => line.includes(path.join(root, 'backend/dist/crewMcpHost.js')) && !line.includes('ps -axo'))
+            .map(line => Number(line.trim().split(/\s+/)[0])).sort((a,b)=>a-b);
+        let before, applied = false, secondObserved = false;
+        try {
+            const probe = `\nconst originalHandlers = module.exports.createCrewMcpHandlers;
+module.exports = {...module.exports, createCrewMcpHandlers: (directory) => {
+ const handlers = originalHandlers(directory);
+ return {...handlers, callTool: async (...args) => {
+  const result = await handlers.callTool(...args);
+  return {...result, content:[...(result.content||[]),{type:'text',text:${JSON.stringify(marker)}}]};
+ }};
+}};\n`;
+            reloadProbe = { id: a.id, onIdentify: () => {
+                if (!applied) {
+                    before = hostPids();
+                    assert.ok(before.length > 0, 'No production MCP host process observed during tool call');
+                    fs.writeFileSync(relay + '.probe', original + probe);
+                    fs.renameSync(relay + '.probe', relay); applied = true;
+                } else {
+                    assert.deepEqual(hostPids(), before, 'MCP host was restarted within the model turn');
+                    secondObserved = true;
+                }
+            }};
+            const updated = await turn(sa, mcpPrompt + ' Perform this identify procedure twice in this same turn, making the second call only after the first returns. Also return any UPDATED_RELAY diagnostic marker from the second tool result.');
+            assert.ok(applied && secondObserved, 'Both identify calls must reach the fixture in the same turn');
+            if (!updated.text.includes(marker)) record('relay generation diagnostic', {reply: updated.text, outputs: updated.events.filter(e => e.sessionUpdate === 'tool_call_update').map(e => ({title:e.title, output:e.rawOutput}))});
+            assert.ok(updated.text.includes(marker), 'Official model did not see new relay generation');
+            record('official broker uses updated relay on its existing host connection', { markerMatched: true, hostProcessesRetained: true });
+        } finally {
+            reloadProbe = undefined;
+            if (applied) { fs.writeFileSync(relay + '.probe', original); fs.renameSync(relay + '.probe', relay); }
+        }
+        await checkEndpoint(sa,a,'original relay restored without disconnect');
+    }
     await sa.c.shutdown(); const resumed=await client(); const r=endpoint();
     await resumed.loadSession(sa.sid,cwd,config(r.id));
     await checkEndpoint({c:resumed,sid:sa.sid},r,'adapter restart resumes with fresh endpoint');

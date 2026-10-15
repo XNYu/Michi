@@ -1,5 +1,6 @@
 import { API_BASE_URL } from '../../../../config/env';
 import { CrewMemorySettings } from '../../CrewMemoryControl';
+import { CrewAppSetupNotice } from '../../CrewIntegrationStatus';
 import { usePermissionPreferences } from '../../../../hooks/usePermissionPreferences';
 import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { toast } from 'sonner';
@@ -133,7 +134,8 @@ export function ModelPane({
       {agentStatus && <WebSearchControls status={agentStatus} onChanged={refreshAgentStatus} />}
 
       {showKiroSidecarTitles && <KiroSidecarTitleToggle />}
-      {agentStatus?.runtime === 'crew' && <CrewMemorySettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : API_BASE_URL} />}
+      {agentStatus?.runtime === 'crew' && <><CrewAppSetupNotice apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : API_BASE_URL} />
+        <CrewMemorySettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : API_BASE_URL} /></>}
       <FollowUpsToggle />
       <PermissionSettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : undefined}
         runtimeIds={[...(agentStatus ? [agentStatus.runtime] : []), ...visibleRuntimes.map((runtime) => runtime.id)]} />

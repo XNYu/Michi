@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AcpLaunch } from "../../services/acpClient";
 import type { RuntimeAvailability } from "../types";
+import { CREW_APP_VERSION, crewAppNeedsSync } from './crewAppVersion';
 
 /** Kiro Crew app the adapter authenticates as. */
 export const DEFAULT_CREW_APP = "michi-crew-runtime";
@@ -113,10 +114,14 @@ export function crewIntegrationStatus(env: NodeJS.ProcessEnv = process.env) {
         const routed = config.mcp_gateway?.stub_overrides?.[name]
             ?? config.mcp_gateway?.stub_servers?.includes(name) ?? false;
         return { enabled: installed.enabled === true,
+            installedVersion: typeof manifest.version === 'string' ? manifest.version : null,
+            expectedVersion: CREW_APP_VERSION,
+            updateRequired: crewAppNeedsSync(manifest.version),
             approvals: installed.enabled === true && installed.sessionApprovalConsentPending !== true && manifest.permissions?.sessionApproval === true,
             mcpDeclared: installed.enabled === true && !!manifest.mcpServers?.michi,
             mcpRouted: routed, steer: false as const };
-    } catch { return { enabled: false, approvals: false, mcpDeclared: false, mcpRouted: false, steer: false as const }; }
+    } catch { return { enabled: false, approvals: false, mcpDeclared: false, mcpRouted: false, steer: false as const,
+        installedVersion: null, expectedVersion: CREW_APP_VERSION, updateRequired: false }; }
 }
 
 /**
@@ -155,11 +160,14 @@ export function crewAvailability(locations: CrewLaunchLocations = {}): RuntimeAv
         };
     }
     const integration = crewIntegrationStatus(env);
+    if (integration.updateRequired) {
+        return { available: false, detail: `Kiro Crew App update required (${integration.installedVersion ?? 'unknown'} → ${integration.expectedVersion}). Run michi update, then Sync michi-crew-runtime in Crew Apps. Existing custom or temporary sources must be refreshed with the compatibility helper first. Complete any launch approval or Gateway restart requested by Crew.` };
+    }
     if (!integration.approvals) {
-        return { available: false, detail: `Kiro Crew setup incomplete: update ${crewAppName(env)} using node backend/scripts/crew-setup.cjs, complete sessionApproval consent in Crew Apps, and confirm Enabled. Approvals must be handled in Michi.` };
+        return { available: false, detail: `Kiro Crew setup incomplete: install or Sync ${crewAppName(env)} from your Michi crew-app directory, complete sessionApproval consent in Crew Apps, and confirm Enabled. Approvals must be handled in Michi.` };
     }
     if (!integration.mcpDeclared || !integration.mcpRouted) {
-        return { available: false, detail: `Kiro Crew setup incomplete: prepare and update ${crewAppName(env)} using node backend/scripts/crew-setup.cjs, then enable and approve ${crewAppName(env)}:michi Stub / Routed in Crew Developer > MCP Management and restart the Gateway.` };
+        return { available: false, detail: `Kiro Crew setup incomplete: install or Sync ${crewAppName(env)} from your Michi crew-app directory, then enable and approve ${crewAppName(env)}:michi Stub / Routed in Crew Developer > MCP Management and restart the Gateway.` };
     }
     return { available: true };
 }

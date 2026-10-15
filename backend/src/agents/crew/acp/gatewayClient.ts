@@ -110,7 +110,7 @@ export class CrewGatewayClient implements CrewGateway {
 
     async mcpAvailable(): Promise<boolean> {
         const status = crewIntegrationStatus({ KIROCREW_HOME: this.config.kirocrewHome, MICHI_CREW_APP: this.config.appName });
-        return status.mcpDeclared && status.mcpRouted;
+        return !status.updateRequired && status.mcpDeclared && status.mcpRouted;
     }
 
     private async requireOwnSlot(slot: string): Promise<void> {

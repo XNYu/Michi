@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { WebSocketServer } from 'ws';
+import { CREW_APP_VERSION } from '../src/agents/crew/crewAppVersion';
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     test(`${signal} stops the owned native task and removes MCP leases before the adapter exits`, async t => {
@@ -16,7 +17,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
         const bindings = path.join(home, 'mcp');
         fs.mkdirSync(appDir, { recursive: true });
         fs.writeFileSync(path.join(appDir, '.app_secret'), 'test-only-secret');
-        fs.writeFileSync(path.join(appDir, 'app.json'), JSON.stringify({ permissions: { sessionApproval: true }, mcpServers: { michi: {} } }));
+        fs.writeFileSync(path.join(appDir, 'app.json'), JSON.stringify({ version: CREW_APP_VERSION, permissions: { sessionApproval: true }, mcpServers: { michi: {} } }));
         fs.writeFileSync(path.join(appDir, 'installed.json'), JSON.stringify({ enabled: true }));
         fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: ['michi-crew-runtime:michi'] } }));
         let slot = '', running = false, stopCompleted = false;

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,7 @@ function copyTree(src, dest) {
 const WATCH = process.argv.includes("--watch");
 
 rmSync(dist, { recursive: true, force: true });
+mkdirSync(dist, { recursive: true });
 
 // Copy SQL migration files + the codex stop-hook. The runtime resolves them via
 // path.join(__dirname, 'db/{migrations,auditMigrations}') in bundled mode;
@@ -47,6 +48,8 @@ rmSync(dist, { recursive: true, force: true });
 // live at dist/db/... . Without this, runMigrations' readdirSync hits ENOENT
 // and (per its catch) silently no-ops — every schema change stays unapplied.
 function copyAssets() {
+  // The official Crew launcher uses the same Node that built this installation.
+  writeFileSync(resolve(dist, "crew-node.json"), JSON.stringify({ schemaVersion: 1, node: process.execPath, nodeVersion: process.versions.node }) + "\n");
   copyTree(resolve(root, "src/db/migrations"), resolve(dist, "db/migrations"));
   copyTree(resolve(root, "src/db/auditMigrations"), resolve(dist, "db/auditMigrations"));
   copyTree(
@@ -103,8 +106,28 @@ const crewAcpBuildOptions = {
 
 const crewMcpBuildOptions = {
   ...workerBuildOptions,
-  entryPoints: [resolve(root, "src/agents/crew/crewMcpRelay.ts")],
+  entryPoints: [resolve(root, "src/agents/crew/crewMcpMain.ts")],
   outfile: resolve(dist, "crewMcp.js"),
+  write: false,
+  plugins: [{ name: "atomic-crew-relay", setup(pluginBuild) {
+    pluginBuild.onEnd((result) => {
+      if (result.errors.length) return;
+      for (const file of result.outputFiles ?? []) {
+        const temporary = `${file.path}.${process.pid}.tmp`;
+        try {
+          mkdirSync(dirname(file.path), { recursive: true });
+          writeFileSync(temporary, file.contents);
+          renameSync(temporary, file.path);
+        } finally { rmSync(temporary, { force: true }); }
+      }
+    });
+  } }],
+};
+
+const crewMcpHostBuildOptions = {
+  ...workerBuildOptions,
+  entryPoints: [resolve(root, "src/agents/crew/crewMcpHost.ts")],
+  outfile: resolve(dist, "crewMcpHost.js"),
 };
 
 if (WATCH) {
@@ -199,11 +222,13 @@ if (WATCH) {
   await crewAcpCtx.watch();
   const crewMcpCtx = await context(crewMcpBuildOptions);
   await crewMcpCtx.watch();
+  const crewMcpHostCtx = await context(crewMcpHostBuildOptions);
+  await crewMcpHostCtx.watch();
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
     void stopChild()
-      .then(() => Promise.all([ctx.dispose(), workerCtx.dispose(), crewAcpCtx.dispose(), crewMcpCtx.dispose()]))
+      .then(() => Promise.all([ctx.dispose(), workerCtx.dispose(), crewAcpCtx.dispose(), crewMcpCtx.dispose(), crewMcpHostCtx.dispose()]))
       .finally(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
@@ -212,6 +237,7 @@ if (WATCH) {
   await build(workerBuildOptions);
   await build(crewAcpBuildOptions);
   await build(crewMcpBuildOptions);
+  await build(crewMcpHostBuildOptions);
   await build(buildOptions);
   if (stagedOutfile !== outfile) {
     copyTree(stagedOutfile, outfile);

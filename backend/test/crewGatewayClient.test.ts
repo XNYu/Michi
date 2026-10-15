@@ -8,6 +8,7 @@ import { test, type TestContext } from 'node:test';
 import type { AddressInfo } from 'node:net';
 import { CrewGatewayClient, createCrewGateway } from '../src/agents/crew/acp/gatewayClient';
 import { CrewGatewayError, type CrewChatEvent, type CrewGatewayConfig } from '../src/agents/crew/acp/gatewayTypes';
+import { CREW_APP_VERSION } from '../src/agents/crew/crewAppVersion';
 
 const APP = 'michi-crew-runtime';
 const BANNED = /timed out|response stream|connection reset|ECONNRESET/i;
@@ -16,11 +17,15 @@ test('MCP readiness rereads the configured App and Stub route without Gateway ca
     const home = tempHome(t, null);
     const dir = path.join(home, 'apps', APP);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ mcpServers: { michi: {} } }));
+    fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ version: CREW_APP_VERSION, mcpServers: { michi: {} } }));
     fs.writeFileSync(path.join(dir, 'installed.json'), JSON.stringify({ enabled: true }));
     const client = new CrewGatewayClient({ baseUrl: 'http://127.0.0.1:5476', appName: APP, kirocrewHome: home });
     assert.equal(await client.mcpAvailable(), false);
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: [`${APP}:michi`] } }));
+    assert.equal(await client.mcpAvailable(), true);
+    fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ version: '0.4.0', mcpServers: { michi: {} } }));
+    assert.equal(await client.mcpAvailable(), false, 'Existing sessions also reject an outdated App');
+    fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ version: CREW_APP_VERSION, mcpServers: { michi: {} } }));
     assert.equal(await client.mcpAvailable(), true);
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: { stub_servers: [`${APP}:michi`], stub_overrides: { [`${APP}:michi`]: false } } }));
     assert.equal(await client.mcpAvailable(), false);

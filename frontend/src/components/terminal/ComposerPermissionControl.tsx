@@ -29,11 +29,12 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
   const [saving, setSaving] = useState(false);
   const crewOnly = runtimeIds.length === 1 && runtimeIds[0] === 'crew';
   const crewStatus = useCrewIntegration(apiBase, crewOnly);
-  if (crewOnly && (!crewStatus?.approvals || !crewStatus.mcpDeclared || !crewStatus.mcpRouted)) {
-    const label = !crewStatus ? 'Checking Crew setup…' : crewStatus.unavailable ? 'Crew setup unavailable' : 'Crew setup required';
+  if (crewOnly && (!crewStatus?.approvals || !crewStatus.mcpDeclared || !crewStatus.mcpRouted || crewStatus.updateRequired)) {
+    const label = !crewStatus ? 'Checking Crew setup…' : crewStatus.unavailable ? 'Crew setup unavailable' : crewStatus.updateRequired ? 'Sync Crew App' : 'Crew setup required';
     const detail = !crewStatus ? 'Checking required Michi MCP and approval setup.' : crewStatus.unavailable
       ? 'Could not verify Crew setup. Check the Michi backend connection and retry.'
-      : 'Complete the required Michi integration in Crew: update the prepared App, grant sessionApproval, enable and approve Michi MCP Stub / Routed, then restart the Gateway. Chats and approvals stay in Michi.';
+      : crewStatus.updateRequired ? `Crew App ${crewStatus.installedVersion ?? 'unknown'} is older than ${crewStatus.expectedVersion}. Update Michi, then Sync michi-crew-runtime in Crew Apps. Refresh custom or temporary sources with the compatibility helper first.`
+      : 'Install the crew-app directory from your Michi installation in Crew, grant sessionApproval, enable and approve Michi MCP Stub / Routed, then restart the Gateway. Chats and approvals stay in Michi.';
     return <span className="t-toolbar-chip" role="status" title={detail}>{label}</span>;
   }
   const supportsYolo = runtimeIds.some(supportsChatYolo);
