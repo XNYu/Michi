@@ -184,6 +184,52 @@ export interface McpSlotCallbacks {
 
 export class McpSlotRegistry {
     private slots = new Map<string, McpSlot>();
+    private sessionGroups = new Map<string, {
+        catalog: McpSlot;
+        sessions: Map<string, { slotId: string; turn?: symbol }>;
+    }>();
+
+    /** Chat-only gateway: a stable catalog/URL, explicit native
+     * ACP session IDs on calls. Warm sessions are never added to its routing map. */
+    createSessionGroup(catalog: McpSlot): string {
+        const id = randomBytes(16).toString('hex');
+        this.sessionGroups.set(id, { catalog: { ...catalog }, sessions: new Map() });
+        return id;
+    }
+
+    getSessionGroupCatalog(groupId: string): McpSlot | undefined {
+        return this.sessionGroups.get(groupId)?.catalog;
+    }
+
+    bindSession(groupId: string, sessionId: string, slotId: string): void {
+        const group = this.sessionGroups.get(groupId);
+        const slot = this.slots.get(slotId);
+        if (!group || !slot || slot.parentChatId !== sessionId || !slot.nodeId
+            || slot.owner?.kind === 'agent_run') throw new Error('Invalid MCP chat session binding');
+        group.sessions.set(sessionId, { slotId });
+    }
+
+    beginSessionTurn(groupId: string, sessionId: string): () => void {
+        const binding = this.sessionGroups.get(groupId)?.sessions.get(sessionId);
+        if (!binding) throw new Error('MCP session is not bound');
+        const turn = Symbol('mcp-turn');
+        binding.turn = turn;
+        return () => { if (binding.turn === turn) binding.turn = undefined; };
+    }
+
+    endSessionTurn(groupId: string, sessionId: string): void {
+        const binding = this.sessionGroups.get(groupId)?.sessions.get(sessionId);
+        if (binding) binding.turn = undefined;
+    }
+
+    resolveSessionSlot(groupId: string, sessionId: string): McpSlot | undefined {
+        const binding = this.sessionGroups.get(groupId)?.sessions.get(sessionId);
+        return binding?.turn ? this.slots.get(binding.slotId) : undefined;
+    }
+
+    disposeSessionGroup(groupId: string): void {
+        this.sessionGroups.delete(groupId);
+    }
 
     create(
         parentChatId: string,
@@ -217,6 +263,11 @@ export class McpSlotRegistry {
         // (see mountMcp), so there is nothing transport-level to dispose here —
         // we just drop the slot binding.
         this.slots.delete(slotId);
+        for (const group of this.sessionGroups.values()) {
+            for (const [sid, binding] of group.sessions) {
+                if (binding.slotId === slotId) group.sessions.delete(sid);
+            }
+        }
     }
 }
 
@@ -279,34 +330,28 @@ function allowedAgentRunToolNames(slot: McpSlot): AgentRunToolName[] {
  * A new McpServer + transport pair is built per-slot on demand so the
  * tool handler has a closure over the specific slot.
  */
-function notifyMcpToolResult(slot: McpSlot, toolName: string, result: unknown): void {
-    if (!slot.onMcpToolResult) return;
-    setImmediate(() => {
-        try {
-            slot.onMcpToolResult?.(toolName, result);
-        } catch {
-            // Backfill is best-effort; never fail the MCP response.
-        }
-    });
-}
-
-function attachMcpToolResultNotify(server: McpServer, slot: McpSlot): void {
-    const proto = server as unknown as { registerTool: (...args: any[]) => unknown };
-    const original = proto.registerTool.bind(server);
-    proto.registerTool = (name: string, config: unknown, handler: (...args: any[]) => unknown) =>
-        original(name, config, async (...args: any[]) => {
-            const result = await handler(...args);
-            notifyMcpToolResult(slot, name, result);
-            return result;
-        });
-}
-
-export function buildMcpServerForSlot(slot: McpSlot): McpServer {
+export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): McpServer {
     const server = new McpServer(
         { name: "michi-tools", version: "1.0.0" },
         { capabilities: { tools: {} } },
     );
     attachMcpToolResultNotify(server, slot);
+
+    // Keep the legacy slot schemas untouched. The shared endpoint adds one
+    // required field to every tool, checks it, then passes the original payload
+    // to the existing handler. tools/list is identical for every chat.
+    const registerTool: McpServer['registerTool'] = (name, config, handler) => {
+        if (sessionAnchor === undefined) return server.registerTool(name, config, handler);
+        const anchor = z.string().min(1).describe('Current ACP SessionID from the latest Michi session context.');
+        const inputSchema = config.inputSchema instanceof z.ZodType
+            ? config.inputSchema.and(z.object({ session_id: anchor }))
+            : { ...config.inputSchema, session_id: anchor };
+        return server.registerTool(name, { ...config, inputSchema }, async (args: any, extra: any) => {
+            if (args.session_id !== sessionAnchor) throw new Error('MCP session_id does not match the routed session');
+            const { session_id: _anchor, ...payload } = args;
+            return (handler as (args: any, extra: any) => any)(payload, extra);
+        });
+    };
 
     // Side-effect tools that mutate the chat graph or filesystem. The
     // globalContext tools (list_threads / search_messages / read_node) are
@@ -315,7 +360,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     const SIDE_EFFECT_TOOL_NAMES = new Set(["spawn_branches", "save_artifact", "update_artifact", "show_image"]);
     for (const tool of listEnabledBuiltinTools()) {
         if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name) || !isToolExposed(slot, tool.name)) continue;
-        server.registerTool(
+        registerTool(
             tool.name,
             { description: tool.description, inputSchema: builtinToZodShape(tool) },
             async (args) => {
@@ -365,7 +410,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
 
     if (slot.agentRuns) {
         const allowedNames = allowedAgentRunToolNames(slot);
-        if (allowedNames.length > 0) registerAgentRunTools(server, slot.agentRuns, allowedNames);
+        if (allowedNames.length > 0) registerAgentRunTools(registerTool, slot.agentRuns, allowedNames);
     }
 
     // submit_agent_result is registered only for agent_run owners with a bound
@@ -376,7 +421,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         && slot.onSubmitAgentResult
         && isToolExposed(slot, "submit_agent_result")
     ) {
-        server.registerTool(
+        registerTool(
             "submit_agent_result",
             {
                 description: "Submit the final structured Result Bundle for this exact Agent Run Attempt before finishing.",
@@ -393,7 +438,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     }
 
     if (slot.onSetFollowUps && isToolExposed(slot, "set_follow_ups")) {
-        server.registerTool(
+        registerTool(
             "set_follow_ups",
             {
                 description:
@@ -416,7 +461,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     }
 
     if (slot.onSetBranchOverview && isToolExposed(slot, "set_branch_overview")) {
-        server.registerTool(
+        registerTool(
             "set_branch_overview",
             {
                 description:
@@ -451,7 +496,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
                 text: JSON.stringify(slot.onValidateFollowUps?.() ?? {}),
             }],
         });
-        if (isToolExposed(slot, "validate_follow_ups")) server.registerTool(
+        if (isToolExposed(slot, "validate_follow_ups")) registerTool(
             "validate_follow_ups",
             {
                 description:
@@ -460,7 +505,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
             },
             validateTurnMetadata,
         );
-        if (isToolExposed(slot, "validate_turn_metadata")) server.registerTool(
+        if (isToolExposed(slot, "validate_turn_metadata")) registerTool(
             "validate_turn_metadata",
             {
                 description:
@@ -471,7 +516,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         );
     }
 
-    if (isToolExposed(slot, "list_threads")) server.registerTool(
+    if (isToolExposed(slot, "list_threads")) registerTool(
         "list_threads",
         {
             description:
@@ -492,7 +537,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "search_messages")) server.registerTool(
+    if (isToolExposed(slot, "search_messages")) registerTool(
         "search_messages",
         {
             description:
@@ -516,7 +561,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "read_node")) server.registerTool(
+    if (isToolExposed(slot, "read_node")) registerTool(
         "read_node",
         {
             description:
@@ -544,7 +589,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "read_node_overview")) server.registerTool(
+    if (isToolExposed(slot, "read_node_overview")) registerTool(
         "read_node_overview",
         {
             description:
@@ -585,7 +630,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         };
     }
 
-    if (isToolExposed(slot, "inspect_pane")) server.registerTool(
+    if (isToolExposed(slot, "inspect_pane")) registerTool(
         "inspect_pane",
         {
             description:
@@ -613,7 +658,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "read_pane_output")) server.registerTool(
+    if (isToolExposed(slot, "read_pane_output")) registerTool(
         "read_pane_output",
         {
             description:
@@ -649,7 +694,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "list_panes")) server.registerTool(
+    if (isToolExposed(slot, "list_panes")) registerTool(
         "list_panes",
         {
             description:
@@ -685,7 +730,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "wait_pane")) server.registerTool(
+    if (isToolExposed(slot, "wait_pane")) registerTool(
         "wait_pane",
         {
             description:
@@ -723,7 +768,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "ask_user")) server.registerTool(
+    if (isToolExposed(slot, "ask_user")) registerTool(
         "ask_user",
         {
             description:
@@ -776,7 +821,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
         },
     );
 
-    if (isToolExposed(slot, "approve")) server.registerTool(
+    if (isToolExposed(slot, "approve")) registerTool(
         "approve",
         {
             description:
@@ -808,7 +853,7 @@ export function buildMcpServerForSlot(slot: McpSlot): McpServer {
     return server;
 }
 
-function registerAgentRunTools(server: McpServer, invoker: AgentRunToolInvoker,
+function registerAgentRunTools(registerTool: McpServer['registerTool'], invoker: AgentRunToolInvoker,
     allowedNames?: readonly AgentRunToolName[]): void {
     const genericObject = z.record(z.string(), z.unknown());
     const schemas: Record<AgentRunToolName, Record<string, z.ZodTypeAny>> = {
@@ -855,7 +900,7 @@ function registerAgentRunTools(server: McpServer, invoker: AgentRunToolInvoker,
     const allowed = allowedNames ? new Set(allowedNames) : null;
     for (const name of AGENT_RUN_TOOL_NAMES) {
         if (allowed && !allowed.has(name)) continue;
-        server.registerTool(name, { description: descriptions[name], inputSchema: schemas[name] }, async (args) => {
+        registerTool(name, { description: descriptions[name], inputSchema: schemas[name] }, async (args) => {
             const result = await invoker.invoke(name, args ?? {});
             return { content: [{ type: 'text', text: JSON.stringify(result) }] };
         });
@@ -923,8 +968,9 @@ export function mountMcp(
         res.json(result);
     });
 
-    const handlePost = async (req: Request<{ slotId: string }>, res: Response) => {
-        const slotId = req.params.slotId;
+    const handlePost = async (req: Request<{ slotId?: string; groupId?: string }>, res: Response) => {
+        const groupId = req.params.groupId;
+        const slotId = req.params.slotId ?? groupId!;
         if (!isLoopbackAddress(req.socket.remoteAddress)) {
             log.warn("mcp", "mcp slot rejected non-loopback request", {
                 slotId,
@@ -933,7 +979,20 @@ export function mountMcp(
             res.status(403).json({ error: "internal mcp is loopback-only" });
             return;
         }
-        const slot = registry.get(slotId);
+        let slot = groupId ? registry.getSessionGroupCatalog(groupId) : registry.get(slotId);
+        let sessionAnchor: string | undefined = groupId ? '__catalog__' : undefined;
+        if (groupId && slot && req.body?.method === 'tools/call') {
+            const sid = req.body?.params?.arguments?.session_id;
+            slot = typeof sid === 'string' ? registry.resolveSessionSlot(groupId, sid) : undefined;
+            if (!slot) {
+                res.json({ jsonrpc: '2.0', id: req.body.id ?? null, error: {
+                    code: -32602,
+                    message: 'session_id must name a bound, active chat in this MCP group. Use the current Michi SessionID.',
+                } });
+                return;
+            }
+            sessionAnchor = sid;
+        }
         if (!slot) {
             // Almost always an orphaned child from a previous backend instance
             // (nodemon restart / redeploy) still POSTing to its old slotId.
@@ -942,7 +1001,7 @@ export function mountMcp(
             res.status(404).json({ error: "unknown mcp slot" });
             return;
         }
-        const server = buildMcpServerForSlot(slot);
+        const server = buildMcpServerForSlot(slot, sessionAnchor);
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined, // stateless
         });
@@ -972,4 +1031,7 @@ export function mountMcp(
     router.post("/mcp/:slotId", handlePost);
     router.get("/mcp/:slotId", methodNotAllowed);
     router.delete("/mcp/:slotId", methodNotAllowed);
+    router.post('/mcp-session/:groupId', handlePost);
+    router.get('/mcp-session/:groupId', methodNotAllowed);
+    router.delete('/mcp-session/:groupId', methodNotAllowed);
 }

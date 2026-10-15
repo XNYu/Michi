@@ -277,7 +277,8 @@ export class KiroSession implements AgentSession {
             : (fullNodeSummaryExperimentEnabled()
                 ? FULL_BRANCH_OVERVIEW_TOOL_REMINDER
                 : BRANCH_OVERVIEW_TOOL_REMINDER);
-        const textForModel = text + promptNote + (reminder || "") + overviewReminder;
+        const textForModel = text + promptNote + (reminder || "") + overviewReminder
+            + (this.runtime.getMcpSessionReminder?.(this.nativeSessionId) ?? '');
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`
@@ -444,7 +445,11 @@ export class KiroSession implements AgentSession {
             ...steeringEvents(steeringParser.push(completionStripper.flush())),
             ...steeringEvents(steeringParser.finish()),
         ];
+        let endMcpTurn: (() => void) | undefined;
         try {
+            // Recovery can replace the MCP group. Activate the rebuilt binding
+            // only once the native client is ready to accept this prompt.
+            endMcpTurn = this.runtime.beginMcpSessionTurn?.(this.nativeSessionId);
             for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks, signal)) {
                 const kind = update.sessionUpdate;
                 if (kind === 'session_state') {
@@ -734,6 +739,8 @@ export class KiroSession implements AgentSession {
         } catch (err) {
             yield* flush();
             throw err;
+        } finally {
+            endMcpTurn?.();
         }
         yield* flush();
         const held = completionStripper.flush();
@@ -749,6 +756,7 @@ export class KiroSession implements AgentSession {
      * quarantined session, and the hub's force-finish timer bounds the UI.
      */
     async cancel(): Promise<CancelAck> {
+        this.runtime.endMcpSessionTurn?.(this.nativeSessionId);
         this.activeTurn?.abort();
         const c = this.runtime.getClient(this.cwd);
         const dispatched = (await c?.cancel(this.nativeSessionId)) === true;

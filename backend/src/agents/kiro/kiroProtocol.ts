@@ -32,6 +32,11 @@ export function michiMcpServer(engine: KiroEngine, baseUrl: string, slotId: stri
     };
 }
 
+/** One definition per cwd/process; session_id is carried in each tool call. */
+export function michiSessionMcpServer(baseUrl: string, groupId: string): AcpMcpServer {
+    return { ...michiMcpServer('v3', baseUrl, groupId), url: `${baseUrl}/mcp-session/${groupId}` };
+}
+
 export interface AcpSessionOptions {
     metadata?: Record<string, unknown>;
     modelId?: string;
