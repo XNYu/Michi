@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ArtifactEntry } from '../../../state/chatTypes';
 import { manageFileType, MANAGE_COLORS } from './tokens';
+import { Button } from '../../ui/controls';
 
 interface Props {
   artifacts: ArtifactEntry[];
@@ -114,25 +115,9 @@ function Strip({
       }}
     >
       <span>Drag &amp; drop files anywhere, or</span>
-      <button
-        type="button"
-        onClick={onAdd}
-        style={{
-          border: 'none',
-          background: 'var(--term-fg)',
-          color: 'var(--term-bg, #fff)',
-          padding: '4px 12px',
-          fontFamily: 'inherit',
-          fontSize: 'var(--fs-lg)',
-          fontWeight: 500,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 4,
-          cursor: 'pointer',
-        }}
-      >
+      <Button variant="primary" onClick={onAdd}>
         + Add source
-      </button>
+      </Button>
       <span style={{ flex: 1 }} />
       <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>
         {favoriteCount} favorite{favoriteCount === 1 ? '' : 's'} · {fmtBytes(totalBytes)} total
