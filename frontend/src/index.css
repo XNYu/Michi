@@ -2995,7 +2995,7 @@ html[data-vibrancy="on"],
 .mention-editor-host { position: relative; flex: 1; min-width: 0; }
 .mention-editor-host .ProseMirror {
   outline: none;
-  min-height: calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 1.5);
+  min-height: calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * var(--composer-min-rows, 1.5));
   max-height: min(50vh, calc(var(--composer-body-size, var(--message-body-size)) * var(--message-body-leading) * 18));
   overflow-y: auto;
   box-sizing: border-box;

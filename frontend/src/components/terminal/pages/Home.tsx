@@ -15,7 +15,7 @@ interface HomeProps {
 const MAX_RECENTS = 6;
 /** The composer and the list under it share one column, so a row's title, its
  *  workspace and its timestamp all sit inside the width the eye already has. */
-const HOME_COLUMN_WIDTH = 640;
+const HOME_COLUMN_WIDTH = 760;
 
 export default function TerminalHome({ onSubmitted }: HomeProps) {
   const {
@@ -118,6 +118,9 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
           style={{
             ['--message-body-size' as string]: '17px',
             ['--message-body-leading' as string]: '1.55',
+            // Open with room for a second line so a longer prompt doesn't start
+            // out cramped; it still grows to the shared max-height cap.
+            ['--composer-min-rows' as string]: '2',
             ['--composer-chrome-size' as string]: 'var(--fs-lg)',
             // Hero chips: bigger font, but tighter horizontal padding and
             // letter-spacing so the row stays compact rather than sprawling.
