@@ -36,12 +36,22 @@ describe('Appearance pane width modes', () => {
     expect(setPref).toHaveBeenCalledExactlyOnceWith('paneWidthMode', mode);
   });
 
-  it('exposes the corner radius outside Advanced and writes the pref', () => {
+  it('keeps the corner radius under Advanced and writes the pref', () => {
     render(<AppearancePane />);
+    expect(screen.queryByRole('slider', { name: 'Corner radius' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
     const slider = screen.getByRole('slider', { name: 'Corner radius' }) as HTMLInputElement;
     expect(slider.value).toBe(String(DEFAULT_PREFS.cornerRadius));
     fireEvent.change(slider, { target: { value: '9' } });
     expect(setPref).toHaveBeenCalledExactlyOnceWith('cornerRadius', 9);
+  });
+
+  it('labels the thread limit as a sidebar setting outside Advanced', () => {
+    render(<AppearancePane />);
+    const slider = screen.getByRole('slider', { name: 'Sidebar threads per workspace' }) as HTMLInputElement;
+    expect(slider.value).toBe(String(DEFAULT_PREFS.sidebarThreadLimit));
+    fireEvent.change(slider, { target: { value: '7' } });
+    expect(setPref).toHaveBeenCalledExactlyOnceWith('sidebarThreadLimit', 7);
   });
 
   it('retains the shared width slider', () => {

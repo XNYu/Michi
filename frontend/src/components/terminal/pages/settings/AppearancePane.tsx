@@ -144,30 +144,12 @@ export function AppearancePane() {
           in prefs.tsx are the tuned look. The prefs + effects still drive the
           glass; re-add these Rows to expose them again. */}
 
-      <Row k="theme.cornerRadius" label="Corner radius">
+      {/* ── Sidebar threads per workspace (always visible) ────────── */}
+
+      <Row k="theme.sidebarThreadLimit" label="Sidebar threads per workspace">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <input
-            aria-label="Corner radius"
-            type="range"
-            min={0}
-            max={CORNER_RADIUS_MAX}
-            step={1}
-            value={prefs.cornerRadius}
-            onChange={(e) => setPref('cornerRadius', Number(e.target.value))}
-            style={{ flex: 1, accentColor: 'var(--term-accent)' }}
-          />
-          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
-            {prefs.cornerRadius}px
-          </span>
-        </div>
-        <CornerRadiusPreview />
-      </Row>
-
-      {/* ── Threads per workspace (always visible) ─────────────────── */}
-
-      <Row k="theme.sidebarThreadLimit" label="Threads per workspace">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
+            aria-label="Sidebar threads per workspace"
             type="range"
             min={1}
             max={30}
@@ -382,6 +364,25 @@ export function AppearancePane() {
                   full width
                 </button>
               </div>
+            </Row>
+
+            <Row k="theme.cornerRadius" label="Corner radius">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  aria-label="Corner radius"
+                  type="range"
+                  min={0}
+                  max={CORNER_RADIUS_MAX}
+                  step={1}
+                  value={prefs.cornerRadius}
+                  onChange={(e) => setPref('cornerRadius', Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--term-accent)' }}
+                />
+                <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                  {prefs.cornerRadius}px
+                </span>
+              </div>
+              <CornerRadiusPreview />
             </Row>
 
             <Row k="theme.sidebarRowStyle" label="Sidebar row style">
