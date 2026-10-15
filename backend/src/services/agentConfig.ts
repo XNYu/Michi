@@ -520,25 +520,37 @@ export function updateProviderForRuntime(
  * Remember the provider + model a conversation actually ran with, so a new
  * pane switched to this runtime lands on the same pair instead of the
  * built-in fallback. Pane-level picks never go through /agent/options, so
- * this is the only place they become "last used". The two fields are
- * written together because modelByRuntime is only meaningful under the
- * provider it was chosen for. No-op when nothing changed.
+ * this is the only place they become "last used".
+ *
+ * Provider runtimes (Pi) pass their provider: the two fields are written
+ * together because modelByRuntime is only meaningful under the provider it
+ * was chosen for. Runtimes without provider-scoped models (Kiro, Claude,
+ * Codex) pass `null` and only the model is recorded, so providerByRuntime
+ * stays limited to provider runtimes.
+ *
+ * Returns true when the stored memory changed; no-op otherwise.
  */
 export function recordLastUsedProviderModel(
   runtimeId: string,
-  providerId: string,
+  providerId: string | null,
   modelId: string | null | undefined,
   userId?: string,
-): AgentConfig {
+): boolean {
   const cfg = getAgentConfig(userId);
+  if (providerId === null) {
+    if (!modelId || cfg.modelByRuntime[runtimeId] === modelId) return false;
+    updateAgentConfig({ modelByRuntime: { [runtimeId]: modelId } }, userId);
+    return true;
+  }
   const providerChanged = cfg.providerByRuntime[runtimeId] !== providerId;
   const modelChanged = !!modelId && cfg.modelByRuntime[runtimeId] !== modelId;
-  if (!providerChanged && !modelChanged) return cfg;
-  return updateAgentConfig(
+  if (!providerChanged && !modelChanged) return false;
+  updateAgentConfig(
     {
       providerByRuntime: { [runtimeId]: providerId },
       ...(modelId || providerChanged ? { modelByRuntime: { [runtimeId]: modelId || '' } } : {}),
     },
     userId,
   );
+  return true;
 }

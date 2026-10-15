@@ -147,6 +147,33 @@ describe('auto-branch behavior (real provider)', () => {
     expect(prerequisite.workspace.activeTreeId).toBe(prerequisite.tree?.id);
   });
 
+  it.each([
+    { lastUsedUpdated: true, reloads: 1 },
+    { lastUsedUpdated: false, reloads: 0 },
+  ])('reloads agent status after a send only when the remembered model changed ($lastUsedUpdated)', async ({ lastUsedUpdated, reloads }) => {
+    mockEnsureSession.mockImplementation(() => Promise.resolve({
+      chatId: 'fake-chat', currentModeId: null, resumeStrategy: 'fresh', runtimeId: 'claude', modelId: 'sonnet', lastUsedUpdated,
+    }));
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => {
+      await result.current.store.createProject('test', undefined);
+    });
+    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
+
+    const reload = vi.fn();
+    window.addEventListener('michi:reload-agent-status', reload);
+    try {
+      await act(async () => {
+        const rootId = (await result.current.store.createThread()) ?? '';
+        result.current.store.sendMessage(rootId, 'hello', { runtimeId: 'claude', modelId: 'sonnet' });
+      });
+      await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+      expect(reload).toHaveBeenCalledTimes(reloads);
+    } finally {
+      window.removeEventListener('michi:reload-agent-status', reload);
+    }
+  });
+
   it('clears the unread focus exemption when the focused pane is closed', async () => {
     const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
     await act(async () => {

@@ -226,3 +226,49 @@ for (const runtimeId of ['codex', 'claude', 'kiro']) {
     });
   });
 }
+
+function registerPlainRuntime(): string {
+  const id = 'plain-model-test';
+  registerRuntime({
+    ...runtime,
+    id,
+    label: 'Plain Model Test',
+    capabilities: { ...runtime.capabilities, providerModels: false, apiKeys: false },
+    async newSession(options: NewAgentSessionOptions) {
+      captured.push(options);
+      return { id: options.sessionId!, runtimeId: id, currentModelId: options.model, getHistory: () => [], getPendingAssistant: () => undefined, async *send() {}, async cancel() {} };
+    },
+  });
+  return id;
+}
+
+test('a pane send on a non-provider runtime records its model as the runtime last-used model', async () => {
+  const plainId = registerPlainRuntime();
+  // Config persists across tests in one run; start from a different model.
+  updateAgentConfig({ modelByRuntime: { [plainId]: 'flexible' } });
+  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId, modelId: 'limited' });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.lastUsedUpdated, true);
+  const cfg = getAgentConfig();
+  assert.equal(cfg.modelByRuntime[plainId], 'limited');
+  // Non-provider runtimes never gain a providerByRuntime entry.
+  assert.equal(cfg.providerByRuntime[plainId], undefined);
+  // Other runtimes' memory is untouched.
+  assert.equal(cfg.modelByRuntime[runtime.id], 'flexible');
+});
+
+test('an unchanged send reports no last-used update', async () => {
+  const plainId = registerPlainRuntime();
+  await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId, modelId: 'limited' });
+  const repeat = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId, modelId: 'limited' });
+  assert.equal(repeat.status, 200, JSON.stringify(repeat.body));
+  assert.equal(repeat.body.lastUsedUpdated, false);
+});
+
+test('switching back to a non-provider runtime resolves to its last-used model', async () => {
+  const plainId = registerPlainRuntime();
+  updateAgentConfig({ modelByRuntime: { [plainId]: 'limited' } });
+  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(captured[0].model, 'limited');
+});

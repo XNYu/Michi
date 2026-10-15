@@ -207,6 +207,12 @@ export interface EnsureSessionResult {
   providerId?: string | null;
   modelId?: string | null;
   reasoning?: AgentReasoning | null;
+  /**
+   * True when this send changed the runtime's remembered provider/model
+   * (agentStatus.providerByRuntime / modelByRuntime), so cached agent status
+   * is stale. Older gateways omit it.
+   */
+  lastUsedUpdated?: boolean;
   resumeStrategy: ResumeStrategy;
   resumeReason?: string;
 }
@@ -321,6 +327,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
     providerId: json.providerId ?? null,
     modelId: json.modelId ?? null,
     reasoning: json.reasoning ?? null,
+    lastUsedUpdated: json.lastUsedUpdated === true,
     resumeStrategy: (json.resumeStrategy ?? 'compatible') as ResumeStrategy,
     resumeReason: typeof json.resumeReason === 'string' ? json.resumeReason : undefined,
   };

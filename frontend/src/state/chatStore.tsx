@@ -1560,6 +1560,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         });
         if (ensured.sessionState) dispatch({ type: 'session-state', nodeId, state: ensured.sessionState });
         boundSessionsRef.current.add(nodeId);
+        // This send changed the runtime's remembered model. Reload status so
+        // other panes switching to that runtime land on it instead of a
+        // stale value from the last status load.
+        if (ensured.lastUsedUpdated) refreshAgentStatus();
 
         if ((ensured.resumeStrategy === 'live' || ensured.resumeStrategy === 'exact') && peerBlocks.length > 0) {
           // Existing hidden context stays intact, so newly linked peer context
@@ -1642,7 +1646,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         cancel();
       }
     },
-    [createSharedStreamHandlers, dispatch, handleTurnEnd],
+    [createSharedStreamHandlers, dispatch, handleTurnEnd, refreshAgentStatus],
   );
 
   // A spawn frame can be missed after its short replay window. The backend

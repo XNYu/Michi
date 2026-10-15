@@ -1478,12 +1478,16 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             }
             // Pane-level provider/model picks never touch /agent/options, so
             // remember what this conversation actually ran with. A new pane
-            // switched to this runtime then lands on the same pair instead of
-            // the built-in fallback. Primary-agent profiles are fixed by their
-            // definition and must not rewrite the user's own memory.
-            if (!primaryProfile && runtime.capabilities.providerModels && targetSignature.providerId) {
-                recordLastUsedProviderModel(runtimeId, targetSignature.providerId, targetSignature.modelId, michiUserId);
-            }
+            // switched to this runtime then lands on the same model instead
+            // of the built-in fallback. Provider runtimes record the provider
+            // too; the others record only the model. Primary-agent profiles
+            // are fixed by their definition and must not rewrite the user's
+            // own memory.
+            const lastUsedProvider = runtime.capabilities.providerModels ? targetSignature.providerId : null;
+            const lastUsedUpdated = !primaryProfile
+                && runtime.capabilities.models
+                && (!runtime.capabilities.providerModels || !!lastUsedProvider)
+                && recordLastUsedProviderModel(runtimeId, lastUsedProvider, targetSignature.modelId, michiUserId);
             log.info('chat', 'runtime session resolved', {
                 nodeId,
                 runtimeId: session.runtimeId,
@@ -1508,6 +1512,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 providerId: targetSignature.providerId,
                 modelId: targetSignature.modelId,
                 reasoning: targetSignature.reasoning,
+                lastUsedUpdated,
                 resumeFingerprint: null,
                 resumeStrategy,
                 resumeReason,
