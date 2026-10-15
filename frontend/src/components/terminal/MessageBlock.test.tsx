@@ -1,7 +1,7 @@
 // Locks the role-differentiation styling contract for MessageBlock.
-// User: right-aligned paper-card bubble with an inline overline label
-//   ("you · HH:MM") inside the card; surface + drop shadow + 72% max-width
-//   live in index.css (.terminal-message-user), not inline.
+// User: right-aligned paper-card bubble with no role/time label; surface +
+//   drop shadow + 72% max-width live in index.css (.terminal-message-user),
+//   not inline. The time shows only in the hover action row.
 // Assistant: flush-left, no border, no fill, "> michi" label above.
 // Asserts on inline style strings because jsdom doesn't resolve var()/color-mix()/calc().
 import { describe, expect, it, vi } from 'vitest';
@@ -52,14 +52,14 @@ function renderMessage(
 }
 
 describe('MessageBlock — role styling', () => {
-  it('user message labels itself with an inline "you" overline (no outer label)', () => {
+  it('user message carries no role/time label inside or above the card', () => {
     const { container } = renderMessage({ role: 'user', text: 'q?' });
     const block = container.querySelector('.terminal-message-user') as HTMLElement;
     expect(block).not.toBeNull();
-    const overline = block.querySelector('.bubble-overline') as HTMLElement;
-    expect(overline).not.toBeNull();
-    expect(overline.textContent).toMatch(/you/);
-    // The outer "$ you" sibling that the baseline bubble used is gone.
+    // The card itself marks the speaker; the time lives in the hover action row.
+    expect(block.querySelector('.bubble-overline')).toBeNull();
+    expect(block.textContent).toBe('q?');
+    // The outer "$ you" sibling that the baseline bubble used is gone too.
     const outerSibling = block.parentElement?.previousElementSibling as HTMLElement | null;
     expect(outerSibling?.textContent ?? '').not.toMatch(/^\$ you/);
   });

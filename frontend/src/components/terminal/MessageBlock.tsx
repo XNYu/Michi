@@ -1646,10 +1646,6 @@ function MessageBlockInner({
               wordBreak: 'break-word',
             }}
           >
-            <span className="bubble-overline">
-              <b>you</b>
-              {(() => { const t = formatMessageTime(m.createdAt); return t ? ` · ${t}` : ''; })()}
-            </span>
             {m.comments && m.comments.length > 0 && <CommentChips comments={m.comments} />}
             {m.quotedText && <QuoteChip text={m.quotedText} />}
             {m.attachments && m.attachments.length > 0 && (

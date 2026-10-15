@@ -721,11 +721,12 @@
   background-color: var(--shiki-dark-bg, var(--michi-code-token-bg, transparent));
 }
 
-/* User bubble · paper card. The "$ you" affordance moves inside the card as
-   an ALL-CAPS overline; the bubble itself reads as a warm-paper card kissed
-   with a hint of accent (4% mix), with a 2px accent right rule and a warm
-   drop shadow tinted by the accent so the lift feels of-a-piece with the
-   rule instead of a neutral gray cast.
+/* User bubble · quiet paper card. No role/time label: the card, its right
+   alignment and the 2px accent right rule already mark the speaker, and the
+   time shows in the hover action row (MessageActions). The bubble reads as a
+   warm-paper card kissed with a hint of accent (4% mix), with a warm drop
+   shadow tinted by the accent so the lift feels of-a-piece with the rule
+   instead of a neutral gray cast.
    Typography uses the !important rules so they beat the density-driven
    inline fontFamily/fontSize/lineHeight that MessageBlock sets. */
 .terminal-message-user {
@@ -734,7 +735,7 @@
   line-height: var(--message-body-leading) !important;
   position: relative;
   max-width: 72%;
-  padding: 12px 16px 13px;
+  padding: 9px 15px 10px;
   background: color-mix(in srgb, var(--term-accent) 4%, var(--term-surface));
   border-right: 2px solid var(--term-accent);
   box-shadow:
@@ -742,28 +743,8 @@
     0 1px 2px rgba(0, 0, 0, 0.03),
     0 6px 18px -10px color-mix(in srgb, var(--term-accent) 22%, transparent);
 }
-.terminal-message-user[data-density='dense'] { padding: 9px 14px 10px; }
-.terminal-message-user[data-density='compact'] { padding: 11px 16px 12px; }
-
-/* Overline label inside the card: ALL-CAPS mono in accent. Replaces the
-   outer "$ you" header that the legacy bubble printed above itself. */
-.terminal-message-user .bubble-overline {
-  display: block;
-  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, Menlo, monospace);
-  font-size: var(--fs-xs);
-  letter-spacing: var(--ls-caps-wide);
-  text-transform: uppercase;
-  margin-bottom: 4px;
-  color: var(--term-accent);
-  font-weight: 500;
-  /* Reset the .terminal-message font/size/leading !important rule above so
-     the overline reads at its own small size. */
-  line-height: 1 !important;
-}
-.terminal-message-user .bubble-overline b {
-  color: var(--term-accent);
-  font-weight: 500;
-}
+.terminal-message-user[data-density='dense'] { padding: 6px 13px 7px; }
+.terminal-message-user[data-density='compact'] { padding: 8px 15px 9px; }
 
 /* In-place edit state */
 .terminal-message-user-editing {
