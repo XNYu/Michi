@@ -46,6 +46,32 @@ function rowOrder(): string[] {
 
 const cellsOf = (id: string) => within(screen.getByTestId(`workspace-table-row-${id}`)).getAllByRole('cell');
 
+describe('TerminalWorkspaces — header controls', () => {
+  beforeEach(() => _resetForTest());
+
+  it('uses the shared primary Button and page search field', () => {
+    render(<TerminalWorkspaces onNav={vi.fn()} />);
+    const create = screen.getByRole('button', { name: '+ new workspace' });
+    expect(create.className).toContain('ui-btn--primary');
+    // No fill of its own: the colour is the shared recipe's (Send's accent).
+    expect(create.style.background).toBe('');
+
+    const search = screen.getByRole('searchbox', { name: 'Filter workspaces' });
+    expect(search.closest('label')!.className).toBe('ui-search');
+  });
+
+  it('clears the filter from the field\'s own clear button', () => {
+    render(<TerminalWorkspaces onNav={vi.fn()} />);
+    const search = screen.getByRole('searchbox', { name: 'Filter workspaces' }) as HTMLInputElement;
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
+    fireEvent.change(search, { target: { value: 'zeta' } });
+    expect(rowOrder()).toEqual(['ws-z']);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(search.value).toBe('');
+    expect(rowOrder().length).toBeGreaterThan(1);
+  });
+});
+
 describe('TerminalWorkspaces — row click', () => {
   beforeEach(() => _resetForTest());
 

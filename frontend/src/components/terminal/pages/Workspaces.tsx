@@ -12,6 +12,8 @@ import type { PageId } from '../../../state/commands';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import { getElectron } from '../../../lib/electronBridge';
 import { toast } from 'sonner';
+import { Search, X } from 'lucide-react';
+import { Button } from '../../ui/controls';
 
 function formatRelative(ts: number): string {
   if (!ts) return '—';
@@ -385,6 +387,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   }, [menu, projects, archiveProject, unarchiveProject, pinProject, unpinProject, deleteProject, changeFolder, onNav]);
 
   const [query, setQuery] = React.useState('');
+  const searchRef = React.useRef<HTMLInputElement>(null);
 
   const allCards = React.useMemo(() => {
     return projects
@@ -480,82 +483,32 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, justifyContent: 'flex-end' }}>
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                border: '1px solid var(--term-line)',
-                background: 'var(--term-surface)',
-                boxShadow: 'inset 0 1px 2px rgba(26,25,22,.06)',
-                padding: '0 8px',
-                height: 32,
-                minWidth: 220,
-                maxWidth: 320,
-                flex: '0 1 280px',
-              }}
-            >
-              <span style={{ color: 'var(--term-faint, var(--term-muted))', fontSize: 'var(--fs-sm)' }}>⌕</span>
+            {/* The shared page-search field and primary Button — the same
+                controls the Trash page's header uses. */}
+            <label className="ui-search" style={{ minWidth: 220, maxWidth: 320, flex: '0 1 280px' }}>
+              <Search size={14} aria-hidden="true" />
               <input
+                ref={searchRef}
                 type="search"
+                aria-label="Filter workspaces"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="filter workspaces, threads, paths…"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: 'none',
-                  background: 'transparent',
-                  outline: 'none',
-                  fontFamily: 'var(--ui-font)',
-                  fontSize: 'var(--fs-md)',
-                  color: 'var(--term-fg)',
-                  padding: 0,
-                  height: 28,
-                }}
               />
               {query && (
                 <button
                   type="button"
-                  onClick={() => setQuery('')}
                   aria-label="Clear"
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    color: 'var(--term-muted)',
-                    cursor: 'pointer',
-                    fontSize: 'var(--fs-xl)',
-                    lineHeight: 1,
-                    padding: 0,
-                  }}
+                  onClick={() => { setQuery(''); searchRef.current?.focus(); }}
                 >
-                  ×
+                  <X size={14} aria-hidden="true" />
                 </button>
               )}
-            </div>
-            <button
-              type="button"
-              onClick={openNew}
-              style={{
-                padding: '0 14px',
-                height: 32,
-                border: '1px solid var(--term-fg)',
-                background: 'var(--term-fg)',
-                color: 'var(--term-surface)',
-                fontFamily: 'var(--ui-font)',
-                fontSize: 'var(--fs-md)',
-                fontWeight: 600,
-                letterSpacing: 'var(--ls-wide)',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                boxShadow: '0 1px 3px rgba(26,25,22,.15)',
-                transition: 'transform var(--t-soft), box-shadow var(--t-soft)',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 3px 8px rgba(26,25,22,.2)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(26,25,22,.15)'; }}
-            >
+            </label>
+            {/* Same height as the search field beside it. */}
+            <Button variant="primary" onClick={openNew} style={{ height: 36, padding: '0 14px' }}>
               + new workspace
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -1086,23 +1039,9 @@ function EmptyState({ onNew }: { onNew: () => void }) {
         Workspaces hold all the threads, branches, and digests for one corner of your
         thinking. Make one for a project, a question, or whatever you keep coming back to.
       </p>
-      <button
-        type="button"
-        onClick={onNew}
-        style={{
-          padding: '10px 18px',
-          border: '1px solid var(--term-fg)',
-          background: 'var(--term-fg)',
-          color: 'var(--term-surface)',
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-md)',
-          fontWeight: 600,
-          letterSpacing: 'var(--ls-wide)',
-          cursor: 'pointer',
-        }}
-      >
+      <Button variant="primary" onClick={onNew} style={{ padding: '10px 18px' }}>
         + new workspace
-      </button>
+      </Button>
     </div>
   );
 }

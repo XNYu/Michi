@@ -79,6 +79,11 @@ describe.each(Object.entries(PALETTES))('%s palette readability', (_name, p) => 
     expect(contrastRatio(p.bg, p.digest)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it('reads the primary button ink (the surface) on its accent fill', () => {
+    // .ui-btn--primary / .t-action-btn.is-primary: Send and every text Button.
+    expect(contrastRatio(p.surface, p.accent)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it('reads accent text on its pale accent fill', () => {
     // Floor is 4.0, not AA's 4.5: Bone's rust on its chip fill sits at 4.1:1.
     expect(contrastRatio(p.accent, p.accentF)).toBeGreaterThanOrEqual(4.0);

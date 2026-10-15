@@ -2581,22 +2581,9 @@ html[data-vibrancy="on"],
 .t-action-btn.is-outline {
   color: var(--term-mid);
 }
-.t-action-btn.is-primary {
-  background: var(--term-accent);
-  color: var(--term-surface);
-}
-.t-action-btn.is-primary:hover {
-  background: color-mix(in srgb, var(--term-accent) 88%, black);
-}
-/* A disabled primary says "nothing to send yet", not "a paler Send": neutral
-   fill and ink at full opacity instead of the accent faded to 40%, which read
-   as an enabled secondary button and left the arrow at under 2:1. */
-.t-action-btn.is-primary:disabled,
-.t-action-btn.is-primary[aria-disabled="true"] {
-  opacity: 1;
-  background: var(--term-alt2);
-  color: var(--term-muted);
-}
+/* .t-action-btn.is-primary — its fill, hover and disabled states are declared
+   once, together with the text Button, under ".ui-btn--primary" below, so Send
+   and every other solid accent button stay the same button. */
 .t-action-btn.is-queue {
   background: var(--term-surface);
   color: var(--term-accent);
@@ -3582,15 +3569,23 @@ html[data-vibrancy="on"],
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* primary — accent fill */
-.ui-btn--primary {
-  border-color: var(--term-accent);
+/* primary — accent fill. ONE recipe for every solid accent button: the text
+   Button and the composer's Send (.t-action-btn.is-primary). A coloured button
+   is the same button wherever it sits — don't hand-roll another fill (fg,
+   digest, …) at a call site; use <Button variant="primary">. */
+.ui-btn--primary,
+.t-action-btn.is-primary {
   background: var(--term-accent);
-  color: var(--on-accent);
+  color: var(--term-surface);
+}
+.ui-btn--primary {
+  /* The fill runs under the border, as it does on Send. */
+  border-color: transparent;
   font-weight: 600;
 }
-.ui-btn--primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--term-accent) 88%, var(--term-fg));
+.ui-btn--primary:hover:not(:disabled),
+.t-action-btn.is-primary:hover {
+  background: color-mix(in srgb, var(--term-accent) 88%, black);
 }
 /* ghost — no border, quiet */
 .ui-btn--ghost {
@@ -3623,6 +3618,19 @@ html[data-vibrancy="on"],
 .ui-btn--primary[data-danger='true']:hover:not(:disabled) {
   background: color-mix(in srgb, var(--term-danger) 88%, var(--term-fg));
 }
+/* A disabled primary says "nothing to do yet", not "a paler button": neutral
+   fill and ink at full opacity instead of the accent faded out, which read as
+   an enabled secondary button and left the label at under 2:1. Declared after
+   hover and danger so it wins over both. */
+.ui-btn--primary:disabled,
+.ui-btn--primary[data-danger='true']:disabled,
+.t-action-btn.is-primary:disabled,
+.t-action-btn.is-primary[aria-disabled="true"] {
+  opacity: 1;
+  border-color: transparent;
+  background: var(--term-alt2);
+  color: var(--term-muted);
+}
 
 /* ── Text input / select primitive · .ui-input / .ui-select ──────────────────
    The --term-alt + --term-line recipe that recurred across ~13 files, with one
@@ -3653,6 +3661,57 @@ html[data-vibrancy="on"],
 }
 .ui-input::placeholder {
   color: var(--term-faint);
+}
+
+/* ── Page-level search field · .ui-search ────────────────────────────────────
+   A <label> wrapping a leading icon, the input and an optional clear button:
+   the filter in a full page's header. Same recipe as the Trash page's search
+   (Trash.css keeps its own copy for its responsive overrides). */
+.ui-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  color: var(--term-muted);
+  background: var(--term-surface);
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+}
+.ui-search:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+.ui-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--term-fg);
+  font: var(--fs-md) var(--ui-font);
+}
+.ui-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.ui-search input::placeholder {
+  color: var(--term-muted);
+}
+.ui-search button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 28px;
+  margin-right: -5px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
 }
 
 /* ── Shared drawer / modal scrim + panel classes ─────────────────────────────
