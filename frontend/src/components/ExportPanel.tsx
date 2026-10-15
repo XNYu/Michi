@@ -23,7 +23,7 @@ const PANEL_PROSE =
   '[&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) ' +
   '[&_p]:text-(--term-mid) [&_li]:text-(--term-mid) ' +
   '[&_strong]:text-(--term-fg) [&_a]:text-(--term-accent) ' +
-  '[&_code]:text-(--term-fg) [&_code]:bg-(--term-alt) [&_code]:px-1 [&_code]:rounded';
+  '[&_code]:text-(--term-fg) [&_code]:bg-(--term-alt) [&_code]:px-1 [&_code]:rounded-(--ui-radius-sm)';
 
 export default function ExportPanel({ open, state, onClose, onAbort, onSave }: ExportPanelProps) {
   const headerTitle = state.kind === 'idle' ? 'Export' : `Export · ${state.exportTitle}`;
@@ -49,7 +49,7 @@ export default function ExportPanel({ open, state, onClose, onAbort, onSave }: E
             style={{
               padding: '40px 18px',
               textAlign: 'center',
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               color: 'var(--term-muted)',
               fontStyle: 'italic',
             }}
@@ -81,12 +81,12 @@ export default function ExportPanel({ open, state, onClose, onAbort, onSave }: E
                 />
               ))}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--term-mid)' }}>
+            <div style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)' }}>
               Preparing export…
             </div>
             <div
               style={{
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 color: 'var(--term-muted)',
                 textAlign: 'center',
                 maxWidth: 320,
@@ -102,7 +102,7 @@ export default function ExportPanel({ open, state, onClose, onAbort, onSave }: E
           <div style={{ padding: 18 }}>
             <div
               style={{
-                fontSize: 12,
+                fontSize: 'var(--fs-md)',
                 fontWeight: 600,
                 color: 'var(--term-danger)',
                 marginBottom: 8,
@@ -112,7 +112,7 @@ export default function ExportPanel({ open, state, onClose, onAbort, onSave }: E
             </div>
             <div
               style={{
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 color: 'var(--term-muted)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',

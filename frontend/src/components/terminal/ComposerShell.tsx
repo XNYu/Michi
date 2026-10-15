@@ -123,12 +123,12 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
           boxShadow: isFocused
             ? 'var(--term-composer-shadow, 0 1px 0 rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.10))'
             : 'var(--term-composer-shadow-muted, 0 1px 0 rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.06))',
-          transition: 'background 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out',
+          transition: 'background var(--t-soft) ease-out, border-color var(--t-soft) ease-out, box-shadow var(--t-soft) ease-out',
           // Toolbar chips and action buttons inherit this font size. Defaults
           // to 11.5px (matches the historical hard-coded value) but Home
           // overrides via --composer-chrome-size to scale the whole shell up
           // for its hero composer.
-          fontSize: 'var(--composer-chrome-size, 11.5px)',
+          fontSize: 'var(--fs-md)',
           display: 'flex',
           flexDirection: 'column',
         }}

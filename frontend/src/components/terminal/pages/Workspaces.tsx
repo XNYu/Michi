@@ -350,9 +350,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               style={{
                 margin: 0,
                 fontFamily: 'var(--ui-font)',
-                fontSize: 21,
-                fontWeight: 650,
-                letterSpacing: '-.01em',
+                fontSize: 'var(--fs-4xl)',
+                fontWeight: 700,
+                letterSpacing: 'var(--ls-tight)',
                 color: 'var(--term-fg)',
               }}
             >
@@ -360,7 +360,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             </h1>
             <span style={{
               fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               color: 'var(--term-muted)',
             }}>
               {allCards.length}
@@ -383,7 +383,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                 flex: '0 1 280px',
               }}
             >
-              <span style={{ color: 'var(--term-faint, var(--term-muted))', fontSize: 11 }}>⌕</span>
+              <span style={{ color: 'var(--term-faint, var(--term-muted))', fontSize: 'var(--fs-sm)' }}>⌕</span>
               <input
                 type="search"
                 value={query}
@@ -396,7 +396,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                   background: 'transparent',
                   outline: 'none',
                   fontFamily: 'var(--ui-font)',
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   color: 'var(--term-fg)',
                   padding: 0,
                   height: 28,
@@ -412,7 +412,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                     background: 'transparent',
                     color: 'var(--term-muted)',
                     cursor: 'pointer',
-                    fontSize: 14,
+                    fontSize: 'var(--fs-xl)',
                     lineHeight: 1,
                     padding: 0,
                   }}
@@ -431,13 +431,13 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                 background: 'var(--term-fg)',
                 color: 'var(--term-surface)',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 12,
+                fontSize: 'var(--fs-md)',
                 fontWeight: 600,
-                letterSpacing: '.02em',
+                letterSpacing: 'var(--ls-wide)',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
                 boxShadow: '0 1px 3px rgba(26,25,22,.15)',
-                transition: 'transform 130ms, box-shadow 130ms',
+                transition: 'transform var(--t-soft), box-shadow var(--t-soft)',
               }}
               onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 3px 8px rgba(26,25,22,.2)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(26,25,22,.15)'; }}
@@ -455,9 +455,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             flexWrap: 'wrap',
             marginTop: 12,
             fontFamily: 'var(--ui-font)',
-            fontSize: 11.5,
+            fontSize: 'var(--fs-md)',
             color: 'var(--term-muted)',
-            letterSpacing: '.04em',
+            letterSpacing: 'var(--ls-wide)',
           }}
         >
           <Metric label="nodes" value={totals.nodes} />
@@ -472,7 +472,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
           />
           <span style={{ flex: 1 }} />
           {totals.lastTs > 0 && (
-            <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 10.5 }}>
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 'var(--fs-sm)' }}>
               last activity{' '}
               <span style={{ color: 'var(--term-fg)' }}>{formatRelative(totals.lastTs)} ago</span>
             </span>
@@ -489,7 +489,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               padding: '40px 20px',
               textAlign: 'center',
               color: 'var(--term-muted)',
-              fontSize: 13,
+              fontSize: 'var(--fs-lg)',
               border: '1px solid var(--term-line)',
               background: 'var(--term-surface)',
               boxShadow: '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
@@ -612,7 +612,7 @@ function WorkspaceCard({
         boxShadow: hover
           ? '0 2px 4px rgba(26,25,22,.05), 0 18px 40px rgba(26,25,22,.11)'
           : '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
-        transition: 'box-shadow 150ms cubic-bezier(.2,0,.4,1), transform 150ms cubic-bezier(.2,0,.4,1)',
+        transition: 'box-shadow var(--t-soft) cubic-bezier(.2,0,.4,1), transform var(--t-soft) cubic-bezier(.2,0,.4,1)',
         transform: hover ? 'translateY(-3px)' : 'none',
       }}
     >
@@ -624,11 +624,12 @@ function WorkspaceCard({
             height: 34,
             background: accent,
             border: 'none',
+            // eslint-disable-next-line no-restricted-syntax -- fixed workspace badge palette, not theme-driven
             color: '#fff',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             fontWeight: 700,
             fontFamily: 'var(--ui-font)',
             flexShrink: 0,
@@ -653,7 +654,7 @@ function WorkspaceCard({
               style={{
                 width: '100%',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 16,
+                fontSize: 'var(--fs-2xl)',
                 lineHeight: 1.25,
                 fontWeight: 600,
                 color: 'var(--term-fg)',
@@ -669,7 +670,7 @@ function WorkspaceCard({
             <div
               style={{
                 fontFamily: 'var(--ui-font)',
-                fontSize: 16,
+                fontSize: 'var(--fs-2xl)',
                 lineHeight: 1.25,
                 fontWeight: 600,
                 color: 'var(--term-fg)',
@@ -685,14 +686,14 @@ function WorkspaceCard({
           )}
           <div
             style={{
-              fontSize: 10.5,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--term-muted)',
               marginTop: 3,
               fontFamily: w.cwd ? 'var(--font-mono, ui-monospace, monospace)' : 'var(--ui-font)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
-              letterSpacing: w.cwd ? '0' : '.04em',
+              letterSpacing: w.cwd ? 0 : 'var(--ls-wide)',
               textTransform: w.cwd ? 'none' : 'uppercase',
             }}
           >
@@ -708,11 +709,11 @@ function WorkspaceCard({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,
-                fontSize: 9.5,
+                fontSize: 'var(--fs-xs)',
                 color: 'var(--term-select, var(--term-accent))',
                 fontWeight: 700,
                 textTransform: 'uppercase',
-                letterSpacing: '.08em',
+                letterSpacing: 'var(--ls-caps)',
               }}
             >
               <Dot color="var(--term-select, var(--term-accent))" size={6} pulse />
@@ -754,7 +755,7 @@ function WorkspaceCard({
                   gap: 8,
                   padding: '4px 0',
                   borderTop: i === 0 ? 'none' : '1px solid var(--term-line)',
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   color: 'var(--term-fg)',
                 }}
               >
@@ -773,8 +774,8 @@ function WorkspaceCard({
                 </span>
                 <span
                   style={{
-                    fontSize: 10,
-                    color: 'var(--term-faint, var(--term-muted))',
+                    fontSize: 'var(--fs-xs)',
+                    color: 'var(--term-muted)',
                     fontFamily: 'var(--font-mono, ui-monospace, monospace)',
                     flexShrink: 0,
                   }}
@@ -793,7 +794,7 @@ function WorkspaceCard({
                   gap: 8,
                   padding: '4px 0',
                   borderTop: i === 0 ? 'none' : '1px solid var(--term-line)',
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   color: 'var(--term-fg)',
                 }}
               >
@@ -809,8 +810,8 @@ function WorkspaceCard({
                 </span>
                 <span
                   style={{
-                    fontSize: 10,
-                    color: 'var(--term-faint, var(--term-muted))',
+                    fontSize: 'var(--fs-xs)',
+                    color: 'var(--term-muted)',
                     fontFamily: 'var(--font-mono, ui-monospace, monospace)',
                     flexShrink: 0,
                   }}
@@ -823,8 +824,8 @@ function WorkspaceCard({
         {!showMatches && w.threads.length === 0 && (
           <li
             style={{
-              fontSize: 11.5,
-              color: 'var(--term-faint, var(--term-muted))',
+              fontSize: 'var(--fs-md)',
+              color: 'var(--term-muted)',
               fontStyle: 'italic',
               padding: '4px 0',
             }}
@@ -848,8 +849,8 @@ function WorkspaceCard({
         <Sparkline values={w.spark} color={accent} />
         <span
           style={{
-            fontSize: 9.5,
-            color: 'var(--term-faint, var(--term-muted))',
+            fontSize: 'var(--fs-xs)',
+            color: 'var(--term-muted)',
             fontFamily: 'var(--font-mono, ui-monospace, monospace)',
           }}
         >
@@ -876,12 +877,12 @@ function WorkspaceCard({
           background: 'transparent',
           color: 'var(--term-muted)',
           opacity: hover ? 1 : 0.45,
-          transition: 'opacity 100ms, background 100ms, border-color 100ms',
+          transition: 'opacity var(--t-soft), background var(--t-soft), border-color var(--t-soft)',
           cursor: 'pointer',
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: 16,
+          fontSize: 'var(--fs-2xl)',
           lineHeight: 1,
           padding: 0,
         }}
@@ -908,9 +909,9 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
       <span
         style={{
           color: 'var(--term-muted)',
-          letterSpacing: '.06em',
+          letterSpacing: 'var(--ls-wide)',
           textTransform: 'uppercase',
-          fontSize: 9.5,
+          fontSize: 'var(--fs-xs)',
           fontFamily: 'var(--ui-font)',
         }}
       >
@@ -921,7 +922,7 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
           fontFamily: 'var(--font-mono, ui-monospace, monospace)',
           color: color || 'var(--term-fg)',
           fontWeight: 500,
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         {value}
@@ -939,19 +940,19 @@ function Metric({ label, value, color, pulse }: { label: string; value: number; 
           fontFamily: 'var(--font-mono, ui-monospace, monospace)',
           fontVariantNumeric: 'tabular-nums',
           color: color || 'var(--term-fg)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           fontWeight: 600,
         }}
       >
         {value}
       </span>
-      <span style={{ textTransform: 'uppercase', letterSpacing: '.08em', fontSize: 9 }}>{label}</span>
+      <span style={{ textTransform: 'uppercase', letterSpacing: 'var(--ls-caps)', fontSize: 'var(--fs-2xs)' }}>{label}</span>
     </span>
   );
 }
 
 function MetricSep() {
-  return <span style={{ color: 'var(--term-line)', fontSize: 14 }} aria-hidden>│</span>;
+  return <span style={{ color: 'var(--term-line)', fontSize: 'var(--fs-xl)' }} aria-hidden>│</span>;
 }
 
 function Highlight({ text, q }: { text: string; q: string }) {
@@ -972,7 +973,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
           background: 'color-mix(in srgb, var(--term-accent) 28%, transparent)',
           color: 'inherit',
           padding: '0 1px',
-          borderRadius: 1,
+          borderRadius: 'var(--ui-radius-sm)',
         }}
       >
         {text.slice(hit, hit + q.length)}
@@ -999,7 +1000,7 @@ function EmptyState({ onNew }: { onNew: () => void }) {
       <div
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 18,
+          fontSize: 'var(--fs-3xl)',
           lineHeight: 1.3,
           fontWeight: 600,
           color: 'var(--term-fg)',
@@ -1011,7 +1012,7 @@ function EmptyState({ onNew }: { onNew: () => void }) {
       <p
         style={{
           margin: '0 0 20px',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-muted)',
           lineHeight: 1.6,
         }}
@@ -1028,9 +1029,9 @@ function EmptyState({ onNew }: { onNew: () => void }) {
           background: 'var(--term-fg)',
           color: 'var(--term-surface)',
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           fontWeight: 600,
-          letterSpacing: '.02em',
+          letterSpacing: 'var(--ls-wide)',
           cursor: 'pointer',
         }}
       >

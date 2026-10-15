@@ -4,6 +4,7 @@ import { useAuthSession } from '../../../services/auth';
 import { signOutAndReset } from '../../../services/signOut';
 import { useChatStore, useNodesSelector } from '../../../state/chatStore';
 import { usePrefs, type TerminalPalette } from '../../../state/prefs';
+import { PALETTES } from '../tokens';
 import {
   saveProviderKey,
   clearProviderKey,
@@ -626,12 +627,10 @@ function KeyRow({
 
 // ─── account settings ──────────────────────────────────────────────────────
 
-const PALETTE_SWATCHES: Array<{ id: TerminalPalette; title: string; from: string; to: string }> = [
-  { id: 'bone',    title: 'Bone',    from: '#fdfdfc', to: '#b8451f' },
-  { id: 'slate',   title: 'Slate',   from: '#f3f4f6', to: '#1a4d8f' },
-  { id: 'monokai', title: 'Monokai', from: '#272822', to: '#a6e22e' },
-  { id: 'gruvbox', title: 'Gruvbox', from: '#282828', to: '#fabd2f' },
-];
+// Derived from the palette tokens so the preview can't drift from the real canvas/accent.
+const PALETTE_SWATCHES: Array<{ id: TerminalPalette; title: string; from: string; to: string }> = (
+  [['bone', 'Bone'], ['slate', 'Slate'], ['monokai', 'Monokai'], ['gruvbox', 'Gruvbox']] as const
+).map(([id, title]) => ({ id, title, from: PALETTES[id].bg, to: PALETTES[id].accent }));
 
 function AccountSettings({
   displayName,
@@ -758,25 +757,15 @@ function GoogleGlyph() {
 function ProfilePageStyles() {
   return (
     <style>{`
+      /* --fg, --fg-muted, --fg-subtle, --surface*, --line*, --accent*, --danger
+         and --ok come from the global aliases in index.css, with the same
+         meaning as everywhere else (fg-muted = term-mid, fg-subtle =
+         term-muted). Only the Profile-specific names are defined here. */
       .profile-page {
-        --app-bg: var(--term-page-bg, var(--term-bg, #fdfdfc));
-        --app-bg-muted: var(--term-bg-muted, var(--term-alt, #ede9e4));
-        --surface: var(--term-surface, #ffffff);
-        --surface-alt: var(--term-alt, #ede9e4);
-        --surface-hover: var(--term-hover-bg, var(--term-alt, #f3f0eb));
-        --fg: var(--term-fg, #1c1917);
-        --fg-muted: var(--term-muted, #78716c);
-        --fg-subtle: var(--term-faint, #c4bdb7);
-        --line: var(--term-line, #e7e3de);
-        --line-strong: var(--term-line-s, #d6d0ca);
-        --accent: var(--term-accent, #b85d17);
-        --accent-fg: var(--term-accent-fg, #ffffff);
-        --accent-soft: var(--term-accent-f, #f4dccf);
-        --accent-tint: var(--term-accent-f, #fef3db);
-        --digest: var(--term-digest, #2f6b4e);
-        --digest-f: var(--term-digest-f, #d7e7df);
-        --danger: var(--term-danger, #a8261a);
-        --ok: var(--term-ok, #2f6b4e);
+        --app-bg-muted: var(--term-alt);
+        --accent-tint: var(--term-accent-f);
+        --digest: var(--term-digest);
+        --digest-f: var(--term-digest-f);
       }
 
       .profile-shell {
@@ -796,14 +785,14 @@ function ProfilePageStyles() {
       /* sidenav — sharp, left-accent active state */
       .profile-sidenav { padding: 14px 0; position: sticky; top: 0; align-self: start; display: flex; flex-direction: column; gap: 22px; }
       .profile-sidenav h4 {
-        font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+        font-size: var(--fs-xs); letter-spacing: var(--ls-caps-wide); text-transform: uppercase;
         color: var(--fg-subtle); font-weight: 500; margin: 0 0 6px 4px;
         font-family: var(--ui-font);
       }
       .profile-sidenav__items { display: flex; flex-direction: column; }
       .profile-sidenav__item {
         display: flex; align-items: center; gap: 9px; padding: 5px 8px 5px 4px;
-        font-family: var(--ui-font); font-size: 12.5px;
+        font-family: var(--ui-font); font-size: var(--fs-lg);
         color: var(--fg-muted); cursor: pointer;
         transition: background var(--t-quick), color var(--t-quick);
         text-decoration: none;
@@ -815,12 +804,12 @@ function ProfilePageStyles() {
         border-left-color: var(--accent);
       }
       .profile-sidenav__caret {
-        width: 8px; color: var(--accent); font-size: 10px;
+        width: 8px; color: var(--accent); font-size: var(--fs-xs);
         display: inline-block; text-align: center;
       }
       .profile-sidenav__item svg { width: 14px; height: 14px; opacity: 0.85; flex-shrink: 0; }
       .profile-sidenav__count {
-        margin-left: auto; font-size: 10px; color: var(--fg-subtle);
+        margin-left: auto; font-size: var(--fs-xs); color: var(--fg-subtle);
         font-variant-numeric: tabular-nums;
         padding: 0 4px; border: 1px solid var(--line);
       }
@@ -850,8 +839,8 @@ function ProfilePageStyles() {
       .phero__avatar--initials {
         display: inline-flex; align-items: center; justify-content: center;
         background: var(--accent); color: var(--accent-fg);
-        font-family: var(--ui-font); font-weight: 600; font-size: 20px;
-        letter-spacing: .02em;
+        font-family: var(--ui-font); font-weight: 600; font-size: var(--fs-4xl);
+        letter-spacing: var(--ls-wide);
       }
       .phero__avatar--initials::after {
         content: ''; position: absolute; inset: 3px;
@@ -861,20 +850,20 @@ function ProfilePageStyles() {
       .phero__info { min-width: 0; }
       .phero__name {
         font-family: var(--ui-font);
-        font-size: 22px; font-weight: 500; letter-spacing: -.01em;
+        font-size: var(--fs-4xl); font-weight: 500; letter-spacing: var(--ls-tight);
         color: var(--fg); margin: 0 0 6px; line-height: 1.15;
       }
       .phero__meta {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-        font-family: var(--ui-font); font-size: 12px; color: var(--fg-muted);
+        font-family: var(--ui-font); font-size: var(--fs-md); color: var(--fg-muted);
       }
       .phero__field { display: inline-flex; align-items: baseline; gap: 6px; }
       .phero__k {
-        color: var(--fg-subtle); font-size: 10.5px;
-        letter-spacing: .08em; text-transform: uppercase;
+        color: var(--fg-subtle); font-size: var(--fs-sm);
+        letter-spacing: var(--ls-caps); text-transform: uppercase;
       }
       .phero__v { color: var(--fg); }
-      .phero__sep { color: var(--fg-subtle); }
+      .phero__sep { color: var(--term-faint); }
       .phero__right {
         display: inline-flex; align-items: center; gap: 10px;
         flex-shrink: 0;
@@ -884,22 +873,22 @@ function ProfilePageStyles() {
         padding: 5px 9px;
         border: 1px solid var(--accent-soft); background: var(--accent-soft);
         color: var(--accent);
-        font-family: var(--ui-font); font-size: 11px; white-space: nowrap;
+        font-family: var(--ui-font); font-size: var(--fs-sm); white-space: nowrap;
       }
       .phero__streak b { color: var(--fg); font-weight: 500; }
       .phero__streak-dot {
         width: 6px; height: 6px;
-        border-radius: 99px; /* the only intentional radius */
+        border-radius: var(--ui-radius-pill); /* the only intentional radius */
         background: var(--accent);
       }
       .phero__signout {
         background: transparent; color: var(--fg-muted);
         border: 1px solid var(--line);
         padding: 5px 12px;
-        font-family: var(--ui-font); font-size: 11px;
-        letter-spacing: .04em;
+        font-family: var(--ui-font); font-size: var(--fs-sm);
+        letter-spacing: var(--ls-wide);
         cursor: pointer; white-space: nowrap;
-        transition: color .12s, border-color .12s, background .12s;
+        transition: color var(--t-soft), border-color var(--t-soft), background var(--t-soft);
       }
       .phero__signout:hover {
         color: var(--accent); border-color: var(--accent);
@@ -913,8 +902,8 @@ function ProfilePageStyles() {
       }
       .heatmap-card__title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; flex: 1; }
       .heatmap-card__title h3 {
-        font-family: var(--ui-font); font-size: 12px; font-weight: 600;
-        letter-spacing: .16em; text-transform: uppercase;
+        font-family: var(--ui-font); font-size: var(--fs-md); font-weight: 600;
+        letter-spacing: var(--ls-caps-wide); text-transform: uppercase;
         margin: 0; color: var(--fg); white-space: nowrap;
         display: flex; align-items: center; gap: 10px;
       }
@@ -924,7 +913,7 @@ function ProfilePageStyles() {
       }
       .heatmap-card__title em {
         font-family: var(--ui-font); font-style: normal;
-        font-size: 11.5px; color: var(--fg-muted);
+        font-size: var(--fs-md); color: var(--fg-muted);
       }
       .seg-toggle {
         display: inline-flex;
@@ -933,10 +922,10 @@ function ProfilePageStyles() {
       }
       .seg-toggle button {
         border: 0; background: transparent;
-        font-family: var(--ui-font); font-size: 11px;
+        font-family: var(--ui-font); font-size: var(--fs-sm);
         color: var(--fg-muted); padding: 5px 12px; cursor: pointer;
         border-right: 1px solid var(--line);
-        text-transform: lowercase; letter-spacing: .02em;
+        text-transform: lowercase; letter-spacing: var(--ls-wide);
         transition: color var(--t-quick), background var(--t-quick);
       }
       .seg-toggle button:last-child { border-right: 0; }
@@ -947,7 +936,7 @@ function ProfilePageStyles() {
       .heatmap { display: grid; grid-template-columns: 28px 1fr; gap: 6px; align-items: start; }
       .heatmap__day-labels {
         display: grid; grid-template-rows: repeat(7, 1fr);
-        font-family: var(--ui-font); font-size: 10px; color: var(--fg-subtle);
+        font-family: var(--ui-font); font-size: var(--fs-xs); color: var(--fg-subtle);
       }
       .heatmap__day-labels span:nth-child(odd) { visibility: hidden; }
       .heatmap__day-labels span { height: 13px; line-height: 13px; }
@@ -974,13 +963,13 @@ function ProfilePageStyles() {
       .heatmap__cell.is-future { opacity: 0.25; }
       .heatmap__legend {
         display: flex; justify-content: space-between; align-items: center;
-        margin-top: 10px; font-family: var(--ui-font); font-size: 11px; color: var(--fg-muted);
+        margin-top: 10px; font-family: var(--ui-font); font-size: var(--fs-sm); color: var(--fg-muted);
         flex-wrap: wrap; gap: 8px;
       }
       .heatmap__legend b { color: var(--fg); font-weight: 500; }
       .heatmap__legend-scale {
         display: flex; align-items: center; gap: 4px;
-        font-size: 10.5px; color: var(--fg-subtle);
+        font-size: var(--fs-sm); color: var(--fg-subtle);
       }
       .heatmap__legend-scale .heatmap__cell { width: 11px; height: 11px; }
 
@@ -991,8 +980,8 @@ function ProfilePageStyles() {
         flex-wrap: wrap; margin-bottom: 16px;
       }
       .profile-section__head h2 {
-        font-family: var(--ui-font); font-size: 12px; font-weight: 600;
-        letter-spacing: .16em; text-transform: uppercase;
+        font-family: var(--ui-font); font-size: var(--fs-md); font-weight: 600;
+        letter-spacing: var(--ls-caps-wide); text-transform: uppercase;
         margin: 0; color: var(--fg); white-space: nowrap;
         display: flex; align-items: center; gap: 10px;
       }
@@ -1001,11 +990,11 @@ function ProfilePageStyles() {
         width: 4px; height: 12px; background: var(--accent);
       }
       .profile-section__meta {
-        font-family: var(--ui-font); font-size: 11.5px; color: var(--fg-muted);
+        font-family: var(--ui-font); font-size: var(--fs-md); color: var(--fg-muted);
         flex: 1; min-width: 0;
       }
       .profile-section__count {
-        font-size: 11px; color: var(--fg-subtle);
+        font-size: var(--fs-sm); color: var(--fg-subtle);
         font-variant-numeric: tabular-nums;
         padding: 2px 8px; border: 1px solid var(--line);
         font-family: var(--ui-font);
@@ -1014,7 +1003,7 @@ function ProfilePageStyles() {
       .profile-empty {
         padding: 22px; background: var(--surface);
         border: 1px solid var(--line);
-        font-family: var(--ui-font); font-size: 12.5px; color: var(--fg-muted);
+        font-family: var(--ui-font); font-size: var(--fs-lg); color: var(--fg-muted);
         text-align: center;
       }
 
@@ -1028,8 +1017,8 @@ function ProfilePageStyles() {
         margin-top: 12px;
       }
       .keys-add__label {
-        font-family: var(--ui-font); font-size: 11px;
-        letter-spacing: .04em; text-transform: uppercase;
+        font-family: var(--ui-font); font-size: var(--fs-sm);
+        letter-spacing: var(--ls-wide); text-transform: uppercase;
         color: var(--fg-subtle);
       }
       .keys-add__select {
@@ -1037,7 +1026,7 @@ function ProfilePageStyles() {
         background: var(--surface); color: var(--fg);
         border: 1px solid var(--line);
         padding: 8px 10px;
-        font-family: var(--ui-font); font-size: 12.5px;
+        font-family: var(--ui-font); font-size: var(--fs-lg);
         cursor: pointer;
       }
       .keys-add__select:hover { border-color: var(--accent); }
@@ -1053,11 +1042,11 @@ function ProfilePageStyles() {
       .key-row__icon {
         width: 28px; height: 28px;
         display: inline-flex; align-items: center; justify-content: center;
-        font-family: var(--ui-font); font-size: 13px; font-weight: 600;
+        font-family: var(--ui-font); font-size: var(--fs-lg); font-weight: 600;
         border: 1px solid var(--line);
         color: var(--fg);
       }
-      .key-row.is-missing .key-row__icon { color: var(--fg-subtle); }
+      .key-row.is-missing .key-row__icon { color: var(--term-faint); }
       .key-row__icon--anthropic,
       .key-row__icon--openai,
       .key-row__icon--openrouter,
@@ -1067,20 +1056,20 @@ function ProfilePageStyles() {
         display: flex; align-items: center; gap: 10px;
         font-family: var(--ui-font); margin-bottom: 4px; flex-wrap: wrap;
       }
-      .key-row__label { font-size: 13px; font-weight: 500; color: var(--fg); }
+      .key-row__label { font-size: var(--fs-lg); font-weight: 500; color: var(--fg); }
       .key-row__tag {
-        font-family: var(--ui-font); font-size: 10.5px;
-        letter-spacing: .04em; font-weight: 500;
+        font-family: var(--ui-font); font-size: var(--fs-sm);
+        letter-spacing: var(--ls-wide); font-weight: 500;
       }
       .key-row__tag.is-ok { color: var(--accent); }
       .key-row__tag.is-muted { color: var(--fg-subtle); }
       .key-row__env {
-        font-family: var(--ui-font); font-size: 10.5px;
-        color: var(--fg-subtle); letter-spacing: .04em;
+        font-family: var(--ui-font); font-size: var(--fs-sm);
+        color: var(--fg-subtle); letter-spacing: var(--ls-wide);
         padding: 1px 6px; border: 1px solid var(--line);
       }
       .key-row__sub {
-        font-family: var(--ui-font); font-size: 11.5px; color: var(--fg-muted);
+        font-family: var(--ui-font); font-size: var(--fs-md); color: var(--fg-muted);
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
         min-height: 18px;
       }
@@ -1089,7 +1078,7 @@ function ProfilePageStyles() {
         padding: 1px 7px; color: var(--fg-muted);
         border: 1px solid var(--line);
       }
-      .key-row__sep { color: var(--fg-subtle); }
+      .key-row__sep { color: var(--term-faint); }
       .key-row__link { color: var(--accent); text-decoration: none; }
       .key-row__link:hover { text-decoration: underline; }
       .key-row__editor {
@@ -1101,11 +1090,11 @@ function ProfilePageStyles() {
         flex: 1; min-width: 200px; height: 26px; padding: 0 8px;
         border: 1px solid var(--line-strong);
         background: var(--app-bg);
-        font-family: var(--ui-font); font-size: 12px;
+        font-family: var(--ui-font); font-size: var(--fs-md);
         color: var(--fg); outline: none;
       }
       .key-row__input:focus { border-color: var(--accent); }
-      .key-row__error { font-family: var(--ui-font); font-size: 11px; color: var(--danger); margin-top: 6px; }
+      .key-row__error { font-family: var(--ui-font); font-size: var(--fs-sm); color: var(--danger); margin-top: 6px; }
       .key-row__actions { display: flex; gap: 4px; align-items: center; }
 
       /* form grid (account settings) — sharp, bordered stack */
@@ -1117,18 +1106,18 @@ function ProfilePageStyles() {
       }
       .form-row:last-child { border-bottom: 0; }
       .form-row__label {
-        font-family: var(--ui-font); font-size: 12px; font-weight: 500;
-        color: var(--fg); letter-spacing: .02em;
+        font-family: var(--ui-font); font-size: var(--fs-md); font-weight: 500;
+        color: var(--fg); letter-spacing: var(--ls-wide);
       }
       .form-row__hint {
-        font-family: var(--ui-font); font-size: 11px;
+        font-family: var(--ui-font); font-size: var(--fs-sm);
         color: var(--fg-subtle); margin-top: 3px;
       }
       .profile-input {
         width: 100%; max-width: 320px; height: 30px; padding: 0 10px;
         border: 1px solid var(--line-strong);
         background: var(--app-bg);
-        font-family: var(--ui-font); font-size: 12.5px;
+        font-family: var(--ui-font); font-size: var(--fs-lg);
         color: var(--fg); outline: none;
       }
       .profile-input:focus { border-color: var(--accent); }
@@ -1137,11 +1126,11 @@ function ProfilePageStyles() {
         display: inline-flex; align-items: center; gap: 8px;
         padding: 4px 10px;
         border: 1px solid var(--line); background: var(--app-bg-muted);
-        font-family: var(--ui-font); font-size: 12px; color: var(--fg);
+        font-family: var(--ui-font); font-size: var(--fs-md); color: var(--fg);
         max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .google-pill__check {
-        color: var(--ok); font-size: 10.5px; letter-spacing: .04em;
+        color: var(--ok); font-size: var(--fs-sm); letter-spacing: var(--ls-wide);
       }
       .theme-picker { display: flex; gap: 8px; flex-wrap: wrap; }
       .theme-swatch {
@@ -1164,8 +1153,8 @@ function ProfilePageStyles() {
         gap: 6px; height: 30px; padding: 0 12px;
         border: 1px solid var(--line-strong);
         background: var(--surface); color: var(--fg);
-        font-family: var(--ui-font); font-size: 12px; font-weight: 500;
-        cursor: pointer; text-transform: lowercase; letter-spacing: .02em;
+        font-family: var(--ui-font); font-size: var(--fs-md); font-weight: 500;
+        cursor: pointer; text-transform: lowercase; letter-spacing: var(--ls-wide);
         transition: background var(--t-quick), border-color var(--t-quick), color var(--t-quick);
       }
       .profile-btn:hover {
@@ -1175,7 +1164,7 @@ function ProfilePageStyles() {
       }
       .profile-btn:disabled { opacity: 0.4; cursor: default; }
       .profile-btn:disabled:hover { background: var(--surface); border-color: var(--line-strong); color: var(--fg); }
-      .profile-btn--sm { height: 24px; padding: 0 9px; font-size: 11px; }
+      .profile-btn--sm { height: 24px; padding: 0 9px; font-size: var(--fs-sm); }
       .profile-btn--ghost {
         background: transparent; border-color: transparent; color: var(--fg-muted);
       }
@@ -1197,7 +1186,7 @@ function ProfilePageStyles() {
         margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line);
         display: flex; justify-content: space-between; align-items: center;
         gap: 12px; flex-wrap: wrap;
-        font-family: var(--ui-font); font-size: 11px; color: var(--fg-subtle);
+        font-family: var(--ui-font); font-size: var(--fs-sm); color: var(--fg-subtle);
       }
       .profile-footer a { color: var(--fg-muted); white-space: nowrap; text-decoration: none; }
       .profile-footer a:hover { color: var(--fg); }

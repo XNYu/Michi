@@ -21,7 +21,7 @@ export default function PaneLauncher() {
       style={{
         width: 26,
         height: 26,
-        fontSize: 16,
+        fontSize: 'var(--fs-2xl)',
         color: 'var(--term-mid)',
         WebkitAppRegion: 'no-drag',
       } as React.CSSProperties}

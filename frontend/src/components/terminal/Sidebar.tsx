@@ -8,6 +8,7 @@ import TreeSelectionBar from './TreeSelectionBar';
 import ResizeHandle from '../ResizeHandle';
 import { rowGeom, rowPadding, type RowGeom } from './sidebarRowStyle';
 import {
+  AgentIcon,
   HomeIcon,
   WorkspacesIcon,
   SettingsIcon,
@@ -28,11 +29,11 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
  *  historical hardcoded values, so those live on as the var fallbacks too. */
 const SIDEBAR_DENSITY: Record<
   'compact' | 'comfortable' | 'airy',
-  { fs: number; rowPy: number; wsGap: number; tsFs: number; navPy: number }
+  { fs: string; rowPy: number; wsGap: number; tsFs: string; navPy: number }
 > = {
-  compact: { fs: 13.5, rowPy: 4, wsGap: 6, tsFs: 11, navPy: 6 },
-  comfortable: { fs: 13.5, rowPy: 6, wsGap: 10, tsFs: 11, navPy: 7 },
-  airy: { fs: 14, rowPy: 8, wsGap: 14, tsFs: 11.5, navPy: 8 },
+  compact: { fs: 'var(--fs-xl)', rowPy: 4, wsGap: 6, tsFs: 'var(--fs-sm)', navPy: 6 },
+  comfortable: { fs: 'var(--fs-xl)', rowPy: 6, wsGap: 10, tsFs: 'var(--fs-sm)', navPy: 7 },
+  airy: { fs: 'var(--fs-xl)', rowPy: 8, wsGap: 14, tsFs: 'var(--fs-md)', navPy: 8 },
 };
 
 export default function TerminalSidebar({
@@ -108,10 +109,10 @@ export default function TerminalSidebar({
   const d = SIDEBAR_DENSITY[prefs.sidebarDensity];
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const densityVars = {
-    '--sb-fs': `${d.fs}px`,
+    '--sb-fs': d.fs,
     '--sb-row-py': `${d.rowPy}px`,
     '--sb-ws-gap': `${d.wsGap}px`,
-    '--sb-ts-fs': `${d.tsFs}px`,
+    '--sb-ts-fs': d.tsFs,
     '--sb-nav-py': `${d.navPy}px`,
     // Horizontal gutter between sidebar content and its edges. Applied as
     // padding on the scrollable tree + bottom nav (below), so it stacks on
@@ -124,7 +125,8 @@ export default function TerminalSidebar({
     // `.terminal-sidebar .t-row-hover` negative margin reads this, NOT
     // --sb-inset — that's what makes one rule serve both looks.
     '--sb-bleed': `${geom.bleed}px`,
-    '--sb-radius': `${geom.radius}px`,
+    // Card rows round with the Corner radius pref (--ui-radius-lg); flat modes stay 0.
+    '--sb-radius': geom.radius > 0 ? 'var(--ui-radius-lg)' : '0px',
   } as React.CSSProperties;
 
   const aside = (
@@ -154,7 +156,7 @@ export default function TerminalSidebar({
         // z-index 1 in non-overlay mode lifts the sidebar (and its right-edge
         // box-shadow) above sibling pane content, which otherwise paints its
         // own surface bg over the 8px shadow extension and hides the glow.
-        zIndex: overlayMode ? 35 : (collapsed ? undefined : 1),
+        zIndex: overlayMode ? 'var(--z-sidebar-overlay)' : (collapsed ? undefined : 'var(--z-raised)'),
         boxShadow: overlayMode
           ? '4px 0 24px rgba(0,0,0,0.18)'
           : (collapsed
@@ -174,9 +176,9 @@ export default function TerminalSidebar({
         transition: overlayMode || isResizing
           ? 'none'
           : collapsed
-            ? 'width 180ms cubic-bezier(.4,0,1,1), opacity 140ms ease-in'
-            : 'width 200ms cubic-bezier(0,0,.2,1), opacity 150ms ease-out',
-        animation: overlayMode ? 'slideInLeft 200ms ease-out' : undefined,
+            ? 'width var(--t-enter) cubic-bezier(.4,0,1,1), opacity var(--t-soft) ease-in'
+            : 'width var(--t-enter) cubic-bezier(0,0,.2,1), opacity var(--t-soft) ease-out',
+        animation: overlayMode ? 'slideInLeft var(--t-enter) ease-out' : undefined,
       }}
     >
       <div
@@ -225,8 +227,8 @@ export default function TerminalSidebar({
             position: 'absolute',
             inset: 0,
             background: 'rgba(0,0,0,0.32)',
-            zIndex: 34,
-            animation: 'fadeIn 200ms ease-out',
+            zIndex: 'var(--z-sidebar-scrim)',
+            animation: 'fadeIn var(--t-enter) ease-out',
           }}
         />
         {aside}
@@ -250,7 +252,7 @@ function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNa
     {!workspaceReady ? (
       <div aria-hidden="true" style={{ flex: 1, padding: '18px 16px' }}>
         {[72, 88, 60].map((width) => (
-          <div key={width} style={{ width: `${width}%`, height: 12, marginBottom: 18, borderRadius: 3, background: 'var(--term-line)' }} />
+          <div key={width} style={{ width: `${width}%`, height: 12, marginBottom: 18, borderRadius: 'var(--ui-radius-sm)', background: 'var(--term-line)' }} />
         ))}
       </div>
     ) : <>
@@ -312,7 +314,7 @@ function BottomNav({
             : 'var(--sb-nav-py, 6px) calc(12px + var(--sb-inset, 0px))',
           color: active ? 'var(--term-fg)' : 'var(--term-mid)',
           background: active ? 'var(--term-alt)' : 'transparent',
-          fontSize: geom.isCard ? 'var(--sb-fs, 13.5px)' : 14,
+          fontSize: geom.isCard ? 'var(--sb-fs, var(--fs-xl))' : 14,
           fontWeight: geom.isCard ? 500 : undefined,
           fontFamily: 'var(--ui-font)',
         }}
@@ -336,7 +338,7 @@ function BottomNav({
           <span
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 10.5,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--term-surface)',
               background: 'var(--term-muted)',
               padding: '0 5px',
@@ -352,8 +354,8 @@ function BottomNav({
           <span
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 11,
-              color: 'var(--term-faint)',
+              fontSize: 'var(--fs-sm)',
+              color: 'var(--term-muted)',
             }}
           >
             {kbd}
@@ -372,7 +374,7 @@ function BottomNav({
     >
       <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
       {customAgentsEnabled && (
-        <Item id="agents" glyph={<span aria-hidden style={{ fontFamily: 'var(--mono-font)', fontSize: 15 }}>◇</span>} label="Agents" />
+        <Item id="agents" glyph={<AgentIcon size={15} />} label="Agents" />
       )}
       <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
       <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />

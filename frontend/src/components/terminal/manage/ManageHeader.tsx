@@ -53,10 +53,10 @@ export default function ManageHeader({
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 38,
+          fontSize: 'var(--fs-6xl)',
           lineHeight: 1.15,
           fontWeight: 500,
-          letterSpacing: '-0.02em',
+          letterSpacing: 'var(--ls-tight)',
           margin: 0,
           color: 'var(--term-fg)',
         }}
@@ -66,7 +66,7 @@ export default function ManageHeader({
       <div
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-muted)',
           display: 'flex',
           flexWrap: 'wrap',

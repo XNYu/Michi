@@ -30,7 +30,7 @@ export const SIDEBAR_ROW_STYLES: readonly SidebarRowStyle[] = [
 /** Human-facing one-liners for the Settings radio. */
 export const SIDEBAR_ROW_STYLE_LABELS: Record<SidebarRowStyle, string> = {
   'classic': 'classic — full-bleed rows, left accent bar (current)',
-  'rounded-inset': 'rounded inset — 8px inset, 8px radius',
+  'rounded-inset': 'rounded inset — 8px inset, rounded like cards (follows corner radius)',
   'square-inset': 'square inset — 8px inset, no radius',
   'square-full': 'square full-bleed — no inset, no radius',
 };

@@ -53,7 +53,7 @@ export default function WorkspaceIcon({ project, mode, active = false }: Props) 
   const base: React.CSSProperties = {
     width: SIZE, height: SIZE,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 10.5, fontWeight: 700, flexShrink: 0, boxSizing: 'border-box',
+    fontSize: 'var(--fs-sm)', fontWeight: 700, flexShrink: 0, boxSizing: 'border-box',
   };
 
   if (mode === 'outline') {
@@ -63,11 +63,12 @@ export default function WorkspaceIcon({ project, mode, active = false }: Props) 
   }
   if (mode === 'mono') {
     return (
-      <span style={{ ...base, background: 'var(--term-faint)', color: '#fff' }}>{letter}</span>
+      <span style={{ ...base, background: 'var(--term-alt)', color: 'var(--term-mid)' }}>{letter}</span>
     );
   }
-  // mode === 'badge' (default)
+  // mode === 'badge' (default) — fixed workspace badge palette, not theme-driven.
   return (
+    // eslint-disable-next-line no-restricted-syntax
     <span style={{ ...base, background: accent, color: '#fff' }}>{letter}</span>
   );
 }

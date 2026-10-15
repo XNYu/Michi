@@ -1716,7 +1716,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
         — empty pane —
@@ -1742,7 +1742,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
           gap: 4,
         }}
       >
@@ -2039,7 +2039,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             padding: '6px 14px',
             background: 'var(--term-mauve-f)',
             borderBottom: '1px solid var(--term-line)',
-            fontSize: 10.5,
+            fontSize: 'var(--fs-sm)',
             color: 'var(--term-mauve)',
             display: 'flex',
             alignItems: 'center',
@@ -2048,7 +2048,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           }}
         >
           <span style={{ fontWeight: 700 }}>⎇</span>
-          <span style={{ letterSpacing: '.04em' }}>
+          <span style={{ letterSpacing: 'var(--ls-wide)' }}>
             spawned by agent{parentTitle ? ` · inherits ${parentTitle}` : ''}
           </span>
         </div>

@@ -409,7 +409,7 @@ export default function SelectionActions({
           left: placement.left,
           top: placement.top,
           width: composerOpen ? COMPOSER_WIDTH : undefined,
-          zIndex: 9999,
+          zIndex: 'var(--z-selection)',
           transformOrigin: `left ${originY}`,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}
@@ -748,17 +748,17 @@ const TERMINAL_CSS = `
   to   { opacity: 1; transform: scale(1); }
 }
 .sel-actions-enter {
-  animation: sel-enter 220ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation: sel-enter var(--t-enter) cubic-bezier(0.2, 0, 0, 1) both;
 }
 .sel-actions-term-highlight-layer {
   position: fixed;
   inset: 0;
-  z-index: 9998;
+  z-index: calc(var(--z-selection) - 1);
   pointer-events: none;
 }
 .sel-actions-term-highlight-mark {
   position: absolute;
-  border-radius: 2px;
+  border-radius: var(--ui-radius-sm);
   background: color-mix(in srgb, var(--term-accent) 30%, transparent);
 }
 /* Bar + composer share ONE inverted-theme slab: on light themes the popup is
@@ -775,9 +775,8 @@ const TERMINAL_CSS = `
   background: var(--sel-bar-bg);
   color: var(--sel-bar-mid);
   font-family: var(--ui-font);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 450;
-  letter-spacing: 0.015em;
   border: 1px solid var(--sel-bar-line);
   border-radius: 0;
   box-shadow: var(--sel-bar-shadow);
@@ -788,7 +787,7 @@ const TERMINAL_CSS = `
   padding: 6px 12px; background: transparent; border: 0;
   border-radius: 0;
   color: inherit; font: inherit; cursor: pointer;
-  transition: background 60ms ease, color 60ms ease;
+  transition: background var(--t-quick) ease, color var(--t-quick) ease;
 }
 /* Hairline separator between adjacent buttons, inset from top/bottom. */
 .sel-actions-term-btn + .sel-actions-term-btn::before {
@@ -813,7 +812,7 @@ const TERMINAL_CSS = `
   display: flex; align-items: center; justify-content: space-between;
   padding: 7px 12px;
   border-bottom: 1px solid var(--sel-bar-line);
-  font-size: 9.5px; letter-spacing: .1em; font-weight: 500;
+  font-size: var(--fs-xs); letter-spacing: var(--ls-caps); font-weight: 500;
   color: var(--sel-bar-muted); text-transform: uppercase;
 }
 .sel-actions-term-close {
@@ -828,7 +827,7 @@ const TERMINAL_CSS = `
   background: transparent;
   border: 0;
   outline: none; resize: none;
-  font-family: var(--ui-font); font-size: 12.5px;
+  font-family: var(--ui-font); font-size: var(--fs-lg);
   color: var(--sel-bar-fg);
   line-height: 1.5;
 }
@@ -843,9 +842,9 @@ const TERMINAL_CSS = `
   padding: 4px 8px; background: transparent; border: 0;
   border-radius: 0;
   color: var(--sel-bar-mid); cursor: pointer;
-  font-family: var(--ui-font); font-size: 10px; font-weight: 450;
-  letter-spacing: 0.02em;
-  transition: background 60ms ease, color 60ms ease;
+  font-family: var(--ui-font); font-size: var(--fs-xs); font-weight: 450;
+  letter-spacing: var(--ls-wide);
+  transition: background var(--t-quick) ease, color var(--t-quick) ease;
 }
 .sel-actions-term-footer-btn:hover:not(:disabled) {
   background: var(--sel-bar-hover); color: var(--sel-bar-fg);
@@ -854,7 +853,7 @@ const TERMINAL_CSS = `
   cursor: not-allowed; opacity: 0.4;
 }
 .sel-actions-term-footer-kbd {
-  font-family: var(--ui-font); font-size: 9px;
+  font-family: var(--ui-font); font-size: var(--fs-2xs);
   padding: 1px 4px;
   border: 1px solid var(--sel-bar-line);
   border-radius: 0;

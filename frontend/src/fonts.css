@@ -2,14 +2,6 @@
   font-family: 'Inter';
   font-style: normal;
   font-display: swap;
-  font-weight: 300;
-  src: url('../../node_modules/@fontsource/inter/files/inter-latin-300-normal.woff2') format('woff2');
-}
-
-@font-face {
-  font-family: 'Inter';
-  font-style: normal;
-  font-display: swap;
   font-weight: 400;
   src: url('../../node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2') format('woff2');
 }
@@ -92,22 +84,6 @@
   font-display: swap;
   font-weight: 700;
   src: url('../../node_modules/@fontsource/geist/files/geist-latin-700-normal.woff2') format('woff2');
-}
-
-@font-face {
-  font-family: 'Geist';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 800;
-  src: url('../../node_modules/@fontsource/geist/files/geist-latin-800-normal.woff2') format('woff2');
-}
-
-@font-face {
-  font-family: 'Geist';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 900;
-  src: url('../../node_modules/@fontsource/geist/files/geist-latin-900-normal.woff2') format('woff2');
 }
 
 @font-face {

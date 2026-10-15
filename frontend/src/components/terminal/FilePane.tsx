@@ -271,18 +271,18 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
     >
       <div style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', flexShrink: 0 }}>
         <span aria-hidden style={{ color: 'var(--term-accent)' }}>◇</span>
-        <span title={resolvedFilePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--term-mid)' }}>
+        <span title={resolvedFilePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--fs-md)', color: 'var(--term-mid)' }}>
           {resolvedFilePath}{sourceLocation ? `:${sourceLocation.line}${sourceLocation.column != null ? `:${sourceLocation.column}` : ''}` : ''}
         </span>
         {state.phase === 'loaded' && state.sourceReferenceFallback ? (
-          <span title="The literal link path was unreadable; opened as a source reference" style={{ color: 'var(--term-muted)', fontSize: 9.5, whiteSpace: 'nowrap' }}>
+          <span title="The literal link path was unreadable; opened as a source reference" style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', whiteSpace: 'nowrap' }}>
             source reference
           </span>
         ) : null}
         {item.diskState === 'changed' ? (
-          <button type="button" onClick={() => setReloadKey((value) => value + 1)} style={{ border: '1px solid var(--term-accent)', background: 'transparent', color: 'var(--term-accent)', padding: '2px 7px', fontFamily: 'var(--ui-font)', fontSize: 9.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>● Changed on disk · refresh</button>
+          <button type="button" onClick={() => setReloadKey((value) => value + 1)} style={{ border: '1px solid var(--term-accent)', background: 'transparent', color: 'var(--term-accent)', padding: '2px 7px', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', cursor: 'pointer', whiteSpace: 'nowrap' }}>● Changed on disk · refresh</button>
         ) : null}
-        {item.diskState === 'removed' ? <span style={{ color: 'var(--term-danger)', fontSize: 9.5 }}>⚠ Deleted on disk</span> : null}
+        {item.diskState === 'removed' ? <span style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-xs)' }}>⚠ Deleted on disk</span> : null}
         {isMarkdown ? (
           <button
             type="button"
@@ -302,19 +302,20 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
           onBranch={handleBranch}
           onComment={handleComment}
         />
-        {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 11 }}>loading {basename(item.filePath)}…</div> : null}
-        {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 11 }}>⚠ {state.message}</div> : null}
+        {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading {basename(item.filePath)}…</div> : null}
+        {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)' }}>⚠ {state.message}</div> : null}
         {state.phase === 'loaded' && isMarkdown && item.viewMode === 'rendered' ? (
           <MarkdownContent text={state.content} className={`prose prose-sm max-w-none wrap-break-word${isDark ? ' prose-invert' : ''}`} style={fileProseVars} />
         ) : null}
         {state.phase === 'loaded' && (!isMarkdown || item.viewMode === 'source') ? (
-          <pre ref={sourcePreRef} style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>
+          // eslint-disable-next-line no-restricted-syntax -- = --fs-md; measuredLineHeight reads it back from computed style
+          <pre ref={sourcePreRef} style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 12, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>
             {state.content}
           </pre>
         ) : null}
       </div>
       {state.phase === 'loaded' ? (
-        <div style={{ height: 24, padding: '0 12px', borderTop: '1px solid var(--term-line)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, fontSize: 9.5, color: 'var(--term-muted)' }}>
+        <div style={{ height: 24, padding: '0 12px', borderTop: '1px solid var(--term-line)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
           <span>{basename(resolvedFilePath)}</span>
           <span>{state.size < 1024 ? `${state.size} B` : `${(state.size / 1024).toFixed(1)} KB`}</span>
           <span>{new Date(state.modifiedAt).toLocaleTimeString()}</span>

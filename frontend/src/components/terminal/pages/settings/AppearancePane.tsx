@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { usePrefs, TerminalPalette, CORNER_RADIUS_MAX } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
-import { resolveAccent } from '../../tokens';
+import { PALETTES, resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
 import { PANE_MOTION_OPTIONS, type PaneMotion } from '../../paneMotion';
 import {
@@ -30,7 +30,7 @@ function CornerRadiusPreview() {
         <span
           style={{
             padding: '3px 7px',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             fontFamily: 'var(--ui-font)',
             color: 'var(--term-mid)',
             background: 'var(--ui-tooltip-bg)',
@@ -92,7 +92,7 @@ export function AppearancePane() {
         />
         <span
           style={{
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             fontFamily: 'var(--ui-font)',
             color: sel ? 'var(--term-fg)' : 'var(--term-mid)',
           }}
@@ -103,7 +103,7 @@ export function AppearancePane() {
           <span
             style={{
               color: 'var(--term-accent)',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               fontWeight: 700,
               marginLeft: 4,
             }}
@@ -120,7 +120,7 @@ export function AppearancePane() {
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 15,
+          fontSize: 'var(--fs-2xl)',
           fontWeight: 700,
           color: 'var(--term-fg)',
           margin: 0,
@@ -132,10 +132,10 @@ export function AppearancePane() {
 
       <Row k="theme.palette" label="Palette">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-          <Swatch c="#f6f5f1" label="bone" value="bone" />
-          <Swatch c="#f3f4f6" label="slate" value="slate" />
-          <Swatch c="#272822" label="monokai" value="monokai" />
-          <Swatch c="#282828" label="gruvbox" value="gruvbox" />
+          <Swatch c={PALETTES.bone.bg} label="bone" value="bone" />
+          <Swatch c={PALETTES.slate.bg} label="slate" value="slate" />
+          <Swatch c={PALETTES.monokai.bg} label="monokai" value="monokai" />
+          <Swatch c={PALETTES.gruvbox.bg} label="gruvbox" value="gruvbox" />
         </div>
       </Row>
 
@@ -156,7 +156,7 @@ export function AppearancePane() {
             onChange={(e) => setPref('cornerRadius', Number(e.target.value))}
             style={{ flex: 1, accentColor: 'var(--term-accent)' }}
           />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
             {prefs.cornerRadius}px
           </span>
         </div>
@@ -176,7 +176,7 @@ export function AppearancePane() {
             onChange={(e) => setPref('sidebarThreadLimit', Number(e.target.value))}
             style={{ flex: 1, accentColor: 'var(--term-accent)' }}
           />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
             {prefs.sidebarThreadLimit}
           </span>
         </div>
@@ -193,7 +193,7 @@ export function AppearancePane() {
             onChange={(e) => setPref('focusDim', Number(e.target.value))}
             style={{ flex: 1, accentColor: 'var(--term-accent)' }}
           />
-          <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 30, textAlign: 'right' }}>
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 30, textAlign: 'right' }}>
             {prefs.focusDim}%
           </span>
         </div>
@@ -246,7 +246,7 @@ export function AppearancePane() {
                 <span
                   style={{
                     fontFamily: 'var(--ui-font)',
-                    fontSize: 10.5,
+                    fontSize: 'var(--fs-sm)',
                     color: 'var(--term-mid)',
                   }}
                 >
@@ -274,14 +274,14 @@ export function AppearancePane() {
             background: 'transparent',
             color: 'var(--term-mid)',
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             fontWeight: 600,
             cursor: 'pointer',
-            letterSpacing: '0.04em',
+            letterSpacing: 'var(--ls-wide)',
             textTransform: 'uppercase',
           }}
         >
-          <span style={{ fontSize: 10, transition: 'transform 120ms ease', transform: advancedOpen ? 'rotate(90deg)' : 'rotate(0)' }}>▸</span>
+          <span style={{ fontSize: 'var(--fs-xs)', transition: 'transform var(--t-soft) ease', transform: advancedOpen ? 'rotate(90deg)' : 'rotate(0)' }}>▸</span>
           Advanced
         </button>
 
@@ -293,9 +293,9 @@ export function AppearancePane() {
                 value={prefs.paneWidthMode}
                 onChange={(e) => setPref('paneWidthMode', e.target.value as typeof prefs.paneWidthMode)}
                 style={{
-                  width: '100%', minWidth: 0, padding: '8px 10px', borderRadius: 4,
+                  width: '100%', minWidth: 0, padding: '8px 10px', borderRadius: 'var(--ui-radius)',
                   border: '1px solid var(--term-line)', background: 'var(--term-surface)',
-                  color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 12,
+                  color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)',
                 }}
               >
                 <option value="fixed">Fixed width (2+ panes)</option>
@@ -312,7 +312,7 @@ export function AppearancePane() {
                 style={{
                   maxWidth: '100%', padding: '5px 8px', border: '1px solid var(--term-line)',
                   background: 'var(--term-surface)', color: 'var(--term-fg)',
-                  fontFamily: 'var(--ui-font)', fontSize: 11,
+                  fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)',
                 }}
               >
                 {PANE_MOTION_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -331,7 +331,7 @@ export function AppearancePane() {
                   onChange={(e) => setPref('defaultPaneWidth', Number(e.target.value))}
                   style={{ flex: 1, accentColor: 'var(--term-accent)' }}
                 />
-                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 42, textAlign: 'right' }}>
+                <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 42, textAlign: 'right' }}>
                   {prefs.defaultPaneWidth}px
                 </span>
               </div>
@@ -355,7 +355,7 @@ export function AppearancePane() {
                 />
                 <span
                   style={{
-                    fontSize: 11, color: 'var(--term-fg)',
+                    fontSize: 'var(--fs-sm)', color: 'var(--term-fg)',
                     fontFamily: 'var(--ui-font)', minWidth: 56, textAlign: 'right',
                   }}
                 >
@@ -376,7 +376,7 @@ export function AppearancePane() {
                     border: `1px solid ${prefs.singlePaneContentWidth === null ? 'var(--term-fg)' : 'var(--term-line)'}`,
                     background: prefs.singlePaneContentWidth === null ? 'var(--term-fg)' : 'transparent',
                     color: prefs.singlePaneContentWidth === null ? 'var(--term-surface)' : 'var(--term-mid)',
-                    fontFamily: 'var(--ui-font)', fontSize: 11, cursor: 'pointer',
+                    fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', cursor: 'pointer',
                   }}
                 >
                   full width
@@ -393,9 +393,9 @@ export function AppearancePane() {
               <div
                 style={{
                   marginTop: 8,
-                  fontSize: 11,
+                  fontSize: 'var(--fs-sm)',
                   lineHeight: 1.6,
-                  color: 'var(--term-faint)',
+                  color: 'var(--term-muted)',
                   fontFamily: 'var(--ui-font)',
                 }}
               >
@@ -435,7 +435,7 @@ export function AppearancePane() {
                   onChange={(e) => setPref('messageFontSize', Number(e.target.value))}
                   style={{ flex: 1, accentColor: 'var(--term-accent)' }}
                 />
-                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
                   {prefs.messageFontSize}px
                 </span>
               </div>
@@ -452,7 +452,7 @@ export function AppearancePane() {
                   onChange={(e) => setPref('composerFontSize', Number(e.target.value))}
                   style={{ flex: 1, accentColor: 'var(--term-accent)' }}
                 />
-                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
                   {prefs.composerFontSize}px
                 </span>
               </div>
@@ -477,7 +477,7 @@ export function AppearancePane() {
                   onChange={(e) => setPref('sidebarInset', Number(e.target.value))}
                   style={{ flex: 1, accentColor: 'var(--term-accent)' }}
                 />
-                <span style={{ fontSize: 11, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
+                <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', minWidth: 38, textAlign: 'right' }}>
                   {prefs.sidebarInset}px
                 </span>
               </div>

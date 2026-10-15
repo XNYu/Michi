@@ -52,7 +52,7 @@ function LazyPage({ children }: { children: React.ReactNode }) {
             alignItems: 'center',
             justifyContent: 'center',
             color: 'var(--term-muted)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
           }}
         >
           loading…
@@ -530,7 +530,7 @@ export default function TerminalShell() {
         <div className="terminal-content-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
           {/* Keep the data barrier, not a root-level rendering barrier. */}
           {!hydrated ? (
-            <div role="status" aria-label="Loading workspaces" style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--term-faint)', fontSize: 12 }}>
+            <div role="status" aria-label="Loading workspaces" style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>
               <span className="term-hydrating">loading workspaces…</span>
             </div>
           ) : <>
@@ -651,7 +651,7 @@ function AgentManagementLibrary({ onNav }: { onNav: (page: PageId) => void }) {
     try { dispatch({ type: 'upsert-definitions', resources: [await action(identity)] }); setError(null); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
-  return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 10 }}>CONTROL PLANE · {backendName} ({backendConnectionId}){activeProject ? ` · WORKSPACE ${activeProject.name}` : ' · NO WORKSPACE SELECTED'}</div><AgentLibraryPage definitions={definitions} runs={runs} workspaceId={activeProject?.id ?? null} loading={loading} error={error} onCreate={create} onEdit={edit} onEnable={(identity) => { void update(identity, enableAgentDefinition); }} onDisable={(identity) => { void update(identity, disableAgentDefinition); }} onDuplicate={(identity) => { void update(identity, duplicateAgentDefinition); }} onDelete={(identity) => { void deleteAgentDefinition(identity).then(() => dispatch({ type: 'remove-definition', identity })).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }} /></div>;
+  return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)' }}>CONTROL PLANE · {backendName} ({backendConnectionId}){activeProject ? ` · WORKSPACE ${activeProject.name}` : ' · NO WORKSPACE SELECTED'}</div><AgentLibraryPage definitions={definitions} runs={runs} workspaceId={activeProject?.id ?? null} loading={loading} error={error} onCreate={create} onEdit={edit} onEnable={(identity) => { void update(identity, enableAgentDefinition); }} onDisable={(identity) => { void update(identity, disableAgentDefinition); }} onDuplicate={(identity) => { void update(identity, duplicateAgentDefinition); }} onDelete={(identity) => { void deleteAgentDefinition(identity).then(() => dispatch({ type: 'remove-definition', identity })).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }} /></div>;
 }
 
 function profileFromForm(value: AgentDefinitionFormValue['runtimeProfile']): RuntimeProfileV1 {
@@ -708,7 +708,7 @@ function AgentManagementEditor({ route, onNav }: { route: ReturnType<typeof useM
       setBlockers(reason instanceof AgentEnableBlockedError ? reason.blockers : null);
     }
   };
-  return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 10 }}>CONTROL PLANE · {route.backendConnectionId}{route.workspaceId ? ` · WORKSPACE ${route.workspaceId}` : ' · GLOBAL'}</div><AgentEditorPage definition={definition} initialScope={route.scope} workspaceId={route.workspaceId} error={error} blockers={blockers} onCancel={() => onNav('agents')} onSaveDraft={(value) => execute(() => persist(value, false))} onEnable={(value) => execute(() => persist(value, true))} onDisable={identity ? () => execute(async () => { dispatch({ type: 'upsert-definitions', resources: [await disableAgentDefinition(identity)] }); }) : undefined} onDuplicate={identity ? () => execute(async () => { const copied = await duplicateAgentDefinition(identity); dispatch({ type: 'upsert-definitions', resources: [copied] }); setManageAgentRoute({ mode: 'edit', scope: copied.value.scope, workspaceId: copied.value.workspaceId, backendConnectionId: copied.backendConnectionId, definitionId: copied.value.id }); }) : undefined} onDelete={identity ? () => execute(async () => { await deleteAgentDefinition(identity); dispatch({ type: 'remove-definition', identity }); setManageAgentRoute(null); onNav('agents'); }) : undefined} /></div>;
+  return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><div style={{ padding: '7px 56px', borderBottom: '1px solid var(--term-line)', color: 'var(--term-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)' }}>CONTROL PLANE · {route.backendConnectionId}{route.workspaceId ? ` · WORKSPACE ${route.workspaceId}` : ' · GLOBAL'}</div><AgentEditorPage definition={definition} initialScope={route.scope} workspaceId={route.workspaceId} error={error} blockers={blockers} onCancel={() => onNav('agents')} onSaveDraft={(value) => execute(() => persist(value, false))} onEnable={(value) => execute(() => persist(value, true))} onDisable={identity ? () => execute(async () => { dispatch({ type: 'upsert-definitions', resources: [await disableAgentDefinition(identity)] }); }) : undefined} onDuplicate={identity ? () => execute(async () => { const copied = await duplicateAgentDefinition(identity); dispatch({ type: 'upsert-definitions', resources: [copied] }); setManageAgentRoute({ mode: 'edit', scope: copied.value.scope, workspaceId: copied.value.workspaceId, backendConnectionId: copied.backendConnectionId, definitionId: copied.value.id }); }) : undefined} onDelete={identity ? () => execute(async () => { await deleteAgentDefinition(identity); dispatch({ type: 'remove-definition', identity }); setManageAgentRoute(null); onNav('agents'); }) : undefined} /></div>;
 }
 
 function SettingsDrawer({ open, onClose, onNav, motion, onPresenceChange, workspaceReady }: { open: boolean; onClose: () => void; onNav: (p: PageId) => void; motion: 'standard' | 'instant'; onPresenceChange: (present: boolean) => void; workspaceReady: boolean }) {

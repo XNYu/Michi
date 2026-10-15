@@ -23,7 +23,7 @@ function Breadcrumb({ filePath }: { filePath: string }) {
         display: 'flex',
         alignItems: 'center',
         gap: 4,
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         color: 'var(--term-muted)',
         overflow: 'hidden',
         whiteSpace: 'nowrap',
@@ -282,7 +282,7 @@ export default function ArtifactPane({
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
         — empty artifact pane —
@@ -317,11 +317,11 @@ export default function ArtifactPane({
           alignItems: 'center',
           gap: 8,
           flexShrink: 0,
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
         {/* File icon */}
-        <span style={{ color: 'var(--term-accent)', fontSize: 13 }}>📄</span>
+        <span style={{ color: 'var(--term-accent)', fontSize: 'var(--fs-lg)' }}>📄</span>
         {/* Breadcrumb */}
         <Breadcrumb filePath={filePath} />
         {/* Live-refresh badge: the file changed on disk (from any source). We
@@ -332,7 +332,7 @@ export default function ArtifactPane({
           <span
             style={{
               padding: '2px 8px',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
               fontFamily: 'var(--ui-font)',
               whiteSpace: 'nowrap',
@@ -347,10 +347,10 @@ export default function ArtifactPane({
             onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
             style={{
               padding: '2px 8px',
-              border: '1px solid var(--term-error, #e53e3e)',
+              border: '1px solid var(--term-danger)',
               background: 'transparent',
-              color: 'var(--term-error, #e53e3e)',
-              fontSize: 10,
+              color: 'var(--term-danger)',
+              fontSize: 'var(--fs-xs)',
               cursor: 'pointer',
               fontFamily: 'var(--ui-font)',
               whiteSpace: 'nowrap',
@@ -369,7 +369,7 @@ export default function ArtifactPane({
               border: '1px solid var(--term-accent)',
               background: 'transparent',
               color: 'var(--term-accent)',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               cursor: 'pointer',
               fontFamily: 'var(--ui-font)',
               whiteSpace: 'nowrap',
@@ -386,7 +386,7 @@ export default function ArtifactPane({
             type="button"
             className={`t-text-btn is-bordered${artifact.viewMode === 'source' ? ' is-active' : ''}`}
             onClick={(e) => { e.stopPropagation(); toggleView(); }}
-            style={{ fontSize: 10 }}
+            style={{ fontSize: 'var(--fs-xs)' }}
             title={artifact.viewMode === 'rendered' ? 'Show source' : 'Show rendered'}
           >
             {artifact.viewMode === 'rendered' ? 'View source' : 'Rendered'}
@@ -397,7 +397,7 @@ export default function ArtifactPane({
           type="button"
           className="t-text-btn is-bordered"
           onClick={(e) => { e.stopPropagation(); openInEditor(); }}
-          style={{ fontSize: 10 }}
+          style={{ fontSize: 'var(--fs-xs)' }}
           title="Open in external editor"
         >
           ↗ Open
@@ -413,7 +413,7 @@ export default function ArtifactPane({
           overflowY: 'auto',
           padding: '16px 22px 24px',
           color: 'var(--term-fg)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           lineHeight: 1.7,
           position: 'relative',
         }}
@@ -426,13 +426,13 @@ export default function ArtifactPane({
         />
         <div style={innerWrap}>
           {artifact.status === 'loading' && (
-            <div style={{ color: 'var(--term-muted)', fontSize: 12 }}>
+            <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>
               Loading {artifact.basename || filePath}…
             </div>
           )}
 
           {artifact.status === 'error' && (
-            <div style={{ color: 'var(--term-error, #e53e3e)', fontSize: 12 }}>
+            <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-md)' }}>
               ⚠ {artifact.error || 'Failed to load file'}
             </div>
           )}
@@ -444,16 +444,16 @@ export default function ArtifactPane({
               ) : (
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: 'var(--fs-md)',
                     lineHeight: 1.6,
-                    fontFamily: 'var(--mono-font, ui-monospace, SFMono-Regular, monospace)',
+                    fontFamily: 'var(--font-mono)',
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                     color: 'var(--term-mid)',
                     background: 'var(--term-alt)',
                     padding: '12px 14px',
                     border: '1px solid var(--term-line)',
-                    borderRadius: 2,
+                    borderRadius: 'var(--ui-radius-sm)',
                     overflow: 'auto',
                   }}
                 >
@@ -471,7 +471,7 @@ export default function ArtifactPane({
           style={{
             padding: '4px 14px',
             borderTop: '1px solid var(--term-line)',
-            fontSize: 10,
+            fontSize: 'var(--fs-xs)',
             color: 'var(--term-muted)',
             display: 'flex',
             gap: 12,

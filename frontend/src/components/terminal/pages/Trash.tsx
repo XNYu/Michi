@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Clock3, Ellipsis, Folder, MessageSquare, Search, Trash2, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useChatStore, useChatNodesSnapshot } from '../../../state/chatStore';
@@ -138,7 +139,9 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
     } finally {
       operation.current = false;
       if (mounted.current) {
-        setBusy(false);
+        // Commit before any queued focus runs: the row buttons are disabled
+        // while busy, and focusing a still-disabled button silently fails.
+        flushSync(() => setBusy(false));
         if (returnFocus) focusFrame.current = requestAnimationFrame(() => {
           if (mounted.current) (trigger?.isConnected ? trigger : search.current)?.focus({ preventScroll: true });
         });

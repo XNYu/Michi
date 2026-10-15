@@ -107,11 +107,11 @@ function CrashFallback({ error, onReload }: { error: Error; onReload: () => void
         textAlign: 'center',
       }}
     >
-      <div style={{ fontSize: 24, marginBottom: 4 }}>⚠</div>
-      <div style={{ fontSize: 14, fontWeight: 500 }}>
+      <div style={{ fontSize: 'var(--fs-4xl)', marginBottom: 4 }}>⚠</div>
+      <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 500 }}>
         Michi ran into a problem
       </div>
-      <div style={{ fontSize: 12, color: 'var(--term-muted, #888)', maxWidth: 420 }}>
+      <div style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted, #888)', maxWidth: 420 }}>
         The interface crashed and couldn't recover automatically.
         Your data is safe — reloading will restore everything.
       </div>
@@ -122,9 +122,9 @@ function CrashFallback({ error, onReload }: { error: Error; onReload: () => void
           overflow: 'auto',
           background: 'var(--term-surface, #eee)',
           border: '1px solid var(--term-line, #ddd)',
-          borderRadius: 4,
+          borderRadius: 'var(--ui-radius)',
           padding: 8,
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
           whiteSpace: 'pre-wrap',
           textAlign: 'left',
           color: 'var(--term-muted, #888)',
@@ -138,10 +138,10 @@ function CrashFallback({ error, onReload }: { error: Error; onReload: () => void
           background: 'var(--term-fg, #333)',
           color: 'var(--term-bg, #f5f2ee)',
           border: 'none',
-          borderRadius: 4,
+          borderRadius: 'var(--ui-radius)',
           padding: '6px 16px',
           fontFamily: 'var(--ui-font, system-ui, sans-serif)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           cursor: 'pointer',
           marginTop: 4,
         }}

@@ -187,10 +187,10 @@ function SectionLabel({ children, first }: { children: React.ReactNode; first?: 
     <div
       style={{
         fontFamily: 'var(--ui-font)',
-        fontSize: 8.5,
-        letterSpacing: '.12em',
+        fontSize: 'var(--fs-2xs)',
+        letterSpacing: 'var(--ls-caps-wide)',
         textTransform: 'uppercase',
-        color: 'var(--term-faint)',
+        color: 'var(--term-muted)',
         margin: first ? '0 0 6px' : '16px 0 6px',
       }}
     >
@@ -247,10 +247,10 @@ function VariantRow({ variant, tag, title, desc }: { variant: AgentBlockStyle; t
     <AgentBlockStyleOverride.Provider value={variant}>
       <div data-variant-row={tag} style={{ fontFamily: 'var(--ui-font)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 600, background: '#1a1916', color: '#fdfdfc', padding: '2px 6px' }}>{tag}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: '#1a1916' }}>{title}</span>
+          <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, background: 'var(--term-fg)', color: 'var(--term-bg)', padding: '2px 6px' }}>{tag}</span>
+          <span style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, color: 'var(--term-fg)' }}>{title}</span>
         </div>
-        <div style={{ fontSize: 11, color: '#70695d', marginBottom: 12, maxWidth: 830 }}>{desc}</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 12, maxWidth: 830 }}>{desc}</div>
         <div style={{ display: 'flex', gap: 14 }}>
           <SpecimenPanel palette="bone" label={`${tag} Bone`} />
           <SpecimenPanel palette="monokai" label={`${tag} Monokai`} />

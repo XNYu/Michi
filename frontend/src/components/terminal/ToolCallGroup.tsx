@@ -49,7 +49,7 @@ function allTerminal(tools: ToolCallState[]): boolean {
 function StatusDot({ status }: { status: string | undefined }) {
   if (isFailedStatus(status)) {
     return (
-      <span aria-hidden style={{ color: FAIL_COLOR, fontSize: 10, width: 8, flexShrink: 0, lineHeight: 1 }}>×</span>
+      <span aria-hidden style={{ color: FAIL_COLOR, fontSize: 'var(--fs-xs)', width: 8, flexShrink: 0, lineHeight: 1 }}>×</span>
     );
   }
   const running = isRunningStatus(status);
@@ -65,7 +65,7 @@ function StatusDot({ status }: { status: string | undefined }) {
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
+    <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
       {open ? '▾' : '▸'}
     </span>
   );
@@ -74,7 +74,7 @@ function Chevron({ open }: { open: boolean }) {
 function DurLabel({ ms }: { ms: number | undefined }) {
   if (ms == null) return null;
   return (
-    <span style={{ marginLeft: 'auto', color: 'var(--term-faint)', fontSize: 10, flexShrink: 0, paddingLeft: 8 }}>
+    <span style={{ marginLeft: 'auto', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', flexShrink: 0, paddingLeft: 8 }}>
       {formatDurationMs(ms)}
     </span>
   );
@@ -130,7 +130,7 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
   // so the user needs only one click to open the payload.
   if (visibleTools.length === 1 && !subagentToolInfo(visibleTools[0])) {
     return (
-      <div style={{ fontSize: 10.5, fontFamily: 'var(--ui-font)', color: 'var(--term-muted)', marginTop: 14, marginBottom: 14, padding: '3px 0' }}>
+      <div style={{ fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)', color: 'var(--term-muted)', marginTop: 14, marginBottom: 14, padding: '3px 0' }}>
         <ToolRow t={visibleTools[0]} subagents={subagents} />
       </div>
     );
@@ -142,7 +142,7 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
   const spanMs = running ? undefined : toolSpanMs(visibleTools);
 
   const containerStyle: React.CSSProperties = {
-    fontSize: 10.5,
+    fontSize: 'var(--fs-sm)',
     fontFamily: 'var(--ui-font)',
     color: 'var(--term-muted)',
     marginTop: 14,
@@ -202,7 +202,7 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
         {running ? (
           <>
             <span className="term-shimmer">running tools</span>
-            <span style={{ marginLeft: 'auto', color: 'var(--term-faint)', fontSize: 10, flexShrink: 0, paddingLeft: 8 }}>
+            <span style={{ marginLeft: 'auto', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', flexShrink: 0, paddingLeft: 8 }}>
               {doneCount}/{visibleTools.length}
             </span>
           </>
@@ -304,9 +304,9 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
               <span
                 style={{
                   display: 'block',
-                  fontSize: 9.5,
+                  fontSize: 'var(--fs-xs)',
                   fontFamily: 'var(--font-mono)',
-                  color: failed ? FAIL_COLOR : 'var(--term-faint)',
+                  color: failed ? FAIL_COLOR : 'var(--term-muted)',
                   opacity: failed ? 0.8 : 1,
                   marginTop: 1,
                 }}
@@ -341,14 +341,14 @@ function PayloadBlock({ inputJson, output }: { inputJson?: string; output?: stri
     alignItems: 'center',
     gap: 8,
     padding: '3px 8px 2px',
-    fontSize: 9,
-    letterSpacing: '.12em',
-    color: 'var(--term-faint)',
+    fontSize: 'var(--fs-2xs)',
+    letterSpacing: 'var(--ls-caps-wide)',
+    color: 'var(--term-muted)',
     fontFamily: 'var(--ui-font)',
   };
   const ruleStyle: React.CSSProperties = { flex: 1, borderTop: '1px solid var(--term-line)' };
   const preStyle: React.CSSProperties = {
-    fontSize: 10,
+    fontSize: 'var(--fs-xs)',
     lineHeight: 1.5,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
@@ -432,21 +432,21 @@ function SubagentSpineRow({
           {subagentHeading(info)}
         </span>
         {info.model && (
-          <span style={{ color: 'var(--term-faint)', flexShrink: 0, fontSize: 10 }}>{info.model}</span>
+          <span style={{ color: 'var(--term-muted)', flexShrink: 0, fontSize: 'var(--fs-xs)' }}>{info.model}</span>
         )}
-        <span style={{ marginLeft: 'auto', color: failed ? FAIL_COLOR : accent, flexShrink: 0, fontSize: 10, paddingLeft: 8 }}>
+        <span style={{ marginLeft: 'auto', color: failed ? FAIL_COLOR : accent, flexShrink: 0, fontSize: 'var(--fs-xs)', paddingLeft: 8 }}>
           {subagentStatusLabel(t.status)}
         </span>
       </div>
       {mission && (
         <div style={{ marginTop: 2, lineHeight: 1.45, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-          <span style={{ color: 'var(--term-faint)' }}>mission: </span>
+          <span style={{ color: 'var(--term-muted)' }}>mission: </span>
           {clampText(mission, 180)}
         </div>
       )}
       {showNow && (
         <div style={{ marginTop: 1, lineHeight: 1.45 }}>
-          <span style={{ color: 'var(--term-faint)' }}>now: </span>
+          <span style={{ color: 'var(--term-muted)' }}>now: </span>
           <span style={{ color: 'var(--term-accent)' }}>{currentTool}</span>
         </div>
       )}

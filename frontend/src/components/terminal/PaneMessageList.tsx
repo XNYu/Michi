@@ -190,7 +190,7 @@ function PaneMessageListInner({
               data-msg-id={m.id}
               data-streaming-tail={isStreamingTail ? 'true' : undefined}
               className="terminal-message-frame"
-              style={isDownstream ? { opacity: 0.38, filter: 'saturate(0.5)', transition: 'opacity 0.2s' } : undefined}
+              style={isDownstream ? { opacity: 0.38, filter: 'saturate(0.5)', transition: 'opacity var(--t-enter)' } : undefined}
             >
               <MessageBlock
                 m={m}
@@ -365,7 +365,7 @@ function MessagesLoadingPlaceholder() {
             style={{
               height: 12,
               width: i === 0 ? '60%' : '80%',
-              borderRadius: 3,
+              borderRadius: 'var(--ui-radius-sm)',
               background: 'var(--term-line)',
               opacity: 0.5,
             }}
@@ -375,7 +375,7 @@ function MessagesLoadingPlaceholder() {
             style={{
               height: 12,
               width: i === 0 ? '90%' : '45%',
-              borderRadius: 3,
+              borderRadius: 'var(--ui-radius-sm)',
               background: 'var(--term-line)',
               opacity: 0.4,
             }}
@@ -427,9 +427,9 @@ function SubagentStatus({ node }: { node: ChatNodeState }) {
       style={{
         margin: '8px 0',
         padding: '8px 10px',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         border: '1px solid var(--term-line)',
-        borderRadius: 4,
+        borderRadius: 'var(--ui-radius)',
         fontFamily: 'var(--ui-font)',
       }}
     >
@@ -450,8 +450,8 @@ function SubagentStatus({ node }: { node: ChatNodeState }) {
         >
           <span>{s.status === 'working' ? '●' : '✓'}</span>
           <span>{s.agentName}</span>
-          <span style={{ color: 'var(--term-faint)' }}>{s.sessionName}</span>
-          <span style={{ marginLeft: 'auto', color: 'var(--term-faint)' }}>
+          <span style={{ color: 'var(--term-muted)' }}>{s.sessionName}</span>
+          <span style={{ marginLeft: 'auto', color: 'var(--term-muted)' }}>
             {s.status === 'working' ? (s.currentTool || s.statusMessage || 'Running') : 'Done'}
           </span>
         </div>
@@ -490,10 +490,10 @@ function McpServerError({ node }: { node: ChatNodeState }) {
       style={{
         margin: '8px 0',
         padding: '6px 10px',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         color: 'var(--term-danger)',
         border: '1px solid var(--term-danger)',
-        borderRadius: 4,
+        borderRadius: 'var(--ui-radius)',
         opacity: 0.8,
         display: 'flex',
         alignItems: 'center',
@@ -514,7 +514,7 @@ function McpServerError({ node }: { node: ChatNodeState }) {
           border: 'none',
           padding: '0 4px',
           font: 'inherit',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           lineHeight: 1,
           opacity: 0.7,
           flexShrink: 0,

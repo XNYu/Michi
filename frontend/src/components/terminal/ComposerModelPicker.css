@@ -55,15 +55,15 @@
 /* Search uses the shared .michi-menu-search (quiet field + divider); when it sits
    under the Back header, one divider between them is enough. */
 .composer-picker-header:has(+ .michi-menu-search) { border-bottom: 0; margin-bottom: 0; }
-.composer-picker-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; font-size: 11px; line-height: 17px; color: var(--term-muted); overflow-wrap: anywhere; }
+.composer-picker-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; font-size: var(--fs-sm); line-height: 17px; color: var(--term-muted); overflow-wrap: anywhere; }
 .composer-picker-error { color: var(--term-danger); }
 .composer-picker-effort { margin: 4px var(--m-separatorInset) 0; padding: 6px 6px; border-top: 1px solid var(--term-line); }
 .composer-picker-effort-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: var(--m-fontSize); line-height: var(--m-lineHeight); }
 .composer-picker-effort-heading > :last-child { color: var(--term-muted); }
 .composer-picker-range { display: block; appearance: none; width: 100%; height: 28px; margin: 9px 0 0; padding: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
-.composer-picker-range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--term-fg) var(--effort-progress), var(--term-line) var(--effort-progress)); }
-.composer-picker-range::-moz-range-track { height: 6px; border-radius: 3px; background: var(--term-line); }
-.composer-picker-range::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--term-fg); }
+.composer-picker-range::-webkit-slider-runnable-track { height: 6px; border-radius: var(--ui-radius-pill); background: linear-gradient(to right, var(--term-fg) var(--effort-progress), var(--term-line) var(--effort-progress)); }
+.composer-picker-range::-moz-range-track { height: 6px; border-radius: var(--ui-radius-pill); background: var(--term-line); }
+.composer-picker-range::-moz-range-progress { height: 6px; border-radius: var(--ui-radius-pill); background: var(--term-fg); }
 .composer-picker-range::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; margin-top: -6px; border: 1px solid var(--term-line-s); border-radius: 50%; background: var(--term-surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--term-fg) 18%, transparent); }
 .composer-picker-range::-moz-range-thumb { width: 16px; height: 16px; border: 1px solid var(--term-line-s); border-radius: 50%; background: var(--term-surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--term-fg) 18%, transparent); }
 .composer-picker-range:disabled { opacity: .5; cursor: default; }

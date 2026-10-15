@@ -128,7 +128,8 @@ export interface Prefs {
   glassDepth: number;
   /** Corner radius in px (0–12, default 4) for floating surfaces (menus,
    *  modals, popovers, toasts) and controls. Drives --ui-radius, plus
-   *  --ui-radius-sm (half, for rows/buttons/tooltips inside those surfaces). */
+   *  --ui-radius-sm (half, for rows/buttons/tooltips inside those surfaces)
+   *  and --ui-radius-lg (double, for cards, tables and tab pills). */
   cornerRadius: number;
   /** Sidebar's native macOS vibrancy material (Electron+macOS only). Lightest →
    *  densest: under-window < sidebar < menu < hud. Applied via
@@ -250,11 +251,15 @@ export function normalizeCornerRadius(value: unknown): number {
   return Math.min(CORNER_RADIUS_MAX, Math.max(0, Math.round(value)));
 }
 
-/** Pref → the two radius tokens. Inner shapes use half the outer radius so
- *  rows and buttons stay visibly nested inside their surface at any setting. */
-export function cornerRadiusVars(radius: number): { '--ui-radius': string; '--ui-radius-sm': string } {
+/** Pref → the three radius tokens. Inner shapes use half the outer radius so
+ *  rows and buttons stay visibly nested inside their surface at any setting;
+ *  larger containers use double. Pills and dots use --ui-radius-pill and
+ *  never follow this pref. */
+export function cornerRadiusVars(
+  radius: number,
+): { '--ui-radius': string; '--ui-radius-sm': string; '--ui-radius-lg': string } {
   const r = normalizeCornerRadius(radius);
-  return { '--ui-radius': `${r}px`, '--ui-radius-sm': `${Math.round(r / 2)}px` };
+  return { '--ui-radius': `${r}px`, '--ui-radius-sm': `${Math.round(r / 2)}px`, '--ui-radius-lg': `${r * 2}px` };
 }
 
 const PREFS_KEY = 'michi:v1:prefs';

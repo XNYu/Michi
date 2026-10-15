@@ -71,7 +71,7 @@ export default function PaneCaption({
   const dotStyle: React.CSSProperties = isNew && !isDigest && !isArtifact
     && kind !== 'file' && kind !== 'files' && kind !== 'browser' && kind !== 'launcher'
     && kind !== 'diff' && kind !== 'review' && kind !== 'terminal'
-    ? { animation: 'pane-entrance-dot 600ms cubic-bezier(.34, 1.56, .64, 1) forwards' }
+    ? { animation: 'pane-entrance-dot var(--t-slow) cubic-bezier(.34, 1.56, .64, 1) forwards' }
     : {};
 
   const titleColor = focused ? 'var(--term-fg)' : 'var(--term-mid)';
@@ -108,7 +108,7 @@ export default function PaneCaption({
             : '1px solid transparent',
           borderRadius: 0,
           fontFamily: 'var(--ui-font)',
-          fontSize: 12.5,
+          fontSize: 'var(--fs-lg)',
           color: titleColor,
           background: hovered ? 'var(--term-hover-bg, var(--term-alt))' : 'transparent',
           userSelect: 'none',
@@ -119,7 +119,7 @@ export default function PaneCaption({
       >
         <Dot color={dotColor} size={6} pulse={streaming && !isDigest} extraStyle={dotStyle} />
         {kindGlyph ? (
-          <span aria-hidden style={{ color: dotColor, fontFamily: 'var(--mono-font)', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{kindGlyph}</span>
+          <span aria-hidden style={{ color: dotColor, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-sm)', fontWeight: 700, flexShrink: 0 }}>{kindGlyph}</span>
         ) : null}
         {isDigest && (
           <span
@@ -127,7 +127,7 @@ export default function PaneCaption({
             style={{
               color: 'var(--term-digest)',
               fontWeight: 700,
-              fontSize: 13,
+              fontSize: 'var(--fs-lg)',
               lineHeight: 1,
               flexShrink: 0,
             }}
@@ -151,11 +151,11 @@ export default function PaneCaption({
           <span
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 9,
+              fontSize: 'var(--fs-2xs)',
               padding: '1px 5px',
               border: '1px solid var(--term-digest)',
               color: 'var(--term-digest)',
-              letterSpacing: '.12em',
+              letterSpacing: 'var(--ls-caps-wide)',
               fontWeight: 700,
               flexShrink: 0,
             }}
@@ -166,7 +166,7 @@ export default function PaneCaption({
         {error && (
           <span
             aria-hidden
-            style={{ color: 'var(--term-danger)', fontSize: 11, flexShrink: 0 }}
+            style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', flexShrink: 0 }}
           >
             ⚠
           </span>
@@ -193,11 +193,11 @@ export default function PaneCaption({
             justifyContent: 'center',
             padding: 0,
             border: closeHover ? '1px solid var(--term-line)' : '1px solid transparent',
-            borderRadius: 3,
+            borderRadius: 'var(--ui-radius-sm)',
             background: closeHover ? 'var(--term-alt2, var(--term-alt))' : 'transparent',
             color: closeHover ? 'var(--term-fg)' : 'var(--term-faint)',
             fontFamily: 'inherit',
-            fontSize: 14,
+            fontSize: 'var(--fs-xl)',
             lineHeight: 1,
             cursor: 'pointer',
             opacity: hovered ? 1 : 0,

@@ -11,8 +11,8 @@
   --m-width: 288px;
   --m-maxHeight: 240px;
   --m-borderWidth: 1px;
-  --m-fontSize: 13px;
-  --m-captionSize: 11px;
+  --m-fontSize: var(--fs-lg);
+  --m-captionSize: var(--fs-sm);
   --m-weight: 500;
   --m-lineHeight: 1.4;
   --m-padding: 6px;
@@ -24,11 +24,11 @@
   --m-separatorInset: 4px;
   --m-searchHeight: 34px;
   --m-iconSize: 14px;
-  --m-hoverMs: 100ms;
-  --m-enterMs: 140ms;
-  --m-clickDelay: 160ms;
+  --m-hoverMs: var(--t-soft);
+  --m-enterMs: var(--t-soft);
+  --m-clickDelay: 160ms; /* = BLINK_MS in ContextMenu.tsx; a timing contract, not a style */
   --m-font: var(--ui-font);
-  --m-shadow: 0 8px 24px 0 rgba(0, 0, 0, .14);
+  --m-shadow: var(--ui-popover-shadow);
 }
 .michi-menu {
   box-sizing: border-box;
@@ -114,7 +114,7 @@
 .michi-menu-detail-title { margin-bottom: 4px; overflow-wrap: anywhere; }
 .michi-menu-detail-body {
   color: var(--term-mid);
-  font-size: 12px;
+  font-size: var(--fs-md);
   font-weight: 400;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -144,7 +144,7 @@
 .michi-menu-sublabel { margin-left: 6px; }
 .michi-menu-glyph { flex: 0 0 var(--m-iconSize); width: var(--m-iconSize); font-size: var(--m-iconSize); text-align: center; color: var(--term-mid); }
 .michi-menu-glyph > svg { display: block; margin: 0 auto; }
-.michi-menu-keys { flex-shrink: 0; min-width: 12px; text-align: right; color: var(--term-faint); font-size: var(--m-captionSize); }
+.michi-menu-keys { flex-shrink: 0; min-width: 12px; text-align: right; color: var(--term-muted); font-size: var(--m-captionSize); }
 .michi-menu-pinned { flex-shrink: 0; border-top: 1px solid var(--term-line); margin-top: 4px; padding-top: 4px; }
 .michi-menu-search { flex-shrink: 0; border-bottom: 1px solid var(--term-line); margin-bottom: 4px; }
 .michi-menu-search input {

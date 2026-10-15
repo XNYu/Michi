@@ -200,7 +200,7 @@ export default function ChatTreeList({
         style={{
           padding: '20px 0',
           fontFamily: 'var(--ui-font)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-muted)',
         }}
       >
@@ -277,18 +277,18 @@ export default function ChatTreeList({
               background: 'var(--term-alt)',
               cursor: 'pointer',
               fontFamily: 'var(--ui-font)',
-              fontSize: 11,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--term-muted)',
-              letterSpacing: '.08em',
+              letterSpacing: 'var(--ls-caps)',
               textTransform: 'uppercase',
               textAlign: 'left',
             }}
           >
-            <span style={{ fontSize: 9, transition: 'transform 100ms', transform: archivedExpanded ? 'rotate(90deg)' : 'none' }}>
+            <span style={{ fontSize: 'var(--fs-2xs)', transition: 'transform var(--t-soft)', transform: archivedExpanded ? 'rotate(90deg)' : 'none' }}>
               ▶
             </span>
             ARCHIVED
-            <span style={{ fontWeight: 600, color: 'var(--term-fg)', fontSize: 11, letterSpacing: 0, textTransform: 'none' }}>
+            <span style={{ fontWeight: 600, color: 'var(--term-fg)', fontSize: 'var(--fs-sm)', letterSpacing: 0, textTransform: 'none' }}>
               {archivedGroups.length}
             </span>
           </button>
@@ -328,10 +328,10 @@ function SectionLabel({
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         color: 'var(--term-muted)',
         padding: '6px 18px 14px',
-        letterSpacing: '0.12em',
+        letterSpacing: 'var(--ls-caps-wide)',
         fontWeight: 500,
         fontFamily: 'var(--ui-font)',
       }}
@@ -339,7 +339,7 @@ function SectionLabel({
       {icon && (
         <span
           style={{
-            color: tone === 'pin' ? 'var(--term-pin, #c48300)' : 'inherit',
+            color: tone === 'pin' ? 'var(--term-select)' : 'inherit',
             display: 'inline-flex',
           }}
         >
@@ -387,7 +387,7 @@ function TreeBlock({
       className="chat-tree-block"
       style={{
         padding: '2px 0',
-        transition: 'border-color 100ms',
+        transition: 'border-color var(--t-soft)',
         opacity: isArchived && !manageMode ? 0.7 : 1,
       }}
     >
@@ -414,9 +414,9 @@ function TreeBlock({
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: 10,
-                color: '#fff',
-                transition: 'all 80ms',
+                fontSize: 'var(--fs-xs)',
+                color: 'var(--on-accent)',
+                transition: 'all var(--t-quick)',
               }}
             >
               {checked && '✓'}
@@ -457,8 +457,8 @@ function TreeBlock({
           style={{
             paddingLeft: 40,
             fontFamily: 'var(--ui-font)',
-            fontSize: 11,
-            color: 'var(--term-faint, var(--term-muted))',
+            fontSize: 'var(--fs-sm)',
+            color: 'var(--term-muted)',
           }}
         >
           … +{group.overflow.count} deeper
@@ -513,12 +513,12 @@ function ChatRow({
         padding: '6px 10px 6px 8px',
         marginLeft: isBranch ? 18 : 0,
         background: selected
-          ? 'var(--term-sel, color-mix(in srgb, var(--term-accent) 14%, transparent))'
+          ? 'color-mix(in srgb, var(--term-accent) 14%, transparent)'
           : hovered
-            ? 'var(--term-hover, var(--term-alt))'
+            ? 'var(--term-hover-bg)'
             : 'transparent',
         cursor: 'pointer',
-        transition: 'background 100ms',
+        transition: 'background var(--t-soft)',
       }}
     >
       {selected && (
@@ -539,7 +539,7 @@ function ChatRow({
           <span
             style={{
               color: 'var(--term-faint, var(--term-muted))',
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               lineHeight: 1.2,
               flexShrink: 0,
             }}
@@ -550,7 +550,7 @@ function ChatRow({
         <span
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: isBranch ? 14 : 15,
+            fontSize: isBranch ? 'var(--fs-xl)' : 'var(--fs-2xl)',
             lineHeight: 1.3,
             fontWeight: 500,
             color: isArchived ? 'var(--term-muted)' : 'var(--term-fg)',
@@ -566,11 +566,11 @@ function ChatRow({
             <span
               style={{
                 marginLeft: 8,
-                fontSize: 9,
+                fontSize: 'var(--fs-2xs)',
                 padding: '1px 5px',
                 border: '1px solid var(--term-line)',
                 color: 'var(--term-muted)',
-                letterSpacing: '.04em',
+                letterSpacing: 'var(--ls-wide)',
                 verticalAlign: 'middle',
                 fontWeight: 400,
               }}
@@ -581,7 +581,7 @@ function ChatRow({
         </span>
         <span
           style={{
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             color: 'var(--term-muted)',
             fontVariantNumeric: 'tabular-nums',
             flexShrink: 0,
@@ -602,7 +602,7 @@ function ChatRow({
               display: 'inline-flex',
               alignItems: 'center',
               gap: 3,
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               color: 'var(--term-muted)',
               flexShrink: 0,
               fontFamily: 'var(--ui-font)',
@@ -625,7 +625,7 @@ function ChatRow({
               background: 'transparent',
               cursor: 'pointer',
               color: 'var(--term-muted)',
-              fontSize: 14,
+              fontSize: 'var(--fs-xl)',
               lineHeight: 1,
               padding: '2px 6px',
               flexShrink: 0,
@@ -641,7 +641,7 @@ function ChatRow({
             marginTop: 1,
             marginLeft: isBranch ? 16 : 0,
             fontFamily: 'var(--ui-font)',
-            fontSize: 12.5,
+            fontSize: 'var(--fs-lg)',
             lineHeight: 1.4,
             color: 'var(--term-muted)',
             whiteSpace: 'nowrap',

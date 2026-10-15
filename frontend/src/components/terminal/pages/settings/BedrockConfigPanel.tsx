@@ -23,7 +23,7 @@ const BEDROCK_REGIONS = [
 
 const fieldStyle: React.CSSProperties = {
   fontFamily: 'var(--ui-font)',
-  fontSize: 12,
+  fontSize: 'var(--fs-md)',
   padding: '6px 8px',
   border: '1px solid var(--term-line)',
   background: 'var(--term-surface-glass)',
@@ -33,7 +33,7 @@ const fieldStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 'var(--fs-sm)',
   color: 'var(--term-muted)',
   marginBottom: 4,
   fontFamily: 'var(--ui-font)',
@@ -137,7 +137,7 @@ export function BedrockConfigPanel({
     <div
       style={{
         fontFamily: 'var(--ui-font)',
-        fontSize: 13,
+        fontSize: 'var(--fs-lg)',
         color: 'var(--term-fg)',
         marginTop: 18,
         paddingTop: 14,
@@ -146,9 +146,9 @@ export function BedrockConfigPanel({
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: 'var(--fs-xs)',
           color: 'var(--term-muted)',
-          letterSpacing: '.14em',
+          letterSpacing: 'var(--ls-caps-wide)',
           marginBottom: 12,
           fontFamily: 'var(--ui-font)',
         }}
@@ -159,7 +159,7 @@ export function BedrockConfigPanel({
       {envDetected && (
         <div
           style={{
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             color: 'var(--term-accent)',
             marginBottom: 14,
             padding: '8px 10px',
@@ -206,7 +206,7 @@ export function BedrockConfigPanel({
                 display: 'flex',
                 alignItems: 'flex-start',
                 gap: 8,
-                fontSize: 12,
+                fontSize: 'var(--fs-md)',
                 cursor: 'pointer',
               }}
             >
@@ -257,7 +257,7 @@ export function BedrockConfigPanel({
                   </div>
                 )}
                 {credentialSource === opt.value && opt.value === 'auto' && (
-                  <span style={{ fontSize: 10.5, color: 'var(--term-muted)' }}>
+                  <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
                     Uses the AWS SDK default credential chain (IAM role, ~/.aws/credentials, etc.)
                   </span>
                 )}
@@ -277,7 +277,7 @@ export function BedrockConfigPanel({
           placeholder="e.g. aws sso login --profile my-profile"
           style={{ ...fieldStyle, minWidth: 480, width: '100%', maxWidth: 600 }}
         />
-        <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginTop: 4, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 4, lineHeight: 1.5 }}>
           Runs automatically when credentials expire. Similar to Claude Code's awsAuthRefresh.
         </div>
       </div>
@@ -289,7 +289,7 @@ export function BedrockConfigPanel({
           disabled={saving}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
@@ -305,7 +305,7 @@ export function BedrockConfigPanel({
           disabled={verifying}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
             background: verifyResult?.ok ? 'var(--term-alt)' : 'var(--term-surface-glass)',
@@ -320,7 +320,7 @@ export function BedrockConfigPanel({
           onClick={() => void handleClear()}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
@@ -336,7 +336,7 @@ export function BedrockConfigPanel({
       {verifyResult && (
         <div
           style={{
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             color: verifyResult.ok ? 'var(--term-accent)' : 'var(--term-danger)',
             marginTop: 8,
           }}
@@ -347,10 +347,10 @@ export function BedrockConfigPanel({
         </div>
       )}
       {error && (
-        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
       )}
       {config?.configured && !verifyResult && (
-        <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 8 }}>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 8 }}>
           {config.envDetected
             ? 'Credentials detected from environment.'
             : `Credentials saved (${config.credentialSource}).`}

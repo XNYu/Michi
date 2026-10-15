@@ -183,7 +183,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
           justifyContent: 'center',
           gap: 12,
           fontFamily: 'var(--ui-font)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-muted)',
           background: 'var(--term-page-bg, var(--term-bg))',
         }}
@@ -198,7 +198,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
             color: 'var(--term-fg)',
             padding: '4px 10px',
             fontFamily: 'inherit',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             cursor: 'pointer',
           }}
         >
@@ -377,12 +377,12 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
               position: 'absolute',
               inset: 0,
               border: '2px dashed var(--term-accent)',
-              background: 'rgba(47, 143, 115, .15)',
+              background: 'color-mix(in srgb, var(--term-accent) 12%, transparent)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               pointerEvents: 'none',
-              zIndex: 100,
+              zIndex: 'var(--z-pane-overlay)',
             }}
           >
             <div
@@ -392,8 +392,8 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
                 color: 'var(--term-accent)',
                 padding: '8px 18px',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 12,
-                borderRadius: 3,
+                fontSize: 'var(--fs-md)',
+                borderRadius: 'var(--ui-radius-sm)',
               }}
             >
               drop {droppedFileCount} file{droppedFileCount === 1 ? '' : 's'} · add as context

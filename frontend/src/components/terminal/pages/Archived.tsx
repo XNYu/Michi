@@ -200,7 +200,7 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
             border: '1px solid var(--term-line)',
             padding: 20,
             color: 'var(--term-muted)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             fontFamily: 'var(--ui-font)',
           }}
         >
@@ -246,7 +246,7 @@ function WorkspaceSectionView({
           background: 'var(--term-alt)',
           borderBottom: '1px solid var(--term-line)',
           fontFamily: 'var(--ui-font)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
         <span
@@ -254,18 +254,19 @@ function WorkspaceSectionView({
             width: 22,
             height: 22,
             background: workspaceAccent(project.id),
+            // eslint-disable-next-line no-restricted-syntax -- fixed workspace badge palette, not theme-driven
             color: '#fff',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             fontWeight: 700,
           }}
         >
           {initialOf(project.name)}
         </span>
-        <span style={{ color: 'var(--term-fg)', fontWeight: 600, fontSize: 12 }}>{project.name}</span>
-        <span style={{ color: 'var(--term-muted)', fontSize: 10 }}>
+        <span style={{ color: 'var(--term-fg)', fontWeight: 600, fontSize: 'var(--fs-md)' }}>{project.name}</span>
+        <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
           {groups.length} item{groups.length === 1 ? '' : 's'}
         </span>
       </div>
@@ -310,12 +311,12 @@ function ArchiveListRow({
         background: 'var(--term-surface)',
       }}
     >
-      <span style={{ fontSize: 14, color: 'var(--term-muted)' }}>▣</span>
+      <span style={{ fontSize: 'var(--fs-xl)', color: 'var(--term-muted)' }}>▣</span>
       <div style={{ minWidth: 0 }}>
         <div
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             color: 'var(--term-fg)',
             fontWeight: 600,
             overflow: 'hidden',
@@ -325,11 +326,11 @@ function ArchiveListRow({
         >
           {title}
         </div>
-        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 10, color: 'var(--term-muted)', marginTop: 2 }}>
+        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', marginTop: 2 }}>
           {meta}
         </div>
       </div>
-      <span style={{ fontFamily: 'var(--ui-font)', fontSize: 11, color: 'var(--term-muted)' }}>
+      <span style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
         {formatRelative(archivedAt)}
       </span>
       <div style={{ display: 'inline-flex', gap: 8, justifySelf: 'end' }}>
@@ -337,12 +338,12 @@ function ArchiveListRow({
           onClick={onRestore}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             color: 'var(--term-fg)',
             cursor: 'pointer',
             padding: '4px 10px',
             border: '1px solid var(--term-fg)',
-            letterSpacing: '.04em',
+            letterSpacing: 'var(--ls-wide)',
           }}
         >
           ↺ restore
@@ -351,12 +352,12 @@ function ArchiveListRow({
           onClick={onPurge}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             color: 'var(--term-danger)',
             cursor: 'pointer',
             padding: '4px 10px',
             border: '1px solid var(--term-danger)',
-            letterSpacing: '.04em',
+            letterSpacing: 'var(--ls-wide)',
           }}
         >
           × delete permanently

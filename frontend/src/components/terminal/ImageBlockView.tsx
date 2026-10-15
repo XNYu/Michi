@@ -21,8 +21,8 @@ export function ImageBlockView({ blocks }: { blocks: readonly AssistantBlock[] }
         if (broken.has(src)) {
           return (
             <figure key={b.id} style={{ margin: 0 }}>
-              <div style={{ fontSize: 12, opacity: 0.6, fontStyle: 'italic' }}>image unavailable</div>
-              {b.caption && <figcaption style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>{b.caption}</figcaption>}
+              <div style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted)', fontStyle: 'italic' }}>image unavailable</div>
+              {b.caption && <figcaption style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted)', marginTop: 4 }}>{b.caption}</figcaption>}
             </figure>
           );
         }
@@ -47,10 +47,10 @@ export function ImageBlockView({ blocks }: { blocks: readonly AssistantBlock[] }
                 alt={b.caption ?? ''}
                 loading="lazy"
                 onError={() => setBroken((prev) => new Set(prev).add(src))}
-                style={{ maxWidth: '100%', borderRadius: 6, display: 'block' }}
+                style={{ maxWidth: '100%', borderRadius: 'var(--ui-radius)', display: 'block' }}
               />
             </button>
-            {b.caption && <figcaption style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>{b.caption}</figcaption>}
+            {b.caption && <figcaption style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted)', marginTop: 4 }}>{b.caption}</figcaption>}
           </figure>
         );
       })}

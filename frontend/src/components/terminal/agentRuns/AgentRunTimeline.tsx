@@ -46,14 +46,14 @@ const CHIP_LABEL: Partial<Record<AgentRunEventType, string>> = {
  */
 export function AgentRunTimeline({ events }: { events: readonly AgentRunEventV1[] }) {
   const ordered = [...events].sort((a, b) => a.seq - b.seq).filter((event) => !HIDDEN.has(event.type));
-  if (ordered.length === 0) return <div style={{ color: 'var(--term-muted)', fontSize: 11 }}>No activity yet.</div>;
+  if (ordered.length === 0) return <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>No activity yet.</div>;
   return (
     <ol aria-label="Run activity" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {ordered.map((event) => {
         if (event.type === AgentRunEventType.Assistant) {
           return (
             <li key={event.seq} data-testid="run-transcript-entry"
-              style={{ fontSize: 13.5, lineHeight: 1.55, color: 'var(--term-fg)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '64ch' }}>
+              style={{ fontSize: 'var(--fs-xl)', lineHeight: 1.55, color: 'var(--term-fg)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '64ch' }}>
               {payloadText(event)}
             </li>
           );
@@ -61,7 +61,7 @@ export function AgentRunTimeline({ events }: { events: readonly AgentRunEventV1[
         if (event.type === AgentRunEventType.Thought) {
           return (
             <li key={event.seq} data-testid="run-transcript-entry"
-              style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--term-muted)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '64ch' }}>
+              style={{ fontSize: 'var(--fs-md)', lineHeight: 1.5, color: 'var(--term-muted)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '64ch' }}>
               {payloadText(event)}
             </li>
           );
@@ -69,19 +69,19 @@ export function AgentRunTimeline({ events }: { events: readonly AgentRunEventV1[
         if (event.type === AgentRunEventType.RecoveryStarted) {
           // Runtime fallback is an inline system event, not a kv row.
           return (
-            <li key={event.seq} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--mono-font)', fontSize: 10, color: 'var(--term-muted)' }}>
+            <li key={event.seq} style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
               <span aria-hidden style={{ color: 'var(--term-select)' }}>⚠</span>
               <span>{payloadText(event)}</span>
-              <span style={{ color: 'var(--term-faint)' }}>· recovering</span>
+              <span style={{ color: 'var(--term-muted)' }}>· recovering</span>
             </li>
           );
         }
         const label = CHIP_LABEL[event.type] ?? event.type.replaceAll('_', ' ');
         return (
-          <li key={event.seq} style={{ display: 'flex', alignItems: 'baseline', gap: 7, fontSize: 10.5, color: 'var(--term-muted)' }}>
-            <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>▸</span>
+          <li key={event.seq} style={{ display: 'flex', alignItems: 'baseline', gap: 7, fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
+            <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>▸</span>
             <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
-              <span style={{ fontFamily: 'var(--mono-font)', fontSize: 9.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--term-faint)', marginRight: 7 }}>{label}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', marginRight: 7 }}>{label}</span>
               {payloadText(event)}
             </span>
           </li>

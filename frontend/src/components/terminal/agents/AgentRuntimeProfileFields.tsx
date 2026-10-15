@@ -41,8 +41,8 @@ interface Props {
 
 const inputStyle: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box', border: '1px solid var(--term-line)',
-  background: 'var(--term-panel, var(--term-bg))', color: 'var(--term-fg)',
-  fontFamily: 'var(--ui-font)', fontSize: 12, padding: '7px 9px', outline: 'none',
+  background: 'var(--term-bg)', color: 'var(--term-fg)',
+  fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)', padding: '7px 9px', outline: 'none',
 };
 
 export default function AgentRuntimeProfileFields({ value, onChange, prefix = 'runtime', errors = {}, compact = false, catalog = null }: Props) {
@@ -117,10 +117,10 @@ export default function AgentRuntimeProfileFields({ value, onChange, prefix = 'r
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' }}>
       {label}
       {children}
-      {error && <span role="alert" style={{ color: 'var(--danger, var(--term-error))', fontSize: 10, letterSpacing: 0, textTransform: 'none' }}>{error}</span>}
+      {error && <span role="alert" style={{ color: 'var(--danger, var(--term-danger))', fontSize: 'var(--fs-xs)', letterSpacing: 0, textTransform: 'none' }}>{error}</span>}
     </label>
   );
 }

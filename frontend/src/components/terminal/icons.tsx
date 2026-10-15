@@ -233,3 +233,101 @@ export function LinkIcon({ size = 14, className }: IconProps) {
     </svg>
   );
 }
+
+export function TrashIcon({ size = 14, className }: IconProps) {
+  // Lidded bin with two ribs — deleted things wait here before they're gone.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2.5 4.5h11" />
+      <path d="M6.2 4.5V3h3.6v1.5" />
+      <path d="M4 4.5l.8 9h6.4l.8-9" />
+      <path d="M6.8 7v4M9.2 7v4" />
+    </svg>
+  );
+}
+
+export function ArchiveIcon({ size = 14, className }: IconProps) {
+  // Box with a lid and a pull slot — kept, but out of the way.
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="2" y="2.5" width="12" height="3.5" rx="1" />
+      <path d="M3.5 6v6.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6" />
+      <path d="M6.5 8.8h3" />
+    </svg>
+  );
+}
+
+export function PlusIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
+export function ThreadIcon({ size = 14, className }: IconProps) {
+  // One thread: a root bead, a spine, and a branch curling off it — the tree
+  // glyph's node-and-elbow language at 16 units.
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="4.5" cy="3.8" r="1.5" />
+      <circle cx="4.5" cy="12.2" r="1.5" />
+      <circle cx="11.5" cy="8" r="1.5" />
+      <path d="M4.5 5.3v5.4" />
+      <path d="M4.5 5.6c0 1.6 1.2 2.4 3 2.4H10" />
+    </svg>
+  );
+}
+
+export function WeaveIcon({ size = 14, className }: IconProps) {
+  // Two branches merging into one node — weaving chats back together.
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="4" cy="3.5" r="1.5" />
+      <circle cx="12" cy="3.5" r="1.5" />
+      <circle cx="8" cy="12.5" r="1.5" />
+      <path d="M4 5c0 3 4 3 4 6M12 5c0 3-4 3-4 6" />
+    </svg>
+  );
+}
+
+export function ExportIcon({ size = 14, className }: IconProps) {
+  // Arrow dropping into a tray.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 2.5V10" />
+      <path d="M4.8 6.8L8 10l3.2-3.2" />
+      <path d="M2.5 11v2.5h11V11" />
+    </svg>
+  );
+}
+
+export function AgentIcon({ size = 14, className }: IconProps) {
+  // Michi's agent mark (◇) drawn as an outline diamond with a solid core.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 2l6 6-6 6-6-6z" />
+      <circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function ShieldIcon({ size = 14, className }: IconProps) {
+  // Permission prompts on: a shield with a check.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 1.8l5 2v4.1c0 3-2.1 5.1-5 6.3-2.9-1.2-5-3.3-5-6.3V3.8z" />
+      <path d="M5.8 8.1l1.6 1.6 3-3.1" />
+    </svg>
+  );
+}
+
+export function ShieldOffIcon({ size = 14, className }: IconProps) {
+  // Permission prompts bypassed: the same shield, struck through.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 1.8l5 2v4.1c0 3-2.1 5.1-5 6.3-2.9-1.2-5-3.3-5-6.3V3.8z" />
+      <path d="M2 2l12 12" />
+    </svg>
+  );
+}

@@ -22,7 +22,7 @@ export function Row({
         <div
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             color: 'var(--term-fg)',
             fontWeight: 600,
           }}
@@ -31,8 +31,8 @@ export function Row({
         </div>
         <div
           style={{
-            fontSize: 10,
-            color: 'var(--term-faint)',
+            fontSize: 'var(--fs-xs)',
+            color: 'var(--term-muted)',
             fontFamily: 'var(--ui-font)',
           }}
         >
@@ -86,7 +86,7 @@ export function Radio({
             </span>
             <span
               style={{
-                fontSize: 11.5,
+                fontSize: 'var(--fs-md)',
                 fontFamily: 'var(--ui-font)',
                 color: sel ? 'var(--term-fg)' : 'var(--term-mid)',
                 fontWeight: sel ? 600 : 400,
@@ -122,7 +122,7 @@ export function Toggle({
       onClick={() => onChange(!on)}
     >
       <Switch on={on} onChange={onChange} aria-label={label} />
-      <span style={{ fontSize: 11.5, color: 'var(--term-mid)', fontFamily: 'var(--ui-font)' }}>
+      <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', fontFamily: 'var(--ui-font)' }}>
         {label}
       </span>
     </ClickableRow>

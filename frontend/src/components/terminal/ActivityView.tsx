@@ -473,7 +473,7 @@ export default function ActivityView({
         overflowY: 'auto',
         paddingLeft: 'var(--sb-inset, 0px)',
         paddingRight: 'var(--sb-inset, 0px)',
-        fontSize: 'var(--sb-fs, 13.5px)',
+        fontSize: 'var(--sb-fs, var(--fs-xl))',
       }}
     >
       {agentRuns.length > 0 && (
@@ -498,11 +498,11 @@ export default function ActivityView({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                fontSize: geom.isCard ? 'var(--sb-ts-fs, 11.5px)' : 11,
+                fontSize: geom.isCard ? 'var(--sb-ts-fs, var(--fs-md))' : 11,
                 fontWeight: 600,
-                letterSpacing: geom.isCard ? '0.01em' : '0.03em',
+                letterSpacing: geom.isCard ? 0 : 'var(--ls-wide)',
                 textTransform: geom.isCard ? 'none' : 'uppercase',
-                color: 'var(--term-faint)',
+                color: 'var(--term-muted)',
                 // Card modes drop the label onto the same text spine as the
                 // thread titles below it, sentence-case at one shared size.
                 padding: geom.isCard
@@ -517,8 +517,8 @@ export default function ActivityView({
                     width: 6,
                     height: 6,
                     borderRadius: '50%',
-                    background: 'var(--term-ok, #5dd882)',
-                    animation: 'pulse 2s ease-in-out infinite',
+                    background: 'var(--term-digest)',
+                    animation: 'pulse var(--t-loop-slow) ease-in-out infinite',
                     flexShrink: 0,
                   }}
                 />
@@ -571,7 +571,7 @@ export default function ActivityView({
             padding: '40px 16px',
             textAlign: 'center',
             color: 'var(--term-muted)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
           }}
         >
           No activity yet
@@ -730,8 +730,8 @@ function ActivityTreeEntry({
       {!geom.subtitleInRow && (
       <div
         style={{
-          fontSize: 11,
-          color: 'var(--term-faint)',
+          fontSize: 'var(--fs-sm)',
+          color: 'var(--term-muted)',
           fontFamily: 'var(--ui-font)',
           // Indent to align with the thread title text:
           // ThreadRow: borderLeft(2) + paddingLeft(8+inset) + chevron(12) + gap(5) = 27+inset

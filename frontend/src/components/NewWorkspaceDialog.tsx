@@ -49,15 +49,15 @@ const PROMPT_ROW: React.CSSProperties = {
 };
 
 const PROMPT_GLYPH: React.CSSProperties = {
-  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-  fontSize: 12.5,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-lg)',
   color: 'var(--term-accent)',
   flexShrink: 0,
 };
 
 const PROMPT_LABEL: React.CSSProperties = {
-  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-  fontSize: 11,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-sm)',
   color: 'var(--term-mid)',
   flexShrink: 0,
   width: 56,
@@ -70,7 +70,7 @@ const PROMPT_INPUT: React.CSSProperties = {
   outline: 'none',
   background: 'transparent',
   fontFamily: 'var(--ui-font)',
-  fontSize: 14,
+  fontSize: 'var(--fs-xl)',
   color: 'var(--term-fg)',
   padding: 0,
 };
@@ -305,10 +305,10 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
               value={remoteCwd}
               onChange={(e) => { setRemoteCwd(e.target.value); setError(null); }}
               placeholder="/home/you/project"
-              style={{ ...PROMPT_INPUT, fontFamily: 'var(--mono-font, ui-monospace, monospace)', fontSize: 12.5 }}
+              style={{ ...PROMPT_INPUT, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-lg)' }}
             />
           </div>
-          <div style={{ padding: '9px 14px 12px', color: 'var(--term-muted)', fontSize: 11.5, lineHeight: 1.45 }}>
+          <div style={{ padding: '9px 14px 12px', color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.45 }}>
             This path is resolved on the remote server. Local folder picking and symlink attachments are unavailable for this workspace.
           </div>
         </div>
@@ -332,13 +332,13 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
               margin: '0 14px 12px',
               padding: '18px 14px',
               border: '1.5px dashed var(--term-line)',
-              borderRadius: 6,
+              borderRadius: 'var(--ui-radius)',
               background: 'transparent',
               color: 'var(--term-mid)',
               fontFamily: 'var(--ui-font)',
-              fontSize: 13,
+              fontSize: 'var(--fs-lg)',
               cursor: 'pointer',
-              transition: 'border-color 0.15s, color 0.15s',
+              transition: 'border-color var(--t-soft), color var(--t-soft)',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.borderColor = 'var(--term-accent)';
@@ -378,11 +378,11 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
                   background: 'transparent',
                   color: 'var(--term-mid)',
                   fontFamily: 'var(--ui-font)',
-                  fontSize: 11.5,
+                  fontSize: 'var(--fs-md)',
                   cursor: 'pointer',
                 }}
               >
-                <span style={{ fontSize: 13 }}>+</span> Add folder
+                <span style={{ fontSize: 'var(--fs-lg)' }}>+</span> Add folder
               </button>
             )}
           </div>
@@ -393,7 +393,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
         <div
           style={{
             padding: '8px 14px 0',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             color: 'var(--term-danger)',
             fontFamily: 'var(--ui-font)',
           }}
@@ -407,7 +407,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
           role="status"
           style={{
             padding: '9px 14px 0',
-            fontSize: 11.5,
+            fontSize: 'var(--fs-md)',
             lineHeight: 1.45,
             color: 'var(--term-mid)',
             fontFamily: 'var(--ui-font)',
@@ -455,9 +455,9 @@ function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProp
         alignItems: 'center',
         gap: 8,
         padding: '6px 8px',
-        borderRadius: 4,
+        borderRadius: 'var(--ui-radius)',
         background: hovered ? 'var(--term-alt)' : 'transparent',
-        transition: 'background 0.1s',
+        transition: 'background var(--t-soft)',
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -466,7 +466,7 @@ function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProp
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
-            fontSize: 12.5,
+            fontSize: 'var(--fs-lg)',
             fontWeight: 500,
             color: 'var(--term-fg)',
             fontFamily: 'var(--ui-font)',
@@ -479,9 +479,9 @@ function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProp
         </div>
         <div
           style={{
-            fontSize: 10.5,
+            fontSize: 'var(--fs-sm)',
             color: 'var(--term-muted)',
-            fontFamily: 'var(--mono-font, monospace)',
+            fontFamily: 'var(--font-mono)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -495,13 +495,13 @@ function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProp
       {isPrimary && (
         <span
           style={{
-            fontSize: 10,
+            fontSize: 'var(--fs-xs)',
             fontFamily: 'var(--ui-font)',
             fontWeight: 600,
             color: 'var(--term-accent)',
             background: 'color-mix(in srgb, var(--term-accent) 12%, transparent)',
             padding: '2px 6px',
-            borderRadius: 3,
+            borderRadius: 'var(--ui-radius-sm)',
             flexShrink: 0,
           }}
         >
@@ -515,13 +515,13 @@ function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProp
           onClick={onMakePrimary}
           title="Make this the working directory"
           style={{
-            fontSize: 10,
+            fontSize: 'var(--fs-xs)',
             fontFamily: 'var(--ui-font)',
             color: 'var(--term-mid)',
             background: 'transparent',
             border: '1px solid var(--term-line)',
             padding: '2px 6px',
-            borderRadius: 3,
+            borderRadius: 'var(--ui-radius-sm)',
             cursor: 'pointer',
             flexShrink: 0,
             whiteSpace: 'nowrap',
@@ -540,11 +540,11 @@ function FolderRow({ folder, isPrimary, onRemove, onMakePrimary }: FolderRowProp
           border: 'none',
           color: hovered ? 'var(--term-fg)' : 'transparent',
           cursor: 'pointer',
-          fontSize: 14,
+          fontSize: 'var(--fs-xl)',
           lineHeight: 1,
           padding: '2px 4px',
           flexShrink: 0,
-          transition: 'color 0.1s',
+          transition: 'color var(--t-soft)',
         }}
       >
         ×

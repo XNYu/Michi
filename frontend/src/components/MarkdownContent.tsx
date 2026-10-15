@@ -303,7 +303,7 @@ function HighlightText({ children, term }: { children: string; term: string }) {
     <>
       {parts.map((part, i) =>
         part.toLowerCase() === term.toLowerCase() ? (
-          <mark key={i} className="bg-yellow-300 text-black rounded-sm px-0.5">{part}</mark>
+          <mark key={i} className="bg-(--term-select-f) text-(--term-fg) rounded-(--ui-radius-sm) px-0.5">{part}</mark>
         ) : (
           part
         ),

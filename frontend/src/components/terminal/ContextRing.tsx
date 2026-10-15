@@ -24,10 +24,10 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
  * Exactly four stops, linearly interpolated.
  */
 function ringColor(pct: number): string {
-  if (pct < 50) return 'var(--color-success, #34a853)';
-  if (pct < 75) return 'var(--color-warn, #f9ab00)';
-  if (pct < 90) return 'var(--color-orange, #e8710a)';
-  return 'var(--color-error, #ea4335)';
+  if (pct < 50) return 'var(--term-digest)';
+  if (pct < 75) return 'var(--term-select)';
+  if (pct < 90) return 'color-mix(in srgb, var(--term-select) 50%, var(--term-danger))';
+  return 'var(--term-danger)';
 }
 
 function formatTokens(n: number): string {
@@ -59,7 +59,7 @@ export const ContextRing = React.memo(function ContextRing({
     return {
       strokeDasharray: `${CIRCUMFERENCE} ${CIRCUMFERENCE}`,
       strokeDashoffset: offset,
-      transition: 'stroke-dashoffset 400ms ease-out, stroke 300ms ease-out',
+      transition: 'stroke-dashoffset var(--t-decay) ease-out, stroke var(--t-decay) ease-out',
     };
   }, [pct]);
 
@@ -91,7 +91,7 @@ export const ContextRing = React.memo(function ContextRing({
           flexShrink: 0,
           cursor: 'default',
           opacity: pct < 10 ? 0.5 : 1,
-          transition: 'opacity 300ms ease-out',
+          transition: 'opacity var(--t-decay) ease-out',
         }}
       >
         <svg
@@ -106,7 +106,7 @@ export const ContextRing = React.memo(function ContextRing({
             cy={SIZE / 2}
             r={RADIUS}
             fill="none"
-            stroke="var(--term-line-m, rgba(128,128,128,0.15))"
+            stroke="var(--term-line)"
             strokeWidth={STROKE}
           />
           {/* Progress arc */}

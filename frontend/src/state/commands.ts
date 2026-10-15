@@ -3,10 +3,18 @@ import { kbd } from '../lib/platform';
 
 export type CommandGroup = 'nav' | 'action' | 'workspace' | 'chat' | 'search-result';
 
+/** Leading icon for a palette row. Names map to the SVG set in
+ *  components/terminal/icons.tsx (see commandIcons.tsx); this module stays
+ *  JSX-free. */
+export type CommandIcon =
+  | 'agent' | 'home' | 'branches' | 'map' | 'digest' | 'workspace' | 'trash'
+  | 'archive' | 'settings' | 'profile' | 'plus' | 'shield' | 'shield-off'
+  | 'thread' | 'weave' | 'export' | 'close' | 'chat';
+
 export interface Command {
   id: string;
   group: CommandGroup;
-  glyph: string;
+  icon: CommandIcon;
   label: string;
   keys?: string;
   meta?: string;
@@ -66,55 +74,55 @@ export function buildCommands(ctx: CommandContext): Command[] {
   // Kept in ACTION rather than NAV so the long-standing fixed nav-command
   // ordering/shortcut contract remains unchanged; it still routes to a page.
   if (ctx.customAgentsEnabled) {
-    out.push({ id: 'agents.open', group: 'action', glyph: '◇', label: 'Open Agent Library', run: () => ctx.setPage('agents') });
+    out.push({ id: 'agents.open', group: 'action', icon: 'agent', label: 'Open Agent Library', run: () => ctx.setPage('agents') });
   }
   if (ctx.hasActiveProject) {
     out.push(
-      { id: 'nav.home',       group: 'nav', glyph: '◐', label: 'Go to home',            keys: kbd('mod', '0'), run: () => ctx.setPage('home') },
-      { id: 'nav.branches',   group: 'nav', glyph: '≡', label: 'Open branch overview',  run: () => ctx.setPage('branches') },
-      { id: 'nav.map',        group: 'nav', glyph: '⎇', label: 'Open map',              keys: kbd('mod', 'M'), run: () => ctx.setPage('map') },
-      { id: 'nav.digest',     group: 'nav', glyph: '§', label: 'Open thread digest',    keys: kbd('mod', 'D'), run: () => ctx.setPage('digest') },
-      { id: 'nav.workspaces', group: 'nav', glyph: '▢', label: 'Switch workspace…',     keys: kbd('mod', 'O'), run: () => ctx.setPage('workspaces') },
-      { id: 'nav.trash',      group: 'nav', glyph: '🗑', label: 'Open trash',            run: () => ctx.setPage('trash') },
-      { id: 'nav.archived',   group: 'nav', glyph: '▣', label: 'Open archived nodes',    run: () => ctx.setPage('archived') },
-      { id: 'nav.settings',   group: 'nav', glyph: '⚙', label: 'Open settings',         keys: kbd('mod', ','), run: () => ctx.setPage('settings') },
+      { id: 'nav.home',       group: 'nav', icon: 'home', label: 'Go to home',            keys: kbd('mod', '0'), run: () => ctx.setPage('home') },
+      { id: 'nav.branches',   group: 'nav', icon: 'branches', label: 'Open branch overview',  run: () => ctx.setPage('branches') },
+      { id: 'nav.map',        group: 'nav', icon: 'map', label: 'Open map',              keys: kbd('mod', 'M'), run: () => ctx.setPage('map') },
+      { id: 'nav.digest',     group: 'nav', icon: 'digest', label: 'Open thread digest',    keys: kbd('mod', 'D'), run: () => ctx.setPage('digest') },
+      { id: 'nav.workspaces', group: 'nav', icon: 'workspace', label: 'Switch workspace…',     keys: kbd('mod', 'O'), run: () => ctx.setPage('workspaces') },
+      { id: 'nav.trash',      group: 'nav', icon: 'trash', label: 'Open trash',            run: () => ctx.setPage('trash') },
+      { id: 'nav.archived',   group: 'nav', icon: 'archive', label: 'Open archived nodes',    run: () => ctx.setPage('archived') },
+      { id: 'nav.settings',   group: 'nav', icon: 'settings', label: 'Open settings',         keys: kbd('mod', ','), run: () => ctx.setPage('settings') },
     );
     if (PROFILE_PAGE_ENABLED) {
       out.push(
-        { id: 'nav.profile', group: 'nav', glyph: '◉', label: 'Open profile', keys: kbd('mod', 'P'), run: () => ctx.setPage('profile') },
+        { id: 'nav.profile', group: 'nav', icon: 'profile', label: 'Open profile', keys: kbd('mod', 'P'), run: () => ctx.setPage('profile') },
       );
     }
-    out.push({ id: 'thread.new', group: 'action', glyph: '+', label: 'New thread', keys: kbd('mod', 'T'), run: ctx.createThread });
+    out.push({ id: 'thread.new', group: 'action', icon: 'plus', label: 'New thread', keys: kbd('mod', 'T'), run: ctx.createThread });
     out.push({
       id: 'action.bypass-permissions',
       group: 'action',
-      glyph: ctx.bypassPermissions ? '●' : '○',
+      icon: ctx.bypassPermissions ? 'shield-off' : 'shield',
       label: ctx.bypassPermissions ? 'Bypass permissions: ON' : 'Bypass permissions: OFF',
       run: ctx.toggleBypassPermissions,
     });
     for (const t of ctx.liveTrees) {
-      out.push({ id: `thread.switch.${t.id}`, group: 'nav', glyph: '•', label: `Switch to thread ▸ ${t.name}`, run: () => ctx.activateTree(t.id) });
+      out.push({ id: `thread.switch.${t.id}`, group: 'nav', icon: 'thread', label: `Switch to thread ▸ ${t.name}`, run: () => ctx.activateTree(t.id) });
     }
     for (const t of ctx.archivedTrees) {
-      out.push({ id: `thread.switch.archived.${t.id}`, group: 'nav', glyph: '▣', label: `Switch to archived thread ▸ ${t.name}`, run: () => ctx.activateTree(t.id) });
+      out.push({ id: `thread.switch.archived.${t.id}`, group: 'nav', icon: 'archive', label: `Switch to archived thread ▸ ${t.name}`, run: () => ctx.activateTree(t.id) });
     }
     if (ctx.activeTreeId) {
-      out.push({ id: 'thread.archive', group: 'action', glyph: '▣', label: 'Archive current thread', run: () => ctx.archiveTree(ctx.activeTreeId!) });
+      out.push({ id: 'thread.archive', group: 'action', icon: 'archive', label: 'Archive current thread', run: () => ctx.archiveTree(ctx.activeTreeId!) });
     }
   }
   if (ctx.selection.size >= 2) {
     out.push(
-      { id: 'action.weave',  group: 'action', glyph: '⧉', label: `Weave ${ctx.selection.size} chats`,        run: ctx.fanoutFromSelection },
-      { id: 'action.digest', group: 'action', glyph: '§', label: `Digest from ${ctx.selection.size} chats`, keys: kbd('shift', 'mod', 'D'), run: ctx.digestFromSelection },
-      { id: 'action.export', group: 'action', glyph: '↓', label: `Export ${ctx.selection.size} selected`,                 run: ctx.exportSelection },
-      { id: 'action.clear',  group: 'action', glyph: '×', label: 'Clear selection',                          keys: 'esc',  run: ctx.clearSelection },
+      { id: 'action.weave',  group: 'action', icon: 'weave', label: `Weave ${ctx.selection.size} chats`,        run: ctx.fanoutFromSelection },
+      { id: 'action.digest', group: 'action', icon: 'digest', label: `Digest from ${ctx.selection.size} chats`, keys: kbd('shift', 'mod', 'D'), run: ctx.digestFromSelection },
+      { id: 'action.export', group: 'action', icon: 'export', label: `Export ${ctx.selection.size} selected`,                 run: ctx.exportSelection },
+      { id: 'action.clear',  group: 'action', icon: 'close', label: 'Clear selection',                          keys: 'esc',  run: ctx.clearSelection },
     );
   }
   for (const w of ctx.workspaces) {
     out.push({
       id: `workspace.switch.${w.id}`,
       group: 'workspace',
-      glyph: '▢',
+      icon: 'workspace',
       label: `Switch to workspace ▸ ${w.name}`,
       run: () => ctx.switchWorkspace(w.id),
     });
@@ -124,7 +132,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
     out.push({
       id: `chat.${c.id}`,
       group: 'chat',
-      glyph: '$',
+      icon: 'chat',
       label: `${c.title} · ${c.projectName}`,
       run: () => {
         ctx.switchProject(c.projectId);

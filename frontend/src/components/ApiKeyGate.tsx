@@ -108,10 +108,10 @@ export default function ApiKeyGate() {
       <ModalShell open onClose={() => {}} title="Michi" titleGlyph="◆" width={420} dismissible={false}>
         <div style={{ padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <div style={{ fontFamily: 'var(--ui-font)', fontSize: 16, fontWeight: 700, color: 'var(--term-fg)' }}>
+            <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-2xl)', fontWeight: 700, color: 'var(--term-fg)' }}>
               Backend not reachable
             </div>
-            <div style={{ fontSize: 13, color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
+            <div style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
               The Michi backend isn't responding. If you launched the app from Finder, try quitting and
               re-opening it.
             </div>
@@ -206,10 +206,10 @@ export default function ApiKeyGate() {
           style={{ padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}
         >
           <div>
-            <div style={{ fontFamily: 'var(--ui-font)', fontSize: 18, fontWeight: 700, color: 'var(--term-fg)' }}>
+            <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-3xl)', fontWeight: 700, color: 'var(--term-fg)' }}>
               Add a provider key
             </div>
-            <div style={{ fontSize: 13, color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
+            <div style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
               {status.label} runs on your own AI provider. Pick one and paste a key — it's saved locally and
               never leaves this device.
             </div>
@@ -244,7 +244,7 @@ export default function ApiKeyGate() {
               target="_blank"
               rel="noopener noreferrer"
               style={{
-                fontSize: 12.5,
+                fontSize: 'var(--fs-lg)',
                 color: 'var(--term-accent)',
                 textDecoration: 'none',
                 width: 'fit-content',
@@ -272,13 +272,13 @@ export default function ApiKeyGate() {
             />
           </div>
 
-          {error && <div style={{ fontSize: 12.5, color: 'var(--term-danger)' }}>{error}</div>}
+          {error && <div style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-danger)' }}>{error}</div>}
 
           {verifyResult && (
             <div
               style={{
                 fontFamily: 'var(--font-mono)',
-                fontSize: 11.5,
+                fontSize: 'var(--fs-md)',
                 color: verifyResult.ok ? 'var(--term-digest)' : 'var(--term-danger)',
               }}
             >
@@ -300,7 +300,7 @@ export default function ApiKeyGate() {
             flexShrink: 0,
           }}
         >
-          <span style={{ fontSize: 11.5, color: 'var(--term-muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {defaultModel && (
               <>
                 Default model: <b style={{ color: 'var(--term-mid)', fontWeight: 600 }}>{defaultModel}</b>
@@ -326,8 +326,8 @@ export default function ApiKeyGate() {
 
 const FIELD_LABEL: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  letterSpacing: '.08em',
+  fontSize: 'var(--fs-xs)',
+  letterSpacing: 'var(--ls-caps)',
   textTransform: 'uppercase',
   color: 'var(--term-muted)',
 };

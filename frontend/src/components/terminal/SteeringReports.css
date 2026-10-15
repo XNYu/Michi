@@ -2,7 +2,7 @@
   margin-top: 10px;
   color: var(--term-muted);
   font-family: var(--ui-font);
-  font-size: 12px;
+  font-size: var(--fs-md);
   line-height: 1.5;
   letter-spacing: 0;
   min-width: 0;
@@ -21,8 +21,8 @@
 
 .t-steering-source {
   margin-left: 8px;
-  font-size: 11px;
-  color: var(--term-faint);
+  font-size: var(--fs-sm);
+  color: var(--term-muted);
 }
 
 .t-steering-report-body {
@@ -42,6 +42,6 @@
 
 .t-steering-incomplete {
   display: block;
-  font-size: 11px;
-  color: var(--term-faint);
+  font-size: var(--fs-sm);
+  color: var(--term-muted);
 }

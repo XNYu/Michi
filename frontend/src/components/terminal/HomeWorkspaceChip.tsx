@@ -74,7 +74,7 @@ export function HomeWorkspaceChip({
           setMenu((open) => (open ? null : { x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, trigger }));
         }}
         style={{
-          color: active ? 'var(--term-fg)' : 'var(--term-faint)',
+          color: active ? 'var(--term-fg)' : 'var(--term-muted)',
           fontStyle: active ? undefined : 'italic',
         }}
       >

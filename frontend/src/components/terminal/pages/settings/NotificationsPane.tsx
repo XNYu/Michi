@@ -16,7 +16,7 @@ export function NotificationsPane() {
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 15,
+          fontSize: 'var(--fs-2xl)',
           fontWeight: 700,
           color: 'var(--term-fg)',
           margin: 0,
@@ -60,7 +60,7 @@ export function NotificationsPane() {
                 <div>
                   <span
                     style={{
-                      fontSize: 11.5,
+                      fontSize: 'var(--fs-md)',
                       fontFamily: 'var(--ui-font)',
                       color: sel ? 'var(--term-fg)' : 'var(--term-mid)',
                       fontWeight: sel ? 600 : 400,
@@ -68,7 +68,7 @@ export function NotificationsPane() {
                   >
                     {o.label}
                   </span>
-                  <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginTop: 2 }}>{o.desc}</div>
+                  <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 2 }}>{o.desc}</div>
                 </div>
               </ClickableRow>
             );

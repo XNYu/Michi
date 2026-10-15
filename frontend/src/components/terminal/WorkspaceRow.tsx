@@ -394,7 +394,7 @@ export default function WorkspaceRow({
                 // Same size as the thread titles it heads — at 11.5px it read as
                 // a different tier of thing entirely. Weight + faint colour and
                 // the accent rail are what keep it distinct from a thread.
-                fontSize: 'var(--sb-fs, 13.5px)',
+                fontSize: 'var(--sb-fs, var(--fs-xl))',
                 fontWeight: 600,
                 color: 'var(--term-fg)',
                 // Translucent so it tints the sidebar glass instead of covering it.
@@ -451,7 +451,7 @@ export default function WorkspaceRow({
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 13.5,
+              fontSize: 'var(--fs-xl)',
               fontWeight: 600,
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
@@ -477,7 +477,7 @@ export default function WorkspaceRow({
                   // Card modes inherit the header's quiet 11.5px faint; unread
                   // still bumps the weight, same idea as classic (600 → 900
                   // rather than 450 → 900, since the header rests heavier).
-                  fontSize: geom.workspaceAsHeader ? 'inherit' : 'var(--sb-fs, 13.5px)',
+                  fontSize: geom.workspaceAsHeader ? 'inherit' : 'var(--sb-fs, var(--fs-xl))',
                   fontWeight: geom.workspaceAsHeader
                     ? (wsUnread ? 900 : 600)
                     : (wsUnread ? 900 : 450),
@@ -494,14 +494,14 @@ export default function WorkspaceRow({
                 <span
                   title={`Remote backend: ${getKnownBackendConnections().find((connection) => connection.id === project.backendConnectionId)?.name ?? project.backendConnectionId}`}
                   style={{
-                    fontSize: 8.5,
+                    fontSize: 'var(--fs-2xs)',
                     color: 'var(--term-accent)',
                     fontFamily: 'var(--ui-font)',
                     flexShrink: 0,
                     padding: '0 4px',
                     border: '1px solid color-mix(in srgb, var(--term-accent) 45%, var(--term-line))',
                     lineHeight: '13px',
-                    letterSpacing: '.04em',
+                    letterSpacing: 'var(--ls-wide)',
                   }}
                 >
                   REMOTE
@@ -511,12 +511,12 @@ export default function WorkspaceRow({
                 <span
                   title={`${project.folders!.length} folders`}
                   style={{
-                    fontSize: 9.5,
+                    fontSize: 'var(--fs-xs)',
                     color: 'var(--term-muted)',
                     fontFamily: 'var(--ui-font)',
                     flexShrink: 0,
                     padding: '0 3px',
-                    background: 'var(--term-surface-2, var(--term-alt))',
+                    background: 'var(--term-alt)',
                     lineHeight: '14px',
                   }}
                 >
@@ -533,7 +533,7 @@ export default function WorkspaceRow({
                   stroke="currentColor"
                   strokeWidth="1.4"
                   strokeLinejoin="round"
-                  style={{ color: 'var(--term-pin, #c48300)', flexShrink: 0 }}
+                  style={{ color: 'var(--term-select)', flexShrink: 0 }}
                 >
                   <path d="M8 1.5l1.9 4 4.4.5-3.3 3 .9 4.3L8 11.3 4.1 13.3 5 9 1.7 6l4.4-.5L8 1.5z" />
                 </svg>
@@ -547,7 +547,7 @@ export default function WorkspaceRow({
                   justifyContent: 'center',
                   color: 'var(--term-muted)',
                   flexShrink: 0,
-                  transition: 'transform 120ms ease-out',
+                  transition: 'transform var(--t-soft) ease-out',
                   transform: workspaceExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
                   ...(menu ? { opacity: 1, pointerEvents: 'auto' as const } : {}),
                 }}
@@ -596,7 +596,7 @@ export default function WorkspaceRow({
               top: 5,
               bottom: 5,
               width: 2,
-              borderRadius: 1,
+              borderRadius: 'var(--ui-radius-pill)',
               // Brand accent for both states; the streaming pulse + glow (below)
               // distinguish "live" from a static idle-open pane. `color` is set so
               // the glow's currentColor matches the bar instead of inheriting the
@@ -609,7 +609,7 @@ export default function WorkspaceRow({
                   : undefined,
               animation:
                 workspaceOpenState === 'streaming'
-                  ? 'tpulse 1.4s ease-in-out infinite'
+                  ? 'tpulse var(--t-loop) ease-in-out infinite'
                   : undefined,
               pointerEvents: 'none',
             }}
@@ -630,7 +630,7 @@ export default function WorkspaceRow({
           {filteredLiveTrees.length === 0 && (
             <div
               style={{
-                fontSize: 11.5,
+                fontSize: 'var(--fs-md)',
                 color: 'var(--term-muted)',
                 padding: geom.isCard ? `4px ${spinePadding(geom, geom.titleX)}` : '4px 8px',
               }}
@@ -682,9 +682,9 @@ export default function WorkspaceRow({
                 background: 'transparent',
                 border: 0,
                 textAlign: 'left',
-                color: 'var(--term-faint)',
+                color: 'var(--term-muted)',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 11.5,
+                fontSize: 'var(--fs-md)',
                 cursor: 'pointer',
                 textDecoration: 'underline',
                 textDecorationStyle: 'dotted',

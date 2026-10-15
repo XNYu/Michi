@@ -181,8 +181,8 @@ const FIND_CSS = `
   border: 1px solid var(--term-line);
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   font-family: var(--ui-font);
-  font-size: 11px;
-  z-index: 100;
+  font-size: var(--fs-sm);
+  z-index: var(--z-pane-overlay);
 }
 .t-pane-find-input {
   width: 160px;
@@ -196,13 +196,13 @@ const FIND_CSS = `
   color: var(--term-mid);
   padding: 2px 4px;
   font: inherit;
-  border-radius: 2px;
+  border-radius: var(--ui-radius-sm);
 }
 .t-pane-find-nav:hover, .t-pane-find-close:hover {
   background: var(--term-hover-bg, var(--term-alt)); color: var(--term-fg);
 }
 .t-pane-find-counter {
-  color: var(--term-faint);
+  color: var(--term-muted);
   padding: 0 4px;
   white-space: nowrap;
 }

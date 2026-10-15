@@ -70,32 +70,32 @@ export function AgentRunPane({
       {/* Boxless identity header: plain text + status dot, no chips. */}
       <header style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', padding: '0 12px', background: 'var(--term-surface)', flexShrink: 0 }}>
         <button type="button" aria-label="Agent metadata" aria-expanded={metaOpen} onClick={() => setMetaOpen((open) => !open)}
-          style={{ border: 0, padding: 0, background: 'transparent', cursor: 'pointer', color: 'var(--term-fg)', fontSize: 13, fontWeight: 650, borderBottom: '1px dotted var(--term-line-s)' }}>
+          style={{ border: 0, padding: 0, background: 'transparent', cursor: 'pointer', color: 'var(--term-fg)', fontSize: 'var(--fs-lg)', fontWeight: 700, borderBottom: '1px dotted var(--term-line-s)' }}>
           {run.effectiveDefinition.name}
         </button>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'var(--mono-font)', fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', color: statusColor, fontWeight: 600 }}>
-          <span aria-hidden style={{ width: 5, height: 5, borderRadius: 99, background: statusColor }} />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase', color: statusColor, fontWeight: 600 }}>
+          <span aria-hidden style={{ width: 5, height: 5, borderRadius: 'var(--ui-radius-pill)', background: statusColor }} />
           {run.status} · {elapsedRunLabel(run, now)}
         </span>
         <span style={{ flex: 1 }} />
-        <span style={{ fontFamily: 'var(--mono-font)', fontSize: 10.5, color: 'var(--term-muted)' }}>{runtimeProfileLabel(run)}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>{runtimeProfileLabel(run)}</span>
         {onCancel && !terminal && (
           <button type="button" onClick={() => onCancel(identity)}
-            style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--term-mid)', fontSize: 11.5, cursor: 'pointer' }}>Cancel Run</button>
+            style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--term-mid)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}>Cancel Run</button>
         )}
         <button type="button" aria-label="Close Run Pane" onClick={() => onClose(identity)}
-          style={{ border: 0, background: 'transparent', color: 'var(--term-muted)', cursor: 'pointer', fontSize: 14 }}>×</button>
+          style={{ border: 0, background: 'transparent', color: 'var(--term-muted)', cursor: 'pointer', fontSize: 'var(--fs-xl)' }}>×</button>
       </header>
 
       {/* Metadata popover — everything the old kv sections carried. */}
       {metaOpen && (
         <div data-testid="run-metadata-popover" style={{ position: 'absolute', left: 14, top: 36, width: 340, zIndex: 6, background: 'var(--term-surface)', border: '1px solid var(--term-line-s)', boxShadow: 'var(--term-float-shadow, 0 12px 34px rgba(0,0,0,.14))' }}>
           <div style={{ padding: '7px 12px 6px', borderBottom: '1px solid var(--term-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontFamily: 'var(--mono-font)', fontSize: 9.5, fontWeight: 600, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--term-faint)' }}>Agent metadata</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', fontWeight: 600, letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)' }}>Agent metadata</span>
             <span style={{ flex: 1 }} />
-            <span style={{ fontFamily: 'var(--mono-font)', fontSize: 10, color: 'var(--term-faint)' }}>run {run.id.slice(0, 8)}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>run {run.id.slice(0, 8)}</span>
           </div>
-          <dl style={{ margin: 0, padding: '5px 0', fontSize: 11.5 }}>
+          <dl style={{ margin: 0, padding: '5px 0', fontSize: 'var(--fs-md)' }}>
             <MetaRow label="definition" value={run.definitionId ? `snapshotted at spawn · r${run.definitionRevision}` : 'ephemeral snapshot'} />
             <MetaRow label="runtime" value={runtimeProfileLabel(run)} />
             {fallbacks > 0 && <MetaRow label="fallback" value={`${fallbacks} fallback${fallbacks === 1 ? '' : 's'} · now ${activeAttempt ? [activeAttempt.runtimeProfile.runtimeId, activeAttempt.runtimeProfile.modelId].filter(Boolean).join(' · ') : '—'}`} />}
@@ -105,14 +105,14 @@ export function AgentRunPane({
             <MetaRow label="completion" value={run.completionMode} />
           </dl>
           <details style={{ borderTop: '1px solid var(--term-line)', padding: '6px 12px' }}>
-            <summary style={{ cursor: 'pointer', fontFamily: 'var(--mono-font)', fontSize: 10, color: 'var(--term-muted)' }}>
+            <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
               context · {run.contextManifest.entries.length} items · immutable
             </summary>
             <div style={{ paddingTop: 6 }}><AgentRunContextView manifest={run.contextManifest} /></div>
           </details>
           {onOpenParent && (run.parentRunId || run.parentNodeId) && (
             <div style={{ borderTop: '1px solid var(--term-line)', padding: '6px 12px' }}>
-              <button type="button" onClick={() => onOpenParent(identity)} style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--term-accent)', fontSize: 11, cursor: 'pointer' }}>↰ Open parent</button>
+              <button type="button" onClick={() => onOpenParent(identity)} style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--term-accent)', fontSize: 'var(--fs-sm)', cursor: 'pointer' }}>↰ Open parent</button>
             </div>
           )}
         </div>
@@ -127,10 +127,10 @@ export function AgentRunPane({
             borderRight: '2px solid var(--term-accent)',
             boxShadow: '0 1px 2px rgba(0,0,0,.03)',
           }}>
-            <span style={{ display: 'block', fontFamily: 'var(--mono-font)', fontSize: 10, letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: 4, color: 'var(--term-accent)', fontWeight: 500, lineHeight: 1 }}>
+            <span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', marginBottom: 4, color: 'var(--term-accent)', fontWeight: 500, lineHeight: 1 }}>
               $ delegated
             </span>
-            <div style={{ fontSize: 13, lineHeight: 1.5 }}>{run.task}</div>
+            <div style={{ fontSize: 'var(--fs-lg)', lineHeight: 1.5 }}>{run.task}</div>
           </div>
         </div>
 
@@ -142,10 +142,10 @@ export function AgentRunPane({
           const next = attemptRows.find((candidate) => candidate.attemptIndex === attempt.attemptIndex + 1);
           const nextLabel = next ? [next.runtimeProfile.runtimeId, next.runtimeProfile.modelId].filter(Boolean).join(' · ') : null;
           return (
-            <div key={attempt.id} data-testid="run-attempt-fallback" style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--mono-font)', fontSize: 10, color: 'var(--term-muted)' }}>
+            <div key={attempt.id} data-testid="run-attempt-fallback" style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
               <span aria-hidden style={{ color: 'var(--term-select)' }}>⚠</span>
               <span>{attempt.error?.message}</span>
-              {nextLabel && <span style={{ color: 'var(--term-faint)' }}>→ switched to {nextLabel}</span>}
+              {nextLabel && <span style={{ color: 'var(--term-muted)' }}>→ switched to {nextLabel}</span>}
             </div>
           );
         })}
@@ -154,7 +154,7 @@ export function AgentRunPane({
           onRespond={onRespondInteraction ? (interaction, response) => onRespondInteraction(identity, interaction, response) : undefined} />
 
         {result && (
-          <div data-testid="run-result" style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)', padding: 10, display: 'grid', gap: 8, fontSize: 11 }}>
+          <div data-testid="run-result" style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)', padding: 10, display: 'grid', gap: 8, fontSize: 'var(--fs-sm)' }}>
             {result.source === 'inferred' && <span style={{ color: 'var(--term-select)' }}>Inferred from final output</span>}
             <strong>{result.handoff.conclusion}</strong>
             <div>{result.handoff.artifactsOrChanges}</div>
@@ -163,7 +163,7 @@ export function AgentRunPane({
               <div style={{ border: '1px solid var(--term-line)', padding: 9 }}>
                 <div style={{ fontWeight: 600 }}>Change Set · {result.changeSet.changedFiles.length} files</div>
                 <div style={{ color: 'var(--term-muted)', marginTop: 3 }}>{result.changeSet.summary}</div>
-                <div style={{ color: 'var(--term-faint)', marginTop: 3 }}>Base {result.changeSet.baseCommit} · changes have not been merged automatically</div>
+                <div style={{ color: 'var(--term-muted)', marginTop: 3 }}>Base {result.changeSet.baseCommit} · changes have not been merged automatically</div>
               </div>
             )}
           </div>
@@ -178,18 +178,18 @@ export function AgentRunPane({
           <div style={{ border: 'var(--term-composer-border, 1px solid var(--term-line))', background: 'var(--term-composer-bg, var(--term-surface))', boxShadow: 'var(--term-composer-shadow-muted, none)' }}>
             <textarea aria-label="Steer Agent Run" value={input} onChange={(event) => setInput(event.target.value)}
               placeholder={`Message ${run.effectiveDefinition.name}…`}
-              style={{ width: '100%', minHeight: 44, boxSizing: 'border-box', resize: 'vertical', border: 0, outline: 'none', background: 'transparent', color: 'var(--term-fg)', padding: '9px 11px 0', fontFamily: 'var(--ui-font)', fontSize: 12 }} />
+              style={{ width: '100%', minHeight: 44, boxSizing: 'border-box', resize: 'vertical', border: 0, outline: 'none', background: 'transparent', color: 'var(--term-fg)', padding: '9px 11px 0', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 11px 9px' }}>
               <button type="button" aria-label="Queue input" onClick={() => submit('queued')} disabled={!input.trim()}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, padding: '0 9px', border: '1px solid var(--term-line)', background: 'var(--term-alt)', color: 'var(--term-fg)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-                <span style={{ fontFamily: 'var(--mono-font)', fontSize: 10, color: 'var(--term-muted)', fontWeight: 400 }}>⏎</span>Queue input
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, padding: '0 9px', border: '1px solid var(--term-line)', background: 'var(--term-alt)', color: 'var(--term-fg)', fontSize: 'var(--fs-sm)', fontWeight: 600, cursor: 'pointer' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontWeight: 400 }}>⏎</span>Queue input
               </button>
               <button type="button" aria-label="Stop & redirect" onClick={() => submit('immediate')} disabled={!input.trim() || !activeAttempt}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, padding: '0 9px', border: '1px solid var(--term-line)', background: 'var(--term-surface)', color: 'var(--term-mid)', fontSize: 11, cursor: 'pointer' }}>
-                <span style={{ fontFamily: 'var(--mono-font)', fontSize: 10, color: 'var(--term-faint)' }}>⌥⏎</span>Stop &amp; redirect
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 24, padding: '0 9px', border: '1px solid var(--term-line)', background: 'var(--term-surface)', color: 'var(--term-mid)', fontSize: 'var(--fs-sm)', cursor: 'pointer' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>⌥⏎</span>Stop &amp; redirect
               </button>
               <span style={{ flex: 1 }} />
-              <span style={{ fontSize: 10.5, color: 'var(--term-muted)' }}>Enter never cancels active work.</span>
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>Enter never cancels active work.</span>
             </div>
           </div>
         </footer>
@@ -201,7 +201,7 @@ export function AgentRunPane({
 function MetaRow({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div style={{ display: 'flex', gap: 10, padding: '4px 12px' }}>
-      <dt style={{ width: 84, flexShrink: 0, fontFamily: 'var(--mono-font)', fontSize: 10, color: tone ?? 'var(--term-faint)', margin: 0 }}>{label}</dt>
+      <dt style={{ width: 84, flexShrink: 0, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: tone ?? 'var(--term-muted)', margin: 0 }}>{label}</dt>
       <dd style={{ flex: 1, minWidth: 0, margin: 0, lineHeight: 1.45, color: 'var(--term-fg)' }}>{value}</dd>
     </div>
   );

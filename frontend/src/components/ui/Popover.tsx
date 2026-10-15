@@ -114,10 +114,10 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       borderRadius: menuKind ? undefined : `var(${isTooltip ? '--ui-tooltip-radius' : '--ui-popover-radius'})`,
       boxShadow: menuKind || useGlass ? undefined : `var(${isTooltip ? '--ui-tooltip-shadow' : '--ui-popover-shadow'})`,
       fontFamily: menuKind ? undefined : 'var(--ui-font)',
-      fontSize: menuKind ? undefined : isTooltip ? 11 : 11.5,
+      fontSize: menuKind ? undefined : isTooltip ? 'var(--fs-sm)' : 'var(--fs-md)',
       color: 'var(--term-fg)',
       zIndex: zIndex ?? defaultZ,
-      animation: animate && !menuKind ? 'fadeIn 150ms ease-out both' : undefined,
+      animation: animate && !menuKind ? 'fadeIn var(--t-soft) ease-out both' : undefined,
       ...style,
     };
 
@@ -187,7 +187,7 @@ export function Tooltip({
       }}
     >
       <span>{label}</span>
-      {kbd && <span style={{ color: 'var(--term-faint)', fontSize: 10 }}>{kbd}</span>}
+      {kbd && <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>{kbd}</span>}
     </PopoverSurface>
   );
 }

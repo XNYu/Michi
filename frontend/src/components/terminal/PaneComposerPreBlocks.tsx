@@ -167,7 +167,7 @@ export function PaneComposerPreBlocks({
 
             return (
               <span key={p.id} className="t-att-pending-item t-att-pending-file" title={p.absPath}>
-                <span style={{ fontSize: 10, opacity: 0.7 }}>📄</span>
+                <span style={{ fontSize: 'var(--fs-xs)', opacity: 0.7 }}>📄</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
                   {p.name}
                 </span>

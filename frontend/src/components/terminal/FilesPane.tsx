@@ -106,21 +106,21 @@ const TreeRow = memo(function TreeRow({
           color: selectedPath === entry.path ? 'var(--term-fg)' : 'var(--term-mid)',
           cursor: 'pointer',
           fontFamily: 'var(--ui-font)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
           textAlign: 'left',
         }}
         onMouseEnter={(event) => { if (selectedPath !== entry.path) event.currentTarget.style.background = 'var(--term-hover-bg, var(--term-alt))'; }}
         onMouseLeave={(event) => { if (selectedPath !== entry.path) event.currentTarget.style.background = 'transparent'; }}
       >
-        <span aria-hidden style={{ color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', textAlign: 'center' }}>
+        <span aria-hidden style={{ color: 'var(--term-muted)', fontFamily: 'var(--font-mono)', textAlign: 'center' }}>
           {isDirectory ? (isExpanded ? '⌄' : '›') : '·'}
         </span>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
       </button>
       {isDirectory && isExpanded ? (
         <div>
-          {state?.phase === 'loading' ? <div style={{ padding: `4px 8px 4px ${29 + depth * 14}px`, color: 'var(--term-muted)', fontSize: 10 }}>loading…</div> : null}
-          {state?.phase === 'error' ? <div style={{ padding: `4px 8px 4px ${29 + depth * 14}px`, color: 'var(--term-danger)', fontSize: 10 }}>{state.message}</div> : null}
+          {state?.phase === 'loading' ? <div style={{ padding: `4px 8px 4px ${29 + depth * 14}px`, color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>loading…</div> : null}
+          {state?.phase === 'error' ? <div style={{ padding: `4px 8px 4px ${29 + depth * 14}px`, color: 'var(--term-danger)', fontSize: 'var(--fs-xs)' }}>{state.message}</div> : null}
           {state?.entries.map((child) => (
             <TreeRow
               key={child.path}
@@ -177,7 +177,7 @@ function Preview({ selection, project }: { selection: FileSelection | null; proj
     <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', borderBottom: '1px solid var(--term-line)' }}>
         <span aria-hidden style={{ color: 'var(--term-muted)' }}>▱</span>
-        <span title={selection?.absolutePath ?? selection?.artifactPath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selection ? 'var(--term-mid)' : 'var(--term-muted)', fontSize: 11 }}>
+        <span title={selection?.absolutePath ?? selection?.artifactPath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selection ? 'var(--term-mid)' : 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
           {selection ? selection.absolutePath ?? selection.artifactPath : '/'}
         </span>
         {state.phase === 'loaded' && state.result.kind === 'text' && isMarkdown ? (
@@ -193,14 +193,14 @@ function Preview({ selection, project }: { selection: FileSelection | null; proj
         {state.phase === 'empty' ? (
           <div style={{ minHeight: '100%', display: 'grid', placeItems: 'center', color: 'var(--term-muted)', textAlign: 'center' }}>
             <div>
-              <div aria-hidden style={{ fontSize: 32, lineHeight: 1, marginBottom: 12 }}>▱</div>
-              <div style={{ color: 'var(--term-fg)', fontSize: 13, fontWeight: 500 }}>Open file</div>
-              <div style={{ marginTop: 5, fontSize: 10.5 }}>Select a file from the workspace tree</div>
+              <div aria-hidden style={{ fontSize: 'var(--fs-5xl)', lineHeight: 1, marginBottom: 12 }}>▱</div>
+              <div style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-lg)', fontWeight: 500 }}>Open file</div>
+              <div style={{ marginTop: 5, fontSize: 'var(--fs-sm)' }}>Select a file from the workspace tree</div>
             </div>
           </div>
         ) : null}
-        {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 11 }}>loading {selection?.label}…</div> : null}
-        {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 11 }}>{state.message}</div> : null}
+        {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading {selection?.label}…</div> : null}
+        {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)' }}>{state.message}</div> : null}
         {state.phase === 'loaded' && state.result.kind === 'image' ? (
           <img src={state.result.dataUrl} alt={selection?.label ?? 'Preview'} style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', margin: '0 auto', objectFit: 'contain' }} />
         ) : null}
@@ -208,7 +208,7 @@ function Preview({ selection, project }: { selection: FileSelection | null; proj
           <MarkdownContent text={state.result.content} className="prose prose-sm max-w-none wrap-break-word" />
         ) : null}
         {state.phase === 'loaded' && state.result.kind === 'text' && (!isMarkdown || viewMode === 'source') ? (
-          <pre style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>{state.result.content}</pre>
+          <pre style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 'var(--fs-md)', lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>{state.result.content}</pre>
         ) : null}
       </div>
     </div>
@@ -290,23 +290,23 @@ export default function FilesPane({ item }: { item: FilesPaneItem }) {
         <Preview selection={selection} project={project} />
         <aside style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--term-line)', background: 'var(--term-pane-bg)' }}>
           <div style={{ height: 48, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 9px', borderBottom: '1px solid var(--term-line)' }}>
-            <label style={{ width: '100%', height: 29, display: 'flex', alignItems: 'center', gap: 7, padding: '0 9px', border: '1px solid var(--term-line)', borderRadius: 'var(--term-control-radius, 5px)', color: 'var(--term-muted)', background: 'var(--term-bg)' }}>
+            <label style={{ width: '100%', height: 29, display: 'flex', alignItems: 'center', gap: 7, padding: '0 9px', border: '1px solid var(--term-line)', borderRadius: 'var(--ui-radius)', color: 'var(--term-muted)', background: 'var(--term-bg)' }}>
               <span aria-hidden>⌕</span>
-              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter files…" aria-label="Filter files" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: 'transparent', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 11 }} />
+              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter files…" aria-label="Filter files" style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: 'transparent', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)' }} />
             </label>
           </div>
           <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '5px 0 14px' }}>
-            {roots.length === 0 ? <div style={{ padding: '10px 12px', color: 'var(--term-muted)', fontSize: 10.5 }}>No workspace folders</div> : null}
+            {roots.length === 0 ? <div style={{ padding: '10px 12px', color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>No workspace folders</div> : null}
             {roots.map((root) => (
               <section key={root} style={{ marginBottom: 7 }}>
-                <button type="button" onClick={() => toggleDirectory(root)} title={root} style={{ width: '100%', height: 28, display: 'grid', gridTemplateColumns: '17px minmax(0, 1fr)', alignItems: 'center', gap: 4, padding: '0 8px', border: 0, background: 'transparent', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 10.5, fontWeight: 600, textAlign: 'left', cursor: 'pointer' }}>
+                <button type="button" onClick={() => toggleDirectory(root)} title={root} style={{ width: '100%', height: 28, display: 'grid', gridTemplateColumns: '17px minmax(0, 1fr)', alignItems: 'center', gap: 4, padding: '0 8px', border: 0, background: 'transparent', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', fontWeight: 600, textAlign: 'left', cursor: 'pointer' }}>
                   <span aria-hidden style={{ color: 'var(--term-muted)' }}>{expanded.has(root) ? '⌄' : '›'}</span>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{basename(root) || root}</span>
                 </button>
                 {expanded.has(root) ? (
                   <div>
-                    {directories[root]?.phase === 'loading' ? <div style={{ padding: '5px 12px 5px 29px', color: 'var(--term-muted)', fontSize: 10 }}>loading…</div> : null}
-                    {directories[root]?.phase === 'error' ? <div style={{ padding: '5px 12px 5px 29px', color: 'var(--term-danger)', fontSize: 10 }}>{(directories[root] as Extract<DirectoryState, { phase: 'error' }>).message}</div> : null}
+                    {directories[root]?.phase === 'loading' ? <div style={{ padding: '5px 12px 5px 29px', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>loading…</div> : null}
+                    {directories[root]?.phase === 'error' ? <div style={{ padding: '5px 12px 5px 29px', color: 'var(--term-danger)', fontSize: 'var(--fs-xs)' }}>{(directories[root] as Extract<DirectoryState, { phase: 'error' }>).message}</div> : null}
                     {directories[root]?.entries.map((entry) => (
                       <TreeRow key={entry.path} entry={entry} depth={0} directories={directories} expanded={expanded} filter={normalizedFilter} selectedPath={selection?.absolutePath} onToggle={toggleDirectory} onSelect={(chosen) => setSelection({ id: chosen.path, label: chosen.name, absolutePath: chosen.path })} />
                     ))}
@@ -316,9 +316,9 @@ export default function FilesPane({ item }: { item: FilesPaneItem }) {
             ))}
             {artifactSelections.length > 0 ? (
               <section style={{ borderTop: '1px solid var(--term-line)', paddingTop: 6 }}>
-                <div style={{ height: 25, display: 'flex', alignItems: 'center', padding: '0 9px', color: 'var(--term-muted)', fontSize: 9.5, fontWeight: 600, letterSpacing: '.05em' }}>ARTIFACTS</div>
+                <div style={{ height: 25, display: 'flex', alignItems: 'center', padding: '0 9px', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', fontWeight: 600, letterSpacing: 'var(--ls-wide)' }}>ARTIFACTS</div>
                 {artifactSelections.filter((artifact) => !normalizedFilter || artifact.label.toLocaleLowerCase().includes(normalizedFilter)).map((artifact) => (
-                  <button key={artifact.id} type="button" onClick={() => setSelection(artifact)} title={artifact.absolutePath ?? artifact.artifactPath} style={{ width: '100%', minHeight: 28, display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', alignItems: 'center', gap: 4, padding: '3px 9px', border: 0, background: selection?.id === artifact.id ? 'var(--term-alt)' : 'transparent', color: selection?.id === artifact.id ? 'var(--term-fg)' : 'var(--term-mid)', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 11, textAlign: 'left' }}>
+                  <button key={artifact.id} type="button" onClick={() => setSelection(artifact)} title={artifact.absolutePath ?? artifact.artifactPath} style={{ width: '100%', minHeight: 28, display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', alignItems: 'center', gap: 4, padding: '3px 9px', border: 0, background: selection?.id === artifact.id ? 'var(--term-alt)' : 'transparent', color: selection?.id === artifact.id ? 'var(--term-fg)' : 'var(--term-mid)', cursor: 'pointer', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', textAlign: 'left' }}>
                     <span aria-hidden style={{ color: 'var(--term-accent)', textAlign: 'center' }}>◇</span>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artifact.label}</span>
                   </button>

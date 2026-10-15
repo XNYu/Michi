@@ -38,7 +38,7 @@ export default function DigestList({ digests, filter, onOpen, onRebuild, onExpor
         style={{
           padding: '20px 0',
           fontFamily: 'var(--ui-font)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-muted)',
         }}
       >
@@ -62,11 +62,11 @@ export default function DigestList({ digests, filter, onOpen, onRebuild, onExpor
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
             <span
               style={{
-                fontSize: 10,
+                fontSize: 'var(--fs-xs)',
                 color: 'var(--term-digest, #2f6b4e)',
                 background: 'var(--term-digest-f, #d7e7df)',
                 padding: '2px 7px',
-                letterSpacing: '0.08em',
+                letterSpacing: 'var(--ls-caps)',
                 fontWeight: 600,
                 fontFamily: 'var(--ui-font)',
               }}
@@ -76,7 +76,7 @@ export default function DigestList({ digests, filter, onOpen, onRebuild, onExpor
             <span style={{ flex: 1 }} />
             <span
               style={{
-                fontSize: 12,
+                fontSize: 'var(--fs-md)',
                 color: 'var(--term-muted)',
                 fontFamily: 'var(--ui-font)',
               }}
@@ -87,7 +87,7 @@ export default function DigestList({ digests, filter, onOpen, onRebuild, onExpor
           <div
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 18,
+              fontSize: 'var(--fs-3xl)',
               lineHeight: 1.3,
               fontWeight: 500,
               marginTop: 8,
@@ -100,7 +100,7 @@ export default function DigestList({ digests, filter, onOpen, onRebuild, onExpor
             style={{
               marginTop: 10,
               fontFamily: 'var(--ui-font)',
-              fontSize: 14,
+              fontSize: 'var(--fs-xl)',
               lineHeight: 1.6,
               color: 'var(--term-mid, var(--term-fg))',
               display: '-webkit-box',
@@ -116,7 +116,7 @@ export default function DigestList({ digests, filter, onOpen, onRebuild, onExpor
               display: 'flex',
               gap: 14,
               marginTop: 14,
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               color: 'var(--term-muted)',
               fontFamily: 'var(--ui-font)',
             }}

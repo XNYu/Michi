@@ -43,11 +43,11 @@ export default class PaneErrorBoundary extends React.Component<Props, State> {
           background: 'var(--term-surface)',
           color: 'var(--term-muted)',
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           textAlign: 'center',
         }}
       >
-        <div style={{ color: 'var(--term-fg)', fontSize: 13 }}>
+        <div style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-lg)' }}>
           this pane crashed
         </div>
         <pre
@@ -58,7 +58,7 @@ export default class PaneErrorBoundary extends React.Component<Props, State> {
             background: 'var(--term-bg)',
             border: '1px solid var(--term-line)',
             padding: 8,
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             whiteSpace: 'pre-wrap',
             textAlign: 'left',
           }}
@@ -73,7 +73,7 @@ export default class PaneErrorBoundary extends React.Component<Props, State> {
             color: 'var(--term-fg)',
             padding: '4px 10px',
             fontFamily: 'var(--ui-font)',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             cursor: 'pointer',
           }}
         >

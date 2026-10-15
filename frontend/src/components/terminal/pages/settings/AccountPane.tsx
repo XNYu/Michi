@@ -18,9 +18,9 @@ export function AccountPane({ user }: { user: { email: string; name?: string; im
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontSize: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontSize: 'var(--fs-md)' }}>
       <div>
-        <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>
           signed in as
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -45,7 +45,7 @@ export function AccountPane({ user }: { user: { email: string; name?: string; im
           {busy ? 'Signing out…' : 'Sign out'}
         </BorderBtn>
         {error && (
-          <div style={{ color: 'var(--term-error, #d33)', fontSize: 11, marginTop: 6 }}>
+          <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>
             {error}
           </div>
         )}

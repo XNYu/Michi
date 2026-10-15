@@ -29,8 +29,9 @@ export default function TerminalPane({ item }: { item: TerminalPaneItem }) {
       allowProposedApi: false,
       convertEol: false,
       cursorBlink: true,
-      fontFamily: cssVar(host, '--mono-font', 'ui-monospace, SFMono-Regular, monospace'),
-      fontSize: 12.5,
+      fontFamily: cssVar(host, '--font-mono', 'ui-monospace, SFMono-Regular, monospace'),
+      // eslint-disable-next-line no-restricted-syntax -- xterm takes px as a number; matches --fs-lg
+      fontSize: 13,
       lineHeight: 1.25,
       scrollback: 10_000,
       smoothScrollDuration: 80,
@@ -91,14 +92,14 @@ export default function TerminalPane({ item }: { item: TerminalPaneItem }) {
 
   return (
     <div data-pane-id={item.id} data-pane-kind="terminal" className="terminal-pane" onMouseDown={() => { focusPane(item.id); setFocusedNodeId(null); }} style={shellStyle}>
-      <div style={{ height: 32, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', flexShrink: 0, fontSize: 10, color: 'var(--term-muted)' }}>
+      <div style={{ height: 32, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', flexShrink: 0, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
         <span style={{ color: status === 'ready' ? 'var(--term-digest)' : status === 'exited' ? 'var(--term-danger)' : 'var(--term-muted)' }}>●</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.cwd || '~'}</span>
         <span>{status === 'exited' ? `exit ${exitCode ?? ''}` : status}</span>
       </div>
       <div ref={hostRef} style={{ flex: 1, minHeight: 0, padding: '8px 8px 4px', background: 'var(--term-pane-bg)' }} />
       {status === 'unavailable' ? (
-        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--term-line)', color: 'var(--term-danger)', fontSize: 10 }}>
+        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--term-line)', color: 'var(--term-danger)', fontSize: 'var(--fs-xs)' }}>
           Native terminal is available in the Michi desktop app.
         </div>
       ) : null}

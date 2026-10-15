@@ -216,7 +216,7 @@ export default function TerminalDigest({
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         — no workspace —
@@ -233,7 +233,7 @@ export default function TerminalDigest({
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         — no active thread —
@@ -277,22 +277,22 @@ export default function TerminalDigest({
             <div style={{ marginBottom: 10 }}>
               <span style={{
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                fontSize: 10.5,
-                letterSpacing: '.12em',
+                fontSize: 'var(--fs-sm)',
+                letterSpacing: 'var(--ls-caps-wide)',
                 color: 'var(--term-digest)',
                 textTransform: 'uppercase',
               }}>
                 THREAD DIGEST
               </span>
             </div>
-            <div style={{ color: 'var(--term-fg)', fontSize: 21, fontWeight: 650, marginBottom: 8 }}>
+            <div style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-4xl)', fontWeight: 700, marginBottom: 8 }}>
               Create this thread&rsquo;s digest
             </div>
-            <div style={{ color: 'var(--term-mid)', fontSize: 13, lineHeight: 1.6 }}>
+            <div style={{ color: 'var(--term-mid)', fontSize: 'var(--fs-lg)', lineHeight: 1.6 }}>
               Summarize <strong style={{ color: 'var(--term-fg)' }}>{threadTitle}</strong> into one living digest.
               It will cover {threadState.chatIds.length} chat{threadState.chatIds.length === 1 ? '' : 's'} and update from this thread only.
             </div>
-            <div style={{ marginTop: 10, display: 'flex', gap: 10, fontFamily: 'var(--font-mono, ui-monospace, monospace)', color: 'var(--term-muted)', fontSize: 10.5 }}>
+            <div style={{ marginTop: 10, display: 'flex', gap: 10, fontFamily: 'var(--font-mono, ui-monospace, monospace)', color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
               <span style={{ padding: '2px 8px', background: 'var(--term-alt)', border: '1px solid var(--term-line)' }}>{threadState.messageCount} messages</span>
               <span style={{ padding: '2px 8px', background: 'var(--term-alt)', border: '1px solid var(--term-line)' }}>{threadState.chatIds.length} source{threadState.chatIds.length === 1 ? '' : 's'}</span>
             </div>
@@ -306,8 +306,8 @@ export default function TerminalDigest({
                 marginBottom: 8,
                 color: 'var(--term-muted)',
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                fontSize: 10,
-                letterSpacing: '.12em',
+                fontSize: 'var(--fs-xs)',
+                letterSpacing: 'var(--ls-caps-wide)',
               }}
             >
               OPTIONAL GUIDANCE
@@ -324,7 +324,7 @@ export default function TerminalDigest({
                 minHeight: 88,
               }}
             >
-              <span aria-hidden style={{ color: 'var(--term-digest)', fontSize: 13, paddingTop: 2 }}>›_</span>
+              <span aria-hidden style={{ color: 'var(--term-digest)', fontSize: 'var(--fs-lg)', paddingTop: 2 }}>›_</span>
               <textarea
                 id="thread-digest-guidance"
                 aria-label="Digest guidance (optional)"
@@ -349,14 +349,14 @@ export default function TerminalDigest({
                   background: 'transparent',
                   color: 'var(--term-fg)',
                   fontFamily: 'var(--ui-font)',
-                  fontSize: 14,
+                  fontSize: 'var(--fs-xl)',
                   lineHeight: 1.55,
                   padding: 0,
                 }}
               />
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-              <span style={{ color: 'var(--term-muted)', fontSize: 10.5, fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>⌘↵ to create</span>
+              <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>⌘↵ to create</span>
               <button
                 type="button"
                 onClick={() => void createCurrentDigest()}
@@ -367,7 +367,7 @@ export default function TerminalDigest({
                   background: creating ? 'var(--term-alt)' : 'var(--term-digest)',
                   color: creating ? 'var(--term-muted)' : 'var(--term-bg)',
                   fontFamily: 'var(--ui-font)',
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   fontWeight: 700,
                   cursor: creating ? 'wait' : 'pointer',
                 }}
@@ -409,8 +409,8 @@ export default function TerminalDigest({
             <span
               style={{
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                fontSize: 10.5,
-                letterSpacing: '.12em',
+                fontSize: 'var(--fs-sm)',
+                letterSpacing: 'var(--ls-caps-wide)',
                 color: 'var(--term-digest)',
                 textTransform: 'uppercase',
               }}
@@ -422,17 +422,17 @@ export default function TerminalDigest({
             <span
               style={{
                 fontFamily: 'var(--ui-font)',
-                fontSize: 23,
-                fontWeight: 650,
+                fontSize: 'var(--fs-4xl)',
+                fontWeight: 700,
                 color: 'var(--term-fg)',
-                letterSpacing: '-.01em',
+                letterSpacing: 'var(--ls-tight)',
               }}
             >
               {title}
             </span>
             {stale.length > 0 && <Tag color="var(--term-select)">{stale.length} stale</Tag>}
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, fontSize: 11, color: 'var(--term-muted)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
             <span><span style={{ color: 'var(--term-mid)' }}>scope</span> thread</span>
             <span>
               <span style={{ color: 'var(--term-mid)' }}>sources</span> {liveSources.length} chat
@@ -459,7 +459,7 @@ export default function TerminalDigest({
                 border: 'none',
                 background: 'transparent',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 10,
+                fontSize: 'var(--fs-xs)',
                 color: 'var(--term-muted)',
                 cursor: 'pointer',
                 letterSpacing: 0,
@@ -470,7 +470,7 @@ export default function TerminalDigest({
             >
               <span aria-hidden>{promptOpen ? '▾' : '▸'}</span> CUSTOM PROMPT
               {d.customPrompt && !promptOpen && (
-                <span aria-hidden style={{ color: 'var(--term-accent)', fontSize: 8 }}>●</span>
+                <span aria-hidden style={{ color: 'var(--term-accent)', fontSize: 'var(--fs-2xs)' }}>●</span>
               )}
             </button>
             {promptOpen && (
@@ -486,16 +486,16 @@ export default function TerminalDigest({
                     background: 'var(--term-bg)',
                     color: 'var(--term-fg)',
                     border: '1px solid var(--term-line)',
-                    borderRadius: 3,
+                    borderRadius: 'var(--ui-radius-sm)',
                     padding: '6px 8px',
-                    fontSize: 11.5,
+                    fontSize: 'var(--fs-md)',
                     fontFamily: 'var(--ui-font)',
                     outline: 'none',
                     resize: 'vertical',
                     boxSizing: 'border-box',
                   }}
                 />
-                <div style={{ fontSize: 9.5, color: 'var(--term-muted)', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', marginTop: 4 }}>
                   Applied on next rebuild
                 </div>
               </div>
@@ -520,9 +520,9 @@ export default function TerminalDigest({
             <div
               style={{
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                fontSize: 10,
+                fontSize: 'var(--fs-xs)',
                 color: 'var(--term-muted)',
-                letterSpacing: '.14em',
+                letterSpacing: 'var(--ls-caps-wide)',
                 marginBottom: 6,
                 textTransform: 'uppercase',
               }}
@@ -532,7 +532,7 @@ export default function TerminalDigest({
             <div
               style={{
                 fontFamily: 'var(--ui-font)',
-                fontSize: 13.5,
+                fontSize: 'var(--fs-xl)',
                 color: 'var(--term-fg)',
                 lineHeight: 1.6,
               }}
@@ -558,9 +558,9 @@ export default function TerminalDigest({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                     <span style={{
                       fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                      fontSize: 22,
+                      fontSize: 'var(--fs-4xl)',
                       fontWeight: 500,
-                      color: '#dcd6c8',
+                      color: 'var(--term-faint)',
                       lineHeight: 1,
                       minWidth: 28,
                     }}>
@@ -569,7 +569,7 @@ export default function TerminalDigest({
                     <span
                       style={{
                         fontFamily: 'var(--ui-font)',
-                        fontSize: 18,
+                        fontSize: 'var(--fs-3xl)',
                         fontWeight: 600,
                         color: 'var(--term-fg)',
                       }}
@@ -582,11 +582,11 @@ export default function TerminalDigest({
                       <span
                         onClick={() => openPane(s.sourceId!)}
                         style={{
-                          fontSize: 10.5,
+                          fontSize: 'var(--fs-sm)',
                           color: 'var(--term-muted)',
                           fontFamily: 'var(--ui-font)',
                           cursor: 'pointer',
-                          transition: 'color 100ms',
+                          transition: 'color var(--t-soft)',
                         }}
                         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--term-accent)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--term-muted)'; }}
@@ -598,7 +598,7 @@ export default function TerminalDigest({
                   <div
                     style={{
                       fontFamily: 'var(--ui-font)',
-                      fontSize: 13,
+                      fontSize: 'var(--fs-lg)',
                       color: 'var(--term-mid)',
                       lineHeight: 1.75,
                       marginTop: 8,
@@ -615,7 +615,7 @@ export default function TerminalDigest({
             style={{
               padding: '18px 28px 24px',
               fontFamily: 'var(--ui-font)',
-              fontSize: 13,
+              fontSize: 'var(--fs-lg)',
               color: 'var(--term-mid)',
               lineHeight: 1.65,
             }}
@@ -633,9 +633,9 @@ export default function TerminalDigest({
             <div
               style={{
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                fontSize: 10,
+                fontSize: 'var(--fs-xs)',
                 color: 'var(--term-muted)',
-                letterSpacing: '.14em',
+                letterSpacing: 'var(--ls-caps-wide)',
                 marginBottom: 8,
                 textTransform: 'uppercase',
               }}
@@ -667,7 +667,7 @@ export default function TerminalDigest({
                     style={{
                       color: 'var(--term-accent)',
                       fontFamily: 'var(--ui-font)',
-                      fontSize: 11,
+                      fontSize: 'var(--fs-sm)',
                     }}
                   >
                     ?
@@ -675,7 +675,7 @@ export default function TerminalDigest({
                   <span
                     style={{
                       fontFamily: 'var(--ui-font)',
-                      fontSize: 13,
+                      fontSize: 'var(--fs-lg)',
                       color: 'var(--term-fg)',
                       flex: 1,
                     }}
@@ -685,7 +685,7 @@ export default function TerminalDigest({
                   <span
                     onClick={() => void createChildChat(digestNode.nodeId, q).then(() => onNav('dashboard')).catch(() => {})}
                     style={{
-                      fontSize: 10,
+                      fontSize: 'var(--fs-xs)',
                       color: 'var(--term-mauve)',
                       cursor: 'pointer',
                       fontFamily: 'var(--ui-font)',
@@ -728,9 +728,9 @@ export default function TerminalDigest({
               padding: '12px 14px',
               borderBottom: '1px solid var(--term-line)',
               fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
-              letterSpacing: '.14em',
+              letterSpacing: 'var(--ls-caps-wide)',
               textTransform: 'uppercase',
             }}
           >
@@ -743,7 +743,7 @@ export default function TerminalDigest({
                 onClick={() => scrollToSection(-1)}
                 style={{
                   padding: '7px 14px',
-                  fontSize: 11.5,
+                  fontSize: 'var(--fs-md)',
                   color: 'var(--term-fg)',
                   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
                   display: 'flex',
@@ -752,10 +752,10 @@ export default function TerminalDigest({
                   cursor: 'pointer',
                   background: activeOutlineIdx === -1 ? 'rgba(47,107,78,.08)' : 'transparent',
                   borderLeft: activeOutlineIdx === -1 ? '2px solid var(--term-digest)' : '2px solid transparent',
-                  transition: 'background 150ms, border-color 150ms',
+                  transition: 'background var(--t-soft), border-color var(--t-soft)',
                 }}
               >
-                <span style={{ fontSize: 10, color: 'var(--term-muted)' }}>tl;dr</span>
+                <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>tl;dr</span>
                 <span style={{ fontFamily: 'var(--ui-font)', fontWeight: 500 }}>Summary</span>
               </div>
             )}
@@ -766,7 +766,7 @@ export default function TerminalDigest({
                 onClick={() => scrollToSection(i)}
                 style={{
                   padding: '7px 14px 7px 18px',
-                  fontSize: 11.5,
+                  fontSize: 'var(--fs-md)',
                   color: activeOutlineIdx === i ? 'var(--term-fg)' : 'var(--term-mid)',
                   fontFamily: 'var(--ui-font)',
                   display: 'flex',
@@ -775,10 +775,10 @@ export default function TerminalDigest({
                   cursor: 'pointer',
                   background: activeOutlineIdx === i ? 'rgba(47,107,78,.08)' : 'transparent',
                   borderLeft: activeOutlineIdx === i ? '2px solid var(--term-digest)' : '2px solid transparent',
-                  transition: 'background 150ms, border-color 150ms, color 150ms',
+                  transition: 'background var(--t-soft), border-color var(--t-soft), color var(--t-soft)',
                 }}
               >
-                <span style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 10, color: 'var(--term-muted)', minWidth: 16 }}>
+                <span style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', minWidth: 16 }}>
                   {String(i + 1).padStart(2, '0')}
                 </span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -802,9 +802,9 @@ export default function TerminalDigest({
               padding: '12px 14px',
               borderBottom: '1px solid var(--term-line)',
               fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
-              letterSpacing: '.14em',
+              letterSpacing: 'var(--ls-caps-wide)',
               textTransform: 'uppercase',
             }}
           >
@@ -822,7 +822,7 @@ export default function TerminalDigest({
                     style={{
                       padding: '10px 14px',
                       borderBottom: '1px solid var(--term-line)',
-                      fontSize: 10.5,
+                      fontSize: 'var(--fs-sm)',
                       color: 'var(--term-muted)',
                     }}
                   >
@@ -856,7 +856,7 @@ export default function TerminalDigest({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
-                        fontSize: 11,
+                        fontSize: 'var(--fs-sm)',
                         color: 'var(--term-fg)',
                         fontFamily: 'var(--ui-font)',
                         overflow: 'hidden',
@@ -866,7 +866,7 @@ export default function TerminalDigest({
                     >
                       {n.title || chatLabel(n) || id}
                     </div>
-                    <div style={{ fontSize: 9.5, color: 'var(--term-muted)', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>
+                    <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>
                       {n.messageCount ?? n.messages.length} msgs · in sync
                     </div>
                   </div>
@@ -894,15 +894,15 @@ export default function TerminalDigest({
             style={{
               padding: '0 0 10px',
               fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
-              letterSpacing: '.14em',
+              letterSpacing: 'var(--ls-caps-wide)',
               textTransform: 'uppercase',
             }}
           >
             DIGEST
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginBottom: 12, fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 12, fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>
             scope thread · updated {d.status === 'streaming' ? 'streaming…' : formatRelative(d.generatedAt)}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -915,9 +915,9 @@ export default function TerminalDigest({
                 padding: '7px 12px',
                 border: 'none',
                 background: 'var(--term-digest)',
-                color: '#fff',
+                color: 'var(--on-accent)',
                 fontWeight: 700,
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 cursor: d.status === 'streaming' ? 'not-allowed' : 'pointer',
                 fontFamily: 'var(--ui-font)',
                 opacity: d.status === 'streaming' ? 0.6 : 1,
@@ -940,7 +940,7 @@ export default function TerminalDigest({
                 border: '1px solid var(--term-line)',
                 background: 'transparent',
                 color: 'var(--term-mid)',
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 cursor: 'pointer',
                 fontFamily: 'var(--ui-font)',
               }}

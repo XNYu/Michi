@@ -97,7 +97,7 @@ export function MapTimeline({ nodes, now, onOpenPane, onFocus, parentOf }: MapTi
         {/* Axis: start label —— break markers —— end label */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12,
-          fontFamily: 'var(--message-code-font)', fontSize: 10, color: 'var(--term-muted)',
+          fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)',
         }}>
           <span>{allTimes.length > 0 ? formatAxisLabel(scale.start, span) : ''}</span>
           <span style={{ flex: 1, height: 1, background: 'color-mix(in srgb, var(--term-line) 70%, var(--term-bg))', position: 'relative' }}>
@@ -112,8 +112,8 @@ export function MapTimeline({ nodes, now, onOpenPane, onFocus, parentOf }: MapTi
                   top: -7,
                   transform: 'translateX(-50%)',
                   fontFamily: 'var(--message-code-font)',
-                  fontSize: 9,
-                  color: 'var(--term-faint)',
+                  fontSize: 'var(--fs-2xs)',
+                  color: 'var(--term-muted)',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -213,13 +213,13 @@ function LaneRow({ node, events, streaming, isRoot, scale, now, onFocus }: LaneR
       {/* Left rail: branch title + status chip. */}
       <div style={{ flex: `0 0 ${RAIL_W}px`, minWidth: 0 }}>
         <div style={{
-          fontFamily: 'var(--message-code-font)', fontSize: 12.5, fontWeight: 650, lineHeight: 1.35,
+          fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-lg)', fontWeight: 700, lineHeight: 1.35,
           color: isRoot ? ACCENT_DARK : 'var(--term-fg)',
         }}>{node.title ?? ''}</div>
         {(streaming || isRoot) && (
           <span style={{
             display: 'inline-block', marginTop: 7,
-            fontFamily: 'var(--message-code-font)', fontSize: 9.5, padding: '2px 8px',
+            fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', padding: '2px 8px',
             color: streaming ? 'var(--term-accent)' : ACCENT_DARK,
             background: 'var(--term-accent-f)',
           }}>
@@ -247,8 +247,8 @@ function LaneRow({ node, events, streaming, isRoot, scale, now, onFocus }: LaneR
                 position: 'absolute', top: 0, bottom: 0,
                 left: `${leftPct}%`, width: `${widthPct}%`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--term-faint)',
-                fontFamily: 'var(--message-code-font)', fontSize: 10,
+                color: 'var(--term-muted)',
+                fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)',
                 borderLeft: '1px dashed var(--term-line)',
                 borderRight: '1px dashed var(--term-line)',
                 background: `repeating-linear-gradient(
@@ -296,14 +296,14 @@ function LaneRow({ node, events, streaming, isRoot, scale, now, onFocus }: LaneR
               }}
             >
               <div style={{
-                fontFamily: 'var(--message-code-font)', fontSize: 8.5,
-                color: live ? 'var(--term-accent)' : 'var(--term-faint)',
+                fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-2xs)',
+                color: live ? 'var(--term-accent)' : 'var(--term-muted)',
               }}>
                 {live && <span className="map-card__live-dot">● </span>}
                 {live ? 'now' : `${formatAxisLabel(e.resolvedAt, scale.end - scale.start)}${isForked ? ' · forked' : ''}`}
               </div>
               <div style={{
-                marginTop: 2, fontSize: 10.5, lineHeight: 1.4, color: 'var(--term-fg)',
+                marginTop: 2, fontSize: 'var(--fs-sm)', lineHeight: 1.4, color: 'var(--term-fg)',
                 display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
               }}>{e.text}</div>
             </button>

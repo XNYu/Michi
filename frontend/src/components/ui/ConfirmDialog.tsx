@@ -75,7 +75,7 @@ export function ConfirmDialogHost() {
         style={{
           padding: '16px 16px 8px',
           fontFamily: 'var(--ui-font)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-mid)',
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',

@@ -186,7 +186,7 @@ export default function BranchRow({
           // Same weight/color ladder as classic — one flat weight read too black.
           color: focused || selected || menuOpen ? 'var(--term-fg)' : 'var(--term-mid)',
           fontWeight: unread ? 900 : (focused || selected ? 600 : 450),
-          fontSize: 'var(--sb-fs, 13.5px)',
+          fontSize: 'var(--sb-fs, var(--fs-xl))',
           fontFamily: 'var(--ui-font)',
         }}
       >
@@ -216,12 +216,12 @@ export default function BranchRow({
               flex: 1,
               minWidth: 0,
               padding: '1px 4px',
-              fontSize: 13.5,
+              fontSize: 'var(--fs-xl)',
               fontFamily: 'var(--ui-font)',
               fontWeight: 500,
               background: 'var(--term-surface)',
               border: '1px solid var(--term-accent)',
-              borderRadius: 3,
+              borderRadius: 'var(--ui-radius-sm)',
               color: 'var(--term-fg)',
               outline: 'none',
             }}
@@ -256,7 +256,7 @@ export default function BranchRow({
               // Keeps clear of the hover-revealed ⋯ — see caretKebabClearance.
               marginRight: caretKebabClearance(geom),
               textAlign: 'center',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
               cursor: 'pointer',
             }}
@@ -265,12 +265,12 @@ export default function BranchRow({
           </span>
         )}
         {prefs.showSidebarTimestamps && nodeUpdatedAt > 0 && (
-          <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)', flexShrink: 0 }}>
+          <span style={{ color: 'var(--term-muted)', fontSize: 'var(--sb-ts-fs, var(--fs-sm))', flexShrink: 0 }}>
             {relativeTime(nodeUpdatedAt)}
           </span>
         )}
         {selected && (
-          <span style={{ color: 'var(--term-select)', fontSize: 11, fontWeight: 700 }}>
+          <span style={{ color: 'var(--term-select)', fontSize: 'var(--fs-sm)', fontWeight: 700 }}>
             ✓
           </span>
         )}
@@ -289,7 +289,7 @@ export default function BranchRow({
               top: 5,
               bottom: 5,
               width: 2,
-              borderRadius: 1,
+              borderRadius: 'var(--ui-radius-pill)',
               // Classic paints both states accent and leans on pulse + glow to
               // tell them apart; card modes give idle a neutral rail so accent
               // always means something is actually running.
@@ -304,9 +304,9 @@ export default function BranchRow({
                   : undefined,
               animation:
                 openState === 'streaming'
-                  ? 'tpulse 1.4s ease-in-out infinite'
+                  ? 'tpulse var(--t-loop) ease-in-out infinite'
                   : newPanePulse
-                    ? 'bar-pulse-once 600ms ease-in-out 2'
+                    ? 'bar-pulse-once var(--t-slow) ease-in-out 2'
                     : undefined,
               pointerEvents: 'none',
             }}

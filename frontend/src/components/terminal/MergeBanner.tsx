@@ -37,7 +37,7 @@ export default function MergeBanner({ nodeId }: { nodeId: string }) {
         background: 'var(--term-alt)',
         borderBottom: '1px solid var(--term-line)',
         color: 'var(--term-fg)',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
@@ -59,7 +59,7 @@ export default function MergeBanner({ nodeId }: { nodeId: string }) {
           border: 'none',
           padding: '0 2px',
           font: 'inherit',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
         Dismiss

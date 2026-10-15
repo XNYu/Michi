@@ -31,7 +31,7 @@ const panelHeader: React.CSSProperties = {
 
 const panelTitle: React.CSSProperties = {
   fontFamily: 'var(--ui-font)',
-  fontSize: 15,
+  fontSize: 'var(--fs-2xl)',
   lineHeight: 1.3,
   fontWeight: 500,
   color: 'var(--term-fg)',
@@ -40,10 +40,10 @@ const panelTitle: React.CSSProperties = {
 
 const subtleBadge: React.CSSProperties = {
   fontFamily: 'var(--ui-font)',
-  fontSize: 11,
+  fontSize: 'var(--fs-sm)',
   color: 'var(--term-muted)',
   padding: '2px 6px',
-  background: 'var(--term-surface-2, var(--term-alt))',
+  background: 'var(--term-alt)',
   display: 'inline-flex',
   alignItems: 'center',
   gap: 4,
@@ -51,15 +51,15 @@ const subtleBadge: React.CSSProperties = {
 
 const bodyText: React.CSSProperties = {
   fontFamily: 'var(--ui-font)',
-  fontSize: 13,
+  fontSize: 'var(--fs-lg)',
   lineHeight: 1.55,
   color: 'var(--term-mid, var(--term-fg))',
 };
 
 const faintMeta: React.CSSProperties = {
   fontFamily: 'var(--ui-font)',
-  fontSize: 11,
-  color: 'var(--term-faint, var(--term-muted))',
+  fontSize: 'var(--fs-sm)',
+  color: 'var(--term-muted)',
   marginTop: 2,
 };
 
@@ -108,7 +108,7 @@ export default function ManageSidebar({
             background: 'transparent',
             outline: 'none',
             fontFamily: 'var(--ui-font)',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             lineHeight: 1.55,
             color: 'var(--term-mid, var(--term-fg))',
             padding: 0,
@@ -139,7 +139,7 @@ export default function ManageSidebar({
             disabled={!dirty}
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               padding: '4px 12px',
               background: dirty ? 'var(--term-fg)' : 'var(--term-line)',
               color: 'var(--term-bg, #fff)',
@@ -184,9 +184,9 @@ export default function ManageSidebar({
                 color: 'var(--term-fg)',
                 padding: '6px 14px',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 12,
+                fontSize: 'var(--fs-md)',
                 cursor: 'pointer',
-                letterSpacing: '.02em',
+                letterSpacing: 'var(--ls-wide)',
                 width: '100%',
                 textAlign: 'left',
               }}
@@ -195,7 +195,7 @@ export default function ManageSidebar({
             </button>
           ) : (
             <>
-              <div style={{ ...bodyText, fontSize: 12, fontWeight: 600, color: 'var(--term-fg)' }}>
+              <div style={{ ...bodyText, fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--term-fg)' }}>
                 {bulkActions?.treeSelection.size ?? 0} selected
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -233,7 +233,7 @@ export default function ManageSidebar({
                   color: 'var(--term-fg)',
                   padding: '5px 14px',
                   fontFamily: 'var(--ui-font)',
-                  fontSize: 11,
+                  fontSize: 'var(--fs-sm)',
                   cursor: 'pointer',
                   width: '100%',
                   marginTop: 4,
@@ -257,10 +257,10 @@ function SidebarManageBtn({ label, onClick, danger }: { label: string; onClick: 
       style={{
         cursor: 'pointer',
         color: danger ? 'var(--term-danger, #e55)' : 'var(--term-muted)',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         padding: '4px 10px',
         border: '1px solid ' + (danger ? 'var(--term-danger, #e55)' : 'var(--term-line)'),
-        letterSpacing: '.02em',
+        letterSpacing: 'var(--ls-wide)',
       }}
     >
       {label}

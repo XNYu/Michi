@@ -70,12 +70,12 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         <h1
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 28,
+            fontSize: 'var(--fs-5xl)',
             fontWeight: 500,
             color: 'var(--term-fg)',
             textAlign: 'center',
             margin: 0,
-            letterSpacing: '-.005em',
+            letterSpacing: 'var(--ls-tight)',
             lineHeight: 1.3,
           }}
         >
@@ -133,9 +133,9 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         >
           <div
             style={{
-              fontSize: 11,
-              letterSpacing: '.14em',
-              color: 'var(--term-faint)',
+              fontSize: 'var(--fs-sm)',
+              letterSpacing: 'var(--ls-caps-wide)',
+              color: 'var(--term-muted)',
               textTransform: 'uppercase',
               marginBottom: 10,
               paddingLeft: 4,
@@ -181,7 +181,7 @@ function RecentRow({
         gap: 12,
         padding: '8px 10px',
         fontFamily: 'var(--ui-font)',
-        fontSize: 14,
+        fontSize: 'var(--fs-xl)',
         color: hover ? 'var(--term-fg)' : 'var(--term-mid)',
         background: hover ? 'var(--term-hover-bg, var(--term-alt))' : 'transparent',
         cursor: 'pointer',
@@ -198,7 +198,7 @@ function RecentRow({
       >
         {label}
       </span>
-      <span style={{ color: 'var(--term-faint)', fontSize: 12 }}>{rel}</span>
+      <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>{rel}</span>
     </div>
   );
 }

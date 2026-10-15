@@ -54,13 +54,13 @@ export default function TreeSelectionBar() {
         padding: '5px 10px 5px 14px',
         background: 'var(--term-alt)',
         borderBottom: '1px solid var(--term-line)',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         fontFamily: 'var(--ui-font)',
       }}
     >
       <span style={{ color: 'var(--term-fg)', fontWeight: 600 }}>{count} selected</span>
       <div style={{ flex: 1 }} />
-      <span onClick={selectAllTrees} style={{ cursor: 'pointer', color: 'var(--term-muted)', fontSize: 10 }}>
+      <span onClick={selectAllTrees} style={{ cursor: 'pointer', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
         Select all
       </span>
       {canMerge && (
@@ -72,14 +72,14 @@ export default function TreeSelectionBar() {
           style={{
             cursor: mergeDisabled ? 'not-allowed' : 'pointer',
             color: mergeDisabled ? 'var(--term-muted)' : 'var(--term-fg)',
-            fontSize: 10,
+            fontSize: 'var(--fs-xs)',
             opacity: mergeDisabled ? 0.5 : 1,
           }}
         >
           Merge
         </span>
       )}
-      <span onClick={bulkArchiveTrees} style={{ cursor: 'pointer', color: 'var(--term-muted)', fontSize: 10 }}>
+      <span onClick={bulkArchiveTrees} style={{ cursor: 'pointer', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
         Archive
       </span>
       <span
@@ -90,11 +90,11 @@ export default function TreeSelectionBar() {
             confirmLabel: 'Move',
           }).then((ok) => { if (ok) bulkDeleteTrees(); });
         }}
-        style={{ cursor: 'pointer', color: 'var(--term-danger, #e55)', fontSize: 10 }}
+        style={{ cursor: 'pointer', color: 'var(--term-danger, #e55)', fontSize: 'var(--fs-xs)' }}
       >
         Delete
       </span>
-      <span onClick={clearTreeSelection} style={{ cursor: 'pointer', color: 'var(--term-muted)', fontSize: 10 }}>
+      <span onClick={clearTreeSelection} style={{ cursor: 'pointer', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
         ✕
       </span>
     </div>

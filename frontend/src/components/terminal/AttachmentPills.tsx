@@ -69,7 +69,7 @@ export function AttachmentPills({ items }: Props) {
                   className="t-att-chip"
                   title={a.absPath}
                 >
-                  <span style={{ fontSize: 10, opacity: 0.7 }} aria-hidden>🖼</span>
+                  <span style={{ fontSize: 'var(--fs-xs)', opacity: 0.7 }} aria-hidden>🖼</span>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {a.name}
                   </span>
@@ -120,7 +120,7 @@ export function AttachmentPills({ items }: Props) {
           className="t-att-chip"
           title={a.absPath}
         >
-          <span style={{ fontSize: 10, opacity: 0.7 }} aria-hidden>📄</span>
+          <span style={{ fontSize: 'var(--fs-xs)', opacity: 0.7 }} aria-hidden>📄</span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {a.name}
           </span>

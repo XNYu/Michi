@@ -352,7 +352,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
       closeOnEscape={!lightbox && !ctxMenu}
       title="Artifacts"
       titleBadge={
-        <span style={{ fontSize: 11, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)' }}>{total}</span>
+        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>{total}</span>
       }
       headerActions={
         <>
@@ -372,7 +372,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
             onClick={() => setAdding((v) => !v)}
             title="Add link or paste text"
             aria-label="Add link or text"
-            style={{ fontSize: 17, background: adding ? 'var(--term-alt)' : undefined, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            style={{ fontSize: 'var(--fs-3xl)', background: adding ? 'var(--term-alt)' : undefined, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             +
           </button>
@@ -409,7 +409,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
               rows={2}
               style={{ resize: 'vertical' }}
             />
-            {pasteErr && <div style={{ fontSize: 10.5, color: 'var(--term-danger)' }}>{pasteErr}</div>}
+            {pasteErr && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)' }}>{pasteErr}</div>}
             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
               <Button
                 variant="secondary"
@@ -428,7 +428,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
         {/* Groups */}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
           {total === 0 && (
-            <div style={{ padding: '24px 14px', fontSize: 12, color: 'var(--term-faint)', fontStyle: 'italic', textAlign: 'center' }}>
+            <div style={{ padding: '24px 14px', fontSize: 'var(--fs-md)', color: 'var(--term-muted)', fontStyle: 'italic', textAlign: 'center' }}>
               — no artifacts yet · paste a URL or drop a file
             </div>
           )}
@@ -455,15 +455,15 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
                     cursor: 'pointer',
                     color: 'var(--term-muted)',
                     fontFamily: 'var(--ui-font)',
-                    fontSize: 10.5,
-                    letterSpacing: '.1em',
+                    fontSize: 'var(--fs-sm)',
+                    letterSpacing: 'var(--ls-caps)',
                     textTransform: 'uppercase',
                     borderBottom: '1px solid color-mix(in srgb, var(--term-line) 50%, transparent)',
                   }}
                 >
                   <span style={{ width: 8, display: 'inline-block' }}>{isCollapsed ? '▸' : '▾'}</span>
                   <span>{g.title}</span>
-                  <span style={{ color: 'var(--term-faint)' }}>· {rows.length}</span>
+                  <span style={{ color: 'var(--term-muted)' }}>· {rows.length}</span>
                 </div>
                 {!isCollapsed &&
                   rows.map((c) => (
@@ -600,18 +600,18 @@ function ArtifactRow({
           cursor: renaming ? 'default' : 'pointer',
           background: expanded ? 'var(--term-alt)' : 'transparent',
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           color: 'var(--term-fg)',
         }}
       >
-        <span style={{ width: 26, fontSize: 9, color: ft.color, letterSpacing: '.04em', flexShrink: 0, textTransform: 'uppercase' }}>
+        <span style={{ width: 26, fontSize: 'var(--fs-2xs)', color: ft.color, letterSpacing: 'var(--ls-wide)', flexShrink: 0, textTransform: 'uppercase' }}>
           {ft.label}
         </span>
         {c.source === 'agent' && (
-          <span title="agent-created" style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--term-mauve)', flexShrink: 0 }} />
+          <span title="agent-created" style={{ width: 5, height: 5, borderRadius: 'var(--ui-radius-pill)', background: 'var(--term-mauve)', flexShrink: 0 }} />
         )}
         {c.pinnedAt && (
-          <span title="favorite" style={{ fontSize: 10, color: 'var(--term-accent)', flexShrink: 0 }}>★</span>
+          <span title="favorite" style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-accent)', flexShrink: 0 }}>★</span>
         )}
         {renaming ? (
           <input
@@ -631,23 +631,23 @@ function ArtifactRow({
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
         )}
         {!renaming && (
-          <span style={{ fontSize: 9.5, color: 'var(--term-muted)', flexShrink: 0 }}>{relativeTime(c.updatedAt)}</span>
+          <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>{relativeTime(c.updatedAt)}</span>
         )}
       </div>
 
       {/* Expanded metadata + action bar */}
       {expanded && !renaming && (
         <div style={{ padding: '2px 12px 10px 38px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 11, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)', wordBreak: 'break-all' }}>
+          <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', wordBreak: 'break-all' }}>
             {isLink ? linkLabel(c.url ?? '') : `${c.kind === 'reference' ? '↗ ' : c.kind === 'symlink' ? '⇄ ' : ''}${c.filePath}`}
           </div>
           {c.origin?.nodeId && (
-            <div style={{ fontSize: 10.5, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)' }}>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
               from thread · {c.origin.nodeId.slice(0, 8)}
             </div>
           )}
           {isLink && (
-            <div style={{ fontSize: 10, color: 'var(--term-muted)', fontStyle: 'italic' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontStyle: 'italic' }}>
               Injected as <code>[Link: …]</code> — the agent won't auto-fetch it.
             </div>
           )}

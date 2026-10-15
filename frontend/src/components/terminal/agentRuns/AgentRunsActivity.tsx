@@ -19,16 +19,16 @@ export function AgentRunsActivity({ runs, onOpen, defaultExpanded = false, now }
   return (
     <section aria-label="Agent runs activity" style={{ borderTop: '1px solid var(--term-line)', fontFamily: 'var(--ui-font)' }}>
       <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}
-        style={{ width: '100%', border: 0, background: 'transparent', color: visibleCount ? 'var(--term-fg)' : 'var(--term-muted)', padding: '9px 0', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase' }}>
+        style={{ width: '100%', border: 0, background: 'transparent', color: visibleCount ? 'var(--term-fg)' : 'var(--term-muted)', padding: '9px 0', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 'var(--fs-xs)', fontWeight: 700, letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase' }}>
         <span aria-hidden>{expanded ? '−' : '+'}</span>
         Agent runs
-        <span style={{ color: 'var(--term-faint)', marginLeft: 'auto' }}>{visibleCount}</span>
+        <span style={{ color: 'var(--term-muted)', marginLeft: 'auto' }}>{visibleCount}</span>
       </button>
       {expanded && visibleCount > 0 && (
         <div style={{ display: 'grid', gap: 14, paddingBottom: 12 }}>
           {sections.map(([label, items]) => items.length > 0 && (
             <div key={label}>
-              <div style={{ color: 'var(--term-muted)', fontSize: 10, marginBottom: 5 }}>{label}</div>
+              <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', marginBottom: 5 }}>{label}</div>
               <div style={{ display: 'grid', gap: 5 }}>
                 {items.map((run) => <AgentRunCard key={`${run.backendConnectionId}:${run.value.id}`} run={run} now={now} onOpen={onOpen} />)}
               </div>

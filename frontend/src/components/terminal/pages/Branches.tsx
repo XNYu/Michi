@@ -83,7 +83,7 @@ const BRANCHES_LAYOUT_CSS = `
     background: transparent;
     color: var(--term-mid);
     font-family: var(--ui-font);
-    font-size: 12px;
+    font-size: var(--fs-md);
     line-height: 1.5;
     text-align: left;
     overflow-wrap: anywhere;
@@ -256,8 +256,8 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
           <div
             style={{
               color: 'var(--term-accent)',
-              fontSize: 10,
-              letterSpacing: '.14em',
+              fontSize: 'var(--fs-xs)',
+              letterSpacing: 'var(--ls-caps-wide)',
               marginBottom: 12,
               fontFamily: 'var(--message-code-font)',
               textTransform: 'uppercase',
@@ -275,8 +275,8 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
           <div
             style={{
               fontFamily: 'var(--message-code-font)',
-              fontSize: 10.5,
-              color: 'var(--term-faint)',
+              fontSize: 'var(--fs-sm)',
+              color: 'var(--term-muted)',
               marginTop: 4,
             }}
           >
@@ -292,7 +292,7 @@ export default function Branches({ onNav }: { onNav?: (page: PageId) => void } =
         ))}
 
         {rows.length === 0 && (
-          <p style={{ color: 'var(--term-muted)', fontSize: 13 }}>This thread has no readable branches yet.</p>
+          <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-lg)' }}>This thread has no readable branches yet.</p>
         )}
         </article>
       </div>
@@ -314,10 +314,10 @@ function BranchDirectory({
       <div
         style={{
           padding: '0 16px 8px',
-          color: 'var(--term-faint)',
+          color: 'var(--term-muted)',
           fontFamily: 'var(--message-code-font)',
-          fontSize: 9,
-          letterSpacing: '.12em',
+          fontSize: 'var(--fs-2xs)',
+          letterSpacing: 'var(--ls-caps-wide)',
           textTransform: 'uppercase',
         }}
       >
@@ -381,9 +381,9 @@ function BranchSection({ row, onOpen }: { row: BranchDocumentRow; onOpen: () => 
             border: 0,
             background: 'transparent',
             padding: '7px 0',
-            color: 'var(--term-faint)',
+            color: 'var(--term-muted)',
             font: 'inherit',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             cursor: 'pointer',
           }}
         >
@@ -420,7 +420,7 @@ function BranchHeading({
           fontFamily: 'var(--message-latin-font), var(--message-cjk-font)',
           fontSize: sizes[level],
           lineHeight: level === 1 ? 1.15 : 1.3,
-          letterSpacing: level === 1 ? '-.02em' : '-.01em',
+          letterSpacing: 'var(--ls-tight)',
           fontWeight: 700,
           textWrap: 'balance',
           minWidth: 0,
@@ -432,7 +432,7 @@ function BranchHeading({
         <span
           aria-label="Branch is active"
           title="Branch is active"
-          style={{ color: 'var(--term-accent)', fontSize: 12, animation: 'pulse 1.2s ease-in-out infinite' }}
+          style={{ color: 'var(--term-accent)', fontSize: 'var(--fs-md)', animation: 'pulse var(--t-loop) ease-in-out infinite' }}
         >
           ●
         </span>
@@ -450,7 +450,7 @@ function BranchHeading({
             padding: '2px 4px',
             cursor: 'pointer',
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             flexShrink: 0,
           }}
         >
@@ -481,7 +481,7 @@ function OverviewText({ text, generated, root = false }: { text: string; generat
         style={{
           color: 'var(--term-mid)',
           fontFamily: 'var(--message-latin-font), var(--message-cjk-font)',
-          fontSize: root ? 13.5 : 13,
+          fontSize: root ? 'var(--fs-xl)' : 'var(--fs-lg)',
           lineHeight: root ? 1.75 : 1.68,
           maxWidth: '68ch',
         }}
@@ -501,8 +501,8 @@ function BranchesEmpty({ title, body }: { title: string; body: string }) {
       }}
     >
       <div style={{ textAlign: 'center', maxWidth: 360 }}>
-        <h1 style={{ margin: 0, color: 'var(--term-fg)', fontSize: 22, fontWeight: 600 }}>{title}</h1>
-        <p style={{ color: 'var(--term-muted)', fontSize: 13, lineHeight: 1.6 }}>{body}</p>
+        <h1 style={{ margin: 0, color: 'var(--term-fg)', fontSize: 'var(--fs-4xl)', fontWeight: 600 }}>{title}</h1>
+        <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-lg)', lineHeight: 1.6 }}>{body}</p>
       </div>
     </main>
   );

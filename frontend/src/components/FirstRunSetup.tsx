@@ -33,15 +33,15 @@ function StateChip({ kind, children }: { kind: ChipKind; children: React.ReactNo
   const palette: Record<ChipKind, { color: string; bg: string }> = {
     ready: { color: 'var(--term-digest)', bg: 'var(--term-digest-f)' },
     setup: { color: 'var(--term-select)', bg: 'var(--term-select-f)' },
-    na: { color: 'var(--term-faint)', bg: 'var(--term-alt)' },
+    na: { color: 'var(--term-muted)', bg: 'var(--term-alt)' },
   };
   const { color, bg } = palette[kind];
   return (
     <span
       style={{
         fontFamily: 'var(--font-mono)',
-        fontSize: 9.5,
-        letterSpacing: '.09em',
+        fontSize: 'var(--fs-xs)',
+        letterSpacing: 'var(--ls-caps)',
         textTransform: 'uppercase',
         padding: '2px 7px',
         color,
@@ -66,8 +66,8 @@ function RecoTag() {
     <span
       style={{
         fontFamily: 'var(--font-mono)',
-        fontSize: 9,
-        letterSpacing: '.1em',
+        fontSize: 'var(--fs-2xs)',
+        letterSpacing: 'var(--ls-caps)',
         textTransform: 'uppercase',
         color: 'var(--term-accent)',
         background: 'var(--term-accent-f)',
@@ -142,10 +142,10 @@ export default function FirstRunSetup() {
         style={{ padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}
       >
         <div>
-          <div style={{ fontFamily: 'var(--ui-font)', fontSize: 18, fontWeight: 700, color: 'var(--term-fg)' }}>
+          <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-3xl)', fontWeight: 700, color: 'var(--term-fg)' }}>
             Welcome to Michi
           </div>
-          <div style={{ fontSize: 13, color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
+          <div style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-muted)', lineHeight: 1.55, marginTop: 5 }}>
             We detected your runtimes — you're ready to go. You can change any of this later.
           </div>
         </div>
@@ -194,7 +194,7 @@ export default function FirstRunSetup() {
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span
                       style={{
-                        fontSize: 14,
+                        fontSize: 'var(--fs-xl)',
                         fontWeight: 500,
                         color: 'var(--term-fg)',
                         display: 'flex',
@@ -205,7 +205,7 @@ export default function FirstRunSetup() {
                       {r.label}
                       {recommendedRef.current === r.id && <RecoTag />}
                     </span>
-                    <span style={{ fontSize: 11.5, color: 'var(--term-muted)', marginTop: 2, display: 'block' }}>
+                    <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted)', marginTop: 2, display: 'block' }}>
                       {disabled
                         ? (r.unavailableReason ?? 'Not available on this machine')
                         : rowNeedsKey
@@ -230,7 +230,7 @@ export default function FirstRunSetup() {
               padding: '11px 13px',
               border: '1px solid color-mix(in srgb, var(--term-select) 42%, var(--term-line))',
               background: 'var(--term-select-f)',
-              fontSize: 12.5,
+              fontSize: 'var(--fs-lg)',
               color: 'var(--term-fg)',
               lineHeight: 1.5,
             }}
@@ -273,7 +273,7 @@ export default function FirstRunSetup() {
               ))}
             </select>
             {modelCatalog.error && (
-              <span style={{ fontSize: 11, color: 'var(--term-danger)' }}>{modelCatalog.error}</span>
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)' }}>{modelCatalog.error}</span>
             )}
           </div>
         )}
@@ -290,7 +290,7 @@ export default function FirstRunSetup() {
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 11.5, color: 'var(--term-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-muted)' }}>
           Change anytime in <b style={{ color: 'var(--term-mid)', fontWeight: 600 }}>Settings → Model</b>
         </span>
         <Button variant="primary" disabled={saving} onClick={complete}>
@@ -303,8 +303,8 @@ export default function FirstRunSetup() {
 
 const FIELD_LABEL: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  letterSpacing: '.08em',
+  fontSize: 'var(--fs-xs)',
+  letterSpacing: 'var(--ls-caps)',
   textTransform: 'uppercase',
   color: 'var(--term-muted)',
 };

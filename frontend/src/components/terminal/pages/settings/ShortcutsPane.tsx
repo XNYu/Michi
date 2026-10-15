@@ -52,7 +52,7 @@ export function ShortcutsPane() {
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 15,
+          fontSize: 'var(--fs-2xl)',
           fontWeight: 700,
           color: 'var(--term-fg)',
           margin: 0,
@@ -66,9 +66,9 @@ export function ShortcutsPane() {
         <div key={g.title} style={{ marginBottom: 22 }}>
           <div
             style={{
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
-              letterSpacing: '.14em',
+              letterSpacing: 'var(--ls-caps-wide)',
               marginBottom: 8,
               fontFamily: 'var(--ui-font)',
             }}
@@ -91,7 +91,7 @@ export function ShortcutsPane() {
                 <span
                   style={{
                     fontFamily: 'var(--ui-font)',
-                    fontSize: 11,
+                    fontSize: 'var(--fs-sm)',
                     color: 'var(--term-fg)',
                     padding: '2px 6px',
                     border: '1px solid var(--term-line)',
@@ -104,7 +104,7 @@ export function ShortcutsPane() {
                 <span
                   style={{
                     fontFamily: 'var(--ui-font)',
-                    fontSize: 12.5,
+                    fontSize: 'var(--fs-lg)',
                     color: 'var(--term-mid)',
                   }}
                 >

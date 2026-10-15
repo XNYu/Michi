@@ -34,7 +34,7 @@ describe('menu surface isolation', () => {
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip.classList.contains('michi-menu')).toBe(false);
     expect(tooltip.style.borderRadius).toBe('var(--ui-tooltip-radius)');
-    expect(tooltip.style.fontSize).toBe('11px');
+    expect(tooltip.style.fontSize).toBe('var(--fs-sm)');
     const dialog = screen.getByRole('dialog');
     expect(dialog.classList.contains('michi-menu')).toBe(false);
     expect(dialog.style.borderRadius).toBe('var(--ui-popover-radius)');

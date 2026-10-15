@@ -64,7 +64,7 @@ export default function AgentPermissionFields({ value, onChange, errors = {} }: 
 }
 
 function NumberField({ label, aria, value, onChange, error }: { label: string; aria: string; value: string; onChange: (value: string) => void; error?: string }) {
-  return <label style={labelStyle}>{label}<input aria-label={aria} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} style={agentFieldStyle} />{error && <span role="alert" style={{ color: 'var(--danger, var(--term-error))', fontSize: 10, letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>;
+  return <label style={labelStyle}>{label}<input aria-label={aria} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} style={agentFieldStyle} />{error && <span role="alert" style={{ color: 'var(--danger, var(--term-danger))', fontSize: 'var(--fs-xs)', letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>;
 }
 
-const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' };
+const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' };

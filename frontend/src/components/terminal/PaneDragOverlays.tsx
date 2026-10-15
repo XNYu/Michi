@@ -14,7 +14,7 @@ export function PaneDropIndicator({ side }: { side: 'left' | 'right' | null }) {
         width: 3,
         background: 'var(--term-accent)',
         pointerEvents: 'none',
-        zIndex: 60,
+        zIndex: 'calc(var(--z-drag) + 1)',
       } as React.CSSProperties}
     />
   );
@@ -35,12 +35,12 @@ export function FileDropOverlay({
         position: 'absolute',
         inset: 0,
         border: '2px dashed var(--term-accent)',
-        background: 'rgba(47, 143, 115, .15)',
+        background: 'color-mix(in srgb, var(--term-accent) 12%, transparent)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         pointerEvents: 'none',
-        zIndex: 50,
+        zIndex: 'var(--z-drag)',
       }}
     >
       <div
@@ -50,8 +50,8 @@ export function FileDropOverlay({
           color: 'var(--term-accent)',
           padding: '8px 18px',
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
-          borderRadius: 3,
+          fontSize: 'var(--fs-md)',
+          borderRadius: 'var(--ui-radius-sm)',
           boxShadow: '0 4px 14px rgba(0,0,0,.08)',
         }}
       >

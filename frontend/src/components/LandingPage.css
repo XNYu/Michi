@@ -33,9 +33,9 @@
   --landing-ui: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   --landing-serif: 'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman', serif;
 
-  --landing-t-quick: 80ms;
-  --landing-t-soft: 140ms;
-  --landing-t-ease: cubic-bezier(.2, 0, .6, 1);
+  --landing-t-quick: var(--t-quick);
+  --landing-t-soft: var(--t-soft);
+  --landing-t-ease: var(--t-ease);
 
   display: grid;
   grid-template-rows: 1fr auto;
@@ -78,9 +78,9 @@
   align-items: center;
   gap: 8px;
   font-family: var(--landing-ui);
-  font-size: 15px;
+  font-size: var(--fs-2xl);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: var(--ls-tight);
   color: var(--landing-fg);
 }
 .landing-brand__tree { width: 18px; height: 18px; display: block; }
@@ -97,9 +97,9 @@
 .landing-nav { display: flex; align-items: center; gap: 4px; }
 .landing-nav a {
   padding: 6px 10px;
-  border-radius: 5px;
+  border-radius: var(--ui-radius);
   font-family: var(--landing-ui);
-  font-size: 12.5px;
+  font-size: var(--fs-lg);
   color: var(--landing-fg-muted);
   transition: color var(--landing-t-quick) var(--landing-t-ease),
               background var(--landing-t-quick) var(--landing-t-ease);
@@ -116,10 +116,10 @@
   height: 26px;
   padding: 0 10px 0 8px;
   border: 1px solid var(--landing-line);
-  border-radius: 999px;
+  border-radius: var(--ui-radius-pill);
   background: var(--landing-surface);
   font-family: var(--landing-ui);
-  font-size: 11.5px;
+  font-size: var(--fs-md);
   color: var(--landing-fg-muted);
   white-space: nowrap;
   transition: color var(--landing-t-quick) var(--landing-t-ease),
@@ -149,11 +149,11 @@
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--landing-line-strong);
-  border-radius: 6px;
+  border-radius: var(--ui-radius);
   background: var(--landing-surface);
   color: var(--landing-fg);
   font-family: var(--landing-ui);
-  font-size: 12px;
+  font-size: var(--fs-md);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -204,9 +204,9 @@
 }
 .landing-eyebrow__label {
   font-family: var(--landing-ui);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 500;
-  letter-spacing: 0.14em;
+  letter-spacing: var(--ls-caps-wide);
   text-transform: uppercase;
   color: var(--landing-fg-muted);
 }
@@ -216,7 +216,7 @@
   font-weight: 600;
   font-size: clamp(40px, 5.6vw, 78px);
   line-height: 1.04;
-  letter-spacing: -0.025em;
+  letter-spacing: var(--ls-tight);
   color: var(--landing-fg);
   margin: 0;
   max-width: 20ch;
@@ -231,7 +231,7 @@
 
 .landing-sub {
   font-family: var(--landing-serif);
-  font-size: 18px;
+  font-size: var(--fs-3xl);
   line-height: 1.55;
   color: var(--landing-fg-muted);
   max-width: 52ch;
@@ -257,11 +257,11 @@
   height: 46px;
   padding: 0 20px 0 18px;
   border: 1px solid var(--landing-fg);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-lg);
   background: var(--landing-fg);
   color: var(--landing-bg);
   font-family: var(--landing-ui);
-  font-size: 14px;
+  font-size: var(--fs-xl);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -302,7 +302,7 @@
   align-items: center;
   gap: 10px;
   font-family: var(--landing-ui);
-  font-size: 12.5px;
+  font-size: var(--fs-lg);
   color: var(--landing-fg-muted);
   white-space: nowrap;
 }
@@ -315,7 +315,7 @@
 
 .landing-error {
   font-family: var(--landing-ui);
-  font-size: 12.5px;
+  font-size: var(--fs-lg);
   color: var(--danger);
   margin: 0;
 }
@@ -327,7 +327,7 @@
   flex-wrap: wrap;
   margin-top: 12px;
   font-family: var(--landing-ui);
-  font-size: 11.5px;
+  font-size: var(--fs-md);
   color: var(--landing-fg-subtle);
   position: relative;
 }
@@ -357,8 +357,8 @@
   align-items: center;
   gap: 10px;
   font-family: var(--landing-ui);
-  font-size: 11.5px;
-  letter-spacing: 0.14em;
+  font-size: var(--fs-md);
+  letter-spacing: var(--ls-caps-wide);
   text-transform: uppercase;
   color: var(--landing-fg-muted);
 }
@@ -368,7 +368,7 @@
   width: 8px;
   height: 8px;
   background: var(--landing-accent);
-  border-radius: 1px;
+  border-radius: var(--ui-radius-sm);
   transform: rotate(45deg);
 }
 .landing-chain__hint {
@@ -376,7 +376,7 @@
   align-items: center;
   gap: 8px;
   font-family: var(--landing-ui);
-  font-size: 11.5px;
+  font-size: var(--fs-md);
   color: var(--landing-fg-subtle);
 }
 
@@ -406,7 +406,7 @@
   position: absolute;
   background: var(--landing-surface);
   border: 1px solid var(--landing-line);
-  border-radius: 7px;
+  border-radius: var(--ui-radius-lg);
   padding: 10px 12px 10px 14px;
   box-shadow:
     0 1px 0 rgba(0, 0, 0, .02),
@@ -432,9 +432,9 @@
 }
 .landing-nc__role {
   font-family: var(--landing-ui);
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--ls-wide);
   text-transform: lowercase;
 }
 .landing-nc__role--user   { color: var(--landing-fg); }
@@ -443,14 +443,14 @@
 .landing-nc__role--tool   { color: var(--landing-mauve); }
 .landing-nc__id {
   font-family: var(--landing-ui);
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--landing-fg-subtle);
   margin-left: auto;
   white-space: nowrap;
 }
 .landing-nc__body {
   font-family: var(--landing-serif);
-  font-size: 13.5px;
+  font-size: var(--fs-xl);
   line-height: 1.5;
   color: var(--landing-fg);
   display: -webkit-box;
@@ -465,7 +465,7 @@
   gap: 8px;
   margin-top: 8px;
   font-family: var(--landing-ui);
-  font-size: 10.5px;
+  font-size: var(--fs-sm);
   color: var(--landing-fg-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -485,7 +485,7 @@
   inset: 0 auto 0 0;
   width: 3px;
   background: var(--landing-accent);
-  border-radius: 7px 0 0 7px;
+  border-radius: var(--ui-radius-lg) 0 0 var(--ui-radius-lg);
 }
 
 .landing-nc--digest {
@@ -502,7 +502,7 @@
 }
 .landing-nc--tool .landing-nc__body {
   font-family: var(--landing-ui);
-  font-size: 11.5px;
+  font-size: var(--fs-md);
   color: color-mix(in srgb, var(--landing-mauve) 75%, var(--landing-fg));
 }
 
@@ -515,13 +515,13 @@
   height: 18px;
   padding: 0 7px;
   border: 1px solid var(--landing-accent-soft);
-  border-radius: 999px;
+  border-radius: var(--ui-radius-pill);
   background: var(--landing-accent-tint);
   color: var(--landing-accent);
   font-family: var(--landing-ui);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: var(--ls-wide);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -547,9 +547,9 @@
 }
 .landing-footer__col h6 {
   font-family: var(--landing-ui);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: var(--ls-caps-wide);
   text-transform: uppercase;
   color: var(--landing-fg-muted);
   margin: 0 0 12px;
@@ -563,20 +563,20 @@
 }
 .landing-footer__col li a {
   font-family: var(--landing-ui);
-  font-size: 13px;
+  font-size: var(--fs-lg);
   color: var(--landing-fg);
   transition: color var(--landing-t-quick) var(--landing-t-ease);
 }
 .landing-footer__col li a:hover { color: var(--landing-accent); }
 .landing-footer__col li .landing-meta {
   font-family: var(--landing-ui);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--landing-fg-subtle);
   margin-left: 8px;
 }
 .landing-footer__brand p {
   font-family: var(--landing-serif);
-  font-size: 14px;
+  font-size: var(--fs-xl);
   line-height: 1.5;
   color: var(--landing-fg-muted);
   margin: 8px 0 0;
@@ -593,7 +593,7 @@
   flex-wrap: wrap;
   gap: 12px;
   font-family: var(--landing-ui);
-  font-size: 11.5px;
+  font-size: var(--fs-md);
   color: var(--landing-fg-subtle);
 }
 .landing-footer__legal nav { display: flex; gap: 18px; }
@@ -618,7 +618,7 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 .landing-hero > * {
-  animation: landingFadeUp 520ms var(--landing-t-ease) both;
+  animation: landingFadeUp var(--t-slow) var(--landing-t-ease) both;
 }
 .landing-hero > .landing-eyebrow      { animation-delay: 40ms; }
 .landing-hero > .landing-headline     { animation-delay: 90ms; }

@@ -99,7 +99,7 @@ export default function ResizeHandle({
         width: 8,
         height: '100%',
         cursor: 'col-resize',
-        zIndex: 10,
+        zIndex: 'var(--z-sticky)',
         background: 'transparent',
         display: 'flex',
         alignItems: 'center',
@@ -110,10 +110,10 @@ export default function ResizeHandle({
         style={{
           width: 3,
           height: 36,
-          borderRadius: 2,
-          background: 'var(--term-fg-muted, rgba(120,120,120,0.55))',
+          borderRadius: 'var(--ui-radius-pill)',
+          background: 'var(--term-faint)',
           opacity: active ? 1 : 0,
-          transition: 'opacity 150ms',
+          transition: 'opacity var(--t-soft)',
           pointerEvents: 'none',
         }}
       />

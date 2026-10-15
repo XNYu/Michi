@@ -21,11 +21,13 @@ export interface TerminalTokens {
   lineS: string;
   /** Primary foreground / text. */
   fg: string;
-  /** Muted text (secondary labels). */
+  /** Secondary text that must stay easy to read. ≥4.5:1 on bg/surface/alt. */
   mid: string;
-  /** Even more muted (section captions). */
+  /** Quiet text that still carries information: captions, timestamps, counts,
+   *  hints, metadata. ≥4.5:1 on bg/surface/alt. */
   muted: string;
-  /** Faintest readable gray (timestamps, dim glyphs). */
+  /** Not for information: placeholders, disabled states, decorative glyphs
+   *  (· › ▸) and idle icon affordances. ≥3:1 on bg/surface/alt. */
   faint: string;
   /** Brand accent (focus ring, prompt glyph, brand mark). */
   accent: string;
@@ -50,10 +52,7 @@ export interface TerminalTokens {
 export const BONE: TerminalTokens = {
   bg: '#fdfdfc', bgDeep: '#ffffff', surface: '#ffffff', alt: '#efece5', alt2: '#e8e4d8',
   line: '#d8d2c4', lineS: '#b5ac98', fg: '#1a1916', mid: '#5a544a',
-  // Keep secondary text quiet without dropping below WCAG AA for the 11–13px
-  // labels and timestamps that use these tokens. Both colors clear 4.5:1 on
-  // the Bone canvas and its white raised surfaces.
-  muted: '#70695d', faint: '#777064',
+  muted: '#70695d', faint: '#8c877c',
   accent: '#b8451f', accentF: '#f4dccf',
   select: '#c48300', selectF: '#f8eccf',
   digest: '#2f6b4e', digestF: '#d7e7df',
@@ -64,7 +63,7 @@ export const BONE: TerminalTokens = {
 export const SLATE: TerminalTokens = {
   bg: '#f3f4f6', bgDeep: '#ffffff', surface: '#ffffff', alt: '#e5e7eb', alt2: '#d8dbe1',
   line: '#d1d5db', lineS: '#9ca3af', fg: '#111827', mid: '#4b5563',
-  muted: '#6b7280', faint: '#9ca3af',
+  muted: '#616876', faint: '#7d8491',
   accent: '#1a4d8f', accentF: '#dbeafe',
   select: '#c48300', selectF: '#fef3c7',
   digest: '#2f6b4e', digestF: '#d1fae5',
@@ -75,8 +74,11 @@ export const SLATE: TerminalTokens = {
 export const MONOKAI: TerminalTokens = {
   bg: '#272822', bgDeep: '#1d1e19', surface: '#2d2e28', alt: '#383930', alt2: '#3e3f38',
   line: '#49483e', lineS: '#75715e', fg: '#f8f8f2', mid: '#c0c0b8',
-  muted: '#8a8a7e', faint: '#75715e',
-  accent: '#a6e22e', accentF: '#1e2a10',
+  muted: '#a2a298', faint: '#868371',
+  // Accent is Monokai's own cyan, not its green: green is already the digest
+  // hue, and sharing it made the active item, digest nodes and success/info
+  // toasts indistinguishable.
+  accent: '#66d9ef', accentF: '#12292e',
   select: '#e6db74', selectF: '#2a2810',
   digest: '#a6e22e', digestF: '#1a2210',
   mauve: '#ae81ff', mauveF: '#1e1428',
@@ -85,9 +87,11 @@ export const MONOKAI: TerminalTokens = {
 
 export const GRUVBOX: TerminalTokens = {
   bg: '#282828', bgDeep: '#1d1d1d', surface: '#2e2e2e', alt: '#3c3836', alt2: '#504945',
-  line: '#504945', lineS: '#665c54', fg: '#ebdbb2', mid: '#a89984',
-  muted: '#928374', faint: '#665c54',
-  accent: '#fabd2f', accentF: '#2a2410',
+  line: '#504945', lineS: '#665c54', fg: '#ebdbb2', mid: '#cabb9b',
+  muted: '#afa088', faint: '#8d816f',
+  // Accent is Gruvbox's own blue, not its yellow: yellow is the streaming /
+  // selection hue, and sharing it hid which node was streaming vs. focused.
+  accent: '#83a598', accentF: '#1e2826',
   select: '#fabd2f', selectF: '#2a2410',
   digest: '#b8bb26', digestF: '#1e2210',
   mauve: '#d3869b', mauveF: '#281a20',
@@ -189,11 +193,8 @@ export function cssVarsFor(
     '--tw-prose-bold': p.fg,
     '--tw-prose-code': p.fg,
     '--tw-prose-links': p.accent,
-    // Motion tokens — see docs/superpowers/plans/2026-04-29-terminal-motion-foundation.md
-    '--t-quick': '60ms',
-    '--t-soft': '100ms',
-    '--t-decay': '360ms',
-    '--t-ease': 'cubic-bezier(.2, 0, .6, 1)',
+    // Motion tokens (--t-quick/soft/enter/decay/ease) are palette-independent
+    // and live only in index.css :root.
     // Selection bar inverted tokens — light theme gets dark popup, dark gets light popup.
     '--sel-bar-bg': isLight ? '#26262a' : '#ffffff',
     '--sel-bar-fg': isLight ? '#f0f0f0' : '#1a1916',

@@ -65,7 +65,7 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
     >
       <div
         style={{
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           fontWeight: 600,
           color: 'var(--term-fg)',
           fontFamily: 'var(--ui-font)',
@@ -74,7 +74,7 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
         {permission.title}
         <div
           data-testid="permission-source"
-          style={{ fontWeight: 400, color: 'var(--term-muted)', fontSize: 11, marginTop: 4 }}
+          style={{ fontWeight: 400, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', marginTop: 4 }}
         >
           {permissionSourceLabel(permission.source)}
         </div>
@@ -88,12 +88,12 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
             border: '1px solid var(--term-line)',
-            borderRadius: 4,
+            borderRadius: 'var(--ui-radius)',
             padding: '8px 10px',
             background: 'var(--term-bg)',
             color: 'var(--term-muted)',
-            fontFamily: 'var(--mono-font)',
-            fontSize: 11,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 'var(--fs-sm)',
             lineHeight: 1.45,
           }}
         >
@@ -105,7 +105,7 @@ export default function PermissionBanner({ permission, onRespond, onCancel, read
           <div
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 11,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--term-muted)',
             }}
           >

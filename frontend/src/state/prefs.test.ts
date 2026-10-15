@@ -48,7 +48,7 @@ describe('Kiro sidecar title preference', () => {
 describe('Corner radius preference', () => {
   it('defaults to the tuned 4px menu radius', () => {
     expect(DEFAULT_PREFS.cornerRadius).toBe(4);
-    expect(cornerRadiusVars(DEFAULT_PREFS.cornerRadius)).toEqual({ '--ui-radius': '4px', '--ui-radius-sm': '2px' });
+    expect(cornerRadiusVars(DEFAULT_PREFS.cornerRadius)).toEqual({ '--ui-radius': '4px', '--ui-radius-sm': '2px', '--ui-radius-lg': '8px' });
   });
 
   it('clamps and rounds persisted values, falling back on malformed ones', () => {
@@ -59,9 +59,9 @@ describe('Corner radius preference', () => {
     expect(normalizeCornerRadius(Number.NaN)).toBe(DEFAULT_PREFS.cornerRadius);
   });
 
-  it('derives the nested radius as half the surface radius', () => {
-    expect(cornerRadiusVars(0)).toEqual({ '--ui-radius': '0px', '--ui-radius-sm': '0px' });
-    expect(cornerRadiusVars(9)).toEqual({ '--ui-radius': '9px', '--ui-radius-sm': '5px' });
-    expect(cornerRadiusVars(12)).toEqual({ '--ui-radius': '12px', '--ui-radius-sm': '6px' });
+  it('derives the nested radius as half and the container radius as double', () => {
+    expect(cornerRadiusVars(0)).toEqual({ '--ui-radius': '0px', '--ui-radius-sm': '0px', '--ui-radius-lg': '0px' });
+    expect(cornerRadiusVars(9)).toEqual({ '--ui-radius': '9px', '--ui-radius-sm': '5px', '--ui-radius-lg': '18px' });
+    expect(cornerRadiusVars(12)).toEqual({ '--ui-radius': '12px', '--ui-radius-sm': '6px', '--ui-radius-lg': '24px' });
   });
 });

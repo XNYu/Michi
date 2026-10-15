@@ -54,7 +54,7 @@ export default function DigestPane({
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
         — empty digest pane —
@@ -102,16 +102,16 @@ export default function DigestPane({
           alignItems: 'center',
           gap: 8,
           flexShrink: 0,
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
         }}
       >
-        <span style={{ color: 'var(--term-digest)', fontSize: 14, fontWeight: 700, lineHeight: 1 }}>§</span>
+        <span style={{ color: 'var(--term-digest)', fontSize: 'var(--fs-xl)', fontWeight: 700, lineHeight: 1 }}>§</span>
         <span
           style={{
             color: 'var(--term-digest)',
             fontWeight: 700,
-            letterSpacing: '.14em',
-            fontSize: 10,
+            letterSpacing: 'var(--ls-caps-wide)',
+            fontSize: 'var(--fs-xs)',
           }}
         >
           DIGEST
@@ -132,7 +132,7 @@ export default function DigestPane({
           {title}
         </span>
         {stale.length > 0 && <Tag color="var(--term-select)">{stale.length} stale</Tag>}
-        <span style={{ color: 'var(--term-muted)', fontSize: 10 }}>
+        <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
           {d.status === 'streaming' ? 'streaming…' : formatRelative(d.generatedAt)}
         </span>
         <button
@@ -148,7 +148,7 @@ export default function DigestPane({
             background: d.status === 'streaming' ? 'var(--term-alt)' : 'transparent',
             color: 'var(--term-digest)',
             fontWeight: 700,
-            fontSize: 10,
+            fontSize: 'var(--fs-xs)',
             cursor: d.status === 'streaming' ? 'not-allowed' : 'pointer',
             fontFamily: 'var(--ui-font)',
             opacity: d.status === 'streaming' ? 0.6 : 1,
@@ -168,7 +168,7 @@ export default function DigestPane({
             border: '1px solid var(--term-line)',
             background: 'transparent',
             color: 'var(--term-mid)',
-            fontSize: 10,
+            fontSize: 'var(--fs-xs)',
             cursor: 'pointer',
             fontFamily: 'var(--ui-font)',
           }}
@@ -185,7 +185,7 @@ export default function DigestPane({
           overflowY: 'auto',
           padding: '16px 22px 24px',
           color: 'var(--term-fg)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           lineHeight: 1.7,
         }}
       >
@@ -203,15 +203,15 @@ export default function DigestPane({
             >
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: 'var(--fs-xs)',
                   color: 'var(--term-muted)',
-                  letterSpacing: '.14em',
+                  letterSpacing: 'var(--ls-caps-wide)',
                   marginBottom: 6,
                 }}
               >
                 ▸ TL;DR
               </div>
-              <div style={{ fontSize: 13, color: 'var(--term-fg)', lineHeight: 1.6 }}>
+              <div style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', lineHeight: 1.6 }}>
                 <MarkdownContent text={parsed.tldr} className={DIGEST_PROSE} />
               </div>
             </div>
@@ -221,9 +221,9 @@ export default function DigestPane({
             <>
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: 'var(--fs-xs)',
                   color: 'var(--term-muted)',
-                  letterSpacing: '.14em',
+                  letterSpacing: 'var(--ls-caps-wide)',
                   marginBottom: 8,
                 }}
               >
@@ -245,13 +245,13 @@ export default function DigestPane({
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <span style={{ color: 'var(--term-muted)', fontSize: 10 }}>
+                      <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
                         §{String(i + 1).padStart(2, '0')}
                       </span>
                       <span
                         style={{
                           fontFamily: 'var(--ui-font)',
-                          fontSize: 13,
+                          fontSize: 'var(--fs-lg)',
                           fontWeight: 600,
                           color: 'var(--term-fg)',
                         }}
@@ -260,7 +260,7 @@ export default function DigestPane({
                       </span>
                       {isStale && <Tag color="var(--term-select)">stale</Tag>}
                     </div>
-                    <div style={{ fontSize: 12.5, color: 'var(--term-mid)', lineHeight: 1.6 }}>
+                    <div style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-mid)', lineHeight: 1.6 }}>
                       <MarkdownContent text={s.body} className={DIGEST_PROSE} />
                     </div>
                   </div>
@@ -281,9 +281,9 @@ export default function DigestPane({
             <div style={{ marginTop: 16 }}>
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: 'var(--fs-xs)',
                   color: 'var(--term-muted)',
-                  letterSpacing: '.14em',
+                  letterSpacing: 'var(--ls-caps-wide)',
                   marginBottom: 8,
                 }}
               >
@@ -300,7 +300,7 @@ export default function DigestPane({
                       display: 'flex',
                       gap: 10,
                       alignItems: 'flex-start',
-                      fontSize: 12,
+                      fontSize: 'var(--fs-md)',
                     }}
                   >
                     <span style={{ color: 'var(--term-accent)' }}>?</span>
@@ -308,7 +308,7 @@ export default function DigestPane({
                     <span
                       onClick={() => void createChildChat(nodeId, q).catch(() => {})}
                       style={{
-                        fontSize: 10,
+                        fontSize: 'var(--fs-xs)',
                         color: 'var(--term-mauve)',
                         cursor: 'pointer',
                       }}

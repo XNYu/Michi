@@ -149,8 +149,8 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
 
   return (
     <div style={{ fontFamily: 'var(--ui-font)', color: 'var(--term-fg)' }}>
-      <h1 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Backend connections</h1>
-      <p style={{ color: 'var(--term-muted)', fontSize: 11.5, lineHeight: 1.5, margin: '8px 0 16px' }}>
+      <h1 style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700, margin: 0 }}>Backend connections</h1>
+      <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5, margin: '8px 0 16px' }}>
         Each workspace stays attached to one backend. Local and remote sessions can stream side by side in the same app.
       </p>
 
@@ -189,7 +189,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
 
       {draft && (
         <div style={{ border: '1px solid var(--term-line)', marginTop: 14, padding: 12, background: 'var(--term-surface)' }}>
-          <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 10 }}>
+          <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginBottom: 10 }}>
             {draft.id ? 'Edit remote backend' : 'New remote backend'}
           </div>
           <Field label="name">
@@ -245,7 +245,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
                   placeholder="3000"
                 />
               </Field>
-              <div style={{ color: 'var(--term-muted)', fontSize: 10.5, lineHeight: 1.45, margin: '2px 0 10px' }}>
+              <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.45, margin: '2px 0 10px' }}>
                 Michi runs <code>ssh -L</code> through your existing ~/.ssh/config and ssh-agent. Complete the first login and host-key confirmation in Terminal before testing here.
               </div>
             </>
@@ -258,7 +258,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
               placeholder={draft.id ? 'leave blank to keep saved token' : 'MICHI_REMOTE_TOKEN'}
             />
           </Field>
-          <div style={{ color: 'var(--term-muted)', fontSize: 10.5, lineHeight: 1.45, margin: '2px 0 10px' }}>
+          <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.45, margin: '2px 0 10px' }}>
             The token is stored only by the local Backend in ~/.michi/config.json (mode 0600) and is never exposed to the renderer.
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -270,12 +270,12 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
       )}
 
       {message && (
-        <div role="status" style={{ marginTop: 10, color: message.kind === 'ok' ? 'var(--term-accent)' : 'var(--term-danger)', fontSize: 11.5 }}>
+        <div role="status" style={{ marginTop: 10, color: message.kind === 'ok' ? 'var(--term-accent)' : 'var(--term-danger)', fontSize: 'var(--fs-md)' }}>
           {message.text}
         </div>
       )}
 
-      <div style={{ borderTop: '1px solid var(--term-line)', marginTop: 20, paddingTop: 12, color: 'var(--term-muted)', fontSize: 10.5, lineHeight: 1.55 }}>
+      <div style={{ borderTop: '1px solid var(--term-line)', marginTop: 20, paddingTop: 12, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.55 }}>
         SSH launch: <code>MICHI_REMOTE_ACCESS=1 MICHI_BIND_HOST=127.0.0.1 MICHI_REMOTE_TOKEN=… PORT=3000 npm run remote:start</code>. Run it under systemd, pm2, Docker, or another service manager so it survives SSH and local App exits.
       </div>
     </div>
@@ -297,10 +297,10 @@ function ConnectionRow({
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', borderBottom: '1px solid var(--term-line)' }}>
-      <span style={{ color: local ? 'var(--term-accent)' : 'var(--term-mid)', fontSize: 12 }}>{local ? '●' : '◇'}</span>
+      <span style={{ color: local ? 'var(--term-accent)' : 'var(--term-mid)', fontSize: 'var(--fs-md)' }}>{local ? '●' : '◇'}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 600 }}>{connection.name}</div>
-        <div style={{ color: 'var(--term-muted)', fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{connection.name}</div>
+        <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {local
             ? 'Bundled backend · stopped when the App quits'
             : connection.transport === 'ssh'
@@ -308,13 +308,13 @@ function ConnectionRow({
               : connection.apiUrl}
         </div>
         {!local && connection.transport === 'ssh' && (
-          <div style={{ color: connection.tunnelStatus === 'error' ? 'var(--term-danger)' : 'var(--term-faint)', fontSize: 10 }}>
+          <div style={{ color: connection.tunnelStatus === 'error' ? 'var(--term-danger)' : 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
             tunnel {connection.tunnelStatus === 'disconnected' ? 'on demand' : connection.tunnelStatus ?? 'on demand'}
             {connection.tunnelError ? ` · ${connection.tunnelError}` : ''}
           </div>
         )}
       </div>
-      {!local && <span style={{ color: 'var(--term-faint)', fontSize: 10 }}>{workspaceCount} ws</span>}
+      {!local && <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>{workspaceCount} ws</span>}
       {onEdit && <BorderBtn onClick={onEdit}>edit</BorderBtn>}
       {onRemove && <BorderBtn onClick={onRemove}>remove</BorderBtn>}
     </div>
@@ -330,13 +330,13 @@ function Field({ label, children }: { label: string; children: ReactElement<{ st
       background: 'var(--term-alt)',
       color: 'var(--term-fg)',
       padding: '6px 8px',
-      fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-      fontSize: 11.5,
+      fontFamily: 'var(--font-mono)',
+      fontSize: 'var(--fs-md)',
       outline: 'none',
     },
   });
   return (
-    <label style={{ display: 'grid', gridTemplateColumns: '58px minmax(0, 1fr)', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 11, color: 'var(--term-muted)' }}>
+    <label style={{ display: 'grid', gridTemplateColumns: '58px minmax(0, 1fr)', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
       <span>{label}</span>
       {input}
     </label>

@@ -447,8 +447,8 @@ export default function TerminalTopbar({
           transition: sidebarResizing
             ? 'none'
             : sidebarCollapsed
-              ? 'width 180ms cubic-bezier(.4,0,1,1)'
-              : 'width 200ms cubic-bezier(0,0,.2,1)',
+              ? 'width var(--t-enter) cubic-bezier(.4,0,1,1)'
+              : 'width var(--t-enter) cubic-bezier(0,0,.2,1)',
         }}
       />
       <div
@@ -500,7 +500,7 @@ export default function TerminalTopbar({
           >
             <UnreadIcon />
             {unreadDisplay && (
-              <span style={{ marginLeft: 3, fontSize: 10, fontWeight: 600, lineHeight: 1 }}>
+              <span style={{ marginLeft: 3, fontSize: 'var(--fs-xs)', fontWeight: 600, lineHeight: 1 }}>
                 {unreadDisplay}
               </span>
             )}
@@ -547,8 +547,8 @@ export default function TerminalTopbar({
           overflow: showPaneCells ? 'clip' : 'visible',
           paddingLeft: sidebarCollapsed ? COLLAPSED_LEFT_PAD : 0,
           transition: sidebarCollapsed
-            ? 'padding-left 180ms cubic-bezier(.4,0,1,1)'
-            : 'padding-left 200ms cubic-bezier(0,0,.2,1)',
+            ? 'padding-left var(--t-enter) cubic-bezier(.4,0,1,1)'
+            : 'padding-left var(--t-enter) cubic-bezier(0,0,.2,1)',
         }}
       >
         {showPaneCells && (
@@ -620,8 +620,8 @@ export default function TerminalTopbar({
                     transition: [
                       (isFirst && !sidebarResizing)
                         ? sidebarCollapsed
-                          ? 'padding-left 180ms cubic-bezier(.4,0,1,1)'
-                          : 'padding-left 200ms cubic-bezier(0,0,.2,1)'
+                          ? 'padding-left var(--t-enter) cubic-bezier(.4,0,1,1)'
+                          : 'padding-left var(--t-enter) cubic-bezier(0,0,.2,1)'
                         : null,
                       'filter var(--t-soft) var(--t-ease)',
                     ].filter(Boolean).join(', '),
@@ -636,7 +636,7 @@ export default function TerminalTopbar({
                     // (transparent) correctly shows the dimmed cell bg.
                     filter: cellFocus == null || isCellFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
                     // Layer 1: entrance animation — accent bg highlight fade-out.
-                    ...(isCellNew ? { animation: 'pane-entrance-bg 900ms ease-out forwards' } : {}),
+                    ...(isCellNew ? { animation: 'pane-entrance-bg var(--t-slow) ease-out forwards' } : {}),
                     ...paneLayout.paneStyles[i],
                   }}
                 >
@@ -687,8 +687,8 @@ export default function TerminalTopbar({
               transition: sidebarResizing
                 ? undefined
                 : sidebarCollapsed
-                  ? 'margin-left 180ms cubic-bezier(.4,0,1,1)'
-                  : 'margin-left 200ms cubic-bezier(0,0,.2,1)',
+                  ? 'margin-left var(--t-enter) cubic-bezier(.4,0,1,1)'
+                  : 'margin-left var(--t-enter) cubic-bezier(0,0,.2,1)',
             } as React.CSSProperties}
           >
             {threadPage && (
@@ -699,8 +699,8 @@ export default function TerminalTopbar({
             {page !== 'workspace-manage' && page !== 'agent-manage' && (
               <span
                 style={{
-                  fontSize: 10,
-                  letterSpacing: '.14em',
+                  fontSize: 'var(--fs-xs)',
+                  letterSpacing: 'var(--ls-caps-wide)',
                   color: 'var(--term-muted)',
                 }}
               >
@@ -708,7 +708,7 @@ export default function TerminalTopbar({
               </span>
             )}
             {page !== 'workspace-manage' && page !== 'agent-manage' && page !== 'workspaces' && (
-              <span style={{ color: 'var(--term-faint)', fontSize: 11 }}>·</span>
+              <span style={{ color: 'var(--term-faint)', fontSize: 'var(--fs-sm)' }}>·</span>
             )}
             {page === 'agent-manage' ? (
               <BreadcrumbBackButton onClick={() => _onNav('agents')}>
@@ -719,13 +719,13 @@ export default function TerminalTopbar({
                 ‹ all workspaces
               </BreadcrumbBackButton>
             ) : page === 'workspaces' ? null : page === 'agents' ? (
-              <span style={{ fontSize: 12, color: 'var(--term-mid)', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', whiteSpace: 'nowrap' }}>
                 control plane · {agentBackendName}
               </span>
             ) : page === 'trash' ? (
               <span
                 style={{
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   color: 'var(--term-mid)',
                   whiteSpace: 'nowrap',
                 }}
@@ -735,7 +735,7 @@ export default function TerminalTopbar({
             ) : page === 'archived' ? (
               <span
                 style={{
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   color: 'var(--term-mid)',
                   whiteSpace: 'nowrap',
                 }}
@@ -746,10 +746,10 @@ export default function TerminalTopbar({
               <span
                 title={threadTitle}
                 style={{
-                  fontSize: 13,
+                  fontSize: 'var(--fs-lg)',
                   fontWeight: 600,
                   color: 'var(--term-fg)',
-                  letterSpacing: '-.01em',
+                  letterSpacing: 'var(--ls-tight)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -831,16 +831,16 @@ export default function TerminalTopbar({
             }}
             style={{
               fontFamily: 'var(--ui-font)',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               fontWeight: 700,
               padding: '2px 7px',
-              borderRadius: 10,
+              borderRadius: 'var(--ui-radius-pill)',
               background: 'var(--term-accent)',
               color: 'var(--term-bg)',
               border: 'none',
               cursor: 'pointer',
               flexShrink: 0,
-              animation: 'overflow-badge-enter 400ms cubic-bezier(.34, 1.56, .64, 1) forwards',
+              animation: 'overflow-badge-enter var(--t-decay) cubic-bezier(.34, 1.56, .64, 1) forwards',
               WebkitAppRegion: 'no-drag',
             } as React.CSSProperties}
           >
@@ -857,8 +857,8 @@ export default function TerminalTopbar({
                 background: 'var(--term-accent)',
                 color: 'var(--term-bg)',
                 fontWeight: 700,
-                borderRadius: 3,
-                fontSize: 11,
+                borderRadius: 'var(--ui-radius-sm)',
+                fontSize: 'var(--fs-sm)',
                 WebkitAppRegion: 'no-drag',
               } as React.CSSProperties}
             >
@@ -1010,9 +1010,9 @@ function BrandHomeButton({ onClick }: { onClick: () => void }) {
         cursor: 'pointer',
         color: 'var(--term-fg)',
         fontFamily: 'inherit',
-        fontSize: 18,
+        fontSize: 'var(--fs-3xl)',
         fontWeight: 700,
-        letterSpacing: '-.01em',
+        letterSpacing: 'var(--ls-tight)',
         opacity: hover ? 1 : 0.85,
         whiteSpace: 'nowrap',
         overflow: 'hidden',
@@ -1025,7 +1025,7 @@ function BrandHomeButton({ onClick }: { onClick: () => void }) {
         alt=""
         width={26}
         height={26}
-        style={{ display: 'block', flexShrink: 0, borderRadius: 6 }}
+        style={{ display: 'block', flexShrink: 0, borderRadius: 'var(--ui-radius)' }}
       />
       Michi
     </button>
@@ -1050,7 +1050,7 @@ function BreadcrumbBackButton({
       className="t-text-btn"
       style={{
         fontFamily: 'var(--font-mono, var(--ui-font))',
-        fontSize: 12,
+        fontSize: 'var(--fs-md)',
         WebkitAppRegion: 'no-drag',
       } as React.CSSProperties}
     >
@@ -1114,7 +1114,7 @@ function TopbarIconToggle({
               right: 3,
               width: 5,
               height: 5,
-              borderRadius: 99,
+              borderRadius: 'var(--ui-radius-pill)',
               background: 'var(--term-accent)',
             }}
           />

@@ -132,7 +132,7 @@ export function LiveTimerLabel({ active }: { active: boolean }) {
   }, [active]);
   if (!active || sec < 1) return null;
   return (
-    <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, color: 'var(--term-faint)', flexShrink: 0 }}>
+    <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
       {sec}s
     </span>
   );
@@ -148,11 +148,11 @@ function SubagentStatus({ status }: { status: string | undefined }) {
       {running ? (
         <span className="term-dot-i term-dot-i--run" />
       ) : failed ? (
-        <span aria-hidden style={{ color, fontSize: 10, lineHeight: 1 }}>×</span>
+        <span aria-hidden style={{ color, fontSize: 'var(--fs-xs)', lineHeight: 1 }}>×</span>
       ) : (
         <span className="term-dot-i" />
       )}
-      <span style={{ fontSize: 10, color }}>{subagentStatusLabel(status)}</span>
+      <span style={{ fontSize: 'var(--fs-xs)', color }}>{subagentStatusLabel(status)}</span>
     </span>
   );
 }
@@ -216,10 +216,10 @@ function partition(tools: ToolCallState[]) {
 
 const CARD_BORDER = '1px solid var(--term-line)';
 const CAP_LABEL: React.CSSProperties = {
-  fontSize: 8.5,
-  letterSpacing: '.12em',
+  fontSize: 'var(--fs-2xs)',
+  letterSpacing: 'var(--ls-caps-wide)',
   textTransform: 'uppercase',
-  color: 'var(--term-faint)',
+  color: 'var(--term-muted)',
   fontFamily: 'var(--ui-font)',
 };
 
@@ -227,8 +227,8 @@ function FailedBadge({ label }: { label: string }) {
   return (
     <span
       style={{
-        fontSize: 9,
-        letterSpacing: '.06em',
+        fontSize: 'var(--fs-2xs)',
+        letterSpacing: 'var(--ls-wide)',
         border: '1px solid var(--term-danger)',
         color: 'var(--term-danger)',
         padding: '1px 5px',
@@ -250,7 +250,7 @@ function CardPayload({ t }: { t: ToolCallState }) {
   const failed = isFailedStatus(t.status);
   const preStyle: React.CSSProperties = {
     fontFamily: MONO,
-    fontSize: 10,
+    fontSize: 'var(--fs-xs)',
     lineHeight: 1.5,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
@@ -324,7 +324,7 @@ function CardToolRow({ t }: { t: ToolCallState }) {
             <span
               style={{
                 display: 'block',
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 lineHeight: '16px',
                 color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
                 overflowWrap: 'anywhere',
@@ -337,8 +337,8 @@ function CardToolRow({ t }: { t: ToolCallState }) {
               style={{
                 display: 'block',
                 fontFamily: MONO,
-                fontSize: 9.5,
-                color: running ? 'var(--term-mid)' : 'var(--term-faint)',
+                fontSize: 'var(--fs-xs)',
+                color: running ? 'var(--term-mid)' : 'var(--term-muted)',
                 marginTop: 1,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -354,7 +354,7 @@ function CardToolRow({ t }: { t: ToolCallState }) {
             {/* No purpose — use current single-line layout: Name + detail */}
             <span
               style={{
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 fontWeight: 500,
                 color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
                 flexShrink: 0,
@@ -370,7 +370,7 @@ function CardToolRow({ t }: { t: ToolCallState }) {
             <span
               style={{
                 fontFamily: MONO,
-                fontSize: 10,
+                fontSize: 'var(--fs-xs)',
                 color: running ? 'var(--term-mid)' : 'var(--term-muted)',
                 flex: 1,
                 minWidth: 0,
@@ -390,7 +390,7 @@ function CardToolRow({ t }: { t: ToolCallState }) {
         ) : (
           <>
             {durMs != null && (
-              <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-faint)', flexShrink: 0 }}>
+              <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
                 {formatDurationMs(durMs)}
               </span>
             )}
@@ -431,7 +431,7 @@ function CardSubagent({
         <SparkleIcon size={12} color="var(--term-mauve)" />
         <span
           style={{
-            fontSize: 11.5,
+            fontSize: 'var(--fs-md)',
             fontWeight: 600,
             color: 'var(--term-fg)',
             minWidth: 0,
@@ -442,16 +442,16 @@ function CardSubagent({
         >
           {info.agentType ?? 'SubAgent'}
         </span>
-        <span style={{ ...badgeStyle, fontSize: 8.5, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+        <span style={{ ...badgeStyle, fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' }}>
           subagent
         </span>
-        {info.model && <span style={{ ...badgeStyle, fontFamily: MONO, fontSize: 9 }}>{info.model}</span>}
+        {info.model && <span style={{ ...badgeStyle, fontFamily: MONO, fontSize: 'var(--fs-2xs)' }}>{info.model}</span>}
         <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex' }}>
           <SubagentStatus status={t.status} />
         </span>
       </div>
       <div style={{ padding: '8px 10px' }}>
-        {mission && <div style={{ fontSize: 11, color: 'var(--term-mid)', lineHeight: 1.5 }}>{mission}</div>}
+        {mission && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-mid)', lineHeight: 1.5 }}>{mission}</div>}
         {running && currentTool && (
           <div
             style={{
@@ -462,10 +462,10 @@ function CardSubagent({
               alignItems: 'center',
               gap: 6,
               fontFamily: MONO,
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
             }}
           >
-            <span style={{ color: 'var(--term-faint)' }}>now</span>
+            <span style={{ color: 'var(--term-muted)' }}>now</span>
             <span
               style={{
                 color: 'var(--term-accent)',
@@ -561,14 +561,14 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
           }}
         >
           {running && <CardSpinner />}
-          <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--term-fg)' }}>
+          <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-fg)' }}>
             {tools.length} tool {tools.length === 1 ? 'call' : 'calls'}
           </span>
           {failed > 0 && <FailedBadge label={`${failed} FAILED`} />}
-          <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, color: 'var(--term-faint)', flexShrink: 0 }}>
+          <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
             {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
           </span>
-          <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', flexShrink: 0 }}>▾</span>
+          <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▾</span>
         </button>
         <div
           ref={listRef}
@@ -624,7 +624,7 @@ function CollapsedCardRow({
       }}
     >
       {running ? <CardSpinner /> : <ToolTypeIcon kind="bash" color="var(--term-muted)" />}
-      <span style={{ fontSize: 11.5, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {summarizeToolsBase(tools)}
         {failed > 0 && (
           <span style={{ color: 'var(--term-danger)' }}>
@@ -632,10 +632,10 @@ function CollapsedCardRow({
           </span>
         )}
       </span>
-      <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, color: 'var(--term-faint)', flexShrink: 0 }}>
+      <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
         {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
       </span>
-      <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
+      <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
     </button>
   );
 }
@@ -652,7 +652,7 @@ function TermPayload({ t }: { t: ToolCallState }) {
   const failed = isFailedStatus(t.status);
   const preStyle: React.CSSProperties = {
     fontFamily: MONO,
-    fontSize: 10,
+    fontSize: 'var(--fs-xs)',
     lineHeight: 1.5,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
@@ -714,23 +714,23 @@ function TermToolRow({ t }: { t: ToolCallState }) {
         }}
       >
         {failed ? (
-          <span aria-hidden style={{ fontFamily: MONO, fontSize: 10, color: 'var(--term-danger)', textAlign: 'center' }}>×</span>
+          <span aria-hidden style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)', textAlign: 'center' }}>×</span>
         ) : running ? (
-          <span aria-hidden className="agent-glyph-run" style={{ fontFamily: MONO, fontSize: 10, color: 'var(--term-accent)', textAlign: 'center' }}>❯</span>
+          <span aria-hidden className="agent-glyph-run" style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-accent)', textAlign: 'center' }}>❯</span>
         ) : (
-          <span aria-hidden style={{ fontFamily: MONO, fontSize: 10, color: 'var(--term-muted)', textAlign: 'center' }}>✓</span>
+          <span aria-hidden style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', textAlign: 'center' }}>✓</span>
         )}
         {purpose ? (
           <span style={{ minWidth: 0 }}>
-            <span style={{ fontSize: 11, color: nameColor, display: 'block', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+            <span style={{ fontSize: 'var(--fs-sm)', color: nameColor, display: 'block', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
               {purpose}
             </span>
             <span
               style={{
                 display: 'block',
                 fontFamily: MONO,
-                fontSize: 9.5,
-                color: failed ? 'var(--term-danger)' : 'var(--term-faint)',
+                fontSize: 'var(--fs-xs)',
+                color: failed ? 'var(--term-danger)' : 'var(--term-muted)',
                 marginTop: 1,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -743,21 +743,21 @@ function TermToolRow({ t }: { t: ToolCallState }) {
           </span>
         ) : (
           <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <span style={{ fontSize: 11, color: nameColor }}>{termToolName(t)}</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: nameColor }}>{termToolName(t)}</span>
             {detail && (
               <>
                 {' '}
-                <span style={{ fontFamily: MONO, fontSize: 10.5, color: detailColor }}>{detail}</span>
+                <span style={{ fontFamily: MONO, fontSize: 'var(--fs-sm)', color: detailColor }}>{detail}</span>
               </>
             )}
           </span>
         )}
         {failed ? (
-          <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-danger)' }}>failed</span>
+          <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)' }}>failed</span>
         ) : running ? (
-          <span className="term-shimmer term-shimmer--accent" style={{ fontSize: 9.5 }}>running</span>
+          <span className="term-shimmer term-shimmer--accent" style={{ fontSize: 'var(--fs-xs)' }}>running</span>
         ) : durMs != null ? (
-          <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-faint)' }}>{formatDurationMs(durMs)}</span>
+          <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{formatDurationMs(durMs)}</span>
         ) : (
           <span />
         )}
@@ -781,10 +781,10 @@ function TermSubagent({
   return (
     <div data-testid="subagent-card" style={{ border: CARD_BORDER, fontFamily: 'var(--ui-font)' }}>
       <div style={{ padding: '5px 9px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: CARD_BORDER }}>
-        <span aria-hidden style={{ color: 'var(--term-mauve)', fontSize: 10, flexShrink: 0 }}>◆</span>
+        <span aria-hidden style={{ color: 'var(--term-mauve)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>◆</span>
         <span
           style={{
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             fontWeight: 600,
             color: 'var(--term-fg)',
             minWidth: 0,
@@ -796,15 +796,15 @@ function TermSubagent({
           {subagentHeading(info)}
         </span>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {info.model && <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-faint)' }}>{info.model}</span>}
+          {info.model && <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{info.model}</span>}
           <SubagentStatus status={t.status} />
         </span>
       </div>
       <div style={{ padding: '7px 9px' }}>
-        {mission && <div style={{ fontSize: 10.5, color: 'var(--term-muted)', lineHeight: 1.5 }}>{mission}</div>}
+        {mission && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', lineHeight: 1.5 }}>{mission}</div>}
         {running && currentTool && (
-          <div style={{ marginTop: mission ? 5 : 0, fontFamily: MONO, fontSize: 10, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <span style={{ color: 'var(--term-faint)' }}>now ❯ </span>
+          <div style={{ marginTop: mission ? 5 : 0, fontFamily: MONO, fontSize: 'var(--fs-xs)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--term-muted)' }}>now ❯ </span>
             <span style={{ color: 'var(--term-accent)' }}>{currentTool}</span>
           </div>
         )}
@@ -876,8 +876,8 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
           className="t-hover-fg"
           style={{ ...headerBtn, alignItems: 'baseline' }}
         >
-          <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
-          <span style={{ fontSize: 10.5, color: 'var(--term-muted)', minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {summarizeToolsBase(tools)}
             {failed > 0 && (
               <span style={{ color: 'var(--term-danger)' }}>
@@ -886,7 +886,7 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
             )}
           </span>
           <span aria-hidden style={{ flex: 1, borderBottom: '1px dotted var(--term-line)', transform: 'translateY(-3px)' }} />
-          <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-faint)', flexShrink: 0 }}>
+          <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
             {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
           </span>
         </button>
@@ -898,12 +898,12 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
   return (
     <div style={container}>
       <button type="button" data-toolgroup-header onClick={onToggle} className="t-hover-fg" style={headerBtn}>
-        <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', flexShrink: 0 }}>▾</span>
-        <span style={{ fontSize: 9, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
+        <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▾</span>
+        <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
           tools
         </span>
         <span aria-hidden style={{ flex: 1, borderTop: '1px solid var(--term-line)', transform: 'translateY(1px)' }} />
-        <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--term-faint)', flexShrink: 0 }}>
+        <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
           {rightMeta}
           {failed > 0 && <span style={{ color: 'var(--term-danger)' }}> · {failed} failed</span>}
         </span>

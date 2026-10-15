@@ -61,7 +61,7 @@ export function ModelPane({
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 15,
+          fontSize: 'var(--fs-2xl)',
           fontWeight: 700,
           color: 'var(--term-fg)',
           margin: 0,
@@ -167,12 +167,12 @@ function NativeSessionToggle({ status, preference, label, onChanged }: {
   };
 
   return (
-    <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 12.5, color: 'var(--term-fg)' }}>
+    <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`${label} for ${status.label}`} />
         <span>{label} <span style={{ color: 'var(--term-muted)' }}>({status.label})</span></span>
       </div>
-      {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 11, marginTop: 6 }}>{error}</div>}
+      {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>{error}</div>}
     </div>
   );
 }
@@ -192,8 +192,8 @@ function RuntimePicker({
     ? status.runtime
     : '';
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>runtime</div>
+    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>runtime</div>
       <select
         value={selectedRuntime}
         disabled={saving}
@@ -208,7 +208,7 @@ function RuntimePicker({
         }}
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
           background: 'var(--term-surface-glass)',
@@ -226,11 +226,11 @@ function RuntimePicker({
           </option>
         ))}
       </select>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
         Switching runtime applies to new chats only — existing sessions keep their original runtime.
       </div>
       {error && (
-        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
       )}
     </div>
   );
@@ -247,8 +247,8 @@ function ProviderPicker({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>provider</div>
+    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>provider</div>
       <select
         value={status.provider ?? ''}
         disabled={saving}
@@ -278,7 +278,7 @@ function ProviderPicker({
         }}
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
           background: 'var(--term-surface-glass)',
@@ -293,7 +293,7 @@ function ProviderPicker({
         ))}
       </select>
       {error && (
-        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
       )}
     </div>
   );
@@ -337,8 +337,8 @@ function ProviderModelPicker({
   }, [status.provider, status.runtime]);
 
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>model</div>
+    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>model</div>
       {showFilter && (
         <input
           type="search"
@@ -353,7 +353,7 @@ function ProviderModelPicker({
             width: 320,
             boxSizing: 'border-box',
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 8px',
             marginBottom: 6,
             border: '1px solid var(--term-line)',
@@ -376,7 +376,7 @@ function ProviderModelPicker({
         }}
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
           background: 'var(--term-surface-glass)',
@@ -399,7 +399,7 @@ function ProviderModelPicker({
         <div
           role="status"
           style={{
-            fontSize: 10.5,
+            fontSize: 'var(--fs-sm)',
             color: filteredModels.length === 0 ? 'var(--term-danger)' : 'var(--term-muted)',
             marginTop: 6,
           }}
@@ -410,19 +410,19 @@ function ProviderModelPicker({
         </div>
       )}
       {loading && (
-        <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6 }}>Loading models…</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6 }}>Loading models…</div>
       )}
       {loadError && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-          <span style={{ fontSize: 11, color: 'var(--term-danger)' }}>{loadError}</span>
-          <BorderBtn onClick={retry} style={{ padding: '2px 7px', fontSize: 10.5 }}>Retry</BorderBtn>
+          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)' }}>{loadError}</span>
+          <BorderBtn onClick={retry} style={{ padding: '2px 7px', fontSize: 'var(--fs-sm)' }}>Retry</BorderBtn>
         </div>
       )}
       {saveError && (
-        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{saveError}</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{saveError}</div>
       )}
       {locked && (
-        <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
           Model is managed by this built-in provider.
         </div>
       )}
@@ -440,8 +440,8 @@ function ReasoningPicker({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 13, color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>reasoning effort</div>
+    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>reasoning effort</div>
       <select
         value={status.reasoning ?? 'xhigh'}
         disabled={saving}
@@ -455,7 +455,7 @@ function ReasoningPicker({
         }}
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
           background: 'var(--term-surface-glass)',
@@ -467,11 +467,11 @@ function ReasoningPicker({
           <option key={id} value={id}>{id}</option>
         ))}
       </select>
-      <div style={{ fontSize: 10.5, color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
         Some providers ignore reasoning effort, but models that support it will receive this preference.
       </div>
       {error && (
-        <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
+        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
       )}
     </div>
   );
@@ -514,17 +514,17 @@ function WebSearchControls({
     <div
       style={{
         fontFamily: 'var(--ui-font)',
-        fontSize: 13,
+        fontSize: 'var(--fs-lg)',
         color: 'var(--term-fg)',
         marginTop: 18,
         paddingTop: 18,
         borderTop: '1px solid var(--term-line)',
       }}
     >
-      <div style={{ fontSize: 10, color: 'var(--term-muted)', letterSpacing: '.14em', marginBottom: 10 }}>
+      <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', letterSpacing: 'var(--ls-caps-wide)', marginBottom: 10 }}>
         ▸ WEB SEARCH
       </div>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>search provider</div>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>search provider</div>
       <select
         aria-label="Web search provider"
         value={selectedId}
@@ -532,7 +532,7 @@ function WebSearchControls({
         onChange={(event) => void updateProvider(event.target.value)}
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 12,
+          fontSize: 'var(--fs-md)',
           padding: '6px 8px',
           border: '1px solid var(--term-line)',
           background: 'var(--term-surface-glass)',
@@ -547,10 +547,10 @@ function WebSearchControls({
           </option>
         ))}
       </select>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 6, maxWidth: 500, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 500, lineHeight: 1.5 }}>
         Searches run from the backend. A new chat will expose the selected provider as a source-aware web-search tool.
       </div>
-      {providerError && <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{providerError}</div>}
+      {providerError && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{providerError}</div>}
       {selected && <WebSearchKeyControls key={selected.id} provider={selected} onChanged={onChanged} />}
     </div>
   );
@@ -605,7 +605,7 @@ function WebSearchKeyControls({
 
   return (
     <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>
         {provider.label} {hasKey ? '(saved)' : '(missing)'}
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -620,7 +620,7 @@ function WebSearchKeyControls({
           placeholder={provider.keyLabel}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 8px',
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
@@ -644,18 +644,18 @@ function WebSearchKeyControls({
           Clear
         </button>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginTop: 7, maxWidth: 500, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 7, maxWidth: 500, lineHeight: 1.5 }}>
         {provider.description}
       </div>
       <a
         href={provider.keyUrl}
         target="_blank"
         rel="noopener noreferrer"
-        style={{ display: 'inline-block', fontSize: 11, color: 'var(--term-accent)', marginTop: 7 }}
+        style={{ display: 'inline-block', fontSize: 'var(--fs-sm)', color: 'var(--term-accent)', marginTop: 7 }}
       >
         Open {provider.label} key console
       </a>
-      {error && <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>}
+      {error && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>}
     </div>
   );
 }
@@ -663,7 +663,7 @@ function WebSearchKeyControls({
 function keyButtonStyle(disabled: boolean): React.CSSProperties {
   return {
     fontFamily: 'var(--ui-font)',
-    fontSize: 12,
+    fontSize: 'var(--fs-md)',
     padding: '6px 12px',
     border: '1px solid var(--term-line)',
     background: 'var(--term-surface-glass)',
@@ -750,14 +750,14 @@ function ProviderKeyControls({
     <div
       style={{
         fontFamily: 'var(--ui-font)',
-        fontSize: 13,
+        fontSize: 'var(--fs-lg)',
         color: 'var(--term-fg)',
         marginTop: 18,
         paddingTop: 14,
         borderTop: '1px solid var(--term-line)',
       }}
     >
-      <div style={{ fontSize: 11, color: 'var(--term-muted)', marginBottom: 4 }}>
+      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>
         {provider.label} {hasKey ? '(saved)' : '(missing)'}
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -772,7 +772,7 @@ function ProviderKeyControls({
           placeholder="API key"
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 8px',
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
@@ -786,7 +786,7 @@ function ProviderKeyControls({
           disabled={!keyDraft.trim() || keySaving}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
@@ -802,7 +802,7 @@ function ProviderKeyControls({
           disabled={!canVerifyKey || keyVerifying}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
             background: verifyResult?.ok ? 'var(--term-alt)' : 'var(--term-surface)',
@@ -818,7 +818,7 @@ function ProviderKeyControls({
           disabled={!hasKey}
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 12,
+            fontSize: 'var(--fs-md)',
             padding: '6px 12px',
             border: '1px solid var(--term-line)',
             background: 'var(--term-surface-glass)',
@@ -833,7 +833,7 @@ function ProviderKeyControls({
       {verifyResult && (
         <div
           style={{
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             color: verifyResult.ok ? 'var(--term-accent)' : 'var(--term-danger)',
             marginTop: 6,
           }}
@@ -850,7 +850,7 @@ function ProviderKeyControls({
           rel="noopener noreferrer"
           style={{
             display: 'inline-block',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             color: 'var(--term-accent)',
             marginTop: 8,
           }}
@@ -858,7 +858,7 @@ function ProviderKeyControls({
           Open {provider.label} key console
         </a>
       )}
-      {keyError && <div style={{ fontSize: 11, color: 'var(--term-danger)', marginTop: 6 }}>{keyError}</div>}
+      {keyError && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{keyError}</div>}
     </div>
   );
 }
@@ -877,9 +877,9 @@ function KiroSidecarTitleToggle() {
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: 'var(--fs-xs)',
           color: 'var(--term-muted)',
-          letterSpacing: '.14em',
+          letterSpacing: 'var(--ls-caps-wide)',
           marginBottom: 10,
           fontFamily: 'var(--ui-font)',
         }}
@@ -906,7 +906,7 @@ function KiroSidecarTitleToggle() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span
             style={{
-              fontSize: 12.5,
+              fontSize: 'var(--fs-lg)',
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
               fontWeight: 600,
@@ -916,7 +916,7 @@ function KiroSidecarTitleToggle() {
           </span>
           <span
             style={{
-              fontSize: 11,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--term-muted)',
               fontFamily: 'var(--ui-font)',
             }}
@@ -943,9 +943,9 @@ function FollowUpsToggle() {
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: 'var(--fs-xs)',
           color: 'var(--term-muted)',
-          letterSpacing: '.14em',
+          letterSpacing: 'var(--ls-caps-wide)',
           marginBottom: 10,
           fontFamily: 'var(--ui-font)',
         }}
@@ -968,7 +968,7 @@ function FollowUpsToggle() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span
             style={{
-              fontSize: 12.5,
+              fontSize: 'var(--fs-lg)',
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
               fontWeight: 600,
@@ -996,9 +996,9 @@ function BypassPermissionsToggle() {
     >
       <div
         style={{
-          fontSize: 10,
+          fontSize: 'var(--fs-xs)',
           color: 'var(--term-muted)',
-          letterSpacing: '.14em',
+          letterSpacing: 'var(--ls-caps-wide)',
           marginBottom: 10,
           fontFamily: 'var(--ui-font)',
         }}
@@ -1021,7 +1021,7 @@ function BypassPermissionsToggle() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <span
             style={{
-              fontSize: 12.5,
+              fontSize: 'var(--fs-lg)',
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
               fontWeight: 600,
@@ -1031,7 +1031,7 @@ function BypassPermissionsToggle() {
           </span>
           <span
             style={{
-              fontSize: 11,
+              fontSize: 'var(--fs-sm)',
               color: 'var(--term-muted)',
               fontFamily: 'var(--ui-font)',
             }}
@@ -1086,9 +1086,9 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
     <div style={{ paddingTop: 18, borderTop: '1px solid var(--term-line)' }}>
       <div
         style={{
-          fontSize: 10,
+          fontSize: 'var(--fs-xs)',
           color: 'var(--term-muted)',
-          letterSpacing: '.14em',
+          letterSpacing: 'var(--ls-caps-wide)',
           marginBottom: 10,
           fontFamily: 'var(--ui-font)',
         }}
@@ -1097,7 +1097,7 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
       </div>
       <div
         style={{
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
           color: 'var(--term-muted)',
           fontFamily: 'var(--ui-font)',
           lineHeight: 1.5,
@@ -1109,11 +1109,11 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
         Revoke any to be asked again on the next call.
       </div>
       {grants === null ? (
-        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 12, color: 'var(--term-muted)' }}>
+        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)', color: 'var(--term-muted)' }}>
           loading…
         </div>
       ) : grants.length === 0 ? (
-        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 12, color: 'var(--term-muted)' }}>
+        <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)', color: 'var(--term-muted)' }}>
           No always-allow grants yet.
         </div>
       ) : (
@@ -1129,12 +1129,12 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
                 borderBottom: i < grants.length - 1 ? '1px solid var(--term-line)' : 'none',
                 background: 'var(--term-surface-glass)',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 12,
+                fontSize: 'var(--fs-md)',
               }}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span style={{ color: 'var(--term-fg)', fontWeight: 600 }}>{g.tool_name}</span>
-                <span style={{ color: 'var(--term-muted)', fontSize: 10.5 }}>
+                <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
                   granted {new Date(g.granted_at).toLocaleString()}
                 </span>
               </div>
@@ -1142,7 +1142,7 @@ function PermissionGrantsList({ projectId }: { projectId: string }) {
                 onClick={() => !busy && void revoke(g.tool_name)}
                 style={{
                   padding: '4px 10px',
-                  fontSize: 11,
+                  fontSize: 'var(--fs-sm)',
                   border: '1px solid var(--term-line)',
                   color: 'var(--term-danger)',
                   background: 'transparent',

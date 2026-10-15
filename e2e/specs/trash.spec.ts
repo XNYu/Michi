@@ -169,8 +169,9 @@ test('Trash confirms destructive actions, preserves failed rows, and empties all
   await trash.getByRole('button', { name: 'Empty trash', exact: true }).click();
   await page.getByRole('dialog', { name: 'Empty trash?' }).getByRole('button', { name: 'Empty trash', exact: true }).click();
   await expect(trash.getByRole('heading', { name: 'Trash is empty' })).toBeVisible();
-  expect(calls.empties).toHaveLength(3);
-  expect(calls.workspaces).toEqual(['empty-ws', 'research-ws']);
+  // The empty state renders from local state; the workspace DELETEs may still be in flight.
+  await expect.poll(() => calls.empties).toHaveLength(3);
+  await expect.poll(() => calls.workspaces).toEqual(['empty-ws', 'research-ws']);
   await page.screenshot({ path: info.outputPath('trash-empty.png') });
 });
 

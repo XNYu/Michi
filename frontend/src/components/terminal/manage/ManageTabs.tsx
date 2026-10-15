@@ -39,7 +39,7 @@ export default function ManageTabs({ activeTab, onChange, counts, filter, onFilt
             style={{
               padding: '10px 18px 12px',
               fontFamily: 'var(--ui-font)',
-              fontSize: 14,
+              fontSize: 'var(--fs-xl)',
               lineHeight: 1.2,
               fontWeight: isActive ? 500 : 400,
               color: isActive ? 'var(--term-fg)' : 'var(--term-muted)',
@@ -58,8 +58,8 @@ export default function ManageTabs({ activeTab, onChange, counts, filter, onFilt
             {TAB_LABELS[t]}
             <span
               style={{
-                fontSize: 11.5,
-                color: 'var(--term-faint, var(--term-muted))',
+                fontSize: 'var(--fs-md)',
+                color: 'var(--term-muted)',
                 fontFamily: 'var(--ui-font)',
                 fontWeight: 400,
               }}
@@ -77,7 +77,7 @@ export default function ManageTabs({ activeTab, onChange, counts, filter, onFilt
           gap: 6,
           padding: '6px 10px',
           color: 'var(--term-muted)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         <SearchGlyph />
@@ -90,7 +90,7 @@ export default function ManageTabs({ activeTab, onChange, counts, filter, onFilt
             border: 'none',
             background: 'transparent',
             fontFamily: 'var(--ui-font)',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             color: 'var(--term-fg)',
             padding: 0,
             outline: 'none',

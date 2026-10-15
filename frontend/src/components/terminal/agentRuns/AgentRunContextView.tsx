@@ -12,18 +12,18 @@ function entryTitle(entry: AgentRunContextManifestV1['entries'][number]): string
 export function AgentRunContextView({ manifest }: { manifest: AgentRunContextManifestV1 }) {
   return (
     <div>
-      <div style={{ color: 'var(--term-muted)', fontSize: 10, marginBottom: 8 }}>
+      <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', marginBottom: 8 }}>
         {manifest.entries.length} immutable {manifest.entries.length === 1 ? 'entry' : 'entries'} · {manifest.estimatedChars.toLocaleString()} estimated chars
       </div>
       <div style={{ borderTop: '1px solid var(--term-line)' }}>
         {manifest.entries.map((entry, index) => (
           <div key={`${entry.kind}:${index}`} style={{ padding: '9px 0', borderBottom: '1px solid var(--term-line)' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-              <span style={{ color: 'var(--term-fg)', fontSize: 11, fontWeight: 600 }}>{entryTitle(entry)}</span>
-              <span style={{ color: 'var(--term-faint)', fontSize: 10, marginLeft: 'auto' }}>{entry.kind}</span>
+              <span style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-sm)', fontWeight: 600 }}>{entryTitle(entry)}</span>
+              <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', marginLeft: 'auto' }}>{entry.kind}</span>
             </div>
-            {'size' in entry && <div style={{ color: 'var(--term-muted)', fontSize: 10, marginTop: 3 }}>{entry.size.toLocaleString()} bytes</div>}
-            <code style={{ display: 'block', color: 'var(--term-faint)', fontFamily: 'var(--mono-font)', fontSize: 9, marginTop: 4, overflowWrap: 'anywhere' }}>
+            {'size' in entry && <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', marginTop: 3 }}>{entry.size.toLocaleString()} bytes</div>}
+            <code style={{ display: 'block', color: 'var(--term-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2xs)', marginTop: 4, overflowWrap: 'anywhere' }}>
               sha256 {entry.sha256}
             </code>
           </div>

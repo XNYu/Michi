@@ -25,8 +25,8 @@ const PROMPT_ROW: React.CSSProperties = {
 };
 
 const PROMPT_GLYPH: React.CSSProperties = {
-  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-  fontSize: 12.5,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-lg)',
   color: 'var(--term-mauve, var(--term-accent))',
   flexShrink: 0,
 };
@@ -38,7 +38,7 @@ const PROMPT_INPUT: React.CSSProperties = {
   outline: 'none',
   background: 'transparent',
   fontFamily: 'var(--ui-font)',
-  fontSize: 14,
+  fontSize: 'var(--fs-xl)',
   color: 'var(--term-fg)',
   padding: 0,
 };
@@ -90,7 +90,7 @@ export default function MoveThreadDialog({ open, threadLabel, targets, onClose, 
           style={{
             color: 'var(--term-mid)',
             fontFamily: 'var(--ui-font)',
-            fontSize: 11,
+            fontSize: 'var(--fs-sm)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -144,7 +144,7 @@ export default function MoveThreadDialog({ open, threadLabel, targets, onClose, 
             style={{
               padding: '10px 14px',
               color: 'var(--term-mid)',
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               fontStyle: 'italic',
             }}
           >
@@ -170,7 +170,7 @@ export default function MoveThreadDialog({ open, threadLabel, targets, onClose, 
                       background: active ? 'var(--term-alt)' : 'transparent',
                       color: 'var(--term-fg)',
                       fontFamily: 'var(--ui-font)',
-                      fontSize: 13.5,
+                      fontSize: 'var(--fs-xl)',
                       padding: '7px 14px',
                       cursor: 'pointer',
                       borderLeft: active
@@ -181,7 +181,7 @@ export default function MoveThreadDialog({ open, threadLabel, targets, onClose, 
                     <span
                       aria-hidden
                       style={{
-                        fontFamily: 'var(--mono-font, ui-monospace, monospace)',
+                        fontFamily: 'var(--font-mono)',
                         color: active ? 'var(--term-accent)' : 'var(--term-muted)',
                         flexShrink: 0,
                       }}

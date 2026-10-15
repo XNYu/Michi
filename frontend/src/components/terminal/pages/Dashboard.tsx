@@ -57,7 +57,7 @@ function AgentRunPaneSurface({ item }: { item: AgentRunPaneItem }) {
   }, [dispatch, identity]);
 
   const resource = state.runs[runKey];
-  if (!resource) return <div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 11 }}>loading Agent Run…</div>;
+  if (!resource) return <div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading Agent Run…</div>;
   const target = { identity, workspaceId: resource.value.workspaceId, parentNodeId: resource.value.parentNodeId };
   return (
     <AgentRunPane
@@ -470,7 +470,7 @@ export default function TerminalDashboard() {
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         — no workspace —
@@ -565,7 +565,7 @@ export default function TerminalDashboard() {
             <RetainedPaneContent exiting={exitingIds.has(id)}>
             <PaneErrorBoundary paneId={id}>
               {paneItems[id] ? (
-                <Suspense fallback={<div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 11 }}>loading {paneItems[id].kind}…</div>}>
+                <Suspense fallback={<div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading {paneItems[id].kind}…</div>}>
                   {paneItems[id].kind === 'launcher' ? <PaneChooser item={paneItems[id]} />
                     : paneItems[id].kind === 'files' ? <FilesPane item={paneItems[id]} />
                     : paneItems[id].kind === 'review' ? <ReviewPane item={paneItems[id]} />
@@ -602,12 +602,12 @@ export default function TerminalDashboard() {
             position: 'absolute',
             inset: 0,
             border: '2px dashed var(--term-accent)',
-            background: 'rgba(47, 143, 115, .15)',
+            background: 'color-mix(in srgb, var(--term-accent) 12%, transparent)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             pointerEvents: 'none',
-            zIndex: 100,
+            zIndex: 'var(--z-pane-overlay)',
           }}
         >
           <div
@@ -617,8 +617,8 @@ export default function TerminalDashboard() {
               color: 'var(--term-accent)',
               padding: '8px 18px',
               fontFamily: 'var(--ui-font)',
-              fontSize: 12,
-              borderRadius: 3,
+              fontSize: 'var(--fs-md)',
+              borderRadius: 'var(--ui-radius-sm)',
             }}
           >
             drop {dashDroppedFileCount} file{dashDroppedFileCount === 1 ? '' : 's'} · attach to message
@@ -635,8 +635,8 @@ export default function TerminalDashboard() {
             width: 'min(420px, calc(100% - 48px))',
             background: 'var(--term-bg)',
             border: '1px solid var(--term-line)',
-            boxShadow: 'var(--term-popover-shadow, 0 8px 24px rgba(0,0,0,0.16))',
-            zIndex: 101,
+            boxShadow: 'var(--ui-popover-shadow)',
+            zIndex: 'calc(var(--z-pane-overlay) + 1)',
             pointerEvents: 'none',
           }}
         >

@@ -14,10 +14,10 @@ export default function EmptyThreads() {
         fontFamily: 'var(--ui-font)',
       }}
     >
-      <div style={{ fontSize: 18, color: 'var(--term-fg)', marginBottom: 8 }}>
+      <div style={{ fontSize: 'var(--fs-3xl)', color: 'var(--term-fg)', marginBottom: 8 }}>
         ▂ all threads archived
       </div>
-      <div style={{ fontSize: 12, marginBottom: 16 }}>
+      <div style={{ fontSize: 'var(--fs-md)', marginBottom: 16 }}>
         Start a new thread or unarchive one.
       </div>
       <button

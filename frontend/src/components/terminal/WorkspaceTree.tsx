@@ -831,10 +831,10 @@ export default function WorkspaceTree({
               padding: '5px 8px',
               background: 'transparent',
               border: '1px solid var(--term-line)',
-              borderRadius: 4,
+              borderRadius: 'var(--ui-radius)',
               color: 'var(--term-mid)',
               fontFamily: 'var(--ui-font)',
-              fontSize: 12,
+              fontSize: 'var(--fs-md)',
               cursor: 'pointer',
             }}
           >
@@ -870,8 +870,8 @@ export default function WorkspaceTree({
               <div
                 style={{
                   padding: '4px 6px 4px 6px',
-                  fontSize: 11,
-                  color: 'var(--term-faint)',
+                  fontSize: 'var(--fs-sm)',
+                  color: 'var(--term-muted)',
                   fontFamily: 'var(--ui-font)',
                 }}
               >
@@ -886,8 +886,8 @@ export default function WorkspaceTree({
           data-testid="all-caught-up"
           style={{
             padding: '24px 16px',
-            color: 'var(--term-faint)',
-            fontSize: 12,
+            color: 'var(--term-muted)',
+            fontSize: 'var(--fs-md)',
             textAlign: 'center',
           }}
         >
@@ -921,11 +921,11 @@ function SectionLabel({ label }: { label: string }) {
         // Card modes: the workspace row is itself a sentence-case group header,
         // so this outer section stays UPPERCASE and a notch smaller to keep the
         // two tiers apart instead of reading as two labels of the same rank.
-        fontSize: geom.isCard ? 10.5 : 11,
+        fontSize: 'var(--fs-sm)',
         fontWeight: 600,
-        letterSpacing: geom.isCard ? '0.06em' : '0.03em',
+        letterSpacing: 'var(--ls-wide)',
         textTransform: 'uppercase',
-        color: 'var(--term-faint)',
+        color: 'var(--term-muted)',
         // Classic: match ActivityView's time-label exactly — same padding, same
         // left offset (6px inside the container inset → aligns with the folder
         // icon edge), same 8px marginTop so "Projects" and "Today" sit at the
@@ -972,8 +972,8 @@ function MergedGroupsSection({
   return (
     <div data-testid="merged-section" style={{ marginTop: 12 }}>
       <div style={{
-        padding: '4px 10px', fontSize: 10, color: 'var(--term-muted)',
-        textTransform: 'uppercase', letterSpacing: 1,
+        padding: '4px 10px', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)',
+        textTransform: 'uppercase', letterSpacing: 'var(--ls-caps)',
       }}>
         ── Merged ──
       </div>
@@ -1003,7 +1003,7 @@ function MergedGroupsSection({
                   : '2px solid transparent',
                 color: isFocused ? 'var(--term-fg)' : 'var(--term-mid)',
                 fontWeight: isFocused ? 600 : 400,
-                fontSize: 11.5,
+                fontSize: 'var(--fs-md)',
                 fontFamily: 'var(--ui-font)',
               }}
             >
@@ -1047,10 +1047,10 @@ function MergedGroupsSection({
                     borderLeft: focused
                       ? '2px solid var(--term-accent)'
                       : '2px solid transparent',
-                    color: deleted ? 'var(--term-muted)' : 'var(--term-faint)',
+                    color: 'var(--term-muted)',
                     fontStyle: 'italic',
                     textDecoration: deleted ? 'line-through' : 'none',
-                    fontSize: 11.5,
+                    fontSize: 'var(--fs-md)',
                     fontFamily: 'var(--ui-font)',
                     cursor: deleted ? 'default' : 'pointer',
                   }}
@@ -1091,7 +1091,7 @@ function MergedGroupsSection({
                       : '2px solid transparent',
                     color: focused ? 'var(--term-fg)' : 'var(--term-mid)',
                     fontWeight: focused ? 600 : 400,
-                    fontSize: 11.5,
+                    fontSize: 'var(--fs-md)',
                     fontFamily: 'var(--ui-font)',
                     cursor: 'pointer',
                   }}
@@ -1129,9 +1129,9 @@ function MergedGroupsSection({
             background: 'transparent',
             border: 0,
             textAlign: 'left',
-            color: 'var(--term-faint)',
+            color: 'var(--term-muted)',
             fontFamily: 'var(--ui-font)',
-            fontSize: 11.5,
+            fontSize: 'var(--fs-md)',
             cursor: 'pointer',
             textDecoration: 'underline',
             textDecorationStyle: 'dotted',

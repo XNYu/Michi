@@ -83,30 +83,30 @@ export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
-              fontSize: 11.5,
+              fontSize: 'var(--fs-md)',
               color: 'var(--term-fg)',
             }}
           >
             {filePath}
           </span>
           {state.phase === 'loaded' && state.truncated && (
-            <span style={{ color: 'var(--term-muted)', flexShrink: 0, fontSize: 10 }}>truncated at 100KB</span>
+            <span style={{ color: 'var(--term-muted)', flexShrink: 0, fontSize: 'var(--fs-xs)' }}>truncated at 100KB</span>
           )}
         </>
       }
     >
         <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 12px' }}>
           {state.phase === 'loading' && (
-            <div style={{ fontSize: 11, color: 'var(--term-muted)', padding: '12px 0' }}>loading diff…</div>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', padding: '12px 0' }}>loading diff…</div>
           )}
           {state.phase === 'error' && (
-            <div style={{ fontSize: 11, color: 'var(--term-danger)', padding: '12px 0' }}>⚠ {state.message}</div>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', padding: '12px 0' }}>⚠ {state.message}</div>
           )}
           {state.phase === 'loaded' && (
             <pre
               style={{
                 margin: 0,
-                fontSize: 11,
+                fontSize: 'var(--fs-sm)',
                 lineHeight: 1.55,
                 fontFamily: 'var(--message-code-font, monospace)',
                 whiteSpace: 'pre-wrap',

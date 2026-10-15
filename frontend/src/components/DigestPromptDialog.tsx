@@ -36,7 +36,7 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
         style={{
           padding: '14px 16px 4px',
           fontFamily: 'var(--ui-font)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
           color: 'var(--term-mid)',
           lineHeight: 1.45,
         }}
@@ -58,8 +58,8 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
           <span
             aria-hidden
             style={{
-              fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-              fontSize: 12.5,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 'var(--fs-lg)',
               color: digest,
               paddingTop: 2,
               flexShrink: 0,
@@ -88,7 +88,7 @@ export default function DigestPromptDialog({ open, onConfirm, onCancel }: Digest
               outline: 'none',
               background: 'transparent',
               fontFamily: 'var(--ui-font)',
-              fontSize: 14,
+              fontSize: 'var(--fs-xl)',
               color: 'var(--term-fg)',
               resize: 'vertical',
               padding: 0,

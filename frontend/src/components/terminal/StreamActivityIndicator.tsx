@@ -176,10 +176,10 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
         alignItems: 'center',
         gap: 8,
         margin: '8px 0',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         fontFamily: 'var(--ui-font)',
         color: 'var(--term-muted)',
-        animation: 'fadeIn .3s ease',
+        animation: 'fadeIn var(--t-decay) ease',
       }}
     >
       <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -196,7 +196,7 @@ function StreamActivityIndicatorInner({ node }: { node: ChatNodeState }) {
         {activity.label}
       </span>
       {showElapsed && (
-        <span style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--term-faint)', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--term-muted)', fontVariantNumeric: 'tabular-nums' }}>
           {seconds}s
         </span>
       )}

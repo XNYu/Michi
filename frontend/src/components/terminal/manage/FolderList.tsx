@@ -116,9 +116,9 @@ export default function FolderList({
             onChange={(e) => setRemotePath(e.target.value)}
             placeholder="/remote/path"
             aria-label="Remote folder path"
-            style={{ flex: 1, minWidth: 0, border: '1px solid var(--term-line)', background: 'var(--term-alt)', color: 'var(--term-fg)', padding: '5px 7px', fontFamily: 'var(--mono-font)', fontSize: 10.5 }}
+            style={{ flex: 1, minWidth: 0, border: '1px solid var(--term-line)', background: 'var(--term-alt)', color: 'var(--term-fg)', padding: '5px 7px', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-sm)' }}
           />
-          <button type="button" onClick={() => { void handleAdd(); }} style={{ border: '1px solid var(--term-line)', background: 'transparent', color: 'var(--term-mid)', padding: '4px 8px', cursor: 'pointer', fontSize: 10.5 }}>
+          <button type="button" onClick={() => { void handleAdd(); }} style={{ border: '1px solid var(--term-line)', background: 'transparent', color: 'var(--term-mid)', padding: '4px 8px', cursor: 'pointer', fontSize: 'var(--fs-sm)' }}>
             add server path
           </button>
         </div>
@@ -156,7 +156,7 @@ export default function FolderList({
                 onBlur={() => commitEdit(f.id)}
                 style={{
                   width: '100%',
-                  fontSize: 12,
+                  fontSize: 'var(--fs-md)',
                   fontFamily: 'var(--ui-font)',
                   background: 'var(--term-alt)',
                   border: '1px solid var(--term-line)',
@@ -169,7 +169,7 @@ export default function FolderList({
               <>
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: 'var(--fs-md)',
                     fontWeight: 500,
                     color: 'var(--term-fg)',
                     fontFamily: 'var(--ui-font)',
@@ -184,7 +184,7 @@ export default function FolderList({
                   {f.label || basename(f.path)}
                   {idx === 0 && (
                     <span style={{
-                      fontSize: 10,
+                      fontSize: 'var(--fs-xs)',
                       color: 'var(--term-muted)',
                       marginLeft: 6,
                       fontWeight: 400,
@@ -195,9 +195,9 @@ export default function FolderList({
                 </div>
                 <div
                   style={{
-                    fontSize: 10.5,
-                    color: 'var(--term-faint, var(--term-muted))',
-                    fontFamily: 'var(--mono-font, monospace)',
+                    fontSize: 'var(--fs-sm)',
+                    color: 'var(--term-muted)',
+                    fontFamily: 'var(--font-mono)',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -221,7 +221,7 @@ export default function FolderList({
                 border: 'none',
                 color: 'var(--term-muted)',
                 cursor: 'pointer',
-                fontSize: 14,
+                fontSize: 'var(--fs-xl)',
                 lineHeight: 1,
                 padding: '2px 4px',
                 flexShrink: 0,
@@ -243,7 +243,7 @@ export default function FolderList({
           width: '100%',
           padding: '5px 10px',
           fontFamily: 'var(--ui-font)',
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
           color: folders.length >= MAX_FOLDERS ? 'var(--term-muted)' : 'var(--term-fg)',
           background: 'transparent',
           border: '1px dashed var(--term-line)',

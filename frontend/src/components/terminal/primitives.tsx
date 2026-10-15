@@ -8,12 +8,12 @@ export function Dot({ color, size = 6, pulse = false, extraStyle }: { color: str
         display: 'inline-block',
         width: size,
         height: size,
-        borderRadius: 99,
+        borderRadius: 'var(--ui-radius-pill)',
         background: color,
         color,
         flexShrink: 0,
         boxShadow: pulse ? '0 0 6px 0 currentColor' : undefined,
-        animation: pulse ? 'tpulse 1.4s ease-in-out infinite' : 'none',
+        animation: pulse ? 'tpulse var(--t-loop) ease-in-out infinite' : 'none',
         ...extraStyle,
       }}
     />
@@ -26,7 +26,7 @@ export function KBD({ children }: { children: React.ReactNode }) {
     <span
       style={{
         fontFamily: 'var(--ui-font)',
-        fontSize: 10,
+        fontSize: 'var(--fs-xs)',
         padding: '1px 5px',
         border: '1px solid var(--term-line)',
         color: 'var(--term-mid)',
@@ -187,13 +187,13 @@ export function Tag({
     <span
       style={{
         fontFamily: 'var(--ui-font)',
-        fontSize: 10,
+        fontSize: 'var(--fs-xs)',
         padding: '2px 6px',
         border: `1px solid ${color}`,
         color,
         background: bg,
         fontWeight: strong ? 700 : 500,
-        letterSpacing: '.04em',
+        letterSpacing: 'var(--ls-wide)',
         textTransform: 'uppercase',
       }}
     >

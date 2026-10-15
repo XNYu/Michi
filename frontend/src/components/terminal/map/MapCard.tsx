@@ -91,11 +91,11 @@ export function MapCard({
           borderBottom: '1px solid var(--term-line)',
         }}>
           <span style={{
-            fontFamily: 'var(--message-code-font)', fontSize: 8.5, letterSpacing: '.14em',
+            fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)',
             color: ACCENT_DARK,
           }}>ASKED</span>
           <span style={{
-            fontSize: 10.5, lineHeight: 1.5, color: 'var(--term-mid)',
+            fontSize: 'var(--fs-sm)', lineHeight: 1.5, color: 'var(--term-mid)',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
           }}>{ribbon}</span>
         </div>
@@ -104,17 +104,17 @@ export function MapCard({
       {/* Body — title, collapsed summary, meta chips. */}
       <div style={{ padding: '10px 13px 10px 14px' }}>
         <div style={{
-          fontFamily: 'var(--message-code-font)', fontSize: 13, fontWeight: 650,
+          fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-lg)', fontWeight: 700,
           lineHeight: 1.4, color: 'var(--term-fg)',
         }}>
-          <span style={{ float: 'right', fontSize: 11, color: 'var(--term-faint)', fontWeight: 400, marginLeft: 6 }}>
+          <span style={{ float: 'right', fontSize: 'var(--fs-sm)', color: 'var(--term-faint)', fontWeight: 400, marginLeft: 6 }}>
             {expanded ? '▴' : '▾'}
           </span>
           {node.title ?? ''}
         </div>
         {!expanded && body && (
           <div style={{
-            marginTop: 5, fontSize: 11, lineHeight: 1.55, color: 'var(--term-mid)',
+            marginTop: 5, fontSize: 'var(--fs-sm)', lineHeight: 1.55, color: 'var(--term-mid)',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
           }}>{body}</div>
         )}
@@ -123,11 +123,11 @@ export function MapCard({
           {isMerge && <span style={chipStyle('var(--term-mauve)', 'var(--term-mauve-f)')}>MERGED</span>}
           {msgCount > 0 && <span style={chipStyle('var(--term-muted)', 'var(--term-alt)')}>{msgCount} msgs</span>}
           {streaming ? (
-            <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 9.5, color: 'var(--term-accent)' }}>
+            <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', color: 'var(--term-accent)' }}>
               <span className="map-card__live-dot">●</span> streaming
             </span>
           ) : node.lastAssistantAt ? (
-            <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 9.5, color: 'var(--term-faint)' }}>
+            <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
               {relativeTime(node.lastAssistantAt, now)}
             </span>
           ) : null}
@@ -146,8 +146,8 @@ export function MapCard({
           }}>
             {hiddenTrailCount > 0 && (
               <div data-trail-elided style={{
-                marginBottom: 6, fontFamily: 'var(--message-code-font)', fontSize: 8.5,
-                letterSpacing: '.06em', color: 'var(--term-faint)',
+                marginBottom: 6, fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-2xs)',
+                letterSpacing: 'var(--ls-wide)', color: 'var(--term-muted)',
               }}>
                 +{hiddenTrailCount} earlier · open in pane for the full journal
               </div>
@@ -157,11 +157,11 @@ export function MapCard({
               return (
                 <div key={e.at} data-latest={isLast ? 'true' : 'false'}
                   style={{
-                    marginBottom: isLast ? 0 : 6, fontSize: 11, lineHeight: 1.55,
+                    marginBottom: isLast ? 0 : 6, fontSize: 'var(--fs-sm)', lineHeight: 1.55,
                     color: isLast ? 'var(--term-fg)' : 'var(--term-muted)',
                   }}>
-                  <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 8.5,
-                    color: 'var(--term-faint)', marginRight: 5 }}>
+                  <span style={{ fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-2xs)',
+                    color: 'var(--term-muted)', marginRight: 5 }}>
                     {relativeTime(e.at, now)}</span>{e.text}
                 </div>
               );
@@ -175,7 +175,7 @@ export function MapCard({
             style={{
               width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '8px 13px', border: 'none', borderTop: '1px dashed var(--term-line)',
-              fontFamily: 'var(--message-code-font)', fontSize: 10, letterSpacing: '.06em',
+              fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-wide)',
               color: 'var(--term-muted)', background: 'transparent', cursor: 'pointer',
             }}
           >
@@ -190,7 +190,7 @@ export function MapCard({
 
 function chipStyle(color: string, bg: string): React.CSSProperties {
   return {
-    fontFamily: 'var(--message-code-font)', fontSize: 9.5, padding: '2px 8px',
+    fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', padding: '2px 8px',
     color, background: bg,
   };
 }

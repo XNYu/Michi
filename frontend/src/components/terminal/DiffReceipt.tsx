@@ -37,7 +37,7 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
     <div
       data-testid="diff-receipt"
       style={{
-        fontSize: 10.5,
+        fontSize: 'var(--fs-sm)',
         fontFamily: 'var(--ui-font)',
         marginTop: 4,
         padding: '3px 0',

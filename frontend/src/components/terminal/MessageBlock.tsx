@@ -176,7 +176,7 @@ function MessageActions({
           alignItems: 'center',
           gap: 2,
           opacity: visible ? 1 : 0,
-          transition: 'opacity 120ms ease-out',
+          transition: 'opacity var(--t-soft) ease-out',
           pointerEvents: visible ? 'auto' : 'none',
         }}
       >
@@ -228,7 +228,7 @@ function MessageActions({
         )}
         {time && (
           <span
-            style={{ fontSize: 10, fontFamily: 'var(--ui-font)', color: 'var(--term-faint)', marginLeft: 4 }}
+            style={{ fontSize: 'var(--fs-xs)', fontFamily: 'var(--ui-font)', color: 'var(--term-muted)', marginLeft: 4 }}
           >
             {time}
           </span>
@@ -238,7 +238,7 @@ function MessageActions({
         <span
           data-testid="turn-usage"
           title={usageTitle(usageInfo)}
-          style={{ fontSize: 10, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}
+          style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}
         >
           {usageLabel(usageInfo)}
         </span>
@@ -250,13 +250,13 @@ function MessageActions({
 function TermPlanBlock({ entries }: { entries: PlanEntry[] }) {
   if (entries.length === 0) return null;
   return (
-    <div style={{ borderLeft: '2px solid var(--term-muted)', paddingLeft: 8, marginBottom: 8, fontSize: 11 }}>
-      <div style={{ fontSize: 9.5, color: 'var(--term-muted)', letterSpacing: '.12em', marginBottom: 4, fontFamily: 'var(--ui-font)' }}>
+    <div style={{ borderLeft: '2px solid var(--term-muted)', paddingLeft: 8, marginBottom: 8, fontSize: 'var(--fs-sm)' }}>
+      <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', letterSpacing: 'var(--ls-caps-wide)', marginBottom: 4, fontFamily: 'var(--ui-font)' }}>
         PLAN
       </div>
       {entries.map((e, i) => (
         <div key={i} style={{ display: 'flex', gap: 6, lineHeight: 1.5, color: e.status === 'completed' ? 'var(--term-muted)' : 'var(--term-fg)' }}>
-          <span style={{ fontFamily: 'var(--ui-font)', fontSize: 10, flexShrink: 0 }}>
+          <span style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>
             {e.status === 'completed' ? '✓' : e.status === 'in_progress' ? '›' : '·'}
           </span>
           <span style={{ textDecoration: e.status === 'completed' ? 'line-through' : 'none' }}>{e.content}</span>
@@ -292,7 +292,7 @@ function CodexStepList({ text, streaming }: { text: string; streaming?: boolean 
         const done = !isLast || !streaming;
         return (
           <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-            <span style={{ opacity: done ? 0.5 : 1, fontSize: 10 }}>
+            <span style={{ opacity: done ? 0.5 : 1, fontSize: 'var(--fs-xs)' }}>
               {done ? '✓' : '●'}
             </span>
             <span style={{ opacity: done ? 0.7 : 1 }}>
@@ -492,7 +492,7 @@ export function TermThoughtBlock({
         ? `· ${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
         : '';
     return (
-      <div style={{ marginBottom: 8, fontSize: 11, fontFamily: 'var(--ui-font)' }}>
+      <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
         <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
           <div
             onClick={handleToggle}
@@ -510,7 +510,7 @@ export function TermThoughtBlock({
             {streaming ? (
               <>
                 <CardSpinner />
-                <span className="term-shimmer" style={{ fontSize: 11.5, fontWeight: 500 }}>
+                <span className="term-shimmer" style={{ fontSize: 'var(--fs-md)', fontWeight: 500 }}>
                   {phase === 'working' ? 'Working…' : 'Thinking…'}
                 </span>
                 <LiveTimerLabel active={streaming} />
@@ -518,9 +518,9 @@ export function TermThoughtBlock({
             ) : (
               <>
                 <SparkleIcon size={13} color="var(--term-muted)" />
-                <span style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--term-mid)' }}>{cardBase}</span>
-                {cardSuffix && <span style={{ fontSize: 10, color: 'var(--term-faint)' }}>{cardSuffix}</span>}
-                <span aria-hidden style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--term-faint)' }}>
+                <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)' }}>{cardBase}</span>
+                {cardSuffix && <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{cardSuffix}</span>}
+                <span aria-hidden style={{ marginLeft: 'auto', fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)' }}>
                   {mode === 'expanded' ? '▾' : '▸'}
                 </span>
               </>
@@ -553,13 +553,13 @@ export function TermThoughtBlock({
           : null,
     ].filter(Boolean).join(' · ');
     return (
-      <div style={{ marginBottom: 8, fontSize: 11, fontFamily: 'var(--ui-font)' }}>
+      <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
         {streaming ? (
           <div
             onClick={handleToggle}
             style={{ display: 'flex', alignItems: 'baseline', gap: 7, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
           >
-            <span aria-hidden style={{ fontFamily: 'var(--font-mono)', color: 'var(--term-accent)', fontSize: 11, flexShrink: 0 }}>❯</span>
+            <span aria-hidden style={{ fontFamily: 'var(--font-mono)', color: 'var(--term-accent)', fontSize: 'var(--fs-sm)', flexShrink: 0 }}>❯</span>
             <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
             <span aria-hidden className="agent-caret" />
           </div>
@@ -569,15 +569,15 @@ export function TermThoughtBlock({
             className="t-hover-fg"
             style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
           >
-            <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', flexShrink: 0 }}>
+            <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>
               {mode === 'expanded' ? '▾' : '▸'}
             </span>
-            <span style={{ fontSize: 9, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
+            <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
               {hasTools ? 'working' : 'thinking'}
             </span>
             <span aria-hidden style={{ flex: 1, borderTop: '1px dotted var(--term-line)', transform: 'translateY(1px)' }} />
             {rightMeta && (
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--term-faint)', flexShrink: 0 }}>{rightMeta}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>{rightMeta}</span>
             )}
           </div>
         )}
@@ -596,7 +596,7 @@ export function TermThoughtBlock({
   }
 
   return (
-    <div style={{ marginBottom: 8, fontSize: 11 }}>
+    <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)' }}>
       <div
         onClick={handleToggle}
         style={{
@@ -604,7 +604,7 @@ export function TermThoughtBlock({
           display: 'flex',
           alignItems: 'baseline',
           gap: 7,
-          fontSize: 11,
+          fontSize: 'var(--fs-sm)',
           color: 'var(--term-muted)',
           fontFamily: 'var(--ui-font)',
           userSelect: 'none',
@@ -614,7 +614,7 @@ export function TermThoughtBlock({
         {streaming ? (
           <>
             {mode === 'expanded' ? (
-              <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>▾</span>
+              <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>▾</span>
             ) : (
               <span aria-hidden style={{ width: 8, display: 'inline-flex', flexShrink: 0, alignSelf: 'center' }}>
                 <span className="term-dot-i term-dot-i--run" />
@@ -624,7 +624,7 @@ export function TermThoughtBlock({
           </>
         ) : (
           <>
-            <span aria-hidden style={{ fontSize: 9, color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
+            <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
               {mode === 'expanded' ? '▾' : '▸'}
             </span>
             <span>{doneLabel}</span>
@@ -645,7 +645,7 @@ function ThinkingIndicator() {
   // not reasoning). Reuses the existing bounce-dot @keyframes in index.css.
   return (
     <div
-      style={{ padding: '6px 0', animation: 'fadeIn .3s ease' }}
+      style={{ padding: '6px 0', animation: 'fadeIn var(--t-decay) ease' }}
       aria-label="loading"
       role="status"
     >
@@ -1327,9 +1327,9 @@ function CollapsibleUserText({
             background: 'transparent',
             cursor: 'pointer',
             fontFamily: 'var(--ui-font)',
-            fontSize: 11.5,
+            fontSize: 'var(--fs-md)',
             color: 'var(--term-muted)',
-            letterSpacing: '.02em',
+            letterSpacing: 'var(--ls-wide)',
           }}
         >
           {expanded ? 'Show less' : 'Show more'}
@@ -1376,13 +1376,13 @@ function ErrorTail({
     border: '1px solid var(--term-danger)',
     color: 'var(--term-danger)',
     padding: '3px 10px',
-    font: '600 11px var(--ui-font)',
-    letterSpacing: '.04em',
+    font: '600 var(--fs-sm) var(--ui-font)',
+    letterSpacing: 'var(--ls-wide)',
     background: 'transparent',
     cursor: 'pointer',
   };
   const onHoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
-    (e.currentTarget as HTMLButtonElement).style.background = 'var(--term-danger-f, rgba(168,38,26,0.08))';
+    (e.currentTarget as HTMLButtonElement).style.background = 'var(--term-danger-f)';
   };
   const onHoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
     (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
@@ -1404,14 +1404,14 @@ function ErrorTail({
         <span
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 11,
-            letterSpacing: '.04em',
+            fontSize: 'var(--fs-sm)',
+            letterSpacing: 'var(--ls-wide)',
             color: 'var(--term-danger)',
           }}
         >
           {headline}
         </span>
-        <span style={{ color: 'var(--term-danger)', opacity: 0.5 }}>·</span>
+        <span style={{ color: 'var(--term-faint)' }}>·</span>
         {!isAuth && (
           <button
             type="button"
@@ -1439,12 +1439,12 @@ function ErrorTail({
         )}
       </div>
       {testState === 'ok' && (
-        <div style={{ marginTop: 6, color: 'var(--term-success, #2e7d32)', font: '11px var(--ui-font)' }}>
+        <div style={{ marginTop: 6, color: 'var(--term-digest)', font: 'var(--fs-sm) var(--ui-font)' }}>
           Connection restored — click retry to resend.
         </div>
       )}
       {testState === 'fail' && (
-        <div style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-danger)', opacity: 0.82, font: '11px var(--ui-font)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+        <div style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-danger)', font: 'var(--fs-sm) var(--ui-font)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
           Kiro is still unreachable{testDetail ? `: ${testDetail}` : '. Check your network or re-authenticate, then retry.'}
         </div>
       )}
@@ -1454,8 +1454,7 @@ function ErrorTail({
             marginTop: 6,
             maxWidth: 720,
             color: 'var(--term-danger)',
-            opacity: 0.82,
-            font: '11px var(--ui-font)',
+            font: 'var(--fs-sm) var(--ui-font)',
             lineHeight: 1.45,
             overflowWrap: 'anywhere',
           }}
@@ -1583,7 +1582,7 @@ function MessageBlockInner({
       onMouseLeave={() => setHover(false)}
       style={{
         marginBottom: dMarginBottom,
-        animation: 'fadeIn 0.18s ease-out both',
+        animation: 'fadeIn var(--t-enter) ease-out both',
       }}
     >
       {!isUser && (
@@ -1706,7 +1705,7 @@ function MessageBlockInner({
                   background: 'var(--term-select)',
                   marginLeft: 2,
                   verticalAlign: 'middle',
-                  animation: 'tblink 1s infinite',
+                  animation: 'tblink var(--t-loop-fast) infinite',
                 }}
               />
             )}

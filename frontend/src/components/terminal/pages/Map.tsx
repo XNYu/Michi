@@ -671,7 +671,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--term-muted)',
-          fontSize: 13,
+          fontSize: 'var(--fs-lg)',
         }}
       >
         — no workspace —
@@ -937,7 +937,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                     strokeDasharray={streamingEdge || mergeEdge ? undefined : growEdge ? undefined : dasharray}
                     fill="none"
                     opacity={dimEdge ? opacity * 0.3 : opacity}
-                    style={{ transition: 'opacity .16s, stroke .16s' }}
+                    style={{ transition: 'opacity var(--t-soft), stroke var(--t-soft)' }}
                   />
                 );
               })}
@@ -992,8 +992,8 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                     // any transient overlap during the slide reads cleanly.
                     // Hover/expand raises above neighbors so content reads
                     // cleanly during animated reflows.
-                    zIndex: exp ? 10 : hoveredId === id ? 5 : undefined,
-                    transition: 'top .24s cubic-bezier(.4,0,.2,1), left .24s cubic-bezier(.4,0,.2,1)',
+                    zIndex: exp ? 'var(--z-sticky)' : hoveredId === id ? 'var(--z-raised)' : undefined,
+                    transition: 'top var(--t-enter) cubic-bezier(.4,0,.2,1), left var(--t-enter) cubic-bezier(.4,0,.2,1)',
                     outline: sel ? '2px solid var(--term-select)' : undefined,
                     outlineOffset: 2,
                   }}
@@ -1121,7 +1121,7 @@ function ZoomPill({
   const btn = 't-icon-btn';
   const btnStyle: React.CSSProperties = {
     width: 28, height: 28, display: 'grid', placeItems: 'center',
-    fontSize: 14, fontFamily: 'var(--message-code-font)', color: 'var(--term-mid)',
+    fontSize: 'var(--fs-xl)', fontFamily: 'var(--message-code-font)', color: 'var(--term-mid)',
   };
   return (
     <div
@@ -1137,7 +1137,7 @@ function ZoomPill({
     >
       <button type="button" className={btn} style={btnStyle} onClick={onZoomOut} title="zoom out">−</button>
       <span style={{
-        fontFamily: 'var(--message-code-font)', fontSize: 10.5, color: 'var(--term-fg)',
+        fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-sm)', color: 'var(--term-fg)',
         minWidth: 40, textAlign: 'center',
       }}>{Math.round(zoom * 100)}%</span>
       <button type="button" className={btn} style={btnStyle} onClick={onZoomIn} title="zoom in">+</button>
@@ -1148,7 +1148,7 @@ function ZoomPill({
         title="fit map to the visible area"
         style={{
           borderLeft: GLASS_BORDER, borderRadius: 0,
-          fontFamily: 'var(--message-code-font)', fontSize: 10, letterSpacing: '.08em',
+          fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)',
         }}
       >FIT</button>
     </div>
@@ -1175,8 +1175,8 @@ function LayoutEnginePill({
     background: 'transparent',
     padding: '4px 10px',
     fontFamily: 'var(--message-code-font)',
-    fontSize: 10,
-    letterSpacing: '.06em',
+    fontSize: 'var(--fs-xs)',
+    letterSpacing: 'var(--ls-wide)',
     cursor: 'pointer',
     height: 28,
   };
@@ -1228,7 +1228,7 @@ function LayoutEnginePill({
                 ...btn,
                 color: routing === r ? 'var(--term-accent)' : 'var(--term-mid)',
                 fontWeight: routing === r ? 700 : 400,
-                fontSize: 9,
+                fontSize: 'var(--fs-2xs)',
               }}
             >
               {r === 'SPLINES' ? 'spline' : r === 'POLYLINE' ? 'poly' : 'ortho'}
@@ -1248,7 +1248,7 @@ function LayoutEnginePill({
                 ...btn,
                 color: orbitVariant === v ? 'var(--term-accent)' : 'var(--term-mid)',
                 fontWeight: orbitVariant === v ? 700 : 400,
-                fontSize: 9,
+                fontSize: 'var(--fs-2xs)',
               }}
             >
               {orbitLabels[v]}
@@ -1321,7 +1321,7 @@ export function MapSelectionBar({
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        fontSize: 11.5,
+        fontSize: 'var(--fs-md)',
         boxShadow: '0 8px 24px color-mix(in srgb, var(--term-fg) 22%, transparent)',
       }}
     >
@@ -1335,7 +1335,7 @@ export function MapSelectionBar({
       >
         {count}
       </span>
-      <span style={{ letterSpacing: '.04em' }}>SELECTED</span>
+      <span style={{ letterSpacing: 'var(--ls-wide)' }}>SELECTED</span>
       <span style={{ color: 'var(--term-faint)' }}>·</span>
       <span
         title={names.join(', ')}
@@ -1397,7 +1397,7 @@ function MapFrame({
           position: 'absolute',
           top: 8,
           right: 14,
-          zIndex: 20,
+          zIndex: 'var(--z-pane-overlay)',
           display: 'flex',
           background: GLASS_BG,
           backdropFilter: 'blur(12px)',
@@ -1420,12 +1420,12 @@ function MapFrame({
                 border: 'none',
                 padding: '4px 14px',
                 fontFamily: 'var(--ui-font)',
-                fontSize: 11.5,
+                fontSize: 'var(--fs-md)',
                 color: active ? 'var(--term-bg)' : 'var(--term-mid)',
                 background: active ? 'var(--term-fg)' : 'transparent',
                 fontWeight: active ? 600 : 450,
                 cursor: active ? 'default' : 'pointer',
-                transition: 'background .18s',
+                transition: 'background var(--t-enter)',
               }}
             >
               {MAP_VIEW_LABELS[v]}
@@ -1475,7 +1475,7 @@ function OverviewSurface({
             alignItems: 'center',
             justifyContent: 'center',
             color: 'var(--term-muted)',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
           }}
         >
           no live threads
@@ -1527,21 +1527,21 @@ function OverviewSurface({
                   <span
                     style={{
                       color: active ? 'var(--term-accent)' : 'var(--term-muted)',
-                      fontSize: 10,
-                      letterSpacing: '.12em',
+                      fontSize: 'var(--fs-xs)',
+                      letterSpacing: 'var(--ls-caps-wide)',
                       textTransform: 'uppercase',
                     }}
                   >
                     {summary.tree.kind === 'merge' ? 'merge thread' : summary.tree.archivedAt ? 'archived' : 'thread'}
                   </span>
                   {summary.tree.pinnedAt && (
-                    <span style={{ color: 'var(--term-pin, var(--term-accent))', fontSize: 11 }}>
+                    <span style={{ color: 'var(--term-select)', fontSize: 'var(--fs-sm)' }}>
                       pinned
                     </span>
                   )}
                   <div style={{ flex: 1 }} />
                   {summary.streaming && <Dot color="var(--term-select)" size={6} pulse />}
-                  <span style={{ color: 'var(--term-muted)', fontSize: 11 }}>
+                  <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
                     {relativeTime(summary.lastActiveAt)}
                   </span>
                 </div>
@@ -1549,7 +1549,7 @@ function OverviewSurface({
                   title={summary.title}
                   style={{
                     color: 'var(--term-fg)',
-                    fontSize: 15,
+                    fontSize: 'var(--fs-2xl)',
                     lineHeight: 1.25,
                     fontWeight: 700,
                     fontFamily: 'var(--ui-font)',
@@ -1578,7 +1578,7 @@ function OverviewSurface({
                     alignItems: 'center',
                     gap: 4,
                     color: 'var(--term-muted)',
-                    fontSize: 10,
+                    fontSize: 'var(--fs-xs)',
                   }}
                 >
                   <span
@@ -1610,12 +1610,12 @@ function Metric({ label, value }: { label: string; value: number }) {
         minWidth: 0,
       }}
     >
-      <div style={{ color: 'var(--term-fg)', fontSize: 14, fontWeight: 700 }}>{value}</div>
+      <div style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-xl)', fontWeight: 700 }}>{value}</div>
       <div
         style={{
           color: 'var(--term-muted)',
-          fontSize: 9,
-          letterSpacing: '.08em',
+          fontSize: 'var(--fs-2xs)',
+          letterSpacing: 'var(--ls-caps)',
           textTransform: 'uppercase',
         }}
       >

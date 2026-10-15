@@ -40,7 +40,7 @@ export function PinMark() {
       stroke="currentColor"
       strokeWidth="1.4"
       strokeLinejoin="round"
-      style={{ color: 'var(--term-pin, #c48300)', flexShrink: 0 }}
+      style={{ color: 'var(--term-select)', flexShrink: 0 }}
     >
       <path d="M8 1.5l1.9 4 4.4.5-3.3 3 .9 4.3L8 11.3 4.1 13.3 5 9 1.7 6l4.4-.5L8 1.5z" />
     </svg>
@@ -279,7 +279,7 @@ export default function ThreadRow({
           // read as uniformly too-black.
           color: isActive || selected || menu ? 'var(--term-fg)' : 'var(--term-mid)',
           fontWeight: unread ? 900 : (isActive || selected ? 600 : 450),
-          fontSize: 'var(--sb-fs, 13.5px)',
+          fontSize: 'var(--sb-fs, var(--fs-xl))',
           fontFamily: 'var(--ui-font)',
           position: 'relative',
         }}
@@ -326,7 +326,7 @@ export default function ThreadRow({
             style={{
               flex: 1,
               minWidth: 0,
-              fontSize: 13.5,
+              fontSize: 'var(--fs-xl)',
               fontWeight: 600,
               color: 'var(--term-fg)',
               fontFamily: 'var(--ui-font)',
@@ -352,12 +352,12 @@ export default function ThreadRow({
           </span>
         )}
         {prefs.showSidebarTimestamps && (
-          <span style={{ color: 'var(--term-faint)', fontSize: 'var(--sb-ts-fs, 11px)', marginRight: 2 }}>
+          <span style={{ color: 'var(--term-muted)', fontSize: 'var(--sb-ts-fs, var(--fs-sm))', marginRight: 2 }}>
             {formatRelative(tree.lastActiveAt)}
           </span>
         )}
         {selected && (
-          <span style={{ color: 'var(--term-select)', fontSize: 11, fontWeight: 700 }}>
+          <span style={{ color: 'var(--term-select)', fontSize: 'var(--fs-sm)', fontWeight: 700 }}>
             ✓
           </span>
         )}
@@ -369,8 +369,8 @@ export default function ThreadRow({
               alignItems: 'center',
               gap: 6,
               marginTop: 2,
-              fontSize: 'var(--sb-ts-fs, 11.5px)',
-              color: 'var(--term-faint)',
+              fontSize: 'var(--sb-ts-fs, var(--fs-md))',
+              color: 'var(--term-muted)',
               overflow: 'hidden',
               whiteSpace: 'nowrap',
             }}
@@ -413,7 +413,7 @@ export default function ThreadRow({
               width: 9,
               marginRight: caretKebabClearance(geom),
               textAlign: 'center',
-              fontSize: 10,
+              fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',
               cursor: 'pointer',
             }}
@@ -438,7 +438,7 @@ export default function ThreadRow({
               top: 5,
               bottom: 5,
               width: 2,
-              borderRadius: 1,
+              borderRadius: 'var(--ui-radius-pill)',
               // Classic paints both states in the brand accent and leans on the
               // pulse + glow to tell "live" from "merely open". Card modes give
               // idle a neutral rail so accent in the sidebar always means
@@ -454,9 +454,9 @@ export default function ThreadRow({
                   : undefined,
               animation:
                 openState === 'streaming'
-                  ? 'tpulse 1.4s ease-in-out infinite'
+                  ? 'tpulse var(--t-loop) ease-in-out infinite'
                   : newPanePulse
-                    ? 'bar-pulse-once 600ms ease-in-out 2'
+                    ? 'bar-pulse-once var(--t-slow) ease-in-out 2'
                     : undefined,
               pointerEvents: 'none',
             }}
@@ -525,13 +525,13 @@ export function Chevron({
         alignItems: 'center',
         justifyContent: 'center',
         fontFamily: 'var(--ui-font)',
-        fontSize: 11,
+        fontSize: 'var(--fs-sm)',
         color: visible ? 'var(--term-muted)' : 'transparent',
         cursor: visible && onClick ? 'pointer' : 'default',
         userSelect: 'none',
         transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
         transformOrigin: 'center',
-        transition: 'transform 120ms var(--t-ease, ease-out)',
+        transition: 'transform var(--t-soft) var(--t-ease, ease-out)',
       }}
     >
       ›

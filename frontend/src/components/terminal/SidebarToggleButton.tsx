@@ -27,7 +27,7 @@ export default function SidebarToggleButton({ collapsed, onToggle, style }: Side
         justifyContent: 'center',
         background: hover ? 'var(--term-hover-bg, var(--term-alt))' : 'transparent',
         border: 'none',
-        borderRadius: 4,
+        borderRadius: 'var(--ui-radius)',
         color: hover ? 'var(--term-mid)' : 'var(--term-faint)',
         cursor: 'pointer',
         padding: 0,

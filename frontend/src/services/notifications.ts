@@ -33,7 +33,7 @@ export function notify({ title, body, onClick }: NotifyOptions): void {
               cursor: 'pointer',
               width: '100%',
               padding: '13px 16px',
-              borderRadius: '8px',
+              borderRadius: 'var(--ui-radius)',
               border: '1px solid var(--color-line)',
               background: 'var(--color-surface)',
               color: 'var(--color-fg)',

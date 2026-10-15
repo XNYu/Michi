@@ -73,7 +73,7 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
         gap: 16,
         cursor: 'zoom-out',
         opacity: visible ? 1 : 0,
-        transition: 'opacity 140ms ease-out',
+        transition: 'opacity var(--t-soft) ease-out',
       }}
     >
       <img
@@ -103,13 +103,13 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
         }}
       >
         {filename && (
-          <div style={{ fontSize: 13, fontWeight: 600, wordBreak: 'break-all' }}>{filename}</div>
+          <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, wordBreak: 'break-all' }}>{filename}</div>
         )}
         {meta.length > 0 && (
-          <div style={{ fontSize: 12, opacity: 0.55 }}>{meta.join('  ·  ')}</div>
+          <div style={{ fontSize: 'var(--fs-md)', opacity: 0.55 }}>{meta.join('  ·  ')}</div>
         )}
         {caption && (
-          <div style={{ fontSize: 12, opacity: 0.8, fontStyle: 'italic', marginTop: 2 }}>{caption}</div>
+          <div style={{ fontSize: 'var(--fs-md)', opacity: 0.8, fontStyle: 'italic', marginTop: 2 }}>{caption}</div>
         )}
       </div>
     </div>,

@@ -115,7 +115,7 @@ export default function AgentDefinitionForm({ value, onChange, errors = validate
       </Section>
 
       <Section title="Instructions" aside="optional" description="Method and standards, not the task. “Implement with TDD.” “Prefer primary sources over summaries.” The parent supplies the task each run; empty is fine.">
-        <Field label="System instructions"><textarea aria-label="agent instructions" value={value.instructions} onChange={(event) => set('instructions', event.target.value)} rows={6} placeholder="Optional — leave empty to let the delegated task stand alone." style={{ ...agentFieldStyle, fontFamily: 'var(--mono-font)', resize: 'vertical' }} /></Field>
+        <Field label="System instructions"><textarea aria-label="agent instructions" value={value.instructions} onChange={(event) => set('instructions', event.target.value)} rows={6} placeholder="Optional — leave empty to let the delegated task stand alone." style={{ ...agentFieldStyle, fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></Field>
       </Section>
 
       <Section title="Tools, Skills & MCP" description="This list is the whole surface the agent can touch — the parent’s capabilities are not inherited. Credentials remain in Backend bindings.">
@@ -167,11 +167,11 @@ function Section({ title, aside, description, plain = false, children }: { title
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {!plain && title && (
         <div>
-          <h2 style={{ margin: 0, display: 'flex', alignItems: 'baseline', gap: 8, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 15, fontWeight: 600 }}>
+          <h2 style={{ margin: 0, display: 'flex', alignItems: 'baseline', gap: 8, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-2xl)', fontWeight: 600 }}>
             {title}
-            {aside && <span style={{ color: 'var(--term-faint)', fontSize: 10, fontWeight: 400 }}>{aside}</span>}
+            {aside && <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', fontWeight: 400 }}>{aside}</span>}
           </h2>
-          {description && <p style={{ margin: '4px 0 0', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 11 }}>{description}</p>}
+          {description && <p style={{ margin: '4px 0 0', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)' }}>{description}</p>}
         </div>
       )}
       {children}
@@ -222,21 +222,21 @@ function CapabilityPicker({ value, capabilities, onChange }: { value: AgentDefin
           const title = !entry ? 'not found on this backend' : entry.readiness !== 'ready' ? entry.readiness.replace('_', ' ') : undefined;
           return (
             <span key={key} data-testid={unresolved ? 'capability-chip-unresolved' : 'capability-chip'} title={title} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 8px',
+              display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-sm)', padding: '3px 8px',
               border: `1px solid ${unresolved ? 'var(--term-select)' : ref.kind === 'skill' ? 'var(--term-mauve)' : 'var(--term-line)'}`,
               background: unresolved ? 'var(--term-select-f)' : ref.kind === 'skill' ? 'var(--term-mauve-f)' : 'var(--term-surface)',
               color: unresolved ? 'var(--term-fg)' : ref.kind === 'skill' ? 'var(--term-mauve)' : 'var(--term-fg)',
-              fontFamily: unresolved ? 'var(--mono-font)' : 'var(--ui-font)',
+              fontFamily: unresolved ? 'var(--font-mono)' : 'var(--ui-font)',
             }}>
               {unresolved ? '⚠' : <span aria-hidden style={{ width: 4, height: 4, background: ref.kind === 'skill' ? 'var(--term-mauve)' : 'var(--term-digest)' }} />}
               {ref.kind === 'tool' ? ref.id : `${KIND_LABEL[ref.kind]}: ${ref.id}`}
               <button type="button" aria-label={`Remove capability ${ref.id}`} onClick={() => remove(ref)}
-                style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--term-faint)', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                style={{ border: 0, padding: 0, background: 'transparent', color: 'var(--term-faint)', cursor: 'pointer', fontSize: 'var(--fs-md)', lineHeight: 1 }}>×</button>
             </span>
           );
         })}
         <select aria-label="add capability" value="" onChange={(event) => add(event.target.value)}
-          style={{ ...agentFieldStyle, width: 'auto', fontSize: 11, borderStyle: 'dashed', color: 'var(--term-muted)' }}>
+          style={{ ...agentFieldStyle, width: 'auto', fontSize: 'var(--fs-sm)', borderStyle: 'dashed', color: 'var(--term-muted)' }}>
           <option value="">+ browse capabilities</option>
           {available.map((entry) => (
             <option key={`${entry.kind}:${entry.id}`} value={`${entry.kind}:${entry.id}`}>
@@ -249,10 +249,10 @@ function CapabilityPicker({ value, capabilities, onChange }: { value: AgentDefin
   );
 }
 
-const hintStyle: React.CSSProperties = { margin: 0, color: 'var(--term-faint)', fontFamily: 'var(--ui-font)', fontSize: 10.5 };
-function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) { return <label style={labelStyle}>{label}{children}{error && <span role="alert" style={{ color: 'var(--danger, var(--term-error))', fontSize: 10, letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>; }
-function RefField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <Field label={label}><textarea aria-label={label.toLowerCase()} value={value} onChange={(event) => onChange(event.target.value)} rows={4} style={{ ...agentFieldStyle, fontFamily: 'var(--mono-font)', resize: 'vertical' }} /></Field>; }
-function Check({ label, checked, onChange, type = 'checkbox', name }: { label: string; checked: boolean; onChange: (value: boolean) => void; type?: 'checkbox' | 'radio'; name?: string }) { return <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 12 }}><input type={type} name={name} checked={checked} onChange={(event) => onChange(event.target.checked)} />{label}</label>; }
-const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' };
-export const outlineButtonStyle: React.CSSProperties = { alignSelf: 'flex-start', border: '1px solid var(--term-line)', background: 'transparent', color: 'var(--term-fg)', padding: '6px 10px', fontFamily: 'var(--ui-font)', fontSize: 11, cursor: 'pointer' };
+const hintStyle: React.CSSProperties = { margin: 0, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)' };
+function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) { return <label style={labelStyle}>{label}{children}{error && <span role="alert" style={{ color: 'var(--danger, var(--term-danger))', fontSize: 'var(--fs-xs)', letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>; }
+function RefField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <Field label={label}><textarea aria-label={label.toLowerCase()} value={value} onChange={(event) => onChange(event.target.value)} rows={4} style={{ ...agentFieldStyle, fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></Field>; }
+function Check({ label, checked, onChange, type = 'checkbox', name }: { label: string; checked: boolean; onChange: (value: boolean) => void; type?: 'checkbox' | 'radio'; name?: string }) { return <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)' }}><input type={type} name={name} checked={checked} onChange={(event) => onChange(event.target.checked)} />{label}</label>; }
+const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' };
+export const outlineButtonStyle: React.CSSProperties = { alignSelf: 'flex-start', border: '1px solid var(--term-line)', background: 'transparent', color: 'var(--term-fg)', padding: '6px 10px', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', cursor: 'pointer' };
 const textButtonStyle: React.CSSProperties = { ...outlineButtonStyle, border: 0, padding: '7px 0 0', color: 'var(--term-muted)' };

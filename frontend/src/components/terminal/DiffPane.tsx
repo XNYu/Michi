@@ -43,16 +43,16 @@ export default function DiffPane({ item }: { item: DiffPaneItem }) {
   return (
     <div data-pane-id={item.id} data-pane-kind="diff" className="terminal-pane" onMouseDown={() => { focusPane(item.id); setFocusedNodeId(null); }} style={shellStyle}>
       <div style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--term-line)', flexShrink: 0 }}>
-        <span style={{ color: 'var(--term-digest)', fontSize: 11, fontWeight: 700 }}>±</span>
-        <span title={item.filePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--term-mid)' }}>{item.filePath}</span>
-        {state.phase === 'loaded' && state.truncated ? <span style={{ fontSize: 9.5, color: 'var(--term-muted)' }}>truncated</span> : null}
+        <span style={{ color: 'var(--term-digest)', fontSize: 'var(--fs-sm)', fontWeight: 700 }}>±</span>
+        <span title={item.filePath} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--fs-md)', color: 'var(--term-mid)' }}>{item.filePath}</span>
+        {state.phase === 'loaded' && state.truncated ? <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>truncated</span> : null}
         <button type="button" className="t-icon-btn" onClick={() => setReloadKey((value) => value + 1)} aria-label="Reload diff"><RetryIcon size={14} /></button>
       </div>
       <div className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 0 24px' }}>
-        {state.phase === 'loading' ? <div style={{ padding: '10px 14px', color: 'var(--term-muted)', fontSize: 11 }}>loading diff…</div> : null}
-        {state.phase === 'error' ? <div style={{ padding: '10px 14px', color: 'var(--term-danger)', fontSize: 11 }}>⚠ {state.message}</div> : null}
+        {state.phase === 'loading' ? <div style={{ padding: '10px 14px', color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading diff…</div> : null}
+        {state.phase === 'error' ? <div style={{ padding: '10px 14px', color: 'var(--term-danger)', fontSize: 'var(--fs-sm)' }}>⚠ {state.message}</div> : null}
         {state.phase === 'loaded' ? (
-          <pre style={{ margin: 0, minWidth: 'max-content', fontFamily: 'var(--message-code-font, monospace)', fontSize: 11, lineHeight: 1.55, whiteSpace: 'pre' }}>
+          <pre style={{ margin: 0, minWidth: 'max-content', fontFamily: 'var(--message-code-font, monospace)', fontSize: 'var(--fs-sm)', lineHeight: 1.55, whiteSpace: 'pre' }}>
             {state.diff.split('\n').map((line, index) => <span key={index} style={{ display: 'block', padding: '0 14px', ...lineStyle(line) }}>{line || ' '}</span>)}
           </pre>
         ) : null}

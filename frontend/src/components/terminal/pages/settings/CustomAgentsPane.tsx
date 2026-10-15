@@ -57,7 +57,7 @@ export function CustomAgentsPane() {
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 15,
+          fontSize: 'var(--fs-2xl)',
           fontWeight: 700,
           color: 'var(--term-fg)',
           margin: 0,
@@ -86,7 +86,7 @@ export function CustomAgentsPane() {
             onChange={(next) => { void updateEnabled(next); }}
             aria-label="Show Custom Agents"
           />
-          <span style={{ fontSize: 11.5, color: 'var(--term-mid)', fontFamily: 'var(--ui-font)' }}>
+          <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', fontFamily: 'var(--ui-font)' }}>
             {saving ? 'Updating Custom Agents…' : 'Show Custom Agents'}
           </span>
         </ClickableRow>
@@ -94,7 +94,7 @@ export function CustomAgentsPane() {
           style={{
             margin: '8px 0 0',
             fontFamily: 'var(--ui-font)',
-            fontSize: 10.5,
+            fontSize: 'var(--fs-sm)',
             lineHeight: 1.5,
             color: 'var(--term-muted)',
           }}
@@ -102,12 +102,12 @@ export function CustomAgentsPane() {
           Controls Custom Agents on the active backend. Turning it off removes the UI entry and blocks Agent definitions, Runs, and Agent Run tools; saved definitions are retained.
         </p>
         {unavailable && (
-          <p style={{ margin: '8px 0 0', fontSize: 10.5, color: 'var(--term-muted)' }}>
+          <p style={{ margin: '8px 0 0', fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
             Loading backend status…
           </p>
         )}
         {error && (
-          <p role="alert" style={{ margin: '8px 0 0', fontSize: 10.5, color: 'var(--term-danger)' }}>
+          <p role="alert" style={{ margin: '8px 0 0', fontSize: 'var(--fs-sm)', color: 'var(--term-danger)' }}>
             {error}
           </p>
         )}

@@ -13,6 +13,7 @@ import { ModalShell } from '../ui/ModalShell';
 import { MenuItem } from '../ui/Popover';
 import { kbd } from '../../lib/platform';
 import { TreePrefetchContext, TREE_PREFETCH_INTENT_MS } from '../../state/treePrefetch';
+import { CommandIconGlyph } from './commandIcons';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
   const [s, e] = range;
@@ -32,8 +33,8 @@ function PaletteSearchGlyph() {
     <span
       aria-hidden
       style={{
-        fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-        fontSize: 12.5,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 'var(--fs-lg)',
         color: 'var(--term-accent)',
         flexShrink: 0,
       }}
@@ -60,7 +61,7 @@ const PROMPT_INPUT: React.CSSProperties = {
   outline: 'none',
   background: 'transparent',
   fontFamily: 'var(--ui-font)',
-  fontSize: 14,
+  fontSize: 'var(--fs-xl)',
   color: 'var(--term-fg)',
   padding: 0,
 };
@@ -87,7 +88,7 @@ function renderHtmlSnippet(html: string): React.ReactNode {
       break;
     }
     parts.push(
-      <mark key={key++} style={{ background: 'var(--term-accent)', color: 'var(--on-accent)', padding: '0 2px', borderRadius: 1 }}>
+      <mark key={key++} style={{ background: 'var(--term-accent)', color: 'var(--on-accent)', padding: '0 2px', borderRadius: 'var(--ui-radius-sm)' }}>
         {afterOpen.slice(0, closeIdx)}
       </mark>
     );
@@ -107,7 +108,7 @@ const NODE_ROW_STYLE: React.CSSProperties = {
 const BREADCRUMB_STYLE: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  fontSize: 11.5,
+  fontSize: 'var(--fs-md)',
   lineHeight: 1.4,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -116,15 +117,15 @@ const BREADCRUMB_STYLE: React.CSSProperties = {
 
 const NODE_TIME_STYLE: React.CSSProperties = {
   flexShrink: 0,
-  fontFamily: 'var(--mono-font, ui-monospace, monospace)',
-  fontSize: 10.5,
-  color: 'var(--term-faint)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 'var(--fs-sm)',
+  color: 'var(--term-muted)',
   fontVariantNumeric: 'tabular-nums',
   whiteSpace: 'nowrap',
 };
 
 const SNIPPET_ROW_STYLE: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 'var(--fs-sm)',
   lineHeight: '1.55',
   color: 'var(--term-mid)',
   padding: '2px 0',
@@ -134,14 +135,14 @@ const SNIPPET_ROW_STYLE: React.CSSProperties = {
 };
 
 const SNIPPET_ROLE_STYLE: React.CSSProperties = {
-  color: 'var(--term-faint)',
-  fontSize: 9,
+  color: 'var(--term-muted)',
+  fontSize: 'var(--fs-2xs)',
   marginRight: 4,
 };
 
 const OVERFLOW_HINT_STYLE: React.CSSProperties = {
-  fontSize: 10,
-  color: 'var(--term-faint)',
+  fontSize: 'var(--fs-xs)',
+  color: 'var(--term-muted)',
   padding: '2px 0 0 0',
   fontStyle: 'italic',
 };
@@ -502,7 +503,7 @@ export default function CommandPalette({
                       onMouseEnter={() => hoverSetActive(idx)}
                       onClick={() => { c.run(); onClose(); }}
                     >
-                      <span className="michi-menu-glyph" aria-hidden="true">{c.glyph}</span>
+                      <span className="michi-menu-glyph" aria-hidden="true"><CommandIconGlyph name={c.icon} /></span>
                       <span className="michi-menu-label">{c.label}</span>
                       {keys ? <span className="michi-menu-keys">{keys}</span> : null}
                     </MenuItem>
@@ -536,18 +537,18 @@ export default function CommandPalette({
                     {/* Breadcrumb + timestamp row */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 20 }}>
                       <div style={BREADCRUMB_STYLE}>
-                        <span style={{ color: 'var(--term-faint)', fontSize: 10.5, letterSpacing: '.02em' }}>
+                        <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', letterSpacing: 'var(--ls-wide)' }}>
                           {nr.workspaceName}
                         </span>
                         {nr.breadcrumb.length > 0 && (
-                          <span style={{ color: 'var(--term-line-s)', margin: '0 5px', fontSize: 10 }}>›</span>
+                          <span style={{ color: 'var(--term-line-s)', margin: '0 5px', fontSize: 'var(--fs-xs)' }}>›</span>
                         )}
                         {nr.breadcrumb.map((seg, si) => {
                           const isLast = si === nr.breadcrumb.length - 1;
                           return (
                             <React.Fragment key={si}>
                               {si > 0 && (
-                                <span style={{ color: 'var(--term-faint)', margin: '0 3px', fontSize: 10 }}>/</span>
+                                <span style={{ color: 'var(--term-faint)', margin: '0 3px', fontSize: 'var(--fs-xs)' }}>/</span>
                               )}
                               <span style={isLast ? { color: 'var(--term-fg)', fontWeight: 500 } : { color: 'var(--term-muted)' }}>
                                 {seg}

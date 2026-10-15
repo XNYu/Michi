@@ -110,7 +110,7 @@ function Strip({
         padding: '0 14px',
         color: 'var(--term-muted)',
         fontFamily: 'var(--ui-font)',
-        fontSize: 13,
+        fontSize: 'var(--fs-lg)',
       }}
     >
       <span>Drag &amp; drop files anywhere, or</span>
@@ -123,7 +123,7 @@ function Strip({
           color: 'var(--term-bg, #fff)',
           padding: '4px 12px',
           fontFamily: 'inherit',
-          fontSize: 12.5,
+          fontSize: 'var(--fs-lg)',
           fontWeight: 500,
           display: 'inline-flex',
           alignItems: 'center',
@@ -134,7 +134,7 @@ function Strip({
         + Add source
       </button>
       <span style={{ flex: 1 }} />
-      <span style={{ color: 'var(--term-faint, var(--term-muted))', fontSize: 12 }}>
+      <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>
         {favoriteCount} favorite{favoriteCount === 1 ? '' : 's'} · {fmtBytes(totalBytes)} total
       </span>
     </div>
@@ -177,7 +177,7 @@ function Section({
         <span
           style={{
             fontFamily: 'var(--ui-font)',
-            fontSize: 13,
+            fontSize: 'var(--fs-lg)',
             lineHeight: 1.3,
             fontWeight: 500,
             color: 'var(--term-fg)',
@@ -187,8 +187,8 @@ function Section({
         </span>
         <span
           style={{
-            fontSize: 11.5,
-            color: 'var(--term-faint, var(--term-muted))',
+            fontSize: 'var(--fs-md)',
+            color: 'var(--term-muted)',
             fontFamily: 'var(--ui-font)',
           }}
         >
@@ -218,9 +218,9 @@ function Section({
               alignItems: 'center',
               padding: '12px 14px',
               background: selected
-                ? 'var(--term-sel, color-mix(in srgb, var(--term-accent) 14%, transparent))'
+                ? 'color-mix(in srgb, var(--term-accent) 14%, transparent)'
                 : hovered
-                  ? 'var(--term-hover, var(--term-alt))'
+                  ? 'var(--term-hover-bg)'
                   : 'transparent',
               cursor: 'pointer',
               position: 'relative',
@@ -248,9 +248,9 @@ function Section({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: 10,
+                fontSize: 'var(--fs-xs)',
                 fontWeight: 700,
-                letterSpacing: '0.04em',
+                letterSpacing: 'var(--ls-wide)',
                 flexShrink: 0,
                 fontFamily: 'var(--ui-font)',
                 textTransform: 'uppercase',
@@ -262,7 +262,7 @@ function Section({
               <div
                 style={{
                   fontFamily: 'var(--ui-font)',
-                  fontSize: 14,
+                  fontSize: 'var(--fs-xl)',
                   lineHeight: 1.3,
                   fontWeight: 500,
                   color: 'var(--term-fg)',
@@ -275,8 +275,8 @@ function Section({
               </div>
               <div
                 style={{
-                  fontSize: 12,
-                  color: 'var(--term-faint, var(--term-muted))',
+                  fontSize: 'var(--fs-md)',
+                  color: 'var(--term-muted)',
                   marginTop: 2,
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
@@ -314,7 +314,7 @@ function RowMeta({ size }: { size: number | undefined }) {
         color: 'var(--term-muted)',
         whiteSpace: 'nowrap',
         fontFamily: 'var(--ui-font)',
-        fontSize: 12,
+        fontSize: 'var(--fs-md)',
         fontVariantNumeric: 'tabular-nums',
       }}
     >

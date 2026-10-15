@@ -26,7 +26,7 @@ const buttonStyle: React.CSSProperties = {
   gap: 10,
   padding: '7px 10px',
   border: '1px solid transparent',
-  borderRadius: 'var(--term-control-radius, 5px)',
+  borderRadius: 'var(--ui-radius)',
   background: 'transparent',
   color: 'var(--term-fg)',
   cursor: 'pointer',
@@ -108,7 +108,7 @@ export default function PaneChooser({ item }: { item: LauncherPaneItem }) {
         {/* ── Detached terminal section ── */}
         {detachedTerminals.length > 0 && (
           <>
-            <div style={{ fontSize: 9, color: 'var(--term-muted)', padding: '0 10px', marginBottom: 2, fontFamily: 'var(--ui-font)', letterSpacing: '0.03em', textTransform: 'uppercase' }}>
+            <div style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-muted)', padding: '0 10px', marginBottom: 2, fontFamily: 'var(--ui-font)', letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase' }}>
               Running terminals
             </div>
             {detachedTerminals.map((term) => {
@@ -129,12 +129,12 @@ export default function PaneChooser({ item }: { item: LauncherPaneItem }) {
                     cursor: busy ? 'default' : 'pointer',
                   }}
                 >
-                  <span aria-hidden style={{ color: 'var(--term-digest)', fontFamily: 'var(--mono-font)', fontSize: 12, textAlign: 'center' }}>
+                  <span aria-hidden style={{ color: 'var(--term-digest)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-md)', textAlign: 'center' }}>
                     {isAdopting ? '…' : '●'}
                   </span>
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 12.5, fontWeight: 500, lineHeight: 1.3 }}>Terminal</span>
-                    <span style={{ display: 'block', marginTop: 2, color: 'var(--term-muted)', fontSize: 10.5, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ display: 'block', fontSize: 'var(--fs-lg)', fontWeight: 500, lineHeight: 1.3 }}>Terminal</span>
+                    <span style={{ display: 'block', marginTop: 2, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {shortCwd(term.cwd)}
                     </span>
                   </span>
@@ -164,15 +164,15 @@ export default function PaneChooser({ item }: { item: LauncherPaneItem }) {
               onMouseEnter={busy ? undefined : hoverOn}
               onMouseLeave={isPending ? undefined : hoverOff}
             >
-              <span aria-hidden style={{ color: 'var(--term-muted)', fontFamily: 'var(--mono-font)', fontSize: 12, textAlign: 'center' }}>
+              <span aria-hidden style={{ color: 'var(--term-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-md)', textAlign: 'center' }}>
                 {isPending ? '…' : choice.glyph}
               </span>
               <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 500, lineHeight: 1.3 }}>{choice.label}</span>
-                <span style={{ display: 'block', marginTop: 2, color: 'var(--term-muted)', fontSize: 10.5, lineHeight: 1.3 }}>{choice.description}</span>
+                <span style={{ display: 'block', fontSize: 'var(--fs-lg)', fontWeight: 500, lineHeight: 1.3 }}>{choice.label}</span>
+                <span style={{ display: 'block', marginTop: 2, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.3 }}>{choice.description}</span>
               </span>
               {choice.shortcut ? (
-                <kbd style={{ color: 'var(--term-muted)', background: 'var(--term-alt)', border: '1px solid var(--term-line)', borderRadius: 4, padding: '1px 5px', fontFamily: 'var(--ui-font)', fontSize: 9.5, whiteSpace: 'nowrap' }}>
+                <kbd style={{ color: 'var(--term-muted)', background: 'var(--term-alt)', border: '1px solid var(--term-line)', borderRadius: 'var(--ui-radius)', padding: '1px 5px', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', whiteSpace: 'nowrap' }}>
                   {choice.shortcut}
                 </kbd>
               ) : null}
