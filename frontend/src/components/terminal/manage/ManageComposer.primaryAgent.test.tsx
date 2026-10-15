@@ -89,6 +89,49 @@ describe('ManageComposer primary Agent selection', () => {
     expect(sendMessage).toHaveBeenCalledWith('node-primary', 'Build it', undefined);
   });
 
+  it('restores the selected primary Agent after an app restart once its Definition is listed again', async () => {
+    const first = render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
+    await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalled());
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(await screen.findByText('Implementer'));
+    await waitFor(() => expect(screen.getByTitle('Switch agent — Implementer')).toBeTruthy());
+    first.unmount();
+
+    __resetManageComposerSessionStateForTests({ keepPersisted: true });
+    render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTitle('Switch agent — Implementer')).toBeTruthy());
+    fireEvent.change(document.querySelector('textarea')!, { target: { value: 'Build it' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(bindPendingPrimaryAgent).toHaveBeenCalledWith('node-primary', {
+      workspaceId: 'ws-remote', backendConnectionId: 'remote-a', definitionId: 'agent-implementer',
+    }));
+    expect(createThread).toHaveBeenCalledWith(undefined);
+  });
+
+  it('forgets a restored primary Agent whose Definition is no longer listed', async () => {
+    const first = render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
+    await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalled());
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(await screen.findByText('Implementer'));
+    await waitFor(() => expect(screen.getByTitle('Switch agent — Implementer')).toBeTruthy());
+    first.unmount();
+
+    __resetManageComposerSessionStateForTests({ keepPersisted: true });
+    listPrimaryAgentDefinitions.mockResolvedValue([]);
+    const second = render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTitle('Switch agent — Build')).toBeTruthy());
+    second.unmount();
+
+    // The stale id was dropped, so it does not come back when the list recovers.
+    __resetManageComposerSessionStateForTests({ keepPersisted: true });
+    listPrimaryAgentDefinitions.mockResolvedValue([implementer]);
+    render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
+    await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalledTimes(3));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTitle('Switch agent — Build')).toBeTruthy();
+  });
+
   it.each([false, undefined])('does not discover optional Agents when support is %s', async (enabled) => {
     status.customAgentsEnabled = enabled;
     render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);

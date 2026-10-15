@@ -240,6 +240,107 @@ describe('ManageComposer', () => {
     expect(createThread).toHaveBeenCalledWith('planner');
   });
 
+  it('restores the pre-picked agent after an app restart', () => {
+    vi.useFakeTimers();
+    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
+    storeState.availableModes = [
+      { id: 'planner', name: 'Planner' },
+      { id: 'build', name: 'Build' },
+    ];
+    storeState.defaultModeId = 'build';
+    const first = render(
+      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(screen.getByText('Planner'));
+    flushBlink();
+    first.unmount();
+
+    // A restart drops every in-memory sticky; only localStorage survives.
+    __resetManageComposerSessionStateForTests({ keepPersisted: true });
+
+    render(
+      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
+    );
+    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
+    fireEvent.change(composerTextarea(), { target: { value: 'go' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    expect(createThread).toHaveBeenCalledWith('planner');
+  });
+
+  it('keeps remembered agents per runtime and shows the default for a runtime without one', () => {
+    vi.useFakeTimers();
+    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
+    storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'kiro_default', name: 'Kiro Default' }];
+    storeState.defaultModeId = 'kiro_default';
+    const view = render(
+      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(screen.getByText('Planner'));
+    flushBlink();
+
+    storeState.agentStatus = { runtime: 'claude', capabilities: { modes: true } };
+    storeState.availableModes = [{ id: 'default', name: 'Default' }, { id: 'plan', name: 'Plan' }];
+    storeState.defaultModeId = 'default';
+    view.rerender(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />);
+    expect(screen.getByTitle('Switch agent — Default')).toBeTruthy();
+
+    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
+    storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'kiro_default', name: 'Kiro Default' }];
+    storeState.defaultModeId = 'kiro_default';
+    view.rerender(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />);
+    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
+  });
+
+  it('keeps the remembered agent for the next thread after a successful send', async () => {
+    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
+    storeState.availableModes = [{ id: 'planner', name: 'Planner' }];
+    storeState.defaultModeId = null;
+    let unmountHome = () => {};
+    // Home navigates away on submit, unmounting the composer.
+    const onSubmitted = vi.fn(() => unmountHome());
+    const home = render(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={onSubmitted} />);
+    unmountHome = home.unmount;
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(screen.getByText('Planner'));
+    await waitFor(() => expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy());
+    fireEvent.change(composerTextarea(), { target: { value: 'first' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledOnce());
+    expect(createThread).toHaveBeenCalledWith('planner');
+
+    __resetManageComposerSessionStateForTests({ keepPersisted: true });
+    render(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />);
+    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
+  });
+
+  it('shows the runtime default when the remembered agent is not in the current catalog', () => {
+    vi.useFakeTimers();
+    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
+    storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'build', name: 'Build' }];
+    storeState.defaultModeId = 'build';
+    const first = render(<ManageComposer workspaceId="ws1" enableAgentSelect onSubmitted={vi.fn()} />);
+    fireEvent.click(screen.getByTitle(/Switch agent/));
+    fireEvent.click(screen.getByText('Planner'));
+    flushBlink();
+    first.unmount();
+
+    // e.g. a workspace-level agent that this workspace does not define.
+    storeState.availableModes = [{ id: 'build', name: 'Build' }];
+    const second = render(<ManageComposer workspaceId="ws1" enableAgentSelect onSubmitted={vi.fn()} />);
+    expect(screen.getByTitle('Switch agent — Build')).toBeTruthy();
+    fireEvent.change(composerTextarea(), { target: { value: 'go' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    expect(createThread).toHaveBeenLastCalledWith(undefined);
+    second.unmount();
+
+    // The pick is kept for catalogs that do contain it.
+    storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'build', name: 'Build' }];
+    render(<ManageComposer workspaceId="ws1" enableAgentSelect onSubmitted={vi.fn()} />);
+    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
+  });
+
   it('submits a digest follow-up with the selected mode, without creating a root thread', async () => {
     storeState.availableModes = [{ id: 'build', name: 'Build' }];
     const onSubmitted = vi.fn();

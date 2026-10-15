@@ -31,7 +31,19 @@ import { ComposerModelTrigger } from '../ComposerModelTrigger';
 import { resolveComposerReasoning } from '../composerReasoning';
 import { PaneAgentMenus } from '../PaneAgentMenus';
 import { PaneComposerActions } from '../PaneComposerActions';
-import { activeBackendApiBase, backendConnectionIdForWorkspace, workspaceBackendApiBase } from '../../../config/backendConnections';
+import {
+  activeBackendApiBase,
+  backendConnectionIdForWorkspace,
+  LOCAL_BACKEND_CONNECTION_ID,
+  workspaceBackendApiBase,
+} from '../../../config/backendConnections';
+import {
+  clearComposerAgentSelections,
+  readComposerModeSelection,
+  readComposerPrimaryAgentSelection,
+  writeComposerModeSelection,
+  writeComposerPrimaryAgentSelection,
+} from './composerAgentSelection';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
 
 type ComposerDraft = { value: string; mentions: MentionRecord[] };
@@ -48,18 +60,39 @@ interface PendingAttachment {
 // reset it. Cleared on full reload.
 const composerDrafts = new Map<string, ComposerDraft>();
 const draftPermissionModes = new Map<string, import('michi-shared').ChatPermissionMode>();
-// Last pre-picked agent, sticky across unmounts within a session (mirrors how
-// composer drafts persist). Lets the Home composer remember the chosen agent after
-// you send and come back. A stale id (e.g. after a runtime switch) is dropped at
-// render time once the mode list is known.
-let manageStickyModeId: string | undefined;
+// Pre-picked agent, sticky across unmounts and app restarts. The session
+// copy keeps the pick while agent status is still loading; once the runtime
+// is known the pick is also stored per Backend + runtime (see
+// composerAgentSelection.ts) so the next launch starts from it. A stale id is
+// dropped at render time once the mode list is known.
+type StickyModePick = { backendConnectionId: string; runtimeId: string | undefined; modeId: string | undefined };
+let manageStickyModePick: StickyModePick | undefined;
 const manageStickyPrimaryAgent = new Map<string, PrimaryAgentDefinitionOption>();
 
-export function __resetManageComposerSessionStateForTests() {
+export function __resetManageComposerSessionStateForTests(options: { keepPersisted?: boolean } = {}) {
   composerDrafts.clear();
   draftPermissionModes.clear();
-  manageStickyModeId = undefined;
+  manageStickyModePick = undefined;
   manageStickyPrimaryAgent.clear();
+  if (!options.keepPersisted) clearComposerAgentSelections();
+}
+
+/**
+ * Mode pick for this Backend/runtime: the session copy when it applies
+ * (including one made before the runtime was known), else the stored pick.
+ */
+function stickyModeFor(backendConnectionId: string, runtimeId: string | undefined): string | undefined {
+  const session = manageStickyModePick;
+  if (session && session.backendConnectionId === backendConnectionId
+    && (session.runtimeId === undefined || session.runtimeId === runtimeId)) {
+    return session.modeId;
+  }
+  return readComposerModeSelection(backendConnectionId, runtimeId);
+}
+
+function rememberModePick(backendConnectionId: string, runtimeId: string | undefined, modeId: string | undefined) {
+  manageStickyModePick = { backendConnectionId, runtimeId, modeId };
+  writeComposerModeSelection(backendConnectionId, runtimeId, modeId);
 }
 
 interface Props {
@@ -164,16 +197,17 @@ function ScopedManageComposer({
   };
   // Pre-session agent pick. Only meaningful when enableAgentSelect is on; the
   // chosen mode is stamped onto the new thread in submit() and applied to its
-  // session at ensure-session time so the first message runs under it. Seeded
-  // from (and written back to) the module-level sticky so the pick survives
-  // unmount within a session.
-  const [pendingModeId, setPendingModeIdState] = useState<string | undefined>(
-    () => manageStickyModeId,
-  );
+  // session at ensure-session time so the first message runs under it. Mode
+  // ids belong to the catalog of the active Backend's runtime (the same
+  // source as availableModes), so the pick is remembered per Backend + runtime.
+  const modeBackendConnectionId = activeProject?.backendConnectionId || LOCAL_BACKEND_CONNECTION_ID;
+  const modeRuntimeId = agentStatus?.runtime;
+  const [, setModePickRevision] = useState(0);
+  const pendingModeId = stickyModeFor(modeBackendConnectionId, modeRuntimeId);
   const setPendingModeId = useCallback((id: string | undefined) => {
-    manageStickyModeId = id;
-    setPendingModeIdState(id);
-  }, []);
+    rememberModePick(modeBackendConnectionId, modeRuntimeId, id);
+    setModePickRevision((revision) => revision + 1);
+  }, [modeBackendConnectionId, modeRuntimeId]);
   const [primaryAgents, setPrimaryAgents] = useState<PrimaryAgentDefinitionOption[]>([]);
   const [primaryAgentsLoading, setPrimaryAgentsLoading] = useState(false);
   const [primaryAgentsError, setPrimaryAgentsError] = useState<string | null>(null);
@@ -184,6 +218,9 @@ function ScopedManageComposer({
     if (workspaceId) {
       if (agent) manageStickyPrimaryAgent.set(workspaceId, agent);
       else manageStickyPrimaryAgent.delete(workspaceId);
+      writeComposerPrimaryAgentSelection(workspaceId, agent
+        ? { backendConnectionId: agent.backendConnectionId, definitionId: agent.definition.id }
+        : undefined);
     }
     setPendingPrimaryAgentState(agent);
   }, [workspaceId]);
@@ -210,9 +247,21 @@ function ScopedManageComposer({
       .then((definitions) => {
         if (controller.signal.aborted) return;
         setPrimaryAgents(definitions);
+        // The session copy wins; after a restart only the stored ids remain,
+        // and they are restored only if that Definition is listed again.
         const sticky = manageStickyPrimaryAgent.get(workspaceId);
-        if (sticky && !definitions.some((candidate) => candidate.definition.id === sticky.definition.id && candidate.backendConnectionId === sticky.backendConnectionId)) {
+        const wanted = sticky
+          ? { backendConnectionId: sticky.backendConnectionId, definitionId: sticky.definition.id }
+          : readComposerPrimaryAgentSelection(workspaceId);
+        if (!wanted) return;
+        const match = definitions.find((candidate) =>
+          candidate.definition.id === wanted.definitionId && candidate.backendConnectionId === wanted.backendConnectionId);
+        if (match) {
+          manageStickyPrimaryAgent.set(workspaceId, match);
+          setPendingPrimaryAgentState(match);
+        } else {
           manageStickyPrimaryAgent.delete(workspaceId);
+          writeComposerPrimaryAgentSelection(workspaceId, undefined);
           setPendingPrimaryAgentState(undefined);
         }
       })
