@@ -125,7 +125,12 @@ describe('TerminalDigest thread scope', () => {
     const view = render(<TerminalDigest onNav={vi.fn()} />);
     expect(screen.getByRole('region', { name: 'Digest thinking' }).textContent).toBe('Comparing source conversations');
     expect(screen.getByText('Partial digest output')).toBeTruthy();
-    expect((screen.getByRole('button', { name: /Rebuild/ }) as HTMLButtonElement).disabled).toBe(true);
+    const rebuild = screen.getByRole('button', { name: /Rebuild/ }) as HTMLButtonElement;
+    expect(rebuild.disabled).toBe(true);
+    // The shared primary Button (same fill as the composer's Send), with no
+    // digest-hued fill of its own.
+    expect(rebuild.className).toContain('ui-btn--primary');
+    expect(rebuild.style.background).toBe('');
     expect(markDigestViewed).not.toHaveBeenCalled();
 
     store.nodes.d1 = { ...store.nodes.d1, digest: {
@@ -208,7 +213,10 @@ describe('TerminalDigest thread scope', () => {
     fireEvent.change(screen.getByLabelText('Digest guidance (optional)'), {
       target: { value: 'Focus on decisions and next steps' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Create digest' }));
+    const create = screen.getByRole('button', { name: 'Create digest' });
+    expect(create.className).toContain('ui-btn--primary');
+    expect(create.style.background).toBe('');
+    fireEvent.click(create);
 
     await waitFor(() => {
       expect(createDigest).toHaveBeenCalledWith(

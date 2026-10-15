@@ -7,8 +7,13 @@ import DigestGenerationStatus from '../DigestGenerationStatus';
 import { Dot, Tag } from '../primitives';
 import type { PageId } from '../../../state/commands';
 import ManageComposer from '../manage/ManageComposer';
+import { Button } from '../../ui/controls';
 
-const DIGEST_PROSE = 'prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
+/** Wash behind the outline's current item. Accent, like every other "current"
+ *  marker and the page's buttons — this page carries no digest-hued chrome. */
+const OUTLINE_ACTIVE_FILL = 'color-mix(in srgb, var(--term-accent) 8%, transparent)';
+
+const DIGEST_PROSE ='prose prose-sm max-w-none wrap-break-word [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:text-(--term-fg) [&_h2]:text-(--term-fg) [&_h3]:text-(--term-fg) [&_h4]:text-(--term-fg) [&_p]:text-(--term-mid) [&_li]:text-(--term-mid) [&_strong]:text-(--term-fg) [&_a]:text-(--term-accent)';
 
 function formatRelative(ts: number): string {
   if (!ts) return '—';
@@ -255,7 +260,7 @@ export default function TerminalDigest({
           padding: 28,
           background: 'var(--term-page-bg, var(--term-bg))',
           backgroundImage: `
-            radial-gradient(ellipse 70% 50% at 10% 0%, color-mix(in srgb, var(--term-digest) 3%, transparent), transparent),
+            radial-gradient(ellipse 70% 50% at 10% 0%, color-mix(in srgb, var(--term-accent) 3%, transparent), transparent),
             radial-gradient(ellipse 50% 60% at 95% 90%, color-mix(in srgb, var(--term-mauve) 2%, transparent), transparent)
           `,
         }}
@@ -279,7 +284,7 @@ export default function TerminalDigest({
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
                 fontSize: 'var(--fs-sm)',
                 letterSpacing: 'var(--ls-caps-wide)',
-                color: 'var(--term-digest)',
+                color: 'var(--term-muted)',
                 textTransform: 'uppercase',
               }}>
                 THREAD DIGEST
@@ -318,13 +323,17 @@ export default function TerminalDigest({
                 alignItems: 'flex-start',
                 gap: 10,
                 border: '1px solid var(--term-line)',
-                background: 'rgba(253,253,251,.72)',
-                boxShadow: 'inset 0 1px 3px rgba(26,25,22,.06)',
+                // The palette's own well, like the custom-prompt field in the
+                // detail view — not a fixed pale fill, which turned into a
+                // grey slab with an unreadable placeholder on dark palettes.
+                background: 'var(--term-bg)',
+                borderRadius: 'var(--ui-radius-sm)',
                 padding: '12px 14px',
                 minHeight: 88,
               }}
             >
-              <span aria-hidden style={{ color: 'var(--term-digest)', fontSize: 'var(--fs-lg)', paddingTop: 2 }}>›_</span>
+              {/* The prompt glyph is the accent's, as in the composer. */}
+              <span aria-hidden style={{ color: 'var(--term-accent)', fontSize: 'var(--fs-lg)', paddingTop: 2 }}>›_</span>
               <textarea
                 id="thread-digest-guidance"
                 aria-label="Digest guidance (optional)"
@@ -357,23 +366,14 @@ export default function TerminalDigest({
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
               <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>⌘↵ to create</span>
-              <button
-                type="button"
+              <Button
+                variant="primary"
                 onClick={() => void createCurrentDigest()}
                 disabled={creating}
-                style={{
-                  padding: '7px 14px',
-                  border: '1px solid var(--term-digest)',
-                  background: creating ? 'var(--term-alt)' : 'var(--term-digest)',
-                  color: creating ? 'var(--term-muted)' : 'var(--term-bg)',
-                  fontFamily: 'var(--ui-font)',
-                  fontSize: 'var(--fs-md)',
-                  fontWeight: 700,
-                  cursor: creating ? 'wait' : 'pointer',
-                }}
+                style={{ padding: '7px 14px' }}
               >
                 {creating ? 'creating…' : 'Create digest'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -390,9 +390,11 @@ export default function TerminalDigest({
       display: 'flex',
       minHeight: 0,
       background: 'var(--term-page-bg, var(--term-bg))',
+      // Both washes are the palette's accent — Bone's emerald and rust used to
+      // be written in as fixed colours, whatever the palette.
       backgroundImage: `
-        radial-gradient(ellipse 70% 50% at 10% 0%, rgba(47,107,78,.04), transparent),
-        radial-gradient(ellipse 50% 60% at 95% 90%, rgba(184,69,31,.03), transparent)
+        radial-gradient(ellipse 70% 50% at 10% 0%, color-mix(in srgb, var(--term-accent) 4%, transparent), transparent),
+        radial-gradient(ellipse 50% 60% at 95% 90%, color-mix(in srgb, var(--term-accent) 3%, transparent), transparent)
       `,
     }}>
       <div className="flex min-w-0 shrink-0 flex-col gap-4 px-5 py-[18px] lg:min-h-0 lg:flex-1 lg:shrink">
@@ -411,7 +413,7 @@ export default function TerminalDigest({
                 fontFamily: 'var(--font-mono, ui-monospace, monospace)',
                 fontSize: 'var(--fs-sm)',
                 letterSpacing: 'var(--ls-caps-wide)',
-                color: 'var(--term-digest)',
+                color: 'var(--term-muted)',
                 textTransform: 'uppercase',
               }}
             >
@@ -750,8 +752,8 @@ export default function TerminalDigest({
                   alignItems: 'center',
                   gap: 8,
                   cursor: 'pointer',
-                  background: activeOutlineIdx === -1 ? 'rgba(47,107,78,.08)' : 'transparent',
-                  borderLeft: activeOutlineIdx === -1 ? '2px solid var(--term-digest)' : '2px solid transparent',
+                  background: activeOutlineIdx === -1 ? OUTLINE_ACTIVE_FILL : 'transparent',
+                  borderLeft: activeOutlineIdx === -1 ? '2px solid var(--term-accent)' : '2px solid transparent',
                   transition: 'background var(--t-soft), border-color var(--t-soft)',
                 }}
               >
@@ -773,8 +775,8 @@ export default function TerminalDigest({
                   alignItems: 'center',
                   gap: 8,
                   cursor: 'pointer',
-                  background: activeOutlineIdx === i ? 'rgba(47,107,78,.08)' : 'transparent',
-                  borderLeft: activeOutlineIdx === i ? '2px solid var(--term-digest)' : '2px solid transparent',
+                  background: activeOutlineIdx === i ? OUTLINE_ACTIVE_FILL : 'transparent',
+                  borderLeft: activeOutlineIdx === i ? '2px solid var(--term-accent)' : '2px solid transparent',
                   transition: 'background var(--t-soft), border-color var(--t-soft), color var(--t-soft)',
                 }}
               >
@@ -849,7 +851,9 @@ export default function TerminalDigest({
                         ? 'var(--term-accent)'
                         : isStale
                           ? 'var(--term-select)'
-                          : 'var(--term-digest)'
+                          // In sync is the quiet state: only new / stale
+                          // sources get a colour.
+                          : 'var(--term-muted)'
                     }
                     size={5}
                   />
@@ -906,27 +910,15 @@ export default function TerminalDigest({
             scope thread · updated {d.status === 'streaming' ? 'streaming…' : formatRelative(d.generatedAt)}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={() => void refreshDigest(digestNode.nodeId)}
               disabled={d.status === 'streaming'}
-              style={{
-                flex: 1,
-                padding: '7px 12px',
-                border: 'none',
-                background: 'var(--term-digest)',
-                color: 'var(--on-accent)',
-                fontWeight: 700,
-                fontSize: 'var(--fs-sm)',
-                cursor: d.status === 'streaming' ? 'not-allowed' : 'pointer',
-                fontFamily: 'var(--ui-font)',
-                opacity: d.status === 'streaming' ? 0.6 : 1,
-              }}
+              style={{ flex: 1, padding: '7px 12px' }}
             >
               ↻ Rebuild
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
               onClick={() =>
                 window.dispatchEvent(
                   new CustomEvent('michi:toggle-export-panel', {
@@ -934,19 +926,10 @@ export default function TerminalDigest({
                   }),
                 )
               }
-              style={{
-                flex: 1,
-                padding: '7px 12px',
-                border: '1px solid var(--term-line)',
-                background: 'transparent',
-                color: 'var(--term-mid)',
-                fontSize: 'var(--fs-sm)',
-                cursor: 'pointer',
-                fontFamily: 'var(--ui-font)',
-              }}
+              style={{ flex: 1, padding: '7px 12px' }}
             >
               ↓ Export
-            </button>
+            </Button>
           </div>
         </div>
       </aside>
