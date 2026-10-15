@@ -2082,8 +2082,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           // the floating composer (~card height + 12px gutter on each side, plus a
           // bit extra for the optional quote bar) so the last message can scroll
           // above the card instead of being trapped behind it.
+          // The top also clears the pane-top fade overlay, so the first
+          // message is not drawn under it while the pane is scrolled to top.
           paddingTop:
-            prefs.terminalDensity === 'dense' ? 8 : prefs.terminalDensity === 'compact' ? 12 : 16,
+            (prefs.paneTopFadeHeight || 0) +
+            (prefs.terminalDensity === 'dense' ? 8 : prefs.terminalDensity === 'compact' ? 12 : 16),
           paddingLeft:
             prefs.terminalDensity === 'dense' ? 22 : prefs.terminalDensity === 'compact' ? 24 : 32,
           paddingRight:
