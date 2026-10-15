@@ -927,10 +927,13 @@ export interface ChatContextValue {
   createBlankChild: (parentNodeId: string, opts?: { anchorMessageId?: string }) => Promise<string>;
   createMergedChat: (sourceNodeIds: string[]) => Promise<string>;
   cancelStream: (nodeId: string) => void;
-  /** Process-global list of ACP agents (Kiro modes). Fetched once on mount. */
+  /** Runtime Agent catalog, refreshed on workspace and Backend changes. */
   availableModes: SessionMode[];
   /** The mode ACP assigns to a brand-new session before any user override. Null when unavailable. */
   defaultModeId: string | null;
+  agentModesLoading: boolean;
+  agentModesError: string | null;
+  retryAgentModes: () => void;
   /**
    * Current agent runtime status from `/api/agent/status` (capabilities,
    * runtime label, provider list, etc.). null until first fetch resolves.
@@ -1192,6 +1195,9 @@ export type ChatProjectsValue = Pick<
   | 'theme'
   | 'availableModes'
   | 'defaultModeId'
+  | 'agentModesLoading'
+  | 'agentModesError'
+  | 'retryAgentModes'
   | 'agentStatus'
   | 'warmFailedError'
   | 'refreshAgentStatus'

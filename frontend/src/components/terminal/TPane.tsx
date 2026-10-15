@@ -1,3 +1,4 @@
+import { sessionModeCatalog } from '../../state/sessionModeCatalog';
 import { ChatCommandResult } from './ChatCommandResult';
 import { usePermissionPreferences } from '../../hooks/usePermissionPreferences';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
@@ -343,6 +344,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const {
     availableModes: defaultAvailableModes,
     defaultModeId,
+    agentModesLoading,
+    agentModesError,
+    retryAgentModes,
     agentStatus,
     refreshAgentStatus,
     activeProject,
@@ -351,7 +355,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const { prefs } = usePrefs();
   const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
-  const availableModes = n?.sessionState?.availableModes ?? defaultAvailableModes;
+  const availableModes = sessionModeCatalog(n?.sessionState, defaultAvailableModes, agentStatus?.runtime);
   const permissionPreferences = usePermissionPreferences(n ? workspaceBackendApiBase(n.projectId) : undefined);
   // Latest node state for callbacks that outlive their render closure — the
   // unmount-time scroll save reads messages through this.
@@ -2321,6 +2325,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         modelMenu={modelMenu}
         disabled={streaming}
         availableModes={availableModes}
+        agentModesLoading={agentModesLoading}
+        agentModesError={agentModesError}
+        onRetryAgentModes={retryAgentModes}
         currentModeId={n.currentModeId ?? undefined}
         agentStatus={agentStatus}
         resolvedBinding={resolvedBinding}

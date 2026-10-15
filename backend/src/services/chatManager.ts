@@ -238,7 +238,9 @@ export class ChatManager {
      */
     async getModeCatalog(cwd: string = this.defaultCwd): Promise<{ availableModes: any[]; defaultModeId: string | null }> {
         if (!this.runtime) return { availableModes: [], defaultModeId: null };
-        await this.runtime.warm(cwd);
+        // Reading an already-discovered catalog must not create another warm
+        // session or wait for a refill. The fresh default is cached per cwd.
+        if (this.runtime.getDefaultModeId(cwd) === null) await this.runtime.warm(cwd);
         return {
             availableModes: await this.runtime.getAvailableModes(),
             defaultModeId: this.runtime.getDefaultModeId(cwd),

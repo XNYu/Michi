@@ -10,6 +10,9 @@ interface PaneAgentMenusProps {
   modelMenu: PaneMenuAnchor | null;
   disabled?: boolean;
   availableModes: readonly SessionMode[];
+  agentModesLoading?: boolean;
+  agentModesError?: string | null;
+  onRetryAgentModes?: () => void;
   currentModeId?: string;
   agentStatus: AgentStatus | null;
   resolvedBinding: ResolvedNodeBinding;
@@ -51,6 +54,9 @@ export function PaneAgentMenus({
   modelMenu,
   disabled = false,
   availableModes,
+  agentModesLoading = false,
+  agentModesError = null,
+  onRetryAgentModes,
   currentModeId,
   agentStatus,
   resolvedBinding,
@@ -138,18 +144,23 @@ export function PaneAgentMenus({
             ...primarySections,
             {
               label: modesSectionLabel,
-              items:
-                availableModes.length === 0
-                  ? [{ id: 'loading', label: 'Loading…', disabled: true, run: () => {} }]
-                  : availableModes.map((m) => ({
-                      id: m.id,
-                      label: m.name,
-                      glyph: currentModeId === m.id ? '✓' : undefined,
-                      sublabel: m.description || undefined,
-                      run: () => {
-                        if (m.id !== currentModeId) onSwitchAgent(m.id);
-                      },
-                    })),
+              items: [
+                ...availableModes.map((m) => ({
+                  id: m.id,
+                  label: m.name,
+                  glyph: currentModeId === m.id ? '✓' : undefined,
+                  sublabel: m.description || undefined,
+                  run: () => {
+                    if (m.id !== currentModeId) onSwitchAgent(m.id);
+                  },
+                })),
+                ...(agentModesError ? [{ id: 'agent-error', label: agentModesError, disabled: true, run: () => {} }] : []),
+                ...(onRetryAgentModes && (agentModesError || (!agentModesLoading && availableModes.length === 0 && agentStatus?.capabilities.modes))
+                  ? [{ id: 'agent-retry', label: 'Retry loading agents', run: onRetryAgentModes }] : []),
+                ...(availableModes.length === 0 && !agentModesError ? [{
+                  id: 'agent-status', label: agentModesLoading ? 'Loading agents…' : 'No agents available', disabled: true, run: () => {},
+                }] : []),
+              ],
             },
           ]}
           onClose={onCloseAgentMenu}

@@ -121,6 +121,9 @@ function ScopedManageComposer({
     refreshAgentStatus,
     availableModes,
     defaultModeId,
+    agentModesLoading,
+    agentModesError,
+    retryAgentModes,
     projects,
   } = useChatStore();
 
@@ -789,6 +792,9 @@ function ScopedManageComposer({
         modelMenu={modelMenu}
         disabled={submitting}
         availableModes={availableModes}
+        agentModesLoading={agentModesLoading}
+        agentModesError={agentModesError}
+        onRetryAgentModes={retryAgentModes}
         currentModeId={currentModeId}
         agentStatus={agentStatus}
         resolvedBinding={manageResolvedBinding}

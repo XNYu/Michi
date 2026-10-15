@@ -1,7 +1,7 @@
 import { parseChatCommand, nextQueuedBatch, executeComposerCommand } from './chatCommands';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModes, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
-import { bindPendingPrimaryAgent, type AgentStatus, type SessionMode } from '../services/api';
+import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
+import { bindPendingPrimaryAgent, type AgentStatus } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
 import { DARK_PALETTES } from '../components/terminal/tokens';
@@ -29,6 +29,7 @@ import type { AgentResourceIdentity } from './agentIdentity';
 import { getElectron } from '../lib/electronBridge';
 import { useNavHistory, type NavEntry } from './navHistory';
 import { navigateToNode } from './navigateToNode';
+import { useAgentModeCatalog } from '../hooks/useAgentModeCatalog';
 import { useArtifactWatch } from '../hooks/useArtifactWatch';
 import { NODE_ACTIVITY_ACTIONS, reduceNodes, reduceProject } from './chatReducers';
 import {
@@ -339,25 +340,19 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   //     Settings (provider/model/reasoning controls), and the TPane toolbar chips.
   //   - availableModes: runtime Agent catalog reused by every picker.
   //   - defaultModeId: fresh-session default resolved for the active workspace.
-  // Both load via the cold-start-tolerant effect below: on desktop the renderer
-  // can mount before the backend is listening, so each fetch retries until it
-  // lands instead of failing once and leaving the agent picker stuck on
-  // "Loading…" (Kiro-CLI agents never appearing).
+  // Status and modes retry independently during cold start. The mode hook
+  // retains workspace catalogs and exposes a bounded loading state with retry.
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const agentStatusRef = useRef(agentStatus);
   agentStatusRef.current = agentStatus;
-  const [availableModes, setAvailableModes] = useState<SessionMode[]>([]);
-  /** The mode ACP assigns to a brand-new session. Null when unavailable. */
-  const [defaultModeId, setDefaultModeId] = useState<string | null>(null);
+  const { availableModes, defaultModeId, agentModesLoading, agentModesError, retryAgentModes } =
+    useAgentModeCatalog(activeProjectId, activeBackendConnectionId, agentStatus);
   const [warmFailedError, setWarmFailedError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     setAgentStatus(null);
-    setAvailableModes([]);
-    setDefaultModeId(null);
     setWarmFailedError(null);
     let statusLoaded = false;
-    let modesLoaded = false;
     let statusRequestSeq = 0;
 
     // Track backend warmup for the cold-start error banner, but don't gate
@@ -414,39 +409,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       }
     };
 
-    // Companion to load() for the /agent picker. A 200 (even an empty list for
-    // a runtime without modes) counts as loaded; only a throw — connection
-    // refused before the backend is listening, or a 500 while the ACP client
-    // is still spawning — is retryable.
-    const loadModes = async (): Promise<boolean> => {
-      try {
-        const result = await listAgentModes(activeProjectId ?? undefined);
-        if (cancelled) return false;
-        modesLoaded = true;
-        setAvailableModes(result.availableModes);
-        setDefaultModeId(result.defaultModeId);
-        return true;
-      } catch {
-        // Backend may not be listening yet — loadUntilLoaded retries below.
-        return false;
-      }
-    };
-
-    // Poll /agent/status and /modes until each succeeds, independent of warm.
-    // The runtime is registered synchronously before the backend starts
-    // listening, so the first request that connects already returns full
-    // capabilities and the agent list — there's no reason to wait for
-    // /api/ready (which only flips to `ready` once the warm pool finishes).
-    // Without this, a renderer that mounts before the backend is listening (the
-    // norm in dev, where the window loads from the vite server while the backend
-    // boots separately) would never re-fetch, leaving the composer chips blank
-    // and the agent picker stuck on "Loading…" until then.
+    // Status retries independently of the workspace mode catalog and warmup.
     const loadUntilLoaded = async () => {
       const t0 = Date.now();
-      while (!cancelled && !(statusLoaded && modesLoaded) && Date.now() - t0 < POLL_TIMEOUT_MS) {
+      while (!cancelled && !statusLoaded && Date.now() - t0 < POLL_TIMEOUT_MS) {
         if (!statusLoaded) await load();
-        if (!modesLoaded) await loadModes();
-        if (statusLoaded && modesLoaded) return;
+        if (statusLoaded) return;
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       }
     };
@@ -455,22 +423,21 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const result = await waitForReady();
       if (cancelled) return;
       if (result === 'ready') setWarmFailedError(null);
-      // Backstop: surface status/modes even if the poll above somehow never landed.
+      // Backstop: surface status even if the poll above never landed.
       if (result !== 'timeout') {
         if (!statusLoaded) void load();
-        if (!modesLoaded) void loadModes();
       }
     };
 
     void loadUntilLoaded();
     void watchReady();
-    const handler = () => { void load(); void loadModes(); };
+    const handler = () => { void load(); };
     window.addEventListener('michi:reload-agent-status', handler);
     return () => {
       cancelled = true;
       window.removeEventListener('michi:reload-agent-status', handler);
     };
-  }, [activeBackendConnectionId, activeProjectId]);
+  }, [activeBackendConnectionId]);
   const refreshAgentStatus = useCallback(() => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
@@ -2863,6 +2830,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       theme,
       availableModes,
       defaultModeId,
+      agentModesLoading,
+      agentModesError,
+      retryAgentModes,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
@@ -2882,6 +2852,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       theme,
       availableModes,
       defaultModeId,
+      agentModesLoading,
+      agentModesError,
+      retryAgentModes,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
@@ -2945,6 +2918,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelStream,
       availableModes,
       defaultModeId,
+      agentModesLoading,
+      agentModesError,
+      retryAgentModes,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,
@@ -3077,6 +3053,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelStream,
       availableModes,
       defaultModeId,
+      agentModesLoading,
+      agentModesError,
+      retryAgentModes,
       agentStatus,
       warmFailedError,
       refreshAgentStatus,

@@ -39,12 +39,12 @@ export interface AgentModesResult {
   defaultModeId: string | null;
 }
 
-export async function listAgentModes(workspaceId?: string): Promise<AgentModesResult> {
+export async function listAgentModes(workspaceId?: string, signal?: AbortSignal): Promise<AgentModesResult> {
   const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
   const route = workspaceId
     ? `/workspaces/${encodeURIComponent(workspaceId)}/modes`
     : '/modes';
-  const res = await fetch(`${base}${route}`);
+  const res = await fetch(`${base}${route}`, { signal });
   if (!res.ok) throw new Error(`listAgentModes failed: ${res.status}`);
   const body = await res.json();
   return {

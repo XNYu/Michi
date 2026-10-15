@@ -116,6 +116,7 @@ describe('chatStore boot ready polling', () => {
     vi.clearAllMocks();
     (api.fetchAgentStatus as any).mockResolvedValue(STATUS_FIXTURE);
     (api.listAgentModels as any).mockResolvedValue({ models: [], sanitizedModel: null });
+    (api.listAgentModes as any).mockReset().mockResolvedValue({ availableModes: [], defaultModeId: null });
   });
 
   test('loads agent status without waiting for ready or the model catalog', async () => {
@@ -203,6 +204,7 @@ describe('chatStore boot ready polling', () => {
   // vanishing from the picker). The modes fetch is retried alongside status.
   test('recovers available modes after a cold-start fetch failure', async () => {
     const modes = [{ id: 'gpu-dev', name: 'gpu-dev' }];
+    vi.mocked(api.fetchAgentStatus).mockResolvedValue({ ...STATUS_FIXTURE, model: undefined, capabilities: { ...STATUS_FIXTURE.capabilities, modes: true } });
     (api.listAgentModes as any)
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
       .mockResolvedValue({ availableModes: modes, defaultModeId: 'gpu-dev' });

@@ -67,6 +67,34 @@ describe('PaneAgentMenus model catalog states', () => {
   });
 });
 
+describe('PaneAgentMenus agent catalog states', () => {
+  const props = { ...baseProps, agentMenu: { x: 10, y: 10 }, modelMenu: null };
+
+  it('distinguishes pending discovery from a successfully loaded empty catalog', () => {
+    const view = render(<PaneAgentMenus {...props} agentModesLoading />);
+    expect(screen.getByText('Loading agents…')).toBeTruthy();
+    view.rerender(<PaneAgentMenus {...props} agentModesLoading={false} />);
+    expect(screen.queryByText('Loading agents…')).toBeNull();
+    expect(screen.getByText('No agents available')).toBeTruthy();
+  });
+
+  it('shows discovery failure and retries without a page reload', async () => {
+    const retry = vi.fn();
+    render(<PaneAgentMenus {...props} agentModesError="Agents took too long to load. Please retry." onRetryAgentModes={retry} />);
+    expect(screen.queryByText('Loading agents…')).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retry loading agents' }));
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps cached agents selectable during refresh', async () => {
+    const switchAgent = vi.fn();
+    render(<PaneAgentMenus {...props} availableModes={[{ id: 'vibe', name: 'Default' }]} agentModesLoading onSwitchAgent={switchAgent} />);
+    expect(screen.queryByText('Loading agents…')).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Default' }));
+    await waitFor(() => expect(switchAgent).toHaveBeenCalledWith('vibe'));
+  });
+});
+
 describe('PaneAgentMenus default agent display', () => {
   const agentMenuProps = {
     ...baseProps,
