@@ -39,9 +39,8 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
       style={{
         fontSize: 'var(--fs-sm)',
         fontFamily: 'var(--ui-font)',
-        marginTop: 4,
-        padding: '3px 0',
-        borderTop: '1px dotted var(--term-line)',
+        marginTop: 2,
+        padding: '2px 0',
         color: 'var(--term-mid)',
       }}
     >
