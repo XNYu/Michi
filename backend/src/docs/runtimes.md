@@ -1,6 +1,20 @@
 # Choose and configure a runtime
 
+Applies to: registered ordinary-chat runtimes on the selected backend. Source checked: 2026-10-16. Prerequisites are source/documentation reviewed; successful provider authentication must be checked on your installation.
+
 Open Settings → Model for the backend you are using. Select a runtime, model and supported reasoning level. A new chat's composer also exposes runtime-specific choices. A model's availability depends on installed software, authentication, provider access and that backend's configuration.
+
+## Choose a starting point
+
+| Need | Starting point |
+| --- | --- |
+| Existing Kiro CLI workflow | Kiro, with its installed engine/version |
+| Crew Memory and official Crew backend | Crew, after the complete App setup |
+| Direct multi-provider API use without an agent CLI | Pi |
+| Claude Code's native tools/session | Claude CLI integration |
+| Codex's app-server session/sandbox | Codex integration |
+
+Use `runtime-capabilities` for the detailed comparison. Changing the Settings default Runtime affects new chats; existing chats keep their runtime. Native provider features may not all be exposed in Michi.
 
 ## Kiro CLI
 
@@ -41,3 +55,14 @@ By default, Codex has no fixed session-count limit. `MICHI_CODEX_MAX_CONCURRENT`
 The Electron package does not bundle agent CLIs. Install/configure the runtime on the backend machine, including a remote host when using a remote workspace. `MICHI_ENABLED_RUNTIMES` can restrict which runtimes a backend registers.
 
 Node.js 22.19+ is the documented baseline for source installations, builds and remote launchers. Native runtime behavior, model context limits and provider authentication can differ; use the actual error and settings to diagnose a failure.
+
+## Confirm the selection works
+
+1. Check backend and executable/provider configuration on that machine.
+2. Select an available model rather than guessing an unsupported model ID.
+3. Send a short prompt in a new chat and inspect the effective runtime/model and tool result.
+4. If it fails, preserve the first error and use `troubleshooting` to distinguish auth, model access, rate limit and launch issues.
+
+Terminal login does not prove a desktop app uses the same PATH/home/configuration. See `configuration` for absolute CLI overrides and credential precedence. Do not share secret values while collecting diagnostics.
+
+Related documents: `runtime-capabilities`, `configuration`, `permissions`, `sessions-and-recovery`, `crew`.

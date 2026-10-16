@@ -1,6 +1,6 @@
 # Getting started with Michi
 
-Michi is a workspace for research and implementation across connected conversations. An agent runtime supplies the model and tools; Michi manages chats, branches, panes, artifacts and durable history.
+Applies to: ordinary chats in desktop/web, with local or connected remote backends. Source checked: 2026-10-16. Runtime availability depends on the backend installation. This is a source-reviewed guide, not a live test of your credentials.
 
 ## Install, launch and update
 
@@ -16,29 +16,66 @@ For a source checkout on supported platforms, install Node.js 22.19+ and run `np
 
 For an existing source installation, preserve local changes, pull the public `main` branch, reinstall dependencies and rebuild the desired target. On macOS `npm run electron:build` quits Michi and replaces the installed app. Development launchers and packaging can stop processes; they are not read-only diagnostics. Use `remote-backend` for remote server lifecycle instructions.
 
-## Start a conversation
+## 1. Choose where work runs
 
-1. Open Settings → Model. Select an available runtime and a model, and complete its authentication/provider setup.
-2. Create or select a workspace folder. Filesystem tools operate on the workspace's backend machine.
-3. Send a message from Home. The Home Continue list reopens recent threads across workspaces.
-4. Use a new chat's composer to select runtime, model and reasoning where available. Runtime-specific controls differ; consult the runtimes document.
+Create or select a workspace pointing to your project folder. For a remote workspace, choose the saved connection and a path that exists on that server. The backend owns chat data, runtime processes and filesystem operations for the workspace.
 
-A workspace can contain several conversation trees. The current tree and its panes determine what you are viewing; background work should not move your focus to another tree.
+Use a disposable project folder while learning so that you can inspect a small file-writing exercise.
 
-## Branches and reusable material
+Success check: the workspace shows the intended folder and backend. A laptop path is not automatically available to a remote backend.
 
-Branch or fork when you want a separate line of investigation with inherited context. The agent's `spawn_branches` tool fans out at most five child threads and should be used only when you explicitly ask to branch or split work. Agent Runs are separate durable workers, not conversation branches.
+## 2. Connect one runtime
 
-Artifacts hold reusable documents such as a spec, summary, code or links. `save_artifact` creates one and `update_artifact` replaces an existing one. They are stored as `.contexts/<name>.md` inside the workspace and can be referenced as `@name`. A file already written there does not need another redundant save call.
+Open Settings → Model for the backend you are using. Choose an available runtime and model. A runtime is the agent engine; a model is the model it uses.
 
-Agents can use `list_threads`, `search_messages`, `read_node` and `read_node_overview` to find prior conversation material. Pane tools inspect activity and read output. `send_to_thread` asks the user to approve a message to another chat.
+| Runtime | What must be ready on the backend machine |
+| --- | --- |
+| Kiro | `kiro-cli` installed and authenticated |
+| Kiro Crew | Official local Gateway running; complete `crew`, including required Michi MCP and sessionApproval |
+| Pi | Provider credentials configured; no separate agent CLI |
+| Claude | Claude CLI installed and authenticated/configured |
+| Codex | Codex CLI installed and authenticated/configured |
 
-## History, stop and reconnection
+The desktop app does not bundle agent CLIs. A listed runtime may be unavailable, and opening Michi does not prove provider authentication works. See `runtimes` for prerequisites.
 
-The backend saves conversation and turn state in SQLite. A renderer disconnection does not necessarily stop a durable turn. Reopen the same chat to reconnect before sending the same task again. Explicit Stop cancels the targeted turn; quitting a remote desktop connection does not stop the remote backend.
+Choose Ask while learning. With Use global permissions enabled in Settings → Model → Permissions, the backend's global mode applies and per-chat permission controls are hidden. See `permissions` for each choice's scope.
 
-Native resume and fork capabilities depend on the runtime. Crew Memory is separate from saved chat history; turning Memory off does not delete the conversation.
+## 3. Complete a first task
 
-## Ask Michi about Michi
+Send this in a new chat from Home or the workspace composer:
 
-Agents can call `michi_docs` to list, search and read these bundled documents. For example, ask "Check Michi's built-in docs and explain how tool approvals work." Documents are loaded on demand, work offline and describe the backend build serving the tool. They are reference material, not a report of your live settings or a grant to change them.
+> Tell me the workspace directory you are using. Read the top-level filenames and explain what is here in three sentences. Do not edit files or run project scripts.
+
+Inspect the actual tool activity. A convincing explanation alone does not establish that the agent inspected the correct directory. Compare its folder and filenames with your project.
+
+Then try this in a disposable workspace:
+
+> Create `michi-first-task.md` containing a short summary of this folder. Read it back and show the path. Do not change any other files.
+
+If a permission card appears, inspect the operation and choose Allow Once. Low-risk reads can run automatically, and upstream policies can auto-approve operations. A particular prompt is not guaranteed to produce a card.
+
+Success check: the file exists on the backend machine, its contents match the request, and the agent explains its verification. Retain any failure and find the symptom in `troubleshooting`.
+
+## 4. Resume and branch
+
+Reopen the same conversation from Home's Continue list or the workspace's Chats list and ask a follow-up. Michi saves history; native session restoration depends on the runtime and settings. See `sessions-and-recovery`.
+
+Create a branch for another direction with inherited context. For example:
+
+> Create two research branches: one for a simple implementation and one for an extensible design. Compare the findings here before editing anything.
+
+Explicitly ask when you want split work. `spawn_branches` fans out at most five child threads. Conversation branches do not automatically isolate project files. See `concepts-and-context` and `common-workflows` before parallel implementation.
+
+## 5. Keep useful results
+
+Use Artifacts for reusable specs, reports, files, images and links. Ask the agent to save a summary as an Artifact, then reference its name with `@` in another prompt. Favoriting an Artifact changes its shelf ordering; it does not send the full document on every turn.
+
+Use a thread's Export action for a Markdown transcript. A transcript is useful for reading and sharing, but is not a full restorable application backup. See `files-and-artifacts` and `data-and-backups`.
+
+## Get help
+
+If a chat disconnects, reopen it before repeating the task; the backend may still be working. Use Stop to request cancellation. A remote backend can continue after desktop exit; local execution ends when its backend process stops.
+
+Ask: “Consult Michi's built-in docs and diagnose this error. Distinguish documented behavior from what you actually checked.” The agent can call `michi_docs` when available. If Michi tools are missing, open the human guide directly; a missing docs tool cannot diagnose itself.
+
+Related documents: `help`, `runtimes`, `permissions`, `common-workflows`, `troubleshooting`.

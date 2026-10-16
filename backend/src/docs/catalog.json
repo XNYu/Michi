@@ -1,44 +1,121 @@
 [
   {
+    "id": "help",
+    "title": "Find Michi help",
+    "summary": "Topic index, agent lookup, offline help, pagination and documentation evidence.",
+    "keywords": "help docs documentation guide manual index 帮助 文档 手册 使用指南 找不到文档",
+    "source": "docs/help.md"
+  },
+  {
     "id": "getting-started",
     "title": "Getting started with Michi",
-    "summary": "Installation, updates, workspaces, chats, branches, artifacts and everyday use.",
-    "keywords": "setup install update workspace branch fork artifact composer 使用 入门 安装 更新 分支 工作区",
+    "summary": "Install, launch, choose a backend/runtime and complete a first verified task.",
+    "keywords": "setup install launch first task update workspace composer 使用 入门 安装 更新 第一步 第一次 怎么用",
     "source": "docs/getting-started.md"
+  },
+  {
+    "id": "concepts-and-context",
+    "title": "Understand workspaces, branches and context",
+    "summary": "Mental model, inheritance, @ references, instructions, summaries, Artifacts and Memory.",
+    "keywords": "context branch inherit fork tree pane overview weave digest memory instructions @ 忘了 失忆 上下文 继承 分支 工作区 摘要 引用 没读 历史 记忆",
+    "source": "docs/concepts-and-context.md"
+  },
+  {
+    "id": "common-workflows",
+    "title": "Complete common tasks with Michi",
+    "summary": "End-to-end research, implementation, review, synthesis and handoff recipes.",
+    "keywords": "workflow research implementation review handoff weave digest compare parallel 工作流 调研 实现 审查 评审 汇总 交接 并行",
+    "source": "docs/common-workflows.md"
   },
   {
     "id": "runtimes",
     "title": "Choose and configure a runtime",
-    "summary": "Kiro CLI, Crew, Pi, Claude and Codex requirements, models and session behavior.",
-    "keywords": "runtime model reasoning provider credentials authentication 运行时 模型 配置 认证",
+    "summary": "Kiro CLI, Crew, Pi, Claude and Codex prerequisites, authentication and model selection.",
+    "keywords": "runtime model provider credentials authentication login kiro crew pi claude codex 运行时 模型 配置 认证 登录",
     "source": "docs/runtimes.md"
+  },
+  {
+    "id": "runtime-capabilities",
+    "title": "Runtime capabilities in Michi",
+    "summary": "Integration comparison: images, steer, queue, fork, resume, compaction, tools and native limits.",
+    "keywords": "capability comparison matrix native support feature steer compact image memory 功能对比 能力 支持 区别 对照表 原生 图片 压缩",
+    "source": "docs/runtime-capabilities.md"
   },
   {
     "id": "permissions",
     "title": "Permissions and tool approvals",
-    "summary": "Global and per-chat Ask, Trust, YOLO, approval cards and trust scopes.",
-    "keywords": "approval permission deny allow sandbox trust 审批 权限 信任 授权",
+    "summary": "Global/per-chat modes, approval cards, grant lifetimes, revocation and sandbox boundaries.",
+    "keywords": "approval permission deny allow once trust sandbox yolo revoke 审批 权限 信任 授权 撤销 全局 单次 审批没出现",
     "source": "docs/permissions.md"
+  },
+  {
+    "id": "sessions-and-recovery",
+    "title": "Task states, queued messages and session recovery",
+    "summary": "Busy input, Stop, close/reload/quit, reconnect, native resume/fork and edit/resend.",
+    "keywords": "session queue steer stop cancel reconnect resume fork turn_active 410 409 会话 排队 同轮 停止 中断 重连 恢复 关窗口 关闭窗口 重发 忙碌",
+    "source": "docs/sessions-and-recovery.md"
+  },
+  {
+    "id": "files-and-artifacts",
+    "title": "Files, Artifacts, attachments and the browser",
+    "summary": "Backend paths, reusable sources, @ mentions, uploads, image limits, broken links and browser access.",
+    "keywords": "file artifact attachment upload image browser path link symlink 文件 资料 附件 上传 图片 浏览器 路径 文件在哪 找不到文件",
+    "source": "docs/files-and-artifacts.md"
+  },
+  {
+    "id": "data-and-backups",
+    "title": "History, deletion, backups and migration",
+    "summary": "Missing history, archive/Trash, transcript versus JSON backup, filesystem recovery and migration.",
+    "keywords": "data backup restore export import json archive trash delete migration rollback 数据 备份 导出 导入 删除 回收站 归档 换机 迁移 聊天不见了 撤销",
+    "source": "docs/data-and-backups.md"
+  },
+  {
+    "id": "configuration",
+    "title": "Configure Michi, credentials and updates",
+    "summary": "Installation paths, environment precedence, settings timing, CLI PATH, credentials and updates.",
+    "keywords": "configuration config settings env PATH CLI credential auth update sync precedence 配置 设置 环境变量 找不到CLI 终端能用 桌面不能用 生效 优先级 更新",
+    "source": "docs/configuration.md"
+  },
+  {
+    "id": "performance-and-usage",
+    "title": "Response time, context and usage",
+    "summary": "Latency diagnosis, reasoning/context/template tradeoffs, compaction and tokens versus billing.",
+    "keywords": "performance latency slow thinking reasoning token cost billing credits usage system prompt cache 性能 慢 一直思考 思考太久 上下文 账单 费用 额度 用量",
+    "source": "docs/performance-and-usage.md"
+  },
+  {
+    "id": "privacy-and-data",
+    "title": "Where data goes and how access works",
+    "summary": "Storage locations, provider/MCP recipients, local/remote auth, telemetry, logs and deletion scope.",
+    "keywords": "privacy security data storage telemetry reporting secrets retention 隐私 安全 数据存哪 上传什么 上报 凭据 数据删除",
+    "source": "docs/privacy-and-data.md"
   },
   {
     "id": "troubleshooting",
     "title": "Troubleshoot Michi",
-    "summary": "Startup, disconnected chats, slow responses, missing tools, logs and safe diagnostics.",
-    "keywords": "error slow stuck latency reconnect logs debug 故障 排障 错误 卡住 慢 日志",
+    "summary": "Symptom index, startup/auth/model errors, stuck chats, 410/409, approvals, tools, logs and issue reports.",
+    "keywords": "error slow stuck no output ENOENT SIGTERM 143 401 403 429 5xx 410 409 turn_active logs debug 故障 排障 错误 卡住 卡住了 不动 一直思考 审批没出现 工具不见了 启动失败 闪退",
     "source": "docs/troubleshooting.md"
+  },
+  {
+    "id": "custom-agents",
+    "title": "Custom Agents, Runs and watches (experimental)",
+    "summary": "Feature gate, definitions, capability/context policies, attempts, watches and Run result actions.",
+    "keywords": "custom agents runs watch delegate experimental MICHI_CUSTOM_AGENTS worker agent library 自定义Agent 实验功能 没有Agents页面 委派 后台任务 订阅 重试",
+    "source": "docs/custom-agents.md"
   },
   {
     "id": "crew",
     "title": "Use KiroCrew in Michi",
     "summary": "Official Crew App setup, required MCP and sessionApproval, Sync, Memory and known limits.",
-    "keywords": "kirocrew crew gateway mcp sessionApproval sync memory 接入 记忆 同步 审批",
+    "keywords": "kirocrew crew gateway mcp sessionApproval sync memory stub routed command changed 接入 记忆 同步 审批",
     "source": "agents/crew/GETTING_STARTED.md"
   },
   {
     "id": "remote-backend",
     "title": "Connect a remote backend",
     "summary": "Remote server setup, SSH tunnels, connection tokens and lifecycle.",
-    "keywords": "remote backend ssh tunnel connection token 远程 后端 连接 隧道",
+    "keywords": "remote backend ssh tunnel connection token 远程 后端 连接 隧道 断线",
     "source": "../../docs/remote-backend.md"
   }
 ]

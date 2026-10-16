@@ -85,6 +85,7 @@ frontend/.omc/
 docs/
 !docs/
 docs/*
+!docs/user-guide.md
 !docs/harness-p0-p3-tasks.md
 !docs/remote-backend.md
 !docs/kiro-acp-validation.md

@@ -1,13 +1,14 @@
 # Remote Michi backend
 
+Applies to: self-hosted remote backends connected to the desktop app; Unix shell examples and Linux systemd service steps. Source reviewed: October 16, 2026. This review does not certify a new live deployment or every operating system.
+
 Michi can keep its desktop UI on one machine while running agent sessions and
 filesystem tools on another. A workspace is permanently associated with one
 backend connection, so local and remote workspaces can be used at the same time.
 
 ## Start the remote server
 
-Install Michi and the agent runtimes you want on the remote machine, then run
-one command from the repository root:
+Install Michi and the agent runtimes you want on the remote machine. The public source installation checkout is `~/Michi`; use your actual path if customized. This is the server's installation, not its project workspace. From that directory, run:
 
 ```bash
 npm run remote:launch

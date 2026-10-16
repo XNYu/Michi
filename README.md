@@ -16,6 +16,12 @@ conversation, run them side by side, and fold the good ones back together.
 
 </div>
 
+See the [user guide](docs/user-guide.md) for first tasks, context and branching,
+Runtime comparisons, permissions, recovery, files, backups and troubleshooting.
+The same public articles are available to agents through `michi_docs`.
+
+## Highlights
+
 - **Branching work, not disposable chats**: create manual branches, let an
   agent fan out child branches, weave selected nodes, build digests, inspect a
   thread map, and follow an append-only branch Overview journal.
@@ -563,7 +569,8 @@ Runtime-specific notes:
 Shared Michi tools include:
 
 - built-in product help: `michi_docs` lists, searches and reads versioned, bundled
-  documentation for usage, runtimes, permissions, Crew setup and remote backends.
+  documentation for workflows, context, runtimes, permissions, recovery, files,
+  backups, configuration, privacy, experimental Agents, Crew and remote backends.
   It works offline and loads only requested content. For example, ask an agent
   "Check Michi's built-in docs and explain how approvals work." Agent Run
   definitions must include this capability when needed. Documentation describes
