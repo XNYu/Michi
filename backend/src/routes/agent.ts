@@ -39,7 +39,7 @@ import {
   getWebSearchProviderStatuses,
   setWebSearchApiKey,
 } from "../services/webSearch";
-import type { AgentStatus, AgentRuntimeOption, AgentReasoning, RuntimeAvailability, ModelInfo } from "../agents/types";
+import type { AgentRuntime, AgentStatus, AgentRuntimeOption, AgentReasoning, RuntimeAvailability, ModelInfo } from "../agents/types";
 
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
 import type { CustomAgentsFeatureControl } from '../services/customAgentsFeatureGate';
@@ -70,6 +70,23 @@ export function chooseSanitizedModel(
   const canonical = persisted ? canonicalize?.(persisted) : undefined;
   if (canonical && ids.includes(canonical)) return canonical;
   return models.find((m) => m.isDefault)?.id ?? ids[0];
+}
+
+/**
+ * Whether a runtime (and provider, for provider runtimes) lists a model id a
+ * client asked to save, directly or through the runtime's alias
+ * canonicalizer. A provider's own default model is accepted even when its
+ * live catalog omits it. An empty catalog cannot be checked and accepts the
+ * id, matching chooseSanitizedModel. Throws when the catalog cannot be read.
+ */
+async function isModelListed(runtime: AgentRuntime, modelId: string, providerId: string | undefined): Promise<boolean> {
+  if (!runtime.listModels) return true;
+  const providers = providerId && hasProviders(runtime) ? await runtime.listProviders() : [];
+  if (providers.find((entry) => entry.id === providerId)?.defaultModel === modelId) return true;
+  const ids = (await runtime.listModels({ provider: providerId })).map((model) => model.id);
+  if (ids.length === 0 || ids.includes(modelId)) return true;
+  const canonical = runtime.canonicalModelId?.(modelId);
+  return !!canonical && ids.includes(canonical);
 }
 
 export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
@@ -207,6 +224,26 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
     const patch: Partial<typeof cfg> = {};
     let modelToSet: string | undefined;
 
+    // Model, provider and effort ids belong to one runtime. A client that
+    // still shows an earlier runtime names it here, so its picks are not
+    // stored under the runtime that has since become active. Optional for
+    // clients that predate it; the catalog check below still applies.
+    if (req.body?.expectedRuntime !== undefined) {
+      if (typeof req.body.expectedRuntime !== "string" || !req.body.expectedRuntime.trim()) {
+        res.status(400).json({ ok: false, error: "Invalid expectedRuntime" });
+        return;
+      }
+      if (req.body.expectedRuntime !== cfg.runtime) {
+        const label = getRuntime(cfg.runtime)?.label ?? cfg.runtime;
+        res.status(409).json({
+          ok: false,
+          code: "runtime_mismatch",
+          error: `The active runtime is now ${label}. Check the selection and try again.`,
+        });
+        return;
+      }
+    }
+
     if (req.body?.nativeResumeByRuntime !== undefined) {
       const value = req.body.nativeResumeByRuntime;
       if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -313,6 +350,22 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       && patch.provider !== resolveProvider(effectiveRuntime, userId)) {
       modelToSet = providerInfo.defaultModel;
     }
+    // Check only the id the client sent; the defaults filled in above come
+    // from the provider. An id from another runtime's catalog would otherwise
+    // be passed to this runtime on every new conversation.
+    const requestedModel = req.body?.model !== undefined ? modelToSet : undefined;
+    if (requestedModel !== undefined && runtimeForModel?.capabilities.models) {
+      const scopedProvider = runtimeForModel.capabilities.providerModels ? providerForModel : undefined;
+      try {
+        if (!await isModelListed(runtimeForModel, requestedModel, scopedProvider)) {
+          res.status(400).json({ ok: false, error: `This model is not available for ${runtimeForModel.label}.` });
+          return;
+        }
+      } catch {
+        res.status(503).json({ ok: false, error: 'Unable to verify the model. Please retry.' });
+        return;
+      }
+    }
     if (reasoningToSet !== undefined && runtimeForModel) {
       try {
         const options = await getModelReasoningOptions(runtimeForModel, modelToSet ?? resolveModel(effectiveRuntime, userId), providerForModel, reasoningToSet);
@@ -326,11 +379,14 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       }
     }
     updateAgentConfig(patch, userId);
+    // Store under the runtime that was validated above. Re-reading the active
+    // runtime here would pick up a switch made by another request while the
+    // catalog checks were awaited.
     if (modelToSet !== undefined) {
-      updateAgentModelForRuntime(getAgentConfig(userId).runtime, modelToSet, userId);
+      updateAgentModelForRuntime(effectiveRuntime, modelToSet, userId);
     }
     if (reasoningToSet !== undefined) {
-      updateAgentReasoningForRuntime(getAgentConfig(userId).runtime, reasoningToSet, userId);
+      updateAgentReasoningForRuntime(effectiveRuntime, reasoningToSet, userId);
     }
     res.json({ ok: true });
   });
@@ -383,7 +439,12 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       return;
     }
     const effectiveProvider = active.capabilities.providerModels ? resolveProvider(cfg.runtime, userId) : undefined;
-    const provider = typeof req.query.provider === "string" ? req.query.provider : effectiveProvider;
+    // Only provider runtimes have provider-scoped catalogs. Clients send the
+    // global provider for every runtime; for the others that value must not
+    // switch off the sanitize step below.
+    const provider = active.capabilities.providerModels && typeof req.query.provider === "string"
+      ? req.query.provider
+      : effectiveProvider;
     const models = active.listModels ? await active.listModels({ provider }) : [];
 
     // Sanitize-and-persist: if the persisted model id is missing or not

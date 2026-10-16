@@ -288,6 +288,14 @@ function ScopedManageComposer({
   // ManageComposer creates new threads — use global agentStatus as the binding
   // (no node exists yet). resolveNodeBinding(null, agentStatus) returns source: 'global'.
   const manageResolvedBinding = resolveNodeBinding(null, agentStatus);
+  // Provider, model and effort picks are the global defaults of the runtime
+  // this picker shows. The backend refuses them if its active runtime has
+  // changed since; reload status either way so the picker shows what is saved.
+  const saveHomeDefault = async (patch: { provider?: string; model?: string; reasoning?: AgentReasoning }) => {
+    const result = await saveAgentOptions({ ...patch, expectedRuntime: agentStatus?.runtime });
+    refreshAgentStatus();
+    if (!result.ok) throw new Error(result.error);
+  };
   const permissionRuntime = pendingPrimaryAgent?.definition.runtimeProfile.runtimeId ?? manageResolvedBinding.runtime;
   const effectivePermissionMode = chatPermissionModeForRuntime(permissionMode, permissionRuntime);
   const composerEffort = resolveComposerReasoning(manageResolvedBinding, agentStatus, null, providerModels, agentStatus?.providers);
@@ -888,21 +896,9 @@ function ScopedManageComposer({
           if (!result.ok) throw new Error(result.error);
           refreshAgentStatus();
         }}
-        onSaveProvider={async (provider) => {
-          const result = await saveAgentOptions({ provider });
-          if (!result.ok) throw new Error(result.error);
-          refreshAgentStatus();
-        }}
-        onSaveModel={async (model) => {
-          const result = await saveAgentOptions({ model });
-          if (!result.ok) throw new Error(result.error);
-          refreshAgentStatus();
-        }}
-        onSaveReasoning={async (reasoning) => {
-          const result = await saveAgentOptions({ reasoning: reasoning as AgentReasoning });
-          if (!result.ok) throw new Error(result.error);
-          refreshAgentStatus();
-        }}
+        onSaveProvider={(provider) => saveHomeDefault({ provider })}
+        onSaveModel={(model) => saveHomeDefault({ model })}
+        onSaveReasoning={(reasoning) => saveHomeDefault({ reasoning: reasoning as AgentReasoning })}
         onRetryModels={retryModels}
         onCloseAgentMenu={() => setAgentMenu(null)}
         onCloseModelMenu={() => setModelMenu(null)}

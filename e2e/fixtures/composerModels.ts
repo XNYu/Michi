@@ -41,7 +41,11 @@ export async function installComposerModels(page: Page, options: { failSave?: bo
         const patch = request.postDataJSON() as AgentOptionsPatch;
         patches.push(patch);
         if (options.failSave) { options.failSave = false; return json({ ok: false, error: 'Model settings could not be saved' }, 500); }
-        Object.assign(status, patch);
+        const { expectedRuntime, ...settings } = patch;
+        if (expectedRuntime && expectedRuntime !== status.runtime) {
+          return json({ ok: false, code: 'runtime_mismatch', error: `The active runtime is now ${status.label}.` }, 409);
+        }
+        Object.assign(status, settings);
         if (patch.runtime) {
           status.model = composerModels[patch.runtime as keyof typeof composerModels][0].id;
           status.reasoning = 'medium';

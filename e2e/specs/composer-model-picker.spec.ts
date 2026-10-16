@@ -128,7 +128,7 @@ test('saves model and effort as Home defaults and preserves the draft', async ({
   await expect.poll(() => ensures.length).toBe(1);
   // Home uses the saved global defaults; pane overrides are exercised below.
   expect(status).toMatchObject({ runtime: 'codex', model: 'gpt-5.3-codex', reasoning: 'high' });
-  expect(patches).toEqual([{ model: 'gpt-5.3-codex' }, { reasoning: 'high' }]);
+  expect(patches).toEqual([{ model: 'gpt-5.3-codex', expectedRuntime: 'codex' }, { reasoning: 'high', expectedRuntime: 'codex' }]);
   expect(errors).toEqual([]);
 });
 

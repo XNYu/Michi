@@ -255,7 +255,7 @@ export default function FirstRunSetup() {
               disabled={saving || modelCatalog.loading}
               onChange={async (e) => {
                 setSaving(true);
-                await saveAgentOptions({ model: e.target.value });
+                await saveAgentOptions({ model: e.target.value, expectedRuntime: status.runtime });
                 setSaving(false);
                 refreshAgentStatus();
               }}

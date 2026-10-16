@@ -155,7 +155,7 @@ export default function ApiKeyGate() {
     setError(null);
     try {
       if (selectedProviderInfo.id !== status.provider) {
-        await saveAgentOptions({ provider: selectedProviderInfo.id });
+        await saveAgentOptions({ provider: selectedProviderInfo.id, expectedRuntime: status.runtime });
       }
       if (key.trim()) {
         const result = await saveProviderKey(selectedProviderInfo.id, key.trim());

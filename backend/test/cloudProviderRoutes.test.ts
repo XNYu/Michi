@@ -139,6 +139,9 @@ test('locked models are normalized even on a runtime without reasoning support',
 
 test('cloud model catalogs use account defaults and browsing another provider does not replace model memory', async () => {
   await post('/agent/options', { provider: 'deepseek', model: 'deepseek-v4-flash' });
+  // The save checks the model against the newly selected provider's catalog.
+  assert.deepEqual(catalogProviders, ['deepseek']);
+  catalogProviders = [];
   await fetch(`${base}/agent/runtime-catalog?runtime=pi`);
   await fetch(`${base}/agent/models`);
   assert.deepEqual(catalogProviders, ['deepseek', 'deepseek']);

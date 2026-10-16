@@ -135,6 +135,12 @@ export interface AgentOptionsPatch {
   webSearchProvider?: string | null;
   model?: string;
   reasoning?: AgentReasoning;
+  /**
+   * The active runtime the caller's provider/model/effort choice was made
+   * for. The backend rejects the save (409, code `runtime_mismatch`) when its
+   * active runtime differs, so one runtime's ids are not stored under another.
+   */
+  expectedRuntime?: RuntimeId;
 }
 
 export async function saveAgentOptions(

@@ -268,6 +268,7 @@ function ProviderPicker({
           const result = await saveAgentOptions({
             provider: provider.id,
             model: provider.defaultModel,
+            expectedRuntime: status.runtime,
           });
           setSaving(false);
           if (!result.ok) setError(result.error);
@@ -375,7 +376,7 @@ function ProviderModelPicker({
         onChange={async (e) => {
           setSaving(true);
           setSaveError(null);
-          const result = await saveAgentOptions({ model: e.target.value });
+          const result = await saveAgentOptions({ model: e.target.value, expectedRuntime: status.runtime });
           setSaving(false);
           if (!result.ok) setSaveError(result.error);
           onChanged();
@@ -454,7 +455,7 @@ function ReasoningPicker({
         onChange={async (e) => {
           setSaving(true);
           setError(null);
-          const result = await saveAgentOptions({ reasoning: e.target.value as AgentReasoning });
+          const result = await saveAgentOptions({ reasoning: e.target.value as AgentReasoning, expectedRuntime: status.runtime });
           setSaving(false);
           if (!result.ok) setError(result.error);
           onChanged();

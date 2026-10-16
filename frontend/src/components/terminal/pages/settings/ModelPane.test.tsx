@@ -6,6 +6,7 @@ import { ModelPane } from './ModelPane';
 const setPref = vi.fn();
 const refreshAgentStatus = vi.fn();
 const saveAgentOptions = vi.hoisted(() => vi.fn());
+const listAgentModels = vi.hoisted(() => vi.fn());
 const saveWebSearchKey = vi.hoisted(() => vi.fn());
 const clearWebSearchKey = vi.hoisted(() => vi.fn());
 let agentStatus: any = null;
@@ -16,6 +17,7 @@ vi.mock('../../../../state/chatStore', () => ({
 
 vi.mock('../../../../services/api', () => ({
   saveAgentOptions,
+  listAgentModels,
   saveWebSearchKey,
   clearWebSearchKey,
 }));
@@ -45,6 +47,28 @@ describe('ModelPane Kiro sidecar title setting', () => {
       nativeResumeByRuntime: { codex: true, claude: false },
       nativeForkByRuntime: { codex: true, claude: false } };
   }
+
+  // Model, provider and effort ids belong to the runtime Settings shows; the
+  // backend rejects a save if its active runtime has changed since.
+  it('saves model and effort for the runtime Settings shows', async () => {
+    agentStatus = { runtime: 'kiro', label: 'Kiro', model: 'opus-5.5', reasoning: 'low', hasRequiredKey: true,
+      availableRuntimes: [], capabilities: { models: true, reasoning: true, supportedReasoningLevels: ['low', 'high'] } };
+    listAgentModels.mockResolvedValue({ models: [{ id: 'opus-5.5', label: 'Opus 5.5' }, { id: 'sonnet-5.5', label: 'Sonnet 5.5' }], sanitizedModel: null });
+    render(<ModelPane activeProjectId={null} />);
+    fireEvent.change(await screen.findByDisplayValue('Opus 5.5'), { target: { value: 'sonnet-5.5' } });
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ model: 'sonnet-5.5', expectedRuntime: 'kiro' }));
+    fireEvent.change(screen.getByDisplayValue('low'), { target: { value: 'high' } });
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenLastCalledWith({ reasoning: 'high', expectedRuntime: 'kiro' }));
+  });
+
+  it('switches provider for the runtime Settings shows', async () => {
+    const provider = (id: string) => ({ id, label: id.toUpperCase(), keyLabel: '', envVars: [], defaultModel: `${id}-default`, supportsReasoning: false, hasKey: true });
+    agentStatus = { runtime: 'pi', label: 'Pi', provider: 'p1', providers: [provider('p1'), provider('p2')], hasRequiredKey: true,
+      availableRuntimes: [], capabilities: { providerModels: true } };
+    render(<ModelPane activeProjectId={null} />);
+    fireEvent.change(screen.getByDisplayValue(/^P1/), { target: { value: 'p2' } });
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ provider: 'p2', model: 'p2-default', expectedRuntime: 'pi' }));
+  });
 
   it('saves Native Fork per runtime without changing Native Resume', async () => {
     agentStatus = nativeResumeStatus();
