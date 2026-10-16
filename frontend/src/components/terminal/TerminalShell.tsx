@@ -28,6 +28,8 @@ import type { ChatNodeState } from '../../state/chatTypes';
 import { PanePresentationProvider } from './PanePresentation';
 import { setPanePresenceDashboardVisible } from '../../state/panePresenceVisibility';
 
+import { REMOTE_DIAGNOSTIC_AGENT_EVENT, type DiagnosticAgentRequest } from '../../services/remoteDiagnosticAgent';
+
 const NARROW_THRESHOLD = 700;
 const TerminalMap = React.lazy(() => import('./pages/Map'));
 const TerminalBranches = React.lazy(() => import('./pages/Branches'));
@@ -110,6 +112,8 @@ export default function TerminalShell() {
   const {
     createProject,
     enterChatsWorkspace,
+    createThread,
+    sendMessage,
     focusPane,
     closePane,
     openPane,
@@ -122,6 +126,36 @@ export default function TerminalShell() {
     navForward,
   } = useChatActions();
   useLinkOpening();
+  const [diagnosticRequest, setDiagnosticRequest] = useState<{ projectId: string; request: DiagnosticAgentRequest } | null>(null);
+  const diagnosticPending = React.useRef(false);
+  useEffect(() => {
+    const handle = (event: Event) => {
+      const request = (event as CustomEvent<DiagnosticAgentRequest>).detail;
+      event.preventDefault();
+      if (diagnosticPending.current) { request.reject(new Error('A diagnostic conversation is already opening.')); return; }
+      diagnosticPending.current = true;
+      void enterChatsWorkspace().then(projectId => setDiagnosticRequest({ projectId, request })).catch(error => {
+        diagnosticPending.current = false; request.reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    };
+    window.addEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle);
+    return () => window.removeEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle);
+  }, [enterChatsWorkspace]);
+  useEffect(() => {
+    if (!diagnosticRequest || !diagnosticPending.current || activeProject?.id !== diagnosticRequest.projectId) return;
+    diagnosticPending.current = false;
+    setDiagnosticRequest(null);
+    const { request } = diagnosticRequest;
+    try {
+      if (request.cancelled) return;
+      if (activeProject.backendConnectionId && activeProject.backendConnectionId !== 'local') throw new Error('Diagnostics require a local workspace.');
+      const nodeId = createThread();
+      if (!nodeId) throw new Error('Could not create a local diagnostic conversation.');
+      sendMessage(nodeId, request.prompt, request.binding);
+      setSettingsOpen(false); setNewWsOpen(false); setPage('dashboard');
+      request.resolve();
+    } catch (error) { request.reject(error instanceof Error ? error : new Error(String(error))); }
+  }, [diagnosticRequest, activeProject, createThread, sendMessage]);
   const { prefs, setPref } = usePrefs();
   const drawerMotion = prefs.reduceMotion ? 'instant' as const : 'standard' as const;
 

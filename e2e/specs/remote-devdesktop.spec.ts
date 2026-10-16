@@ -116,3 +116,70 @@ for (const palette of ['bone', 'gruvbox']) {
     await page.screenshot({ path: testInfo.outputPath(`manual-narrow-${palette}.png`) });
   });
 }
+
+for (const hasLocalRuntime of [true, false]) {
+  test(`remote failure has logs, copy and ${hasLocalRuntime ? 'local agent handoff' : 'no-runtime fallback'}`, async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { (window as unknown as { copiedDiagnostic: string }).copiedDiagnostic = text; } } });
+    });
+    const diagnostic = { id: 'attempt-e2e', host: 'build+', startedAt: '2026-10-16T12:00:00Z', stage: 'tunnel', code: 'setup_failed', message: 'SSH tunnel failed: bind: Address already in use', log: '[ssh] Remote service healthy\n[tunnel] bind: Address already in use\n[exit] code=255', truncated: false };
+    const sends: { path: string; body: unknown }[] = [];
+    const sessions: { path: string; body: unknown }[] = [];
+    const remoteWorkspace = { workspace: { id: 'remote-existing', name: 'Remote existing workspace', created_at: 1, cwd: '/home/u/project' }, nodes: [], trees: [], edges: [], messages: [], artifacts: [] };
+    await installMockApi(page, { custom: async route => {
+      const request = route.request(); const url = new URL(request.url());
+      if (url.pathname === '/api/backend-connections') {
+        await route.fulfill({ json: { connections: [{ id: 'remote-existing', name: 'Existing remote', transport: 'ssh', sshHost: 'existing', remotePort: 4444, hasToken: true }] } }); return true;
+      }
+      if (url.pathname === '/api/backend-connections/remote-existing/proxy/workspaces/all') {
+        await route.fulfill({ json: { workspaces: [remoteWorkspace] } }); return true;
+      }
+      if (url.pathname.endsWith('/proxy/agent/status')) {
+        await route.fulfill({ json: { runtime: 'remote-mock', label: 'Remote only', hasRequiredKey: true, availableRuntimes: [{ id: 'remote-mock', label: 'Remote only', available: true }], capabilities: {} } }); return true;
+      }
+      if (url.pathname === '/api/backend-connections/connect-ssh') {
+        await route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'error', code: diagnostic.code, message: diagnostic.message, diagnostic }) + '\n' }); return true;
+      }
+      if (url.pathname === '/api/agent/status') {
+        await route.fulfill({ json: { runtime: 'mock', label: 'Local Mock', hasRequiredKey: hasLocalRuntime,
+          capabilities: { modes: false, permissions: false, providerModels: false, reasoning: false, apiKeys: false, warmSessions: false },
+          availableRuntimes: hasLocalRuntime ? [{ id: 'mock', label: 'Local Mock', available: true, requiresApiKey: false }] : [],
+        } }); return true;
+      }
+      if (request.method() === 'POST' && url.pathname.endsWith('/ensure-session')) sessions.push({ path: url.pathname, body: request.postDataJSON() });
+      if (request.method() === 'POST' && /\/chats\/[^/]+\/message$/.test(url.pathname)) sends.push({ path: url.pathname, body: request.postDataJSON() });
+      return false;
+    } });
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Remote existing workspace', exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: 'Remote existing workspace', exact: true }).first().click();
+    await page.getByText('Settings', { exact: true }).last().click();
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+    await settings.getByRole('button', { name: 'Connect remote', exact: true }).click();
+    await settings.getByLabel('Remote SSH host').fill('build+');
+    await settings.getByRole('button', { name: 'Connect', exact: true }).click();
+    await expect(settings.getByRole('alert')).toContainText('Address already in use');
+    await settings.getByRole('button', { name: 'View logs' }).click();
+    await expect(settings.getByLabel('Connection log')).toHaveValue(/Stage: tunnel[\s\S]*code=255/);
+    await settings.getByRole('button', { name: 'Copy diagnostics' }).click();
+    await expect(settings.getByText('Diagnostics copied.')).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { copiedDiagnostic: string }).copiedDiagnostic)).toContain('code=255');
+    await expect.poll(() => settings.locator('.terminal-settings-content').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('diagnostics.png') });
+    if (hasLocalRuntime) {
+      await settings.getByRole('button', { name: 'Ask local agent' }).click();
+      await expect(settings).toBeHidden();
+      await expect.poll(() => sends.length).toBe(1);
+      expect(sends[0].path).toMatch(/^\/api\/chats\//);
+      expect(JSON.stringify(sends[0].body)).toContain('Address already in use');
+      expect(JSON.stringify(sessions[0].body)).toContain('mock');
+      expect(sessions[0].path).toMatch(/^\/api\/nodes\//);
+      await expect(page.getByText('Hello from mock kiro.', { exact: false }).first()).toBeVisible();
+    } else {
+      await expect(settings.getByRole('button', { name: 'Ask local agent' })).toHaveCount(0);
+      await expect(settings.getByText('No ready local runtime. View or copy diagnostics below.')).toBeVisible();
+      expect(sends).toEqual([]);
+    }
+  });
+}

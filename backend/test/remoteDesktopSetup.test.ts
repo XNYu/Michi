@@ -6,9 +6,10 @@ import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
 import { execFileSync } from 'node:child_process';
-import { buildRemoteInstallScript, parseRemoteHost, RemoteDesktopSetup, shellQuote } from '../src/services/remoteDesktopSetup';
+import { buildRemoteInstallScript, parseRemoteHost, RemoteDesktopSetup, RemoteDesktopError, runRemoteSsh, shellQuote } from '../src/services/remoteDesktopSetup';
 import { getBackendConnection, listBackendConnections, saveBackendConnection } from '../src/services/backendConnections';
 import { SshTunnelManager } from '../src/services/sshTunnelManager';
+import { RemoteDiagnosticLog } from '../src/services/remoteDiagnostics';
 import { setupBackendConnectionRoutes } from '../src/routes/backendConnections';
 
 let dataDir = '', oldDataDir: string | undefined;
@@ -119,8 +120,74 @@ test('setup route streams progress and sanitized result under the local-control 
     const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host: 'build+' }) });
     assert.match(response.headers.get('Content-Type') ?? '', /ndjson/);
     const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line));
-    assert.equal(events[0].type, 'progress'); assert.equal(events[1].result.kind, 'install_required');
+    assert.equal(events[0].type, 'attempt'); assert.equal(events[1].type, 'progress'); assert.equal(events[2].result.kind, 'install_required');
     const denied = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://untrusted.example' }, body: JSON.stringify({ host: 'build+' }) });
+    assert.equal(denied.status, 403);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+
+test('SSH failure preserves stderr, process exit and spawn errors without credential output', async () => {
+  const old = process.env.MICHI_SSH_BIN;
+  const file = path.join(dataDir, 'fake-ssh');
+  fs.writeFileSync(file, '#!/bin/sh\nprintf "Permission denied (publickey).\\n" >&2\nprintf "MICHI_REMOTE_TOKEN=private-value\\n"\nexit 255\n', { mode: 0o700 });
+  const diagnostic = new RemoteDiagnosticLog('build+');
+  try {
+    process.env.MICHI_SSH_BIN = file;
+    await assert.rejects(runRemoteSsh({ sshHost: 'build+' }, 'ignored', undefined, undefined, diagnostic), /SSH authentication/);
+    assert.match(diagnostic.report.log, /Permission denied \(publickey\)/);
+    assert.match(diagnostic.report.log, /code=255/);
+    assert.doesNotMatch(diagnostic.report.log, /private-value/);
+    process.env.MICHI_SSH_BIN = path.join(dataDir, 'missing-ssh');
+    await assert.rejects(runRemoteSsh({ sshHost: 'build+' }, '', undefined, undefined, diagnostic), /ENOENT/);
+    assert.match(diagnostic.report.log, /ENOENT/);
+  } finally { diagnostic.finish(); if (old === undefined) delete process.env.MICHI_SSH_BIN; else process.env.MICHI_SSH_BIN = old; }
+});
+
+test('collects only this attempt setup log on remote build failure and preserves the original stage', async () => {
+  let calls = 0;
+  const diagnostic = new RemoteDiagnosticLog('build+');
+  const service = new RemoteDesktopSetup({ runSsh: async (_target, script, _signal, progress) => {
+    calls++;
+    if (calls === 1) return json({ healthy: false });
+    if (calls === 2) {
+      assert.match(script, new RegExp('setup\\.' + diagnostic.report.id + '\\.log'));
+      progress?.('build', 'Building remotely');
+      throw new RemoteDesktopError('build', 'Remote build failed.');
+    }
+    assert.match(script, new RegExp('setup\\.' + diagnostic.report.id + '\\.log'));
+    return 'npm ERR! dependency unavailable\nMICHI_REMOTE_TOKEN=private-log-token';
+  } });
+  try {
+    await assert.rejects(service.connect('build+', true, (stage, message) => diagnostic.stage(stage, message), undefined, diagnostic), /Remote build failed/);
+    assert.equal(diagnostic.report.stage, 'build');
+    assert.match(diagnostic.report.log, /dependency unavailable/);
+    assert.doesNotMatch(diagnostic.report.log, /private-log-token/);
+  } finally { diagnostic.finish(); }
+});
+
+test('unknown errors include real cause, stage and retrievable diagnostics under the local-control boundary', async () => {
+  class FailingSetup extends RemoteDesktopSetup {
+    override async connect(_host: string, _install: boolean, progress: (stage: string, message: string) => void): Promise<never> {
+      progress('tunnel', 'Opening SSH forwarding');
+      throw new Error('listen EADDRINUSE: port already in use');
+    }
+  }
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new FailingSetup() }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}/api/backend-connections`;
+  try {
+    const response = await fetch(base + '/connect-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host: 'build+' }) });
+    const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line));
+    const failure = events.at(-1);
+    assert.equal(failure.diagnostic.stage, 'tunnel');
+    assert.match(failure.message, /EADDRINUSE/);
+    const saved = await fetch(base + '/diagnostics/' + events[0].id);
+    assert.equal(saved.status, 200);
+    assert.match(((await saved.json()) as { log: string }).log, /EADDRINUSE/);
+    const denied = await fetch(base + '/diagnostics/' + events[0].id, { headers: { Origin: 'https://untrusted.example' } });
     assert.equal(denied.status, 403);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

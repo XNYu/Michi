@@ -260,6 +260,7 @@ export async function probeBackendConnection(input: {
   apiUrl: string;
   token?: string;
   timeoutMs?: number;
+  onDiagnostic?: (message: string) => void;
 }): Promise<{ ok: true; apiUrl: string; serverId?: string } | { ok: false; apiUrl?: string; error: string }> {
   let apiUrl: string;
   try {
@@ -274,6 +275,7 @@ export async function probeBackendConnection(input: {
     const token = input.token?.trim();
     if (token) headers.Authorization = `Bearer ${token}`;
     const response = await fetch(`${apiUrl}/health`, { headers, signal: controller.signal });
+    input.onDiagnostic?.('GET ' + apiUrl + '/health → HTTP ' + response.status);
     const body = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {
       const detail = body && typeof body.error === 'string' ? `: ${body.error}` : '';
@@ -288,6 +290,7 @@ export async function probeBackendConnection(input: {
       serverId: typeof body.serverId === 'string' ? body.serverId : undefined,
     };
   } catch (err) {
+    input.onDiagnostic?.(err instanceof Error ? (err.stack ?? err.message) + (err.cause ? '\nCause: ' + String(err.cause) : '') : String(err));
     const message = (err as Error).name === 'AbortError'
       ? 'Connection timed out'
       : (err as Error).message || 'Connection failed';

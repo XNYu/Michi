@@ -170,6 +170,35 @@ and authentication must still be configured on the remote machine. Setup checks
 Kiro's login status separately and reports a warning when its CLI is installed
 but not signed in. A successful connection is not a successful model-response test.
 
+Failed connections show the failing stage and an expandable diagnostic. **Copy
+diagnostics** copies the attempt ID, host, timestamps, error code, actual exception,
+SSH stdout/stderr and exit status, tunnel details and health-check result. If
+clipboard access fails, the log opens as selectable text. Network interruptions
+retain the received progress and try to retrieve the saved attempt from the local
+gateway.
+
+The local gateway keeps the most recent 20 attempt reports under
+`<MICHI_LOG_DIR or ~/.michi/logs>/remote-connections/<attempt-id>.json` with mode
+0600. Setup protocol records and credentials are redacted before saving or sending
+to the renderer. Installation logs use
+`~/.local/share/michi/devdesktop/setup.<attempt-id>.log` on the host. On failure,
+the gateway also tries to collect that attempt's setup log, the background service
+log and the last 300 systemd journal lines. Service logs may contain earlier runs
+and are labeled accordingly. A failed collection is recorded without replacing
+the original error. Capture limits are explicit: 2 million characters per SSH
+output stream, 750 KB per remote file, 300 KB of journal output, and 4 million
+characters per local report. Complete remote files remain on the host; truncated
+captures are marked. Reports can contain hostnames, paths and source/build output.
+
+When a local runtime is available, **Ask local agent** opens a new conversation in
+the local Chats workspace and sends a diagnostic prompt using that runtime's
+configured provider/model. This also works when the selected workspace is remote.
+It rechecks local availability on click and does not change the default runtime.
+The prompt asks for read-only investigation first and treats logs as untrusted
+data. Long reports use a labeled prompt excerpt; the saved report and full copy
+remain available. Without a ready local runtime, viewing and copying diagnostics
+still work.
+
 For development, the local gateway can override its trusted source with
 `MICHI_REMOTE_SOURCE_URL` and `MICHI_REMOTE_SOURCE_REF`. To test an unpushed
 worktree, `MICHI_REMOTE_EXPERIMENT_BUNDLE` names a Git bundle already placed on

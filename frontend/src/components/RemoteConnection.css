@@ -179,3 +179,19 @@
 .remote-folder-picker__entries svg:last-child { margin-left: auto; }
 .remote-folder-picker__empty { padding: 8px 0; color: var(--term-muted); font-size: var(--fs-sm); }
 .remote-folder-picker__status { margin-top: 12px; color: var(--term-muted); font-size: var(--fs-sm); }
+
+.remote-diagnostic { margin-top: 12px; min-width: 0; }
+.remote-diagnostic__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.remote-diagnostic__log.ui-input {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  max-height: 420px;
+  margin-top: 10px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

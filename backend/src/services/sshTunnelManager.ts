@@ -122,7 +122,7 @@ export class SshTunnelManager {
     return this.statuses.get(connectionId) ?? { phase: 'disconnected' };
   }
 
-  async apiUrl(connection: BackendConnectionRecord): Promise<string> {
+  async apiUrl(connection: BackendConnectionRecord, onDiagnostic?: (source: string, message: string) => void): Promise<string> {
     if (connection.transport === 'direct') return connection.apiUrl;
     const configKey = connectionConfigKey(connection);
     const existing = this.states.get(connection.id);
@@ -149,7 +149,14 @@ export class SshTunnelManager {
           throw new Error('SSH tunnel was stopped');
         }
         state.localPort = localPort;
-        const child = this.spawnSsh(this.sshBinary, buildSshTunnelArgs(connection, localPort));
+        const args = buildSshTunnelArgs(connection, localPort);
+        onDiagnostic?.('tunnel command', this.sshBinary + ' ' + args.join(' '));
+        const child = this.spawnSsh(this.sshBinary, args);
+        let diagnosticStderr = '';
+        if (onDiagnostic) child.stderr?.on('data', chunk => { diagnosticStderr = (diagnosticStderr + String(chunk)).slice(-2_000_000); });
+        const recordDiagnostic = () => onDiagnostic?.('tunnel stderr (last 2 MB)', diagnosticStderr || '[empty]');
+        if (onDiagnostic) child.once('error', error => onDiagnostic('tunnel spawn', error.stack ?? error.message));
+        if (onDiagnostic) child.once('close', (code, signal) => { recordDiagnostic(); onDiagnostic('tunnel exit', 'code=' + code + ' signal=' + signal); });
         state.process = child;
         child.stderr?.on('data', (chunk) => {
           state.stderr = `${state.stderr}${String(chunk)}`.slice(-4_000);
@@ -166,7 +173,8 @@ export class SshTunnelManager {
             reject(new Error(`SSH exited (${code ?? signal ?? 'unknown'})`));
           });
         });
-        await Promise.race([this.waitUntilReady(localPort, child), childFailure]);
+        try { await Promise.race([this.waitUntilReady(localPort, child), childFailure]); }
+        finally { recordDiagnostic(); }
         if (this.states.get(connection.id) !== state) {
           throw new Error('SSH tunnel was stopped');
         }

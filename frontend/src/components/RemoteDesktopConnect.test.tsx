@@ -1,13 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RemoteDesktopConnect } from './RemoteDesktopConnect';
+import { REMOTE_DIAGNOSTIC_AGENT_EVENT, type DiagnosticAgentRequest } from '../services/remoteDiagnosticAgent';
 import { RemoteFolderPicker } from './RemoteFolderPicker';
 
-const mocks = vi.hoisted(() => ({ connect: vi.fn(), browse: vi.fn() }));
+const mocks = vi.hoisted(() => ({ connect: vi.fn(), browse: vi.fn(), status: vi.fn() }));
 vi.mock('../services/api/backendConnections', () => ({
   connectRemoteDesktop: mocks.connect, browseRemoteDirectory: mocks.browse,
 }));
-beforeEach(() => { mocks.connect.mockReset(); mocks.browse.mockReset(); });
+vi.mock('../services/api/agentRuntime', () => ({ fetchAgentStatus: mocks.status }));
+beforeEach(() => { mocks.connect.mockReset(); mocks.browse.mockReset(); mocks.status.mockReset().mockResolvedValue({ runtime: 'none', availableRuntimes: [], hasRequiredKey: false }); });
+afterEach(() => vi.unstubAllGlobals());
 
 it('connects with only a host and requests installation explicitly', async () => {
   mocks.connect.mockResolvedValueOnce({ kind: 'install_required', host: 'build+' }).mockResolvedValueOnce({
@@ -92,4 +95,81 @@ it('does not select the previous directory while a new navigation is pending', a
   await screen.findByRole('button', { name: 'Use this folder' });
   fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
   expect(select).toHaveBeenCalledWith('/local/home/u/project');
+});
+
+
+const report = { id: 'attempt-test', host: 'build+', startedAt: '2026-10-16T12:00:00Z', stage: 'build', code: 'build', message: 'Remote build failed', log: 'npm ERR! missing dependency', truncated: false };
+async function failConnection() {
+  mocks.connect.mockRejectedValue(Object.assign(new Error(report.message), { diagnostic: report }));
+  render(<RemoteDesktopConnect onConnected={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  await screen.findByRole('alert');
+}
+
+it('shows the failing stage and full diagnostic, supports copying without a local runtime', async () => {
+  const copy = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { clipboard: { writeText: copy } });
+  await failConnection();
+  await screen.findByText(/No ready local runtime/);
+  expect(mocks.status).toHaveBeenCalledWith('local', expect.any(AbortSignal));
+  expect(screen.queryByRole('button', { name: 'Ask local agent' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'View logs' }));
+  expect((screen.getByLabelText('Connection log') as HTMLTextAreaElement).value).toContain('Stage: build');
+  fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }));
+  await screen.findByText('Diagnostics copied.');
+  expect(copy.mock.calls[0][0]).toContain('npm ERR! missing dependency');
+});
+
+it('reveals selectable log text when clipboard access fails', async () => {
+  vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+  await failConnection();
+  fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }));
+  await screen.findByText(/Clipboard unavailable/);
+  expect(screen.getByLabelText('Connection log')).toBeTruthy();
+});
+
+it('rechecks local runtime and hands off a diagnostic prompt once', async () => {
+  mocks.status.mockResolvedValue({ runtime: 'codex', label: 'Codex', hasRequiredKey: true,
+    model: 'configured-model', availableRuntimes: [{ id: 'codex', label: 'Codex', available: true, requiresApiKey: false }] });
+  const sent = vi.fn();
+  const handle = (event: Event) => {
+    event.preventDefault();
+    const request = (event as CustomEvent<DiagnosticAgentRequest>).detail;
+    sent(request); request.resolve();
+  };
+  window.addEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle);
+  try {
+    await failConnection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask local agent' }));
+    await vi.waitFor(() => expect(sent).toHaveBeenCalledTimes(1));
+    expect(sent.mock.calls[0][0].binding).toMatchObject({ runtimeId: 'codex', modelId: 'configured-model' });
+    expect(sent.mock.calls[0][0].prompt).toContain('npm ERR! missing dependency');
+    expect(sent.mock.calls[0][0].prompt).toContain('read-only');
+  } finally { window.removeEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle); }
+});
+
+it('keeps the copy fallback visible if local chat handoff fails', async () => {
+  mocks.status.mockResolvedValue({ runtime: 'codex', hasRequiredKey: true,
+    availableRuntimes: [{ id: 'codex', label: 'Codex', available: true }] });
+  await failConnection();
+  fireEvent.click(await screen.findByRole('button', { name: 'Ask local agent' }));
+  await screen.findByText(/Local conversation is unavailable/);
+  expect(screen.getByRole('button', { name: 'Copy diagnostics' })).toBeTruthy();
+});
+
+
+it('cancels a pending agent handoff when the connection dialog is dismissed', async () => {
+  mocks.status.mockResolvedValue({ runtime: 'codex', hasRequiredKey: true,
+    availableRuntimes: [{ id: 'codex', label: 'Codex', available: true }] });
+  let request: DiagnosticAgentRequest | undefined;
+  const handle = (event: Event) => { event.preventDefault(); request = (event as CustomEvent<DiagnosticAgentRequest>).detail; };
+  window.addEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle);
+  try {
+    await failConnection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask local agent' }));
+    await vi.waitFor(() => expect(request).toBeTruthy());
+    cleanup();
+    expect(request?.cancelled).toBe(true);
+  } finally { window.removeEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle); }
 });

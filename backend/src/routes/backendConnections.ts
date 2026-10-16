@@ -13,6 +13,7 @@ import {
 import { sshTunnelManager, type SshTunnelManager } from '../services/sshTunnelManager';
 import { requireLocalControlRequest } from './middleware/localControl';
 import { RemoteDesktopError, RemoteDesktopSetup } from '../services/remoteDesktopSetup';
+import { RemoteDiagnosticLog, readRemoteDiagnostic } from '../services/remoteDiagnostics';
 
 const FORWARDED_REQUEST_HEADERS = ['accept', 'content-type', 'range', 'last-event-id'] as const;
 const SKIPPED_RESPONSE_HEADERS = new Set([
@@ -67,14 +68,25 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
     const emit = (value: unknown) => {
       if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(value) + '\n');
     };
+    const diagnostic = new RemoteDiagnosticLog(req.body.host);
+    emit({ type: 'attempt', id: diagnostic.report.id });
     try {
       const result = await remoteSetup.connect(req.body.host, req.body.install === true,
-        (stage, message) => emit({ type: 'progress', stage, message }), controller.signal);
+        (stage, message) => { diagnostic.stage(stage, message); emit({ type: 'progress', stage, message }); }, controller.signal, diagnostic);
+      diagnostic.append('result', result.kind);
       emit({ type: 'result', result });
     } catch (error) {
-      emit({ type: 'error', code: error instanceof RemoteDesktopError ? error.code : 'setup_failed',
-        message: error instanceof RemoteDesktopError ? error.message : 'Remote setup failed. Check SSH access and try again.' });
-    } finally { res.end(); }
+      diagnostic.fail(error, error instanceof RemoteDesktopError ? error.code : 'setup_failed');
+      diagnostic.save();
+      emit({ type: 'error', code: diagnostic.report.code, message: diagnostic.report.message, diagnostic: diagnostic.report });
+    } finally { diagnostic.finish(); res.end(); }
+  });
+
+  router.get('/backend-connections/diagnostics/:attemptId', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const diagnostic = readRemoteDiagnostic(req.params.attemptId);
+    if (!diagnostic) return res.status(404).json({ error: 'Diagnostic not found or expired.' });
+    res.json(diagnostic);
   });
 
   router.get('/backend-connections/:id/directories', async (req, res) => {

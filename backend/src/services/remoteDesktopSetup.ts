@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import type { RemoteDiagnosticLog } from './remoteDiagnostics';
 import {
   getBackendConnection, listBackendConnections, normalizeBackendConnection,
   probeBackendConnection, saveBackendConnection, type BackendConnectionSummary,
@@ -23,21 +24,22 @@ export function shellQuote(value: string): string { return `'${value.replace(/'/
 
 type SshTarget = ReturnType<typeof parseRemoteHost> & { sshPort?: number };
 type Progress = (stage: string, message: string) => void;
-type RunSsh = (target: SshTarget, script: string, signal?: AbortSignal, progress?: Progress) => Promise<string>;
+type RunSsh = (target: SshTarget, script: string, signal?: AbortSignal, progress?: Progress, diagnostics?: RemoteDiagnosticLog) => Promise<string>;
 
-export const runRemoteSsh: RunSsh = (target, script, signal, progress) => new Promise((resolve, reject) => {
+export const runRemoteSsh: RunSsh = (target, script, signal, progress, diagnostics) => new Promise((resolve, reject) => {
   const child = spawn(process.env.MICHI_SSH_BIN?.trim() || 'ssh', [
     '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
     '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
     ...(target.sshPort ? ['-p', String(target.sshPort)] : []),
     target.sshUser ? `${target.sshUser}@${target.sshHost}` : target.sshHost, 'bash -s',
   ], { stdio: ['pipe', 'pipe', 'pipe'], signal });
-  let output = '', errors = '', pending = '';
-  const timeout = setTimeout(() => child.kill('SIGTERM'), 15 * 60_000);
+  let output = '', errors = '', pending = '', timedOut = false, overflow = false;
+  diagnostics?.append('ssh command', 'ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes ' + (target.sshUser ? target.sshUser + '@' : '') + target.sshHost + ' bash -s');
+  const timeout = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, 15 * 60_000);
   child.stdout.on('data', (chunk) => {
     output += String(chunk);
     pending += String(chunk);
-    if (output.length > 2_000_000) { child.kill('SIGTERM'); return; }
+    if (output.length > 2_000_000) { overflow = true; child.kill('SIGTERM'); return; }
     const lines = pending.split('\n'); pending = lines.pop() ?? '';
     for (const line of lines) {
       if (line.startsWith('MICHI_PROGRESS:')) {
@@ -51,11 +53,16 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress) => new Pr
       }
     }
   });
-  child.stderr.on('data', chunk => { errors = (errors + String(chunk)).slice(-8_000); });
+  child.stderr.on('data', chunk => { errors += String(chunk); if (errors.length > 2_000_000) { overflow = true; child.kill('SIGTERM'); } });
   child.stdin.on('error', () => {});
-  child.once('error', error => { clearTimeout(timeout); reject(error); });
-  child.once('close', code => {
+  child.once('error', error => { clearTimeout(timeout); diagnostics?.append('ssh spawn', error.stack ?? error.message); reject(error); });
+  child.once('close', (code, exitSignal) => {
     clearTimeout(timeout);
+    diagnostics?.append('ssh stdout', output);
+    diagnostics?.append('ssh stderr', errors);
+    diagnostics?.append('ssh exit', 'code=' + code + ' signal=' + exitSignal);
+    if (overflow) { if (diagnostics) diagnostics.report.truncated = true; reject(new RemoteDesktopError('output_limit', 'SSH output exceeded the 2 MB capture limit.')); return; }
+    if (timedOut) { reject(new RemoteDesktopError('ssh_timeout', 'SSH setup exceeded its 15 minute limit.')); return; }
     if (signal?.aborted) { reject(new RemoteDesktopError('cancelled', 'Connection cancelled.')); return; }
     if (code === 0) { resolve(output); return; }
     if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/.test(errors)) {
@@ -64,13 +71,22 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress) => new Pr
     if (/Permission denied|Authentication failed|expired|unauthorized/i.test(errors)) {
       reject(new RemoteDesktopError('ssh_auth', 'SSH authentication needs attention. Sign in with ssh ' + target.sshHost + ', then reconnect.')); return;
     }
+    if (/Could not resolve hostname|Name or service not known/.test(errors)) {
+      reject(new RemoteDesktopError('ssh_dns', 'The SSH hostname could not be resolved. Check the host or SSH alias.')); return;
+    }
+    if (/Connection refused/.test(errors)) {
+      reject(new RemoteDesktopError('ssh_refused', 'The remote machine refused the SSH connection. Check its SSH service and port.')); return;
+    }
+    if (/Operation timed out|Connection timed out|No route to host/.test(errors)) {
+      reject(new RemoteDesktopError('ssh_network', 'SSH could not reach the remote machine. Check your network or VPN.')); return;
+    }
     const known = /MICHI_ERROR:([a-z_]+)/.exec(output + '\n' + errors)?.[1];
     const messages: Record<string, string> = {
       prerequisites: 'The remote machine needs Linux, Python 3, git, curl and tar.',
       node_download: 'Node.js could not be downloaded or verified on the remote machine.',
       node_compatibility: 'Node.js cannot run on this Linux version. A compatible user sysroot or newer Linux image is required.',
       source: 'Could not fetch Michi source. Check repository access on the remote machine.',
-      build: 'Remote build failed. Check the private setup log in ~/.local/share/michi/devdesktop/setup.log.',
+      build: 'Remote build failed. Open the diagnostic log for the build output and remote log path.',
       start: 'Michi could not start. Check the remote service log.',
       busy: 'Another Michi setup is running on this machine. Wait for it to finish, then reconnect.',
       modified_source: 'The managed remote checkout has local changes. Preserve them before rebuilding.',
@@ -138,7 +154,7 @@ function readRemoteJson<T>(output: string): T {
   catch { throw new RemoteDesktopError('invalid_response', 'The remote machine returned an invalid setup response.'); }
 }
 
-export function buildRemoteInstallScript(sourceUrl: string, ref: string, experimentBundle?: string): string {
+export function buildRemoteInstallScript(sourceUrl: string, ref: string, experimentBundle?: string, attemptId?: string): string {
   return `set -eu
 umask 077
 export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"
@@ -149,7 +165,7 @@ for tool in python3 git curl tar; do command -v "$tool" >/dev/null || { echo MIC
 mkdir -p "$root" "$data"
 mkdir "$root/setup.lock" 2>/dev/null || { echo MICHI_ERROR:busy; exit 1; }
 trap 'rmdir "$root/setup.lock" 2>/dev/null || true' EXIT
-log="$root/setup.log"
+log="$root/setup${attemptId ? "." + attemptId : ""}.log"
 touch "$log"; chmod 600 "$log"
 echo MICHI_PROGRESS:node
 node_bin=""
@@ -226,38 +242,84 @@ export type RemoteSetupResult =
 export class RemoteDesktopSetup {
   constructor(private readonly deps: { runSsh?: RunSsh; tunnelManager?: SshTunnelManager; sourceUrl?: string; ref?: string } = {}) {}
 
-  async connect(rawHost: string, install: boolean, progress: Progress, signal?: AbortSignal): Promise<RemoteSetupResult> {
+  async connect(rawHost: string, install: boolean, progress: Progress, signal?: AbortSignal, diagnostics?: RemoteDiagnosticLog): Promise<RemoteSetupResult> {
     const target = parseRemoteHost(rawHost);
     const run = this.deps.runSsh ?? runRemoteSsh;
     const tunnels = this.deps.tunnelManager ?? sshTunnelManager;
-    progress('ssh', 'Connecting to the remote machine…');
-    let info = readRemoteJson<RemoteInfo>(await run(target,
-      `set -e\nexport PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"\ncommand -v python3 >/dev/null || { echo MICHI_ERROR:prerequisites; exit 1; }\n${pythonScript(INSPECT_PYTHON)}`, signal));
-    if (!info.healthy) {
-      if (!install) return { kind: 'install_required', host: rawHost.trim() };
-      info = readRemoteJson<RemoteInfo>(await run(target, buildRemoteInstallScript(
-        this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/XNYu/Michi.git',
-        this.deps.ref ?? process.env.MICHI_REMOTE_SOURCE_REF ?? 'main',
-        process.env.MICHI_REMOTE_EXPERIMENT_BUNDLE,
-      ), signal, progress));
-    }
-    if (!info.healthy || !info.token || !info.port) throw new RemoteDesktopError('start', 'The remote Michi service did not become healthy.');
-    progress('verify', 'Verifying Michi and saving the connection…');
-    const existing = listBackendConnections().find(c => c.transport === 'ssh' && c.sshHost === target.sshHost && c.sshUser === target.sshUser && c.remotePort === info.port);
-    const candidate = normalizeBackendConnection({
-      name: rawHost.trim().replace(/^ssh\s+/, ''), transport: 'ssh', ...target, remotePort: info.port, token: info.token,
-    });
-    candidate.id = `setup-${randomUUID()}`;
+    let installStarted = false, remoteInspected = false;
     try {
-      const apiUrl = await tunnels.apiUrl(candidate);
-      const probe = await probeBackendConnection({ apiUrl, token: info.token });
-      if (!probe.ok) throw new RemoteDesktopError('verify', probe.error);
-      if (signal?.aborted) throw new RemoteDesktopError('cancelled', 'Connection cancelled.');
-      const connection = saveBackendConnection({
-        id: existing?.id, name: candidate.name, transport: 'ssh', ...target, remotePort: info.port, token: info.token,
+      progress('ssh', 'Connecting to the remote machine…');
+      let info = readRemoteJson<RemoteInfo>(await run(target,
+        `set -e\nexport PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"\ncommand -v python3 >/dev/null || { echo MICHI_ERROR:prerequisites; exit 1; }\n${pythonScript(INSPECT_PYTHON)}`, signal, undefined, diagnostics));
+      diagnostics?.protect(info.token);
+      remoteInspected = true;
+      if (!info.healthy) {
+        if (!install) return { kind: 'install_required', host: rawHost.trim() };
+        installStarted = true;
+        diagnostics?.append('remote setup log', '~/.local/share/michi/devdesktop/setup.' + diagnostics.report.id + '.log');
+        info = readRemoteJson<RemoteInfo>(await run(target, buildRemoteInstallScript(
+          this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/XNYu/Michi.git',
+          this.deps.ref ?? process.env.MICHI_REMOTE_SOURCE_REF ?? 'main',
+          process.env.MICHI_REMOTE_EXPERIMENT_BUNDLE, diagnostics?.report.id,
+        ), signal, progress, diagnostics));
+        diagnostics?.protect(info.token);
+      }
+      if (!info.healthy || !info.token || !info.port) throw new RemoteDesktopError('start', 'The remote Michi service did not become healthy.');
+      progress('tunnel', 'Opening a secure SSH tunnel…');
+      diagnostics?.append('remote service', 'Loopback port ' + info.port);
+      // Credentials are registered before any tunnel/probe errors are recorded.
+      diagnostics?.protect(info.token);
+      const existing = listBackendConnections().find(c => c.transport === 'ssh' && c.sshHost === target.sshHost && c.sshUser === target.sshUser && c.remotePort === info.port);
+      const candidate = normalizeBackendConnection({
+        name: rawHost.trim().replace(/^ssh\s+/, ''), transport: 'ssh', ...target, remotePort: info.port, token: info.token,
       });
-      return { kind: 'connected', connection, home: info.home, runtimes: info.runtimes, runtimeWarnings: info.runtimeWarnings ?? [] };
-    } finally { tunnels.stop(candidate.id); }
+      candidate.id = `setup-${randomUUID()}`;
+      try {
+        const apiUrl = await tunnels.apiUrl(candidate, (source, message) => diagnostics?.append(source, message));
+        progress('verify', 'Verifying Michi and saving the connection…');
+        const probe = await probeBackendConnection({ apiUrl, token: info.token, onDiagnostic: message => diagnostics?.append('health', message) });
+        if (!probe.ok) throw new RemoteDesktopError('verify', probe.error);
+        if (signal?.aborted) throw new RemoteDesktopError('cancelled', 'Connection cancelled.');
+        const connection = saveBackendConnection({
+          id: existing?.id, name: candidate.name, transport: 'ssh', ...target, remotePort: info.port, token: info.token,
+        });
+        return { kind: 'connected', connection, home: info.home, runtimes: info.runtimes, runtimeWarnings: info.runtimeWarnings ?? [] };
+      } finally { tunnels.stop(candidate.id); }
+    } catch (error) {
+      if (remoteInspected && diagnostics && !signal?.aborted) {
+        // Read only this attempt's setup log. Historical service output is labeled.
+        // The original files stay on the host; the report explicitly flags limits.
+        try {
+          progress(diagnostics.report.stage, 'Collecting remote logs…');
+          const collected = await run(target, pythonScript(`
+import pathlib, shutil, subprocess
+home = pathlib.Path.home()
+for file in [${installStarted ? `home / '.local/share/michi/devdesktop/setup.${diagnostics.report.id}.log', ` : ''}home / '.michi-remote/remote.log']:
+    print('REMOTE LOG: ' + str(file))
+    if not file.is_file():
+        print('[not created]')
+        continue
+    with file.open('rb') as stream:
+        size = file.stat().st_size
+        if size > 750000:
+            print('[truncated: showing final 750000 bytes; complete log remains on host]')
+            stream.seek(size - 750000)
+        print(stream.read().decode('utf-8', errors='replace'))
+if shutil.which('journalctl'):
+    print('SYSTEMD SERVICE LOG (last 300 lines, may include earlier runs)')
+    try:
+        result = subprocess.run(['journalctl', '--user', '-u', 'michi-remote.service', '-n', '300', '--no-pager', '-o', 'short-iso'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5)
+        output = result.stdout
+        if len(output) > 300000: print('[truncated: showing final 300000 bytes]')
+        print(output[-300000:].decode('utf-8', errors='replace'))
+    except Exception as e: print('Could not read journal: ' + str(e))
+`), AbortSignal.timeout(15_000));
+          diagnostics.append('remote logs (service log may include earlier runs)', collected);
+          if (collected.includes('[truncated:')) diagnostics.report.truncated = true;
+        } catch (collectionError) { diagnostics.append('log collection failed', String(collectionError)); }
+      }
+      throw error;
+    }
   }
 
   async browse(connectionId: string, requestedPath = '~', signal?: AbortSignal): Promise<RemoteDirectory> {
