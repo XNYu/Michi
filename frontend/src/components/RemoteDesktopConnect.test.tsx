@@ -24,7 +24,7 @@ it('connects with only a host and requests installation explicitly', async () =>
   expect(connected).not.toHaveBeenCalled();
   expect(mocks.connect.mock.calls[0].slice(0, 2)).toEqual(['build+', false]);
   fireEvent.click(install);
-  await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', []));
+  await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], ['kiro']));
   expect(mocks.connect.mock.calls[1].slice(0, 2)).toEqual(['build+', true]);
   expect(screen.queryByPlaceholderText('MICHI_REMOTE_TOKEN')).toBeNull();
 });
@@ -58,7 +58,7 @@ it('reports runtime authentication separately from a successful machine connecti
   fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
   fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
   expect(await screen.findByText(warning)).toBeTruthy();
-  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [warning]);
+  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [warning], ['kiro']);
 });
 
 it('browses directories then selects the canonical remote path', async () => {
@@ -172,4 +172,27 @@ it('cancels a pending agent handoff when the connection dialog is dismissed', as
     cleanup();
     expect(request?.cancelled).toBe(true);
   } finally { window.removeEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle); }
+});
+
+
+it('reports detected runtimes without a setup picker', async () => {
+  mocks.connect.mockResolvedValue({ kind: 'connected', connection: { id: 'remote-c', name: 'build+' }, home: '/home/u', runtimes: ['codex', 'claude', 'codex'] });
+  render(<RemoteDesktopConnect onConnected={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  expect(await screen.findByText(/Detected 2 runtimes: Codex, Claude Code/)).toBeTruthy();
+  expect(screen.getByText(/You can switch runtimes in the composer/)).toBeTruthy();
+  expect(screen.queryByRole('combobox')).toBeNull();
+  expect(screen.queryByRole('radio')).toBeNull();
+});
+
+it('keeps a machine connected when no runtimes are detected', async () => {
+  mocks.connect.mockResolvedValue({ kind: 'connected', connection: { id: 'remote-c', name: 'build+' }, home: '/home/u', runtimes: [] });
+  const connected = vi.fn();
+  render(<RemoteDesktopConnect onConnected={connected} />);
+  fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  expect(await screen.findByText(/No agent runtimes detected. Your machine is connected/)).toBeTruthy();
+  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], []);
+  expect(screen.queryByRole('alert')).toBeNull();
 });

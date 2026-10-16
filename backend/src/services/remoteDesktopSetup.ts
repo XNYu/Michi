@@ -280,10 +280,47 @@ export class RemoteDesktopSetup {
         const probe = await probeBackendConnection({ apiUrl, token: info.token, onDiagnostic: message => diagnostics?.append('health', message) });
         if (!probe.ok) throw new RemoteDesktopError('verify', probe.error);
         if (signal?.aborted) throw new RemoteDesktopError('cancelled', 'Connection cancelled.');
+        // Older remote installations can still default to a missing Kiro CLI.
+        // Reuse the remote status and options API, preserving any usable choice.
+        // Runtime discovery is advisory: a connected machine remains connected
+        // when no runtime is configured or an older API cannot answer.
+        progress('runtime', 'Detecting agent runtimes…');
+        const runtimeWarnings = [...(info.runtimeWarnings ?? [])];
+        try {
+          const headers = { Authorization: `Bearer ${info.token}`, 'Content-Type': 'application/json' };
+          const statusResponse = await fetch(`${apiUrl}/agent/status`, { headers, signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]) });
+          if (!statusResponse.ok) throw new Error('Runtime detection returned HTTP ' + statusResponse.status);
+          const status = await statusResponse.json() as {
+            runtime: string; hasRequiredKey: boolean;
+            availableRuntimes: { id: string; label: string; available: boolean; requiresApiKey?: boolean; unavailableReason?: string }[];
+          };
+          if (!Array.isArray(status.availableRuntimes)) throw new Error('Runtime detection is unavailable on this server.');
+          const usable = status.availableRuntimes.filter(runtime => runtime.available
+            && (!runtime.requiresApiKey || (runtime.id === status.runtime && status.hasRequiredKey)));
+          for (const runtime of status.availableRuntimes) {
+            if (!runtime.available && info.runtimes.includes(runtime.id) && runtime.unavailableReason) {
+              runtimeWarnings.push(runtime.label + ': ' + runtime.unavailableReason);
+            }
+          }
+          info.runtimes = [...new Set([...info.runtimes, ...usable.map(runtime => runtime.id)])];
+          const preferred = usable.find(runtime => runtime.id === status.runtime) ?? usable[0];
+          if (preferred && preferred.id !== status.runtime) {
+            const response = await fetch(`${apiUrl}/agent/options`, {
+              method: 'POST', headers, body: JSON.stringify({ runtime: preferred.id }), signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]),
+            });
+            if (!response.ok) throw new Error('Runtime preselection returned HTTP ' + response.status);
+            diagnostics?.append('runtime', 'Preselected ' + preferred.id + ' for new conversations');
+          }
+          diagnostics?.append('runtime', 'Detected ' + info.runtimes.join(', '));
+        } catch (error) {
+          diagnostics?.append('runtime detection', String(error));
+          runtimeWarnings.push('Runtime detection or preselection could not complete. Check the runtime in the composer before starting a chat.');
+        }
+        if (signal?.aborted) throw new RemoteDesktopError('cancelled', 'Connection cancelled.');
         const connection = saveBackendConnection({
           id: existing?.id, name: candidate.name, transport: 'ssh', ...target, remotePort: info.port, token: info.token,
         });
-        return { kind: 'connected', connection, home: info.home, runtimes: info.runtimes, runtimeWarnings: info.runtimeWarnings ?? [] };
+        return { kind: 'connected', connection, home: info.home, runtimes: info.runtimes, runtimeWarnings };
       } finally { tunnels.stop(candidate.id); }
     } catch (error) {
       if (remoteInspected && diagnostics && !signal?.aborted) {

@@ -150,7 +150,22 @@ The renderer receives progress and redacted connection metadata only, never
 the SSH response containing the token. Existing healthy installations using
 `~/.michi/remote.env` are also detected.
 
-After connecting, browse remote folders, choose **Use this folder**, then
+After connecting, Michi shows the number and names of detected runtimes, such
+as **Detected 2 runtimes: Codex, Claude Code**. There is no runtime selection
+step. Michi keeps an available current runtime, or preselects the first usable
+runtime for new conversations. Users can change it in the composer when starting
+a chat; existing conversations retain their own runtime binding. Kiro CLI is
+optional: a remote machine can use Codex, Claude Code, or another configured
+runtime independently. An API runtime such as Pi needs configured provider
+credentials before it can become the automatic default.
+
+A machine with no detected runtimes can still connect and browse folders. Michi
+shows a setup notice; install and authenticate the desired agent on the remote
+machine before chatting. Detection indicates installation or configuration, not
+a successful model response. Runtime status/preselection failures are recorded
+in diagnostics and shown as warnings without discarding the machine connection.
+
+Browse remote folders, choose **Use this folder**, then
 create the workspace. Paths are resolved on the remote machine, including
 symlinks and `~`. Existing remote workspaces are imported without reloading the
 app; late imports preserve newly created workspaces and current focus.

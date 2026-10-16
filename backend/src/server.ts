@@ -34,10 +34,11 @@ import { McpSlotRegistry, mountMcp } from './services/mcpServer';
 import { initDb, getDb, getDbPath, closeDb, closeAuditDb } from './services/db';
 import { initDbWorker, shutdownDbWorker } from './services/dbWorkerClient';
 import { recordAudit } from './services/audit';
-import { getAgentConfig, loadAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning, resolveProvider } from './services/agentConfig';
+import { getAgentConfig, loadAgentConfig, updateAgentConfig, reconcileRuntimeWithRegistered, resolveModel, resolveReasoning, resolveProvider } from './services/agentConfig';
 import { setProviderEnvBindings, getProviderApiKey } from './services/secrets';
 import { getWarmStatus, markReady, markFailed } from './services/readyState';
 import { getRuntime, listRuntimes, registerRuntime } from './agents/registry';
+import { findRemoteRuntimeDefault } from './services/remoteRuntimeDefault';
 import { getEnabledFactories } from './agents/runtimeFactories';
 import { createAgentToolBridge } from './agents/toolBridge';
 import type { ProviderEnvBinding } from './agents/types';
@@ -398,6 +399,14 @@ const agentRunRecoveryPromise = agentRunAssembly.start()
   });
 
 async function warmConfiguredRuntime(): Promise<void> {
+  if (remoteAccessEnabled()) {
+    const selected = await findRemoteRuntimeDefault(listRuntimes(), getAgentConfig().runtime);
+    if (!selected) {
+      log.info('boot', 'remote machine ready; no configured runtime to warm');
+      return;
+    }
+    if (selected.id !== getAgentConfig().runtime) updateAgentConfig({ runtime: selected.id });
+  }
   if (!shouldBootWarm(defaultCwd)) {
     log.info('boot', 'warm skipped', { defaultCwd, reason: 'filesystem_root' });
     startupMark('chat_warm_skipped', { defaultCwd, reason: 'filesystem_root' });

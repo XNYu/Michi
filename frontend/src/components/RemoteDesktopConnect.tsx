@@ -4,13 +4,14 @@ import { fetchAgentStatus } from '../services/api/agentRuntime';
 import { askLocalDiagnosticAgent, localDiagnosticRuntime } from '../services/remoteDiagnosticAgent';
 import { connectRemoteDesktop } from '../services/api/backendConnections';
 import type { BackendConnectionSummary } from '../config/backendConnections';
+import { RemoteRuntimeSummary } from './RemoteRuntimeSummary';
 import { Button } from './ui/controls';
 import './RemoteConnection.css';
 
-const STAGE_LABELS: Record<string, string> = { request: 'starting the request', ssh: 'SSH connection', node: 'Node.js setup', source: 'fetching source', build: 'remote build', start: 'service startup', tunnel: 'SSH forwarding', verify: 'connection verification' };
+const STAGE_LABELS: Record<string, string> = { request: 'starting the request', ssh: 'SSH connection', node: 'Node.js setup', source: 'fetching source', build: 'remote build', start: 'service startup', tunnel: 'SSH forwarding', verify: 'connection verification', runtime: 'runtime detection' };
 
 export function RemoteDesktopConnect({ onConnected }: {
-  onConnected: (connection: BackendConnectionSummary, home: string, warnings: string[]) => void;
+  onConnected: (connection: BackendConnectionSummary, home: string, warnings: string[], runtimes: string[]) => void;
 }) {
   const [host, setHost] = useState('');
   const [busy, setBusy] = useState(false);
@@ -56,7 +57,7 @@ export function RemoteDesktopConnect({ onConnected }: {
         setInstallHost(null); setMessage(`Connected to ${result.connection.name}`);
         setRuntimes(result.runtimes);
         setWarnings(result.runtimeWarnings ?? []);
-        onConnected(result.connection, result.home, result.runtimeWarnings ?? []);
+        onConnected(result.connection, result.home, result.runtimeWarnings ?? [], result.runtimes);
       }
     } catch (failure) {
       if (!controller.signal.aborted) {
@@ -118,7 +119,7 @@ export function RemoteDesktopConnect({ onConnected }: {
       </>}
       {diagnosticFeedback && <p role="status" className="remote-connection-notice">{diagnosticFeedback}</p>}
     </section>}
-    {runtimes?.length === 0 && <p className="remote-connection-notice" role="status">Set up an agent on the remote machine before starting a chat.</p>}
+    {runtimes && <RemoteRuntimeSummary runtimes={runtimes} />}
     {warnings.map(warning => <p key={warning} role="status" className="remote-connection-notice">{warning}</p>)}
     <details className="remote-connect__help">
       <summary>First time connecting?</summary>

@@ -3,6 +3,7 @@ import { getElectron } from '../lib/electronBridge';
 import type { FolderEntry } from '../state/chatTypes';
 import { ModalShell } from './ui/ModalShell';
 import { Button } from './ui/controls';
+import { RemoteRuntimeSummary } from './RemoteRuntimeSummary';
 import { RemoteDesktopConnect } from './RemoteDesktopConnect';
 import { RemoteFolderPicker } from './RemoteFolderPicker';
 import { listBackendConnections } from '../services/api';
@@ -87,6 +88,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [remoteCwd, setRemoteCwd] = useState('');
   const [addingRemote, setAddingRemote] = useState(false);
   const [browsingRemote, setBrowsingRemote] = useState(false);
+  const [remoteRuntimes, setRemoteRuntimes] = useState<string[] | null>(null);
   const [remoteWarnings, setRemoteWarnings] = useState<string[]>([]);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,7 +102,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       setRemoteCwd('');
       setAddingRemote(false);
       setBrowsingRemote(false);
-      setRemoteWarnings([]);
+      setRemoteWarnings([]); setRemoteRuntimes(null);
     } else {
       void listBackendConnections().then((remote) => {
         setKnownBackendConnections(remote);
@@ -289,7 +291,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
             setConnectionId(e.target.value);
             setRemoteCwd('');
             setBrowsingRemote(false);
-            setRemoteWarnings([]);
+            setRemoteWarnings([]); setRemoteRuntimes(null);
             setError(null);
             setFolderNotice(null);
           }}
@@ -309,14 +311,15 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
         </select>
       </div>
 
-      {addingRemote && <RemoteDesktopConnect onConnected={(connection, _home, warnings) => {
+      {addingRemote && <RemoteDesktopConnect onConnected={(connection, _home, warnings, runtimes) => {
         const remotes = [...getKnownBackendConnections().filter(c => c.id !== LOCAL_BACKEND_CONNECTION_ID && c.id !== connection.id), connection];
         setKnownBackendConnections(remotes);
         setConnections(getKnownBackendConnections());
         setConnectionId(connection.id); setAddingRemote(false); setBrowsingRemote(true); setRemoteCwd('');
-        setRemoteWarnings(warnings);
+        setRemoteWarnings(warnings); setRemoteRuntimes(runtimes);
         window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
       }} />}
+      {!addingRemote && remoteRuntimes && <div style={{ padding: '0 14px' }}><RemoteRuntimeSummary runtimes={remoteRuntimes} /></div>}
       {!addingRemote && remoteWarnings.map(warning => <p key={warning} role="status"
         style={{ padding: '0 14px', color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5 }}>{warning}</p>)}
 

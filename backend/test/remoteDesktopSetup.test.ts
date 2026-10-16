@@ -56,7 +56,12 @@ test('inspection requires an explicit install action, persists nothing before re
 });
 
 test('healthy setup verifies the API, hides the token, and reuses the saved connection', async () => {
-  const remote = http.createServer((_req, res) => {
+  const remote = http.createServer((req, res) => {
+    if (req.url === '/api/agent/status') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ runtime: 'kiro', hasRequiredKey: true, availableRuntimes: [{ id: 'kiro', available: true }] }));
+      return;
+    }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ service: 'michi-backend', status: 'healthy', serverId: 'test-box' }));
   });
@@ -190,4 +195,85 @@ test('unknown errors include real cause, stage and retrievable diagnostics under
     const denied = await fetch(base + '/diagnostics/' + events[0].id, { headers: { Origin: 'https://untrusted.example' } });
     assert.equal(denied.status, 403);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+
+const runtimeScenarios: { name: string; detected: string[]; current: string; available: string[]; expected?: string;
+  hasKey?: boolean; expectedDetected?: string[]; unavailable?: boolean; failStatus?: boolean; failOptions?: boolean }[] = [
+  { name: 'Codex only without Kiro', detected: ['codex'], current: 'kiro', available: ['codex'], expected: 'codex' },
+  { name: 'Claude only without Kiro', detected: ['claude'], current: 'kiro', available: ['claude'], expected: 'claude' },
+  { name: 'multiple runtimes keep existing choice', detected: ['claude', 'codex'], current: 'codex', available: ['claude', 'codex'] },
+  { name: 'no agent still connects', detected: [], current: 'kiro', available: [] },
+  { name: 'configured Pi detected from backend', detected: [], current: 'pi', available: ['pi'], hasKey: true, expectedDetected: ['pi'] },
+  { name: 'unconfigured Pi is not preselected', detected: ['codex'], current: 'pi', available: ['pi', 'codex'], expected: 'codex' },
+  { name: 'unavailable installed agent reports warning', detected: ['codex'], current: 'kiro', available: [], unavailable: true },
+  { name: 'old status failure is advisory', detected: ['codex'], current: 'kiro', available: [], failStatus: true },
+  { name: 'preselection failure is advisory', detected: ['codex'], current: 'kiro', available: ['codex'], expected: 'codex', failOptions: true },
+];
+for (const scenario of runtimeScenarios) {
+  test('runtime discovery: ' + scenario.name, async () => {
+    const selected: string[] = [];
+    const token = 'test-runtime-token-never-to-renderer';
+    const remote = http.createServer((req, res) => {
+      assert.equal(req.headers.authorization, 'Bearer ' + token);
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/api/agent/status') {
+        res.statusCode = scenario.failStatus ? 503 : 200;
+        const ids = [...new Set(['kiro', 'pi', ...scenario.available, ...scenario.detected])];
+        res.end(JSON.stringify({ runtime: scenario.current, hasRequiredKey: !!scenario.hasKey,
+          availableRuntimes: ids.map(id => ({ id, label: id, available: scenario.available.includes(id), requiresApiKey: id === 'pi', unavailableReason: 'Sign in on the remote machine.' })) }));
+      } else if (req.url === '/api/agent/options') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => { selected.push(JSON.parse(body).runtime); res.statusCode = scenario.failOptions ? 503 : 200; res.end('{}'); });
+      } else res.end(JSON.stringify({ service: 'michi-backend', status: 'healthy', serverId: 'runtime-test-box' }));
+    });
+    await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+    const address = remote.address(); assert.ok(address && typeof address !== 'string');
+    class FakeTunnel extends SshTunnelManager {
+      override async apiUrl() { return `http://127.0.0.1:${(address as { port: number }).port}/api`; }
+      override stop() {}
+    }
+    const diagnostic = new RemoteDiagnosticLog('build+');
+    const service = new RemoteDesktopSetup({ tunnelManager: new FakeTunnel(), runSsh: async () => json({
+      home: '/home/u', healthy: true, token, port: 4444, runtimes: scenario.detected,
+    }) });
+    try {
+      const result = await service.connect('build+', false, () => {}, undefined, diagnostic);
+      assert.equal(result.kind, 'connected');
+      if (result.kind !== 'connected') return;
+      assert.deepEqual(result.runtimes, scenario.expectedDetected ?? scenario.detected);
+      assert.deepEqual(selected, scenario.expected ? [scenario.expected] : []);
+      assert.equal(result.runtimeWarnings.length > 0, !!(scenario.unavailable || scenario.failStatus || scenario.failOptions));
+      assert.equal(listBackendConnections().length, 1);
+      assert.doesNotMatch(JSON.stringify(result) + diagnostic.report.log, new RegExp(token));
+    } finally { diagnostic.finish(); await new Promise<void>(resolve => remote.close(() => resolve())); }
+  });
+}
+
+test('cancelling runtime discovery does not save the connection or preselect a runtime', async () => {
+  const controller = new AbortController();
+  let optionsCalls = 0;
+  const remote = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/agent/status') {
+      controller.abort();
+      res.end(JSON.stringify({ runtime: 'kiro', hasRequiredKey: true, availableRuntimes: [{ id: 'codex', available: true }] }));
+    } else if (req.url === '/api/agent/options') { optionsCalls++; res.end('{}'); }
+    else res.end(JSON.stringify({ service: 'michi-backend', status: 'healthy', serverId: 'cancel-test' }));
+  });
+  await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+  const address = remote.address(); assert.ok(address && typeof address !== 'string');
+  class FakeTunnel extends SshTunnelManager {
+    override async apiUrl() { return `http://127.0.0.1:${(address as { port: number }).port}/api`; }
+    override stop() {}
+  }
+  const service = new RemoteDesktopSetup({ tunnelManager: new FakeTunnel(), runSsh: async () => json({
+    home: '/home/u', healthy: true, token: 'cancel-test-token', port: 4444, runtimes: ['codex'],
+  }) });
+  try {
+    await assert.rejects(service.connect('build+', false, () => {}, controller.signal), /Connection cancelled/);
+    assert.deepEqual(listBackendConnections(), []);
+    assert.equal(optionsCalls, 0);
+  } finally { await new Promise<void>(resolve => remote.close(() => resolve())); }
 });
