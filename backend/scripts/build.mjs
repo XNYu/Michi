@@ -48,6 +48,11 @@ mkdirSync(dist, { recursive: true });
 // live at dist/db/... . Without this, runMigrations' readdirSync hits ENOENT
 // and (per its catch) silently no-ops — every schema change stays unapplied.
 function copyAssets() {
+  // Keep Agent help available offline in source installs and packaged Electron.
+  const docs = JSON.parse(readFileSync(resolve(root, "src/docs/catalog.json"), "utf8"));
+  for (const doc of docs) {
+    copyTree(resolve(root, "src", doc.source), resolve(dist, "docs", `${doc.id}.md`));
+  }
   // The official Crew launcher uses the same Node that built this installation.
   writeFileSync(resolve(dist, "crew-node.json"), JSON.stringify({ schemaVersion: 1, node: process.execPath, nodeVersion: process.versions.node }) + "\n");
   copyTree(resolve(root, "src/db/migrations"), resolve(dist, "db/migrations"));

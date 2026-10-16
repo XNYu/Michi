@@ -28,7 +28,7 @@ export interface CrewMcpHandlers {
 export function createCrewMcpHandlers(directory?: string): CrewMcpHandlers {
     return {
     listTools: async (): Promise<ListToolsResult> => ({ tools: [
-        { name: 'michi_list_tools', description: 'Discover the Michi tools available to this exact conversation, including their JSON input schemas. Call before using michi_call_tool.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+        { name: 'michi_list_tools', description: 'Discover the Michi tools available to this exact conversation, including their JSON input schemas. Includes michi_docs: consult bundled docs for Michi usage, setup, permissions and troubleshooting. Call before using michi_call_tool.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
         { name: 'michi_call_tool', description: 'Call a tool returned by michi_list_tools for this conversation. Workspace and node identity are supplied by the host.', inputSchema: {
             type: 'object', properties: { tool: { type: 'string' }, arguments: { type: 'object', additionalProperties: true } }, required: ['tool', 'arguments'], additionalProperties: false,
         } },

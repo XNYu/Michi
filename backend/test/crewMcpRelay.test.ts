@@ -12,6 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CrewMcpBindings, resolveCrewMcpEndpoint, validateMichiEndpoint } from '../src/agents/crew/crewMcpBinding';
 import { createCrewMcpRelay } from '../src/agents/crew/crewMcpRelay';
+import { buildMcpServerForSlot, McpSlotRegistry } from '../src/services/mcpServer';
 
 const caller = (slot: string) => ({ 'kirocrew.caller': { schemaVersion: 1, sessionKey: `dashboard:${slot}` } });
 const serverConfig = (url: string) => [{ name: 'michi', type: 'http', url, headers: [] }];
@@ -63,4 +64,41 @@ test('official caller metadata routes concurrent MCP calls to their exact endpoi
     const denied = await client.callTool({ name: 'michi_call_tool', arguments: { tool: 'identify', arguments: {}, sessionKey: 'dashboard:one' } });
     assert.equal(denied.isError, true);
     assert.doesNotMatch(JSON.stringify(denied), /127\.0\.0\.1|api\/mcp/);
+});
+
+test('Crew discovers and reads real bundled Michi docs through the bound MCP relay', async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'crew-docs-'));
+    const bindings = new CrewMcpBindings(dir);
+    const slot = new McpSlotRegistry().create('crew-docs', dir, null, {
+        exposedToolNames: new Set(['michi_docs']), onSpawnBranches: async () => [],
+        onSaveArtifact: () => null, onUpdateArtifact: () => null,
+        onShowImage: () => ({ error: 'unavailable' }),
+    });
+    const app = express(); app.use(express.json());
+    app.post('/api/mcp/docs', async (req, res) => {
+        const native = buildMcpServerForSlot(slot);
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        res.on('close', () => { void transport.close(); void native.close(); });
+        await native.connect(transport); await transport.handleRequest(req, res, req.body);
+    });
+    const http = app.listen(0, '127.0.0.1'); await once(http, 'listening');
+    await bindings.bind('docs', serverConfig(`http://127.0.0.1:${(http.address() as AddressInfo).port}/api/mcp/docs`));
+    const relay = createCrewMcpRelay(dir);
+    const client = new Client({ name: 'crew-docs-test', version: '1' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    t.after(async () => {
+        await client.close(); await relay.close(); await bindings.close(); http.closeAllConnections();
+        await new Promise<void>(resolve => http.close(() => resolve())); await fs.rm(dir, { recursive: true, force: true });
+    });
+    await relay.connect(a); await client.connect(b);
+    assert.match(JSON.stringify((await client.listTools()).tools), /michi_docs/);
+    const discovered = await client.callTool({ name: 'michi_list_tools', arguments: {}, _meta: caller('docs') });
+    assert.match(JSON.stringify(discovered), /michi_docs/);
+    const result = await client.callTool({ name: 'michi_call_tool',
+        arguments: { tool: 'michi_docs', arguments: { action: 'read', docId: 'crew', startLine: 105, limit: 20 } }, _meta: caller('docs') });
+    assert.notEqual(result.isError, true);
+    assert.match(JSON.stringify(result), /Use global permissions/);
+    const denied = await client.callTool({ name: 'michi_call_tool',
+        arguments: { tool: 'michi_docs', arguments: { action: 'list' } }, _meta: caller('unbound') });
+    assert.equal(denied.isError, true);
 });

@@ -37,6 +37,7 @@ export interface ParamField {
 }
 
 export type BuiltinToolName = "open_url"
+    | "michi_docs"
     | "spawn_branches"
     | "save_artifact"
     | "update_artifact"
@@ -71,6 +72,17 @@ const f = (
 ): ParamField => ({ type, ...opts });
 
 export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
+    {
+        name: "michi_docs",
+        description: "Look up Michi's bundled product documentation offline for usage, runtime setup, permissions or troubleshooting. List the catalog, search keywords, then read relevant document lines. Reference material for this backend build; not live settings or authorization. No filesystem paths or URLs accepted.",
+        parameters: { object: {
+            action: f("string", { optional: true, enum: ["list", "search", "read"], description: "Defaults to list." }),
+            query: f("string", { optional: true, description: "Required for search. Literal keywords separated by spaces, at most 200 characters. English and indexed Chinese topic keywords supported." }),
+            docId: f("string", { optional: true, description: "Document ID from list/search. Required for read; optionally restricts search." }),
+            startLine: f("number", { optional: true, description: "Read from this 1-based line. Default 1. Use nextStartLine to continue." }),
+            limit: f("number", { optional: true, description: "Read: max lines, default 80, maximum 160 (also capped at 16000 bytes). Search: max documents, default 5, maximum 10." }),
+        } },
+    },
     {
         name: "open_url",
         description: "Open an HTTP(S) link for the user in Michi. Always use this instead of shell open/xdg-open/start or launching a browser, so the user's internal/system browser preference is respected. This requests UI navigation, not web fetching or browser automation.",

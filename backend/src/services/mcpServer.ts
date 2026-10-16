@@ -1,4 +1,5 @@
 import { openUrlTool } from '../agents/openUrlTool';
+import { michiDocsTool } from './michiDocs';
 import express, { Request, Response } from "express";
 import { randomBytes } from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -380,6 +381,13 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
             return (handler as (args: any, extra: any) => any)(payload, extra);
         });
     };
+
+    const docsTool = listEnabledBuiltinTools().find(tool => tool.name === 'michi_docs');
+    if (docsTool && isToolExposed(slot, docsTool.name)) registerTool(docsTool.name, {
+        description: docsTool.description,
+        inputSchema: builtinToZodShape(docsTool),
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    }, async (args) => michiDocsTool(args));
 
     // Side-effect tools that mutate the chat graph or filesystem. The
     // globalContext tools (list_threads / search_messages / read_node) are

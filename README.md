@@ -562,6 +562,16 @@ Runtime-specific notes:
 
 Shared Michi tools include:
 
+- built-in product help: `michi_docs` lists, searches and reads versioned, bundled
+  documentation for usage, runtimes, permissions, Crew setup and remote backends.
+  It works offline and loads only requested content. For example, ask an agent
+  "Check Michi's built-in docs and explain how approvals work." Agent Run
+  definitions must include this capability when needed. Documentation describes
+  the serving Backend build; it does not inspect live settings or grant access.
+  The [catalog](backend/src/docs/catalog.json) selects the public Markdown files
+  shipped with the Backend. Update the relevant document when changing a user
+  workflow, then rebuild to refresh bundled copies. Existing Crew/remote guides
+  are reused directly so their published instructions stay in sync.
 - graph and history: `spawn_branches`, `list_threads`, `search_messages`,
   `read_node`;
 - reusable material: `save_artifact`, `update_artifact`, `show_image`;

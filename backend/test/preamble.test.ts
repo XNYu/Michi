@@ -55,6 +55,15 @@ describe('buildStableSystemPrompt', () => {
         assert.equal(a, b);
     });
 
+    test('Michi help is loaded on demand with reference-only scope', () => {
+        for (const toolCapabilities of ['michi', 'crew'] as const) {
+            const prompt = buildPreamble({ cwd: '/tmp', enableFollowUps: false, toolCapabilities });
+            assert.match(prompt, /michi_docs/);
+            assert.match(prompt, /not live settings or authorization/);
+            assert.doesNotMatch(prompt, /Trust this tool saves a grant/);
+        }
+    });
+
     test('always includes the FOLLOW-UP sentinel instruction', () => {
         const s = buildStableSystemPrompt();
         assert.match(s, /\[FOLLOW-UP 1\/3:/);

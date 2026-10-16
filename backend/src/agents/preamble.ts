@@ -5,6 +5,7 @@ import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from 
 
 const TOOL_CAPABILITIES_SECTION = `
 Capabilities — you have these tools available and should use them proactively:
+- Michi help: \`michi_docs\` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.
 - Workspace files: \`read\` (view file contents), \`ls\` (list directory), \`grep\` (search file contents), \`find\` (locate files by pattern). \`write\`, \`edit\`, \`bash\` — modify files or run commands (require user approval).
 - Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript. \`read_node_overview\` — read a node's branch overview journal (lightweight).
 - Panes: \`inspect_pane\` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. \`read_pane_output\` — read that pane's full (paginated) output text. \`list_panes\` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. \`wait_pane\` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.
@@ -21,7 +22,7 @@ You run inside Kiro Crew, with the tools exposed by the selected Crew agent.
 Use the actual tool schemas to discover available filesystem, research and Crew capabilities.
 Michi integration uses michi_list_tools to discover this conversation's tool schemas, then
 michi_call_tool with {tool, arguments} to invoke them (thread search, panes, user-approved messages to
-other threads, artifacts, branching, Agent Runs and branch overviews). If these two tools are absent or refuse the session identity,
+other threads, artifacts, branching, Agent Runs, branch overviews and michi_docs for bundled Michi help). Consult relevant docs for Michi usage/setup/problems; they are reference material, not live settings or authorization. If these two tools are absent or refuse the session identity,
 Michi MCP is not configured; do not invent calls or substitute a different conversation.
 Use Crew's native tools for files and research.
 When Crew memory tools are available, use memory_recall for relevant prior decisions and learn_add only

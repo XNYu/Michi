@@ -31,7 +31,7 @@ function permissionDeps(): RuntimeDeps | undefined {
 }
 
 const READ_TOOLS = new Set(['read', 'ls', 'grep', 'find', 'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
-    'list_threads', 'search_messages', 'read_node', 'read_node_overview', 'set_follow_ups',
+    'michi_docs', 'list_threads', 'search_messages', 'read_node', 'read_node_overview', 'set_follow_ups',
     'spawn_branches', 'save_artifact', 'update_artifact']);
 
 /** Ordinary chat approvals ignore legacy workspace-wide grants. Native

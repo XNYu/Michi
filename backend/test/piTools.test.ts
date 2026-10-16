@@ -14,6 +14,18 @@ function opts() {
     imageQuota: { usedBytes: 0, limitBytes: 1 } as any, seenPaths: new Set<string>(), Type };
 }
 
+test('Pi provides the same offline Michi docs without a global context provider', async t => {
+  configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: '/tmp/agent-runtime-test' });
+  t.after(() => __resetRuntimeDeps());
+  const tool = buildPiTools(opts()).find((tool: any) => tool.name === 'michi_docs');
+  assert.ok(tool);
+  const index = await tool.execute('docs-list', {});
+  assert.ok(JSON.parse(index.content[0].text).documents.some((doc: any) => doc.id === 'permissions'));
+  const read = await tool.execute('docs-read', { action: 'read', docId: 'permissions' });
+  assert.match(read.content[0].text, /Trust this tool/);
+  assert.equal((await tool.execute('docs-invalid', { action: 'read', docId: '../config.json' })).isError, true);
+});
+
 describe("buildPiTools global-context gating", () => {
   afterEach(() => __resetRuntimeDeps());
 

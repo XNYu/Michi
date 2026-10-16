@@ -1,4 +1,5 @@
 import { openUrlTool } from '../openUrlTool';
+import { michiDocsTool } from '../../services/michiDocs';
 import type { AgentToolBridge } from "../toolBridge";
 import {
     AGENT_RUN_TOOL_NAMES,
@@ -168,6 +169,9 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
         const parameters = withPurposeField(t.parameters, Type);
 
         switch (t.name) {
+            case "michi_docs":
+                return { name: t.name, label: "Michi docs", description: t.description, parameters,
+                    execute: async (_id: string, args: any) => michiDocsTool(args) };
             case "open_url":
                 return { name: t.name, label: "Open URL", description: t.description, parameters,
                     execute: async (_id: string, args: any) => openUrlTool({ workspaceId, ownerUserId,

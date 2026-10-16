@@ -1,0 +1,44 @@
+[
+  {
+    "id": "getting-started",
+    "title": "Getting started with Michi",
+    "summary": "Installation, updates, workspaces, chats, branches, artifacts and everyday use.",
+    "keywords": "setup install update workspace branch fork artifact composer 使用 入门 安装 更新 分支 工作区",
+    "source": "docs/getting-started.md"
+  },
+  {
+    "id": "runtimes",
+    "title": "Choose and configure a runtime",
+    "summary": "Kiro CLI, Crew, Pi, Claude and Codex requirements, models and session behavior.",
+    "keywords": "runtime model reasoning provider credentials authentication 运行时 模型 配置 认证",
+    "source": "docs/runtimes.md"
+  },
+  {
+    "id": "permissions",
+    "title": "Permissions and tool approvals",
+    "summary": "Global and per-chat Ask, Trust, YOLO, approval cards and trust scopes.",
+    "keywords": "approval permission deny allow sandbox trust 审批 权限 信任 授权",
+    "source": "docs/permissions.md"
+  },
+  {
+    "id": "troubleshooting",
+    "title": "Troubleshoot Michi",
+    "summary": "Startup, disconnected chats, slow responses, missing tools, logs and safe diagnostics.",
+    "keywords": "error slow stuck latency reconnect logs debug 故障 排障 错误 卡住 慢 日志",
+    "source": "docs/troubleshooting.md"
+  },
+  {
+    "id": "crew",
+    "title": "Use KiroCrew in Michi",
+    "summary": "Official Crew App setup, required MCP and sessionApproval, Sync, Memory and known limits.",
+    "keywords": "kirocrew crew gateway mcp sessionApproval sync memory 接入 记忆 同步 审批",
+    "source": "agents/crew/GETTING_STARTED.md"
+  },
+  {
+    "id": "remote-backend",
+    "title": "Connect a remote backend",
+    "summary": "Remote server setup, SSH tunnels, connection tokens and lifecycle.",
+    "keywords": "remote backend ssh tunnel connection token 远程 后端 连接 隧道",
+    "source": "../../docs/remote-backend.md"
+  }
+]
