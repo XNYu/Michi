@@ -24,7 +24,7 @@ it('connects with only a host and requests installation explicitly', async () =>
   expect(connected).not.toHaveBeenCalled();
   expect(mocks.connect.mock.calls[0].slice(0, 2)).toEqual(['build+', false]);
   fireEvent.click(install);
-  await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], ['kiro']));
+  await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], ['kiro'], undefined));
   expect(mocks.connect.mock.calls[1].slice(0, 2)).toEqual(['build+', true]);
   expect(screen.queryByPlaceholderText('MICHI_REMOTE_TOKEN')).toBeNull();
 });
@@ -58,7 +58,7 @@ it('reports runtime authentication separately from a successful machine connecti
   fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
   fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
   expect(await screen.findByText(warning)).toBeTruthy();
-  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [warning], ['kiro']);
+  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [warning], ['kiro'], expect.objectContaining({ severity: 'warning', stage: 'runtime' }));
 });
 
 it('browses directories then selects the canonical remote path', async () => {
@@ -193,6 +193,29 @@ it('keeps a machine connected when no runtimes are detected', async () => {
   fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
   fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
   expect(await screen.findByText(/No agent runtimes detected. Your machine is connected/)).toBeTruthy();
-  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], []);
+  expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], [], undefined);
   expect(screen.queryByRole('alert')).toBeNull();
+});
+
+
+it('exposes saved runtime warning diagnostics and can hand them to the local agent', async () => {
+  const warningReport = { ...report, id: 'warning-report', severity: 'warning' as const, stage: 'runtime', code: 'runtime_warning', message: 'Codex needs sign-in', log: '[status] Codex authentication file missing' };
+  mocks.connect.mockResolvedValue({ kind: 'connected', connection: { id: 'remote-c', name: 'build+' }, home: '/home/u', runtimes: ['codex'], runtimeWarnings: ['Codex needs sign-in'], diagnostic: warningReport });
+  mocks.status.mockResolvedValue({ runtime: 'codex', hasRequiredKey: true, availableRuntimes: [{ id: 'codex', label: 'Codex', available: true }] });
+  const sent = vi.fn();
+  const handle = (event: Event) => { event.preventDefault(); const request = (event as CustomEvent<DiagnosticAgentRequest>).detail; sent(request); request.resolve(); };
+  window.addEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle);
+  try {
+    render(<RemoteDesktopConnect onConnected={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+    await screen.findByText('Connected to build+');
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'View logs' }));
+    expect((screen.getByLabelText('Connection log') as HTMLTextAreaElement).value).toContain('Codex authentication file missing');
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask local agent' }));
+    await vi.waitFor(() => expect(sent).toHaveBeenCalledTimes(1));
+    expect(sent.mock.calls[0][0].prompt).toContain('The machine connected');
+    expect(sent.mock.calls[0][0].binding.runtimeId).toBe('codex');
+  } finally { window.removeEventListener(REMOTE_DIAGNOSTIC_AGENT_EVENT, handle); }
 });

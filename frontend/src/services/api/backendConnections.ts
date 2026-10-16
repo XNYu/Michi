@@ -59,7 +59,7 @@ export async function deleteBackendConnection(id: string): Promise<void> {
 
 export type RemoteSetupResult =
   | { kind: 'install_required'; host: string }
-  | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[]; runtimeWarnings?: string[] };
+  | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[]; runtimeWarnings?: string[]; diagnostic?: RemoteConnectionDiagnostic };
 
 export class RemoteConnectionFailure extends Error {
   constructor(message: string, readonly diagnostic: RemoteConnectionDiagnostic) { super(message); }

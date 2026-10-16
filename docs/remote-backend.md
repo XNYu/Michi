@@ -164,6 +164,10 @@ shows a setup notice; install and authenticate the desired agent on the remote
 machine before chatting. Detection indicates installation or configuration, not
 a successful model response. Runtime status/preselection failures are recorded
 in diagnostics and shown as warnings without discarding the machine connection.
+Warnings include the same **View logs**, **Copy diagnostics**, and (when a local
+runtime is ready) **Ask local agent** controls as failures. The saved attempt
+report includes the warning and setup output; the controls remain available
+while choosing a remote folder.
 
 Browse remote folders, choose **Use this folder**, then
 create the workspace. Paths are resolved on the remote machine, including
@@ -266,6 +270,24 @@ proxy, which adds the token server-side.
   durable remote state, and reattaches to turns that are still running.
 - The native Terminal and raw folder browser remain local-only. In a remote
   workspace, use agent shell tools and chat artifacts to work with server files.
+
+### Background workspace recovery
+
+If a saved remote machine cannot load its workspaces at startup, or a newly
+connected machine cannot import its workspaces, a persistent notice identifies
+that machine, shows the latest error, and indicates automatic retries. Local
+workspaces remain usable. **Try again** wakes the retry delay without starting
+a concurrent recovery request. The notice clears automatically when the remote
+workspace list loads, including a valid empty list. Removing a connection or
+closing the renderer cancels its pending recovery work and clears the notice.
+
+The notice offers **View logs**, **Copy diagnostics**, and **Ask local agent**
+when a local runtime is ready. Recovery diagnostics contain the client request
+errors, HTTP/gateway details, timestamps and retry history for that machine;
+they do not collect remote service files. This in-memory history keeps the
+latest 32,000 characters, marks truncation, and is cleared on recovery or reload.
+Credentials are redacted before display, copy or agent handoff. Each machine's
+recovery is tracked separately and retries do not steal workspace focus.
 
 ## Network security
 

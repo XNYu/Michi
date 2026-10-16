@@ -27,7 +27,9 @@ export function localDiagnosticRuntime(status: AgentStatus): { label: string; bi
 export function remoteDiagnosticPrompt(report: RemoteConnectionDiagnostic): string {
   const full = formatRemoteDiagnostic(report);
   const excerpt = full.length > 64_000 ? full.slice(0, 2000) + '\n[Prompt excerpt: middle omitted; use the saved attempt report for the full log.]\n' + full.slice(-60_000) : full;
-  return 'Help diagnose this failed Michi remote connection from this local conversation. ' +
+  return (report.severity === 'warning'
+    ? 'Help investigate this Michi remote connection warning from this local conversation. The machine connected, but agent setup needs attention. '
+    : 'Help diagnose this failed Michi remote connection from this local conversation. ') +
     'Identify the failing stage and the concrete cause, then explain the smallest fix. ' +
     'Start with read-only checks, including SSH to the specified host if available. ' +
     'Ask before changing remote configuration or installing anything. Preserve strict host-key checking. ' +

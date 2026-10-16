@@ -1,26 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { RemoteConnectionDiagnostic } from 'michi-shared';
+import { redactRemoteLog, type RemoteConnectionDiagnostic } from 'michi-shared';
 import { log } from './logger';
 
 const LIMIT = 4 * 1024 * 1024;
 const active = new Map<string, RemoteDiagnosticLog>();
 const directory = () => path.join(log.logDir(), 'remote-connections');
 
-// Apply before persistence, display, copying or sending to an agent. Protocol
-// records are private even when they do not happen to contain a credential.
-export function redactRemoteLog(value: string): string {
-  return value
-    .replace(/^.*MICHI_SETUP_JSON:.*$/gm, '[private setup response omitted]')
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, '[private key omitted]')
-    .replace(/\b(Bearer\s+)[^\s"'<>]+/gi, '$1[redacted]')
-    .replace(/((?:\b[\w-]{0,96}(?:token|password|secret|api[_-]?key)[\w-]{0,96})["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi, '$1[redacted]')
-    .replace(/(https?:\/\/)[^/\s@]+@/gi, '$1[redacted]@')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16})\b/g, '[redacted]')
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
-}
+export { redactRemoteLog } from 'michi-shared';
 
 export class RemoteDiagnosticLog {
   readonly report: RemoteConnectionDiagnostic;
@@ -53,10 +41,20 @@ export class RemoteDiagnosticLog {
   }
   stage(stage: string, message: string): void { this.report.stage = stage; this.append(stage, message); this.save(); }
   fail(error: unknown, code: string): void {
+    this.report.severity = 'error';
     this.report.code = code;
     this.report.message = this.clean(error instanceof Error ? error.message : String(error));
     this.append('error', error instanceof Error ? error.stack ?? error.message : String(error));
     if (error instanceof Error && error.cause) this.append('cause', String(error.cause));
+  }
+  warn(messages: string[]): string[] {
+    const warnings = messages.map(message => this.clean(message));
+    this.report.stage = 'runtime';
+    this.report.severity = 'warning';
+    this.report.code = 'runtime_warning';
+    this.report.message = warnings.join(' ');
+    for (const warning of warnings) this.append('runtime warning', warning);
+    return warnings;
   }
   save(): void {
     try { fs.writeFileSync(path.join(directory(), this.report.id + '.json'), JSON.stringify(this.report), { mode: 0o600 }); }

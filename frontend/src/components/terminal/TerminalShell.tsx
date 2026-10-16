@@ -4,6 +4,7 @@ import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector } 
 import { useTerminalColors } from './useTerminalColors';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
+import { RemoteRecoveryBanner } from '../RemoteRecoveryBanner';
 import WarmFailedBanner from './WarmFailedBanner';
 import AskUserAlertBar from './AskUserAlertBar';
 import TerminalDashboard from './pages/Dashboard';
@@ -558,6 +559,7 @@ export default function TerminalShell() {
         onOpenPalette={() => { if (hydrated) setPaletteOpen(true); }}
         artifactsOpen={artifactsOpen}
       />
+      <RemoteRecoveryBanner />
       {hydrated && <WarmFailedBanner />}
       {hydrated && <AskUserAlertBar onNav={handleNav} />}
       <div style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>

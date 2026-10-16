@@ -195,3 +195,20 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+
+.remote-workspace-diagnostic { padding: 0 14px 14px; }
+.remote-recovery-list {
+  flex-shrink: 0;
+  max-height: 35vh;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--term-line);
+  background: var(--term-surface);
+  font-family: var(--ui-font);
+  font-size: var(--fs-sm);
+}
+.remote-recovery { padding: 10px 16px; min-width: 0; }
+.remote-recovery + .remote-recovery { border-top: 1px solid var(--term-line); }
+.remote-recovery__heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; }
+.remote-recovery__heading p { margin: 0; color: var(--term-mid); overflow-wrap: anywhere; }
+.remote-recovery__heading strong { color: var(--term-fg); font-weight: 600; }

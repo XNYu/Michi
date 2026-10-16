@@ -1,3 +1,4 @@
+import { clearRemoteRecoveryIssue, markRemoteRecoveryRetrying, reportRemoteRecoveryFailure, REMOTE_WORKSPACE_RETRY_EVENT } from './remoteRecovery';
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   fetchAllWorkspacesMeta,
@@ -1217,6 +1218,23 @@ export function useWorkspacePersistence({
 
   useEffect(() => {
     let cancelled = false;
+    const activeRemoteIds = new Set<string>();
+    const remoteControllers = new Map<string, AbortController>();
+    const retryWaiters = new Map<string, () => void>();
+    const retryRequested = new Set<string>();
+    const onRetryRemote = (event: Event) => {
+      const id = (event as CustomEvent<{ connectionId: string }>).detail?.connectionId;
+      if (!activeRemoteIds.has(id)) return;
+      const wake = retryWaiters.get(id);
+      if (wake) wake(); else retryRequested.add(id);
+    };
+    window.addEventListener(REMOTE_WORKSPACE_RETRY_EVENT, onRetryRemote);
+    const waitForRemoteRetry = (id: string, delay: number) => new Promise<void>(resolve => {
+      if (retryRequested.delete(id)) { resolve(); return; }
+      const done = () => { retryWaiters.delete(id); resolve(); };
+      const timer = window.setTimeout(done, delay);
+      retryWaiters.set(id, () => { window.clearTimeout(timer); done(); });
+    });
     const installNodes = (next: Record<string, ChatNodeState>) => {
       nodesRef.current = next;
       setNodes(next);
@@ -1287,15 +1305,25 @@ export function useWorkspacePersistence({
       logFailure = true,
     ): Promise<BackendSnapshot | null> => {
       const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), REMOTE_HYDRATION_TIMEOUT_MS);
+      remoteControllers.set(connection.id, controller);
+      let timedOut = false;
+      const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, REMOTE_HYDRATION_TIMEOUT_MS);
+      markRemoteRecoveryRetrying(connection.id);
       try {
         const workspaces = await fetchAllWorkspacesMeta(connection.id, controller.signal);
+        if (cancelled || !activeRemoteIds.has(connection.id)) return null;
+        retryRequested.delete(connection.id);
+        clearRemoteRecoveryIssue(connection.id);
         return { connectionId: connection.id, workspaces };
       } catch (err) {
-        if (logFailure) console.warn(`remote backend unavailable (${connection.name}):`, err);
+        if (cancelled || !activeRemoteIds.has(connection.id)) return null;
+        const failure = timedOut ? new Error('The remote connection timed out while loading workspaces.') : err;
+        reportRemoteRecoveryFailure(connection, failure);
+        if (logFailure) console.warn(`remote backend unavailable (${connection.name}):`, failure);
         return null;
       } finally {
         window.clearTimeout(timer);
+        if (remoteControllers.get(connection.id) === controller) remoteControllers.delete(connection.id);
       }
     };
     type RemoteFetchResult = { connection: BackendConnectionSummary; snapshot: BackendSnapshot | null };
@@ -1347,7 +1375,9 @@ export function useWorkspacePersistence({
               ? listBackendConnections().catch(() => [])
               : Promise.resolve([]),
           ]);
+          if (cancelled) return null;
           setKnownBackendConnections(connections);
+          for (const connection of connections) activeRemoteIds.add(connection.id);
           const remoteFetches = connections.map(async (connection): Promise<RemoteFetchResult> => ({
             connection,
             snapshot: await fetchRemoteSnapshot(connection),
@@ -1408,12 +1438,12 @@ export function useWorkspacePersistence({
     };
     const retryRemoteHydration = async (connection: BackendConnectionSummary, replace = true): Promise<void> => {
       let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
-      while (!cancelled) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelay));
-        if (cancelled) return;
+      while (!cancelled && activeRemoteIds.has(connection.id)) {
+        await waitForRemoteRetry(connection.id, retryDelay);
+        if (cancelled || !activeRemoteIds.has(connection.id)) return;
 
         const snapshot = await fetchRemoteSnapshot(connection, false);
-        if (cancelled) return;
+        if (cancelled || !activeRemoteIds.has(connection.id)) return;
         if (!snapshot) {
           retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
           continue;
@@ -1425,7 +1455,7 @@ export function useWorkspacePersistence({
     const mergeRemoteWhenReady = async (fetch: Promise<RemoteFetchResult>, replace = true): Promise<void> => {
       const { connection, snapshot } = await fetch;
       await localInstalled;
-      if (cancelled) return;
+      if (cancelled || !activeRemoteIds.has(connection.id)) return;
       if (snapshot) applyRemoteSnapshot(connection, snapshot, replace);
       else void retryRemoteHydration(connection, replace);
     };
@@ -1443,7 +1473,14 @@ export function useWorkspacePersistence({
         const connections = await listBackendConnections();
         if (cancelled) return;
         setKnownBackendConnections(connections);
+        const currentIds = new Set(connections.map(connection => connection.id));
+        for (const id of activeRemoteIds) {
+          if (currentIds.has(id)) continue;
+          activeRemoteIds.delete(id); knownConnectionIds.delete(id); retryRequested.delete(id);
+          remoteControllers.get(id)?.abort(); retryWaiters.get(id)?.(); clearRemoteRecoveryIssue(id);
+        }
         for (const connection of connections) {
+          activeRemoteIds.add(connection.id);
           if (knownConnectionIds.has(connection.id)) continue;
           knownConnectionIds.add(connection.id);
           void mergeRemoteWhenReady((async () => ({ connection, snapshot: await fetchRemoteSnapshot(connection) }))(), false);
@@ -1570,6 +1607,11 @@ export function useWorkspacePersistence({
     })();
     return () => {
       cancelled = true;
+      resolveLocalInstalled();
+      for (const controller of remoteControllers.values()) controller.abort();
+      for (const wake of retryWaiters.values()) wake();
+      for (const id of activeRemoteIds) clearRemoteRecoveryIssue(id);
+      window.removeEventListener(REMOTE_WORKSPACE_RETRY_EVENT, onRetryRemote);
       window.removeEventListener('michi:backend-connections-changed', onConnectionsChanged);
     };
   }, [nodesRef, setActiveProjectId, setHydrated, setNodes, setProjects, userId]);

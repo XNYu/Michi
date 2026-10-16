@@ -1,3 +1,5 @@
+import type { RemoteConnectionDiagnostic } from 'michi-shared';
+import { RemoteDiagnostics } from './RemoteDiagnostics';
 import React, { useEffect, useRef, useState } from 'react';
 import { getElectron } from '../lib/electronBridge';
 import type { FolderEntry } from '../state/chatTypes';
@@ -88,6 +90,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [remoteCwd, setRemoteCwd] = useState('');
   const [addingRemote, setAddingRemote] = useState(false);
   const [browsingRemote, setBrowsingRemote] = useState(false);
+  const [remoteDiagnostic, setRemoteDiagnostic] = useState<RemoteConnectionDiagnostic | undefined>();
   const [remoteRuntimes, setRemoteRuntimes] = useState<string[] | null>(null);
   const [remoteWarnings, setRemoteWarnings] = useState<string[]>([]);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
@@ -102,7 +105,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       setRemoteCwd('');
       setAddingRemote(false);
       setBrowsingRemote(false);
-      setRemoteWarnings([]); setRemoteRuntimes(null);
+      setRemoteWarnings([]); setRemoteRuntimes(null); setRemoteDiagnostic(undefined);
     } else {
       void listBackendConnections().then((remote) => {
         setKnownBackendConnections(remote);
@@ -291,7 +294,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
             setConnectionId(e.target.value);
             setRemoteCwd('');
             setBrowsingRemote(false);
-            setRemoteWarnings([]); setRemoteRuntimes(null);
+            setRemoteWarnings([]); setRemoteRuntimes(null); setRemoteDiagnostic(undefined);
             setError(null);
             setFolderNotice(null);
           }}
@@ -311,17 +314,19 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
         </select>
       </div>
 
-      {addingRemote && <RemoteDesktopConnect onConnected={(connection, _home, warnings, runtimes) => {
+      {addingRemote && <RemoteDesktopConnect onConnected={(connection, _home, warnings, runtimes, diagnostic) => {
         const remotes = [...getKnownBackendConnections().filter(c => c.id !== LOCAL_BACKEND_CONNECTION_ID && c.id !== connection.id), connection];
         setKnownBackendConnections(remotes);
         setConnections(getKnownBackendConnections());
         setConnectionId(connection.id); setAddingRemote(false); setBrowsingRemote(true); setRemoteCwd('');
-        setRemoteWarnings(warnings); setRemoteRuntimes(runtimes);
+        setRemoteWarnings(warnings); setRemoteRuntimes(runtimes); setRemoteDiagnostic(diagnostic);
         window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
       }} />}
       {!addingRemote && remoteRuntimes && <div style={{ padding: '0 14px' }}><RemoteRuntimeSummary runtimes={remoteRuntimes} /></div>}
       {!addingRemote && remoteWarnings.map(warning => <p key={warning} role="status"
         style={{ padding: '0 14px', color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5 }}>{warning}</p>)}
+
+      {!addingRemote && remoteDiagnostic && <div className="remote-workspace-diagnostic"><RemoteDiagnostics key={remoteDiagnostic.id} report={remoteDiagnostic} /></div>}
 
       {/* Folders section */}
       {!addingRemote && (isRemote ? (

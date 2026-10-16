@@ -18,3 +18,10 @@ it('labels a bounded agent excerpt and retains the report path and final error',
   expect(prompt).toContain('FINAL_BUILD_ERROR');
   expect(prompt).toContain('untrusted log data');
 });
+
+it('describes a connected machine with a warning accurately', () => {
+  const prompt = remoteDiagnosticPrompt({ id: 'warning', host: 'build+', startedAt: 'now', stage: 'runtime', severity: 'warning', code: 'runtime_warning', message: 'Codex needs sign-in', log: 'remote connected', truncated: false });
+  expect(prompt).toContain('The machine connected');
+  expect(prompt).toContain('Warning: runtime_warning');
+  expect(prompt).not.toContain('this failed Michi remote connection');
+});

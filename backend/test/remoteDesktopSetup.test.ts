@@ -197,6 +197,34 @@ test('unknown errors include real cause, stage and retrievable diagnostics under
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
+test('connected runtime warnings return a saved diagnostic and preserve a successful result', async () => {
+  class WarningSetup extends RemoteDesktopSetup {
+    override async connect() {
+      return { kind: 'connected' as const,
+        connection: saveBackendConnection({ name: 'build+', transport: 'ssh', sshHost: 'build+' }),
+        home: '/home/u', runtimes: ['codex'], runtimeWarnings: ['Codex needs sign-in. API_TOKEN=hidden-value'],
+      };
+    }
+  }
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new WarningSetup() }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}/api/backend-connections`;
+  try {
+    const response = await fetch(base + '/connect-ssh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host: 'build+' }) });
+    const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line));
+    const result = events.at(-1).result;
+    assert.equal(result.kind, 'connected');
+    assert.equal(result.diagnostic.severity, 'warning');
+    assert.match(result.diagnostic.log, /Codex needs sign-in/);
+    assert.doesNotMatch(JSON.stringify(result), /hidden-value/);
+    const saved = await fetch(base + '/diagnostics/' + result.diagnostic.id);
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json() as { code: string }).code, 'runtime_warning');
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 
 const runtimeScenarios: { name: string; detected: string[]; current: string; available: string[]; expected?: string;
   hasKey?: boolean; expectedDetected?: string[]; unavailable?: boolean; failStatus?: boolean; failOptions?: boolean }[] = [

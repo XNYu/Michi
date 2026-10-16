@@ -74,7 +74,11 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       const result = await remoteSetup.connect(req.body.host, req.body.install === true,
         (stage, message) => { diagnostic.stage(stage, message); emit({ type: 'progress', stage, message }); }, controller.signal, diagnostic);
       diagnostic.append('result', result.kind);
-      emit({ type: 'result', result });
+      if (result.kind === 'connected' && result.runtimeWarnings.length > 0) {
+        const runtimeWarnings = diagnostic.warn(result.runtimeWarnings);
+        diagnostic.save();
+        emit({ type: 'result', result: { ...result, runtimeWarnings, diagnostic: diagnostic.report } });
+      } else emit({ type: 'result', result });
     } catch (error) {
       diagnostic.fail(error, error instanceof RemoteDesktopError ? error.code : 'setup_failed');
       diagnostic.save();

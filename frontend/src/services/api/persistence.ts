@@ -1,3 +1,4 @@
+import { redactRemoteLog } from 'michi-shared';
 import {
   activeBackendApiBase,
   backendApiBase,
@@ -92,7 +93,11 @@ export async function fetchAllWorkspaces(connectionId?: string): Promise<unknown
  */
 export async function fetchAllWorkspacesMeta(connectionId?: string, signal?: AbortSignal): Promise<unknown[]> {
   const res = await fetch(`${backendApiBase(connectionId)}/workspaces/all?meta=1`, { signal });
-  if (!res.ok) throw new Error(`fetchAllWorkspacesMeta failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const detail = typeof body?.error === 'string' ? ': ' + redactRemoteLog(body.error).slice(0, 2000) : '';
+    throw new Error(`Could not load workspaces (HTTP ${res.status})${detail}`);
+  }
   const body = await res.json();
   return body.workspaces ?? [];
 }

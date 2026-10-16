@@ -40,6 +40,7 @@ vi.mock('../services/api', () => ({
   listBackendConnections: apiMocks.listBackendConnections,
 }));
 
+import { getRemoteRecoveryIssues, retryRemoteWorkspace } from './remoteRecovery';
 import { ACTIVE_TREE_EAGER_BUDGET_MS, useWorkspacePersistence } from './workspacePersistence';
 
 const V2_CAPABILITIES = {
@@ -236,12 +237,64 @@ describe('cold-start hydration barrier', () => {
 
     expect(result.current.hydrated).toBe(true);
     expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1']);
+    expect(getRemoteRecoveryIssues()).toEqual([expect.objectContaining({ connectionId: 'remote-late', attempts: 1, diagnostic: expect.objectContaining({ message: 'ECONNREFUSED' }) })]);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
 
     expect(remoteAttempts).toBeGreaterThanOrEqual(2);
+    expect(getRemoteRecoveryIssues()).toEqual([]);
     expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', 'ws-remote-late']);
     expect(result.current.projects.find((project) => project.id === 'ws-remote-late')?.backendConnectionId).toBe('remote-late');
+  });
+
+  it('manual retry wakes the backoff without overlapping an in-flight request', async () => {
+    apiMocks.listBackendConnections.mockResolvedValue([{ id: 'remote-retry', name: 'Retry remote', transport: 'ssh', sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 }]);
+    let attempts = 0;
+    const pending = deferred<unknown[]>();
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation((id?: string) => {
+      if (id !== 'remote-retry') return Promise.resolve([backendWorkspaceRow]);
+      if (++attempts === 1) return Promise.reject(new Error('SSH auth expired'));
+      return pending.promise;
+    });
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    expect(getRemoteRecoveryIssues()[0].diagnostic.log).toContain('SSH auth expired');
+    await act(async () => { retryRemoteWorkspace('remote-retry'); });
+    expect(attempts).toBe(2);
+    expect(getRemoteRecoveryIssues()[0].retrying).toBe(true);
+    await act(async () => { retryRemoteWorkspace('remote-retry'); await vi.advanceTimersByTimeAsync(100); });
+    expect(attempts).toBe(2);
+    await act(async () => { pending.resolve([]); });
+    expect(getRemoteRecoveryIssues()).toEqual([]);
+    expect(result.current.activeProjectId).toBe('ws-1');
+  });
+
+  it('clears a removed connection and stops its retry loop', async () => {
+    apiMocks.listBackendConnections.mockResolvedValue([{ id: 'remote-removed', name: 'Removed', transport: 'ssh', sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 }]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (id?: string) => {
+      if (id === 'remote-removed') throw new Error('unavailable');
+      return [backendWorkspaceRow];
+    });
+    renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    expect(getRemoteRecoveryIssues()).toHaveLength(1);
+    const calls = apiMocks.fetchAllWorkspacesMeta.mock.calls.length;
+    apiMocks.listBackendConnections.mockResolvedValue([]);
+    await act(async () => { window.dispatchEvent(new CustomEvent('michi:backend-connections-changed')); });
+    expect(getRemoteRecoveryIssues()).toEqual([]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(apiMocks.fetchAllWorkspacesMeta).toHaveBeenCalledTimes(calls);
+  });
+
+  it('does not publish stale remote failures after unmount', async () => {
+    const pending = deferred<unknown[]>();
+    apiMocks.listBackendConnections.mockResolvedValue([{ id: 'remote-stale', name: 'Stale', transport: 'ssh', sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 }]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation((id?: string) => id === 'remote-stale' ? pending.promise : Promise.resolve([backendWorkspaceRow]));
+    const { unmount } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    unmount();
+    await act(async () => { pending.resolve([]); });
+    expect(getRemoteRecoveryIssues()).toEqual([]);
   });
 
   describe('local-first: remote backends never hold the barrier', () => {

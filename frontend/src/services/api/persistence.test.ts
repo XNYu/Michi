@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPersistenceCapabilities, supportsPaneInspection } from './persistence';
+import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, supportsPaneInspection } from './persistence';
 
 /**
  * P2-5 capability discovery. The defensive predicate must return true ONLY
@@ -73,4 +73,14 @@ describe('fetchPersistenceCapabilities — paneInspection field', () => {
     const capabilities = await fetchPersistenceCapabilities('local');
     expect(supportsPaneInspection(capabilities)).toBe(false);
   });
+});
+
+
+it('preserves the remote gateway error and HTTP status while redacting credentials', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'SSH authentication failed. Authorization: Bearer hidden-value' }), { status: 502 })));
+  try {
+    await expect(fetchAllWorkspacesMeta('remote-c')).rejects.toThrow('HTTP 502');
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'SSH authentication failed. Authorization: Bearer hidden-value' }), { status: 502 }));
+    await expect(fetchAllWorkspacesMeta('remote-c')).rejects.toThrow('SSH authentication failed. Authorization: Bearer [redacted]');
+  } finally { vi.unstubAllGlobals(); }
 });
