@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { electronDevEnvironment } from './electron-dev-env.mjs';
@@ -16,9 +17,18 @@ test('restarting the same checkout reuses its Electron profile', () => {
   assert.deepEqual(electronDevEnvironment(root, {}), electronDevEnvironment(path.join(root, '.'), {}));
 });
 
-test('explicit development data, instance and Electron profile overrides are preserved', () => {
+test('runtime/model preferences follow the development data directory, not the installed app', () => {
+  // agentConfig and prefsConfig read MICHI_CONFIG_DIR, defaulting to ~/.michi.
+  // Without this, a dev backend rewrites the installed app's runtime and model.
+  assert.equal(electronDevEnvironment(path.resolve('rabbitholes'), {}).MICHI_CONFIG_DIR, path.join(os.homedir(), '.michi-dev'));
+  const preview = path.resolve('preview-data');
+  assert.equal(electronDevEnvironment(path.resolve('rabbitholes'), { MICHI_DATA_DIR: preview }).MICHI_CONFIG_DIR, preview);
+});
+
+test('explicit development data, config, instance and Electron profile overrides are preserved', () => {
   const env = {
     MICHI_DATA_DIR: path.resolve('preview-data'),
+    MICHI_CONFIG_DIR: path.resolve('preview-config'),
     MICHI_DEV_INSTANCE_ID: 'crew-preview',
     MICHI_ELECTRON_USER_DATA_DIR: path.resolve('electron-profile'),
     PORT: '3010',

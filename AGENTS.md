@@ -15,8 +15,8 @@ The backend requires Node.js 22+ for built-in SQLite.
 - `npm run dev`: builds shared code, then starts the backend esbuild watcher
   and Vite frontend. Default ports are backend 3000 and frontend 3001.
 - `npm run backend:dev` / `npm run frontend:dev`: starts one side after building
-  shared code. Backend development defaults MICHI_DATA_DIR to ~/.michi-dev;
-  use an isolated directory for disposable data.
+  shared code. Backend development defaults MICHI_DATA_DIR, and MICHI_CONFIG_DIR
+  unless set, to ~/.michi-dev; use an isolated directory for disposable data.
 - `npm run build`: builds frontend with Vite, then backend with TypeScript
   checking and esbuild. Workspace build scripts build shared code first.
 - `npm run build:artifact`: runs build, then copies frontend/build into

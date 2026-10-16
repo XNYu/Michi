@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "shared:build": "cd shared && npm run build",
-    "backend:dev": "npm run shared:build && cd backend && npm run dev:raw",
+    "backend:dev": "npm run shared:build && cd backend && MICHI_DATA_DIR=${MICHI_DATA_DIR:-$HOME/.michi-dev} MICHI_CONFIG_DIR=${MICHI_CONFIG_DIR:-${MICHI_DATA_DIR:-$HOME/.michi-dev}} npm run dev:raw",
     "backend:build": "cd backend && npm run build",
     "backend:start": "cd backend && npm start",
     "frontend:dev": "npm run shared:build && cd frontend && npm run dev:raw",
@@ -20,7 +20,7 @@
     "frontend:verify-bundle": "node scripts/verify-frontend-bundle.mjs",
     "frontend:start": "cd frontend && npm start",
     "predev": "node scripts/kill-stale-dev.mjs",
-    "dev": "npm run shared:build && concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw\"",
+    "dev": "npm run shared:build && MICHI_DATA_DIR=${MICHI_DATA_DIR:-$HOME/.michi-dev} MICHI_CONFIG_DIR=${MICHI_CONFIG_DIR:-${MICHI_DATA_DIR:-$HOME/.michi-dev}} concurrently \"cd backend && npm run dev:raw\" \"cd frontend && npm run dev:raw\"",
     "build": "npm run frontend:build && npm run backend:build",
     "build:artifact": "npm run build && npm run copy-frontend",
     "start": "cd backend && npm start",

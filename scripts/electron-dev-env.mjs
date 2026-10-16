@@ -11,6 +11,9 @@ export function electronDevEnvironment(root, env = process.env) {
   return {
     ...env,
     MICHI_DATA_DIR: dataDir,
+    // Runtime/model and UI preferences otherwise default to ~/.michi, the
+    // installed app's config, and a dev backend would overwrite them.
+    MICHI_CONFIG_DIR: env.MICHI_CONFIG_DIR || dataDir,
     MICHI_DEV_INSTANCE_ID: instanceId,
     MICHI_ELECTRON_USER_DATA_DIR:
       env.MICHI_ELECTRON_USER_DATA_DIR || path.join(dataDir, `electron-${instanceId}`),

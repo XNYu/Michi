@@ -372,6 +372,61 @@ VITE_MICHI_PERF=0
 Vite inlines `VITE_*` values at build time. Restart the dev server or rebuild
 after changing them.
 
+### Development isolation
+
+Root `dev`, `backend:dev`, and `electron:dev` commands default `MICHI_DATA_DIR`
+to `~/.michi-dev`, and `MICHI_CONFIG_DIR` to the same directory unless it is
+set, so a development backend does not rewrite the installed app's runtime and
+model. Logs and the remaining configuration have independent paths:
+
+| State | Default / override |
+|---|---|
+| SQLite databases and durable turns | `MICHI_DATA_DIR`; defaults to `~/.michi`, or `~/.michi-dev` for root dev commands. |
+| Runtime/model and UI preferences | `MICHI_CONFIG_DIR/config.json`; defaults to `~/.michi/config.json`, or to the development data directory for root dev commands. |
+| Local provider keys and Bedrock credentials | `~/.michi/config.json`; these modules do not use `MICHI_CONFIG_DIR`. |
+| Backend and Electron logs | `MICHI_LOG_DIR`; defaults to `~/.michi/logs` independently of `MICHI_DATA_DIR`. |
+| Electron dev user data | `MICHI_ELECTRON_USER_DATA_DIR`; defaults to `<dev-data-dir>/electron-<checkout-instance>`. |
+| Packaged Electron `.env`, backend-port, and desktop settings | `~/.michi`; changing `MICHI_DATA_DIR` does not move them. |
+
+For a separate development database, supported preferences, and logs:
+
+```bash
+MICHI_DATA_DIR="$HOME/.michi-dev" \
+MICHI_CONFIG_DIR="$HOME/.michi-dev" \
+MICHI_LOG_DIR="$HOME/.michi-dev/logs" \
+npm run dev
+```
+
+Local provider-key and Bedrock writes still target the shared `~/.michi`
+configuration. A disposable run that must avoid personal credentials or native
+CLI history also needs a separate user/home environment and runtime-specific
+credential directories.
+
+### Hosted auth configuration
+
+The [Dockerfile](Dockerfile) builds the frontend and bundled backend for a
+Pi-only hosted deployment. Set these values in the deployment environment:
+
+| Variable | Purpose |
+|---|---|
+| `NODE_ENV=production` | Enables secure auth cookies; use an HTTPS origin. |
+| `MICHI_REQUIRE_AUTH=true` | Enables Better Auth session checks and Google sign-in. |
+| `MICHI_CLOUD=1` | Enables cloud owner scoping in runtime settings and workspace operations. |
+| `BETTER_AUTH_URL` | Public backend origin, for example `https://michi.example.com`. |
+| `BETTER_AUTH_SECRET` | Stable random auth secret; generate with `openssl rand -hex 32`. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth client credentials. Register `<origin>/api/auth/callback/google` as an authorized redirect URI. |
+| `MICHI_ENCRYPTION_KEY` | Base64-encoded 32-byte key for the per-user API-key vault; generate with `openssl rand -base64 32`. |
+| `MICHI_DATA_DIR` | Persistent writable data directory, usually `/data` in a container. |
+| `MICHI_CORS_ORIGINS` | Comma-separated allowed origins; configure the actual hosted origins when using auth. |
+
+Keep `MICHI_ENCRYPTION_KEY` stable alongside the persistent volume. Key rotation
+is not implemented; replacing or losing it makes stored user API keys
+unreadable. Application data and encrypted user keys live in `data.db`, while
+Better Auth uses `auth.sqlite`. Both need persistent storage. Authentication
+behavior is implemented in [auth.ts](backend/src/services/auth.ts), and key
+encoding/storage in [userKeys.ts](backend/src/services/userKeys.ts).
+
+
 ### Metrics and startup profiling
 
 Michi has a lightweight metrics facade in the backend, Electron main process,
