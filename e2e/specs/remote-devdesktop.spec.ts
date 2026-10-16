@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { installMockApi } from '../fixtures/mockApi';
+import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
 
 test('connects a host, installs explicitly, selects a remote folder and creates a workspace', async ({ page }) => {
   const connection = { id: 'remote-c', name: 'build+', transport: 'ssh', sshHost: 'build+', remotePort: 4444, hasToken: true, createdAt: 1, updatedAt: 1 };
@@ -65,3 +65,54 @@ test('connects a host, installs explicitly, selects a remote folder and creates 
   expect(navigations).toBe(1);
   expect(pageErrors).toEqual([]);
 });
+
+for (const palette of ['bone', 'gruvbox']) {
+  test(`remote settings remain readable in ${palette} with narrow content`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 980, height: 940 });
+    await page.addInitScript(palette => localStorage.setItem('michi:v1:prefs', JSON.stringify({
+      onboardingCompletedAt: 1, terminalPalette: palette,
+    })), palette);
+    const connections = [
+      { id: 'remote-c', name: 'build+', transport: 'ssh', sshHost: 'build+', remotePort: 45489, tunnelStatus: 'connected', hasToken: true, createdAt: 1, updatedAt: 1 },
+      { id: 'remote-other', name: 'build-secondary', transport: 'ssh', sshHost: 'builder-with-a-long-hostname.example.com', remotePort: 44083, tunnelStatus: 'disconnected', hasToken: true, createdAt: 1, updatedAt: 1 },
+    ];
+    await installMockApi(page, { custom: async route => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/api/backend-connections') {
+        await route.fulfill({ json: { connections } }); return true;
+      }
+      if (url.pathname.endsWith('/proxy/workspaces/all')) {
+        await route.fulfill({ json: { workspaces: [] } }); return true;
+      }
+      return false;
+    } });
+    await bootWithWorkspace(page, 'Remote design review');
+    await page.getByText('Settings', { exact: true }).last().click();
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+    await expect(settings.getByText('SSH connected', { exact: true })).toBeVisible();
+    await expect(settings.getByText('Connects when needed')).toBeVisible();
+    const add = settings.getByRole('button', { name: 'Connect remote', exact: true });
+    await expect(add).toBeVisible();
+    await expect(settings.getByText('SSH launch:', { exact: false })).toHaveCount(0);
+    await expect.poll(() => settings.locator('.terminal-settings-content').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    // Controls use the shared UI font, including the host input in the expanded form.
+    const font = await settings.locator('h1').evaluate(el => getComputedStyle(el).fontFamily);
+    expect(await add.evaluate(el => getComputedStyle(el).fontFamily)).toBe(font);
+    await page.screenshot({ path: testInfo.outputPath(`settings-${palette}.png`) });
+    await add.click();
+    const host = settings.getByLabel('Remote SSH host');
+    await host.fill('build+');
+    expect(await host.evaluate(el => getComputedStyle(el).fontFamily)).toBe(font);
+    await expect(settings.getByText(/Run.*in Terminal/)).toBeHidden();
+    await settings.getByText('First time connecting?', { exact: true }).click();
+    await expect(settings.getByText(/Run.*in Terminal/)).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`connect-${palette}.png`) });
+    await settings.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await settings.getByRole('button', { name: 'Manual setup…' }).click();
+    await expect(settings.getByRole('heading', { name: 'Manual connection' })).toBeVisible();
+    await page.setViewportSize({ width: 540, height: 850 });
+    await expect.poll(() => settings.locator('.terminal-settings-content').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`manual-narrow-${palette}.png`) });
+  });
+}

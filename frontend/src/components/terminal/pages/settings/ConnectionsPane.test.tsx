@@ -30,7 +30,7 @@ describe('ConnectionsPane', () => {
   it('keeps Local visible and validates before saving a remote backend', async () => {
     render(<ConnectionsPane projects={[]} />);
     expect(await screen.findByText('Local')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /add remote backend/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual setup/i }));
     fireEvent.change(screen.getByPlaceholderText('build-server'), { target: { value: 'Build' } });
     fireEvent.change(screen.getByLabelText('Connection transport'), { target: { value: 'direct' } });
     fireEvent.change(screen.getByPlaceholderText('https://michi.example.com:3000'), { target: { value: 'https://build.example.com' } });
@@ -47,7 +47,7 @@ describe('ConnectionsPane', () => {
   it('creates an SSH tunnel connection with numeric ports', async () => {
     render(<ConnectionsPane projects={[]} />);
     await screen.findByText('Local');
-    fireEvent.click(screen.getByRole('button', { name: /add remote backend/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual setup/i }));
     expect((screen.getByLabelText('Connection transport') as HTMLSelectElement).value).toBe('ssh');
     fireEvent.change(screen.getByPlaceholderText('build-server'), { target: { value: 'SSH Build' } });
     fireEvent.change(screen.getByLabelText('SSH host'), { target: { value: 'build-server-box' } });
@@ -87,11 +87,40 @@ describe('ConnectionsPane', () => {
     render(<ConnectionsPane projects={[]} />);
     expect(await screen.findByText('Build tunnel')).toBeTruthy();
     expect(screen.getByText(/Permission denied/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     expect((screen.getByLabelText('Connection transport') as HTMLSelectElement).value).toBe('ssh');
     expect((screen.getByLabelText('SSH host') as HTMLInputElement).value).toBe('build-server-box');
     expect((screen.getByLabelText('SSH user') as HTMLInputElement).value).toBe('builder');
     expect((screen.getByLabelText('Remote Michi port') as HTMLInputElement).value).toBe('3000');
   });
+  it('keeps quick connect and manual editing mutually exclusive', async () => {
+    mocks.list.mockResolvedValue([{
+      id: 'ssh-1', name: 'Remote Linux', transport: 'ssh', sshHost: 'build+',
+      hasToken: true, createdAt: 1, updatedAt: 1,
+    }]);
+    render(<ConnectionsPane projects={[]} />);
+    await screen.findByText('Remote Linux');
+    fireEvent.click(screen.getByRole('button', { name: 'Connect remote' }));
+    expect(screen.getByLabelText('Remote SSH host')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.queryByLabelText('Remote SSH host')).toBeNull();
+    expect((screen.getByLabelText('SSH host') as HTMLInputElement).value).toBe('build+');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Connect remote' })).toBeTruthy();
+  });
+
+  it('shows a failed manual connection test and allows retry', async () => {
+    mocks.test.mockRejectedValueOnce(new Error('SSH authentication expired'));
+    render(<ConnectionsPane projects={[]} />);
+    await screen.findByText('Local');
+    fireEvent.click(screen.getByRole('button', { name: /Manual setup/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('SSH authentication expired');
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(await screen.findByText(/Connected to Michi backend/)).toBeTruthy();
+    expect(mocks.test).toHaveBeenCalledTimes(2);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
 });

@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { browseRemoteDirectory, type RemoteDirectory } from '../services/api/backendConnections';
 import { Button } from './ui/controls';
+import { ChevronRightIcon, FolderIcon } from './terminal/icons';
+import './RemoteConnection.css';
 
 export function RemoteFolderPicker({ connectionId, onSelect }: {
   connectionId: string; onSelect: (path: string) => void;
 }) {
+  const pathInputId = useId();
   const [path, setPath] = useState('~');
   const [location, setLocation] = useState({ path: '~', revision: 0 });
   const [directory, setDirectory] = useState<RemoteDirectory | null>(null);
@@ -25,22 +28,24 @@ export function RemoteFolderPicker({ connectionId, onSelect }: {
     setLocation(previous => ({ path: nextPath, revision: previous.revision + 1 }));
   };
 
-  return <div style={{ padding: '10px 14px', background: 'var(--term-surface)', borderBottom: '1px solid var(--term-line)' }}>
-    <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-      <input aria-label="Browse remote folder" value={path} disabled={loading} onChange={event => setPath(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); navigate(path); } }}
-        style={{ minWidth: 0, flex: 1, padding: '6px 8px', background: 'var(--term-alt)', color: 'var(--term-fg)', border: '1px solid var(--term-line)' }} />
+  return <div className="remote-folder-picker" aria-busy={loading}>
+    <label className="remote-folder-picker__label" htmlFor={pathInputId}>Choose a remote folder</label>
+    <div className="remote-folder-picker__entry">
+      <input className="ui-input" id={pathInputId} aria-label="Browse remote folder" value={path} disabled={loading}
+        spellCheck={false} autoCapitalize="none" autoCorrect="off" onChange={event => setPath(event.target.value)}
+        onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); navigate(path); } }} />
       <Button onClick={() => navigate(path)} disabled={loading}>Go</Button>
     </div>
-    {loading && <div role="status">Loading remote folders…</div>}
-    {error && <div role="alert" style={{ color: 'var(--term-danger)' }}>{error}</div>}
-    <div style={{ maxHeight: 180, overflowY: 'auto', display: 'grid', gap: 4 }}>
-      {directory?.parent && <Button variant="ghost" disabled={loading} onClick={() => navigate(directory.parent!)}>↑ Parent folder</Button>}
+    {loading && <div role="status" className="remote-folder-picker__status">Loading remote folders…</div>}
+    {error && <div role="alert" className="remote-connection-notice" data-tone="error">{error}</div>}
+    <div className="remote-folder-picker__entries">
+      {directory?.parent && <Button variant="ghost" size="sm" disabled={loading} onClick={() => navigate(directory.parent!)}>↑ Parent folder</Button>}
       {directory?.entries.map(entry => <Button variant="ghost" key={entry.path} disabled={loading}
-        onClick={() => navigate(entry.path)}>{entry.name} /</Button>)}
-      {directory && !loading && directory.entries.length === 0 && <span style={{ color: 'var(--term-muted)' }}>No subfolders</span>}
+        onClick={() => navigate(entry.path)} aria-label={`${entry.name} /`}>
+        <FolderIcon />{entry.name}<ChevronRightIcon />
+      </Button>)}
+      {directory && !loading && directory.entries.length === 0 && <span className="remote-folder-picker__empty">No subfolders</span>}
     </div>
-    {directory && <Button variant="secondary" disabled={loading || !!error} onClick={() => onSelect(directory.path)}
-      style={{ marginTop: 10 }}>Use this folder</Button>}
+    {directory && <Button variant="primary" disabled={loading || !!error} onClick={() => onSelect(directory.path)}>Use this folder</Button>}
   </div>;
 }

@@ -3,7 +3,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type CSSProperties,
   type ReactElement,
 } from 'react';
 import {
@@ -18,7 +17,8 @@ import {
   type BackendConnectionSummary,
 } from '../../../../config/backendConnections';
 import type { Project } from '../../../../state/chatTypes';
-import { BorderBtn } from '../../primitives';
+import { Button } from '../../../ui/controls';
+import '../../../RemoteConnection.css';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
 import { RemoteDesktopConnect } from '../../../RemoteDesktopConnect';
 
@@ -100,6 +100,8 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
       setMessage(result.ok
         ? { kind: 'ok', text: `Connected to Michi backend${result.serverId ? ` · ${result.serverId}` : ''}` }
         : { kind: 'error', text: result.error || 'Connection failed' });
+    } catch (err) {
+      setMessage({ kind: 'error', text: (err as Error).message });
     } finally {
       setBusy(false);
     }
@@ -150,138 +152,123 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
   };
 
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', color: 'var(--term-fg)' }}>
-      <h1 style={{ fontSize: 'var(--fs-2xl)', fontWeight: 700, margin: 0 }}>Connected machines</h1>
-      <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5, margin: '8px 0 16px' }}>
-        Each workspace stays attached to one backend. Local and remote sessions can stream side by side in the same app.
+    <div className="remote-connections">
+      <h1>Connected machines</h1>
+      <p className="remote-connections__intro">
+        Work locally or connect a remote machine. Choose a machine when creating a workspace.
       </p>
 
-      <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface-glass)' }}>
+      <ul className="remote-connections__list" aria-label="Machines">
         <ConnectionRow connection={getKnownBackendConnections()[0]} local />
-        {connections.map((connection) => (
+        {connections.map(connection => (
           <ConnectionRow
             key={connection.id}
             connection={connection}
             workspaceCount={usage.get(connection.id) ?? 0}
             onEdit={() => {
+              setQuickConnect(false);
               setDraft({
-                id: connection.id,
-                name: connection.name,
-                transport: connection.transport,
-                apiUrl: connection.apiUrl ?? '',
-                sshHost: connection.sshHost ?? '',
+                id: connection.id, name: connection.name, transport: connection.transport,
+                apiUrl: connection.apiUrl ?? '', sshHost: connection.sshHost ?? '',
                 sshUser: connection.sshUser ?? '',
                 sshPort: connection.sshPort ? String(connection.sshPort) : '',
-                remotePort: String(connection.remotePort ?? 3000),
-                token: '',
+                remotePort: String(connection.remotePort ?? 3000), token: '',
               });
               setMessage(null);
             }}
             onRemove={() => { void remove(connection); }}
           />
         ))}
-      </div>
+      </ul>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <BorderBtn onClick={() => { setQuickConnect(value => !value); setDraft(null); }}>Connect remote SSH</BorderBtn>
-        <BorderBtn onClick={() => { setDraft({ ...EMPTY_DRAFT }); setQuickConnect(false); setMessage(null); }}>+ add remote backend (advanced)</BorderBtn>
-      </div>
-      {quickConnect && <div style={{ marginTop: 12 }}><RemoteDesktopConnect onConnected={() => {
-        void refresh().catch(err => setMessage({ kind: 'error', text: (err as Error).message }));
-        window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
-      }} /></div>}
+      {!quickConnect && !draft && <>
+        <div className="remote-connections__actions">
+          <Button variant="primary" onClick={() => { setQuickConnect(true); setMessage(null); }}>
+            Connect remote
+          </Button>
+          <Button variant="ghost" onClick={() => { setDraft({ ...EMPTY_DRAFT }); setMessage(null); }}>
+            Manual setup…
+          </Button>
+        </div>
+        <p className="remote-connections__hint">Connect a Linux machine over SSH.</p>
+      </>}
 
-      {draft && (
-        <div style={{ border: '1px solid var(--term-line)', marginTop: 14, padding: 12, background: 'var(--term-surface)' }}>
-          <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginBottom: 10 }}>
-            {draft.id ? 'Edit remote backend' : 'New remote backend'}
-          </div>
-          <Field label="name">
-            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="build-server" />
+      {quickConnect && <section className="remote-connection-panel" aria-label="Connect remote">
+        <div className="remote-connection-panel__heading">
+          <h2>Connect remote</h2>
+          <Button variant="ghost" size="sm" onClick={() => setQuickConnect(false)}>Cancel</Button>
+        </div>
+        <RemoteDesktopConnect onConnected={() => {
+          void refresh().catch(err => setMessage({ kind: 'error', text: (err as Error).message }));
+          window.dispatchEvent(new CustomEvent('michi:backend-connections-changed'));
+        }} />
+      </section>}
+
+      {draft && <section className="remote-connection-panel" aria-label={draft.id ? 'Edit connection' : 'Manual connection'}>
+        <div className="remote-connection-panel__heading">
+          <h2>{draft.id ? 'Edit connection' : 'Manual connection'}</h2>
+        </div>
+        <div className="remote-connection-form">
+          {!draft.id && <p className="remote-connection-form__hint">
+            For a machine already running Michi. Enter its connection details below.
+          </p>}
+          <Field label="Name">
+            <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="build-server" />
           </Field>
-          <Field label="transport">
-            <select
-              aria-label="Connection transport"
-              value={draft.transport}
-              onChange={(e) => setDraft({ ...draft, transport: e.target.value as 'direct' | 'ssh' })}
-            >
+          <Field label="Connection type">
+            <select aria-label="Connection transport" value={draft.transport}
+              onChange={e => setDraft({ ...draft, transport: e.target.value as 'direct' | 'ssh' })}>
               <option value="ssh">SSH tunnel</option>
               <option value="direct">Direct URL</option>
             </select>
           </Field>
           {draft.transport === 'direct' ? (
-            <Field label="URL">
-              <input value={draft.apiUrl} onChange={(e) => setDraft({ ...draft, apiUrl: e.target.value })} placeholder="https://michi.example.com:3000" />
+            <Field label="Server URL">
+              <input value={draft.apiUrl} onChange={e => setDraft({ ...draft, apiUrl: e.target.value })} placeholder="https://michi.example.com:3000" />
             </Field>
-          ) : (
-            <>
-              <Field label="SSH host">
-                <input
-                  aria-label="SSH host"
-                  value={draft.sshHost}
-                  onChange={(e) => setDraft({ ...draft, sshHost: e.target.value })}
-                  placeholder="build-server-host or ~/.ssh/config alias"
-                />
-              </Field>
-              <Field label="SSH user">
-                <input
-                  aria-label="SSH user"
-                  value={draft.sshUser}
-                  onChange={(e) => setDraft({ ...draft, sshUser: e.target.value })}
-                  placeholder="optional"
-                />
-              </Field>
+          ) : <>
+            <Field label="SSH host">
+              <input aria-label="SSH host" value={draft.sshHost}
+                onChange={e => setDraft({ ...draft, sshHost: e.target.value })} placeholder="SSH alias or hostname" />
+            </Field>
+            <Field label="SSH user">
+              <input aria-label="SSH user" value={draft.sshUser}
+                onChange={e => setDraft({ ...draft, sshUser: e.target.value })} placeholder="From SSH config" />
+            </Field>
+            <div className="remote-connection-form__pair">
               <Field label="SSH port">
-                <input
-                  aria-label="SSH port"
-                  inputMode="numeric"
-                  value={draft.sshPort}
-                  onChange={(e) => setDraft({ ...draft, sshPort: e.target.value })}
-                  placeholder="22 (optional)"
-                />
+                <input aria-label="SSH port" inputMode="numeric" value={draft.sshPort}
+                  onChange={e => setDraft({ ...draft, sshPort: e.target.value })} placeholder="22 (optional)" />
               </Field>
-              <Field label="remote port">
-                <input
-                  aria-label="Remote Michi port"
-                  inputMode="numeric"
-                  value={draft.remotePort}
-                  onChange={(e) => setDraft({ ...draft, remotePort: e.target.value })}
-                  placeholder="3000"
-                />
+              <Field label="Michi port">
+                <input aria-label="Remote Michi port" inputMode="numeric" value={draft.remotePort}
+                  onChange={e => setDraft({ ...draft, remotePort: e.target.value })} placeholder="3000" />
               </Field>
-              <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.45, margin: '2px 0 10px' }}>
-                Michi runs <code>ssh -L</code> through your existing ~/.ssh/config and ssh-agent. Complete the first login and host-key confirmation in Terminal before testing here.
-              </div>
-            </>
-          )}
-          <Field label="token">
-            <input
-              type="password"
-              value={draft.token}
-              onChange={(e) => setDraft({ ...draft, token: e.target.value })}
-              placeholder={draft.id ? 'leave blank to keep saved token' : 'MICHI_REMOTE_TOKEN'}
-            />
+            </div>
+            <p className="remote-connection-form__hint">
+              Uses your SSH config. Complete your first SSH sign-in in Terminal before connecting here.
+            </p>
+          </>}
+          <Field label="Access token">
+            <input type="password" autoComplete="off" value={draft.token}
+              onChange={e => setDraft({ ...draft, token: e.target.value })}
+              placeholder={draft.id ? 'Leave blank to keep saved token' : 'MICHI_REMOTE_TOKEN'} />
           </Field>
-          <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.45, margin: '2px 0 10px' }}>
-            The token is stored only by the local Backend in ~/.michi/config.json (mode 0600) and is never exposed to the renderer.
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <BorderBtn disabled={busy} onClick={() => { void runTest(); }}>{busy ? 'testing…' : 'test connection'}</BorderBtn>
-            <BorderBtn disabled={busy} onClick={() => { void save(); }}>save</BorderBtn>
-            <BorderBtn disabled={busy} onClick={() => setDraft(null)}>cancel</BorderBtn>
+          <p className="remote-connection-form__hint">
+            {draft.id ? 'Leave blank to keep the saved token.' : 'Use the token from your remote Michi server.'} Saved securely on this computer.
+          </p>
+          <div className="remote-connection-form__actions">
+            <Button disabled={busy} onClick={() => { void runTest(); }}>{busy ? 'Checking…' : 'Test connection'}</Button>
+            <Button variant="primary" disabled={busy} onClick={() => { void save(); }}>Save</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setDraft(null)}>Cancel</Button>
           </div>
         </div>
-      )}
+      </section>}
 
-      {message && (
-        <div role="status" style={{ marginTop: 10, color: message.kind === 'ok' ? 'var(--term-accent)' : 'var(--term-danger)', fontSize: 'var(--fs-md)' }}>
-          {message.text}
-        </div>
-      )}
-
-      <div style={{ borderTop: '1px solid var(--term-line)', marginTop: 20, paddingTop: 12, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.55 }}>
-        SSH launch: <code>MICHI_REMOTE_ACCESS=1 MICHI_BIND_HOST=127.0.0.1 MICHI_REMOTE_TOKEN=… PORT=3000 npm run remote:start</code>. Run it under systemd, pm2, Docker, or another service manager so it survives SSH and local App exits.
-      </div>
+      {message && <div role={message.kind === 'error' ? 'alert' : 'status'}
+        className="remote-connection-notice" data-tone={message.kind === 'ok' ? 'success' : 'error'}>
+        {message.text}
+      </div>}
     </div>
   );
 }
@@ -299,50 +286,48 @@ function ConnectionRow({
   onEdit?: () => void;
   onRemove?: () => void;
 }) {
+  const address = local ? 'Workspaces on this computer'
+    : connection.transport === 'ssh'
+      ? `SSH · ${connection.sshUser ? `${connection.sshUser}@` : ''}${connection.sshHost}${connection.sshPort ? `:${connection.sshPort}` : ''}`
+      : connection.apiUrl;
+  const tunnelState = connection.tunnelStatus ?? 'disconnected';
+  const status = local ? 'Built in'
+    : connection.transport === 'direct' ? 'Direct URL'
+      : { connected: 'SSH connected', connecting: 'Connecting…', error: 'Connection issue', disconnected: 'Connects when needed' }[tunnelState];
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', borderBottom: '1px solid var(--term-line)' }}>
-      <span style={{ color: local ? 'var(--term-accent)' : 'var(--term-mid)', fontSize: 'var(--fs-md)' }}>{local ? '●' : '◇'}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{connection.name}</div>
-        <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {local
-            ? 'Bundled backend · stopped when the App quits'
-            : connection.transport === 'ssh'
-              ? `SSH · ${connection.sshUser ? `${connection.sshUser}@` : ''}${connection.sshHost}:${connection.sshPort ?? 22} → 127.0.0.1:${connection.remotePort ?? 3000}`
-              : connection.apiUrl}
+    <li className="remote-machine">
+      <svg className="remote-machine__icon" width="18" height="18" viewBox="0 0 18 18" fill="none"
+        stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {local ? <><rect x="2" y="3" width="14" height="10" rx="1.5" /><path d="M6 16h6M9 13v3" /></>
+          : <><rect x="3" y="2" width="12" height="14" rx="1.5" /><path d="M3 9h12M6 5.5h.01M6 12.5h.01M9 5.5h3M9 12.5h3" /></>}
+      </svg>
+      <div>
+        <div className="remote-machine__heading">
+          <span className="remote-machine__name">{connection.name}</span>
+          <span className="remote-machine__status" data-state={!local && connection.transport === 'ssh' ? tunnelState : undefined}>
+            {!local && connection.transport === 'ssh' && <span className="remote-machine__dot" aria-hidden="true" />}
+            {status}
+          </span>
         </div>
-        {!local && connection.transport === 'ssh' && (
-          <div style={{ color: connection.tunnelStatus === 'error' ? 'var(--term-danger)' : 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
-            tunnel {connection.tunnelStatus === 'disconnected' ? 'on demand' : connection.tunnelStatus ?? 'on demand'}
-            {connection.tunnelError ? ` · ${connection.tunnelError}` : ''}
+        <div className="remote-machine__address" title={address}>{address}</div>
+        {!local && <div className="remote-machine__footer">
+          <span className="remote-machine__count">{workspaceCount} {workspaceCount === 1 ? 'workspace' : 'workspaces'}</span>
+          <div className="remote-machine__actions">
+            {onEdit && <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>}
+            {onRemove && <Button variant="ghost" size="sm" danger onClick={onRemove}>Remove</Button>}
           </div>
-        )}
+        </div>}
+        {!local && connection.tunnelError && <p role="status" className="remote-connection-notice" data-tone="error">
+          {connection.tunnelError}
+        </p>}
       </div>
-      {!local && <span style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>{workspaceCount} ws</span>}
-      {onEdit && <BorderBtn onClick={onEdit}>edit</BorderBtn>}
-      {onRemove && <BorderBtn onClick={onRemove}>remove</BorderBtn>}
-    </div>
+    </li>
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactElement<{ style?: CSSProperties }> }) {
-  const input = cloneElement(children, {
-    style: {
-      width: '100%',
-      boxSizing: 'border-box',
-      border: '1px solid var(--term-line)',
-      background: 'var(--term-alt)',
-      color: 'var(--term-fg)',
-      padding: '6px 8px',
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--fs-md)',
-      outline: 'none',
-    },
-  });
-  return (
-    <label style={{ display: 'grid', gridTemplateColumns: '58px minmax(0, 1fr)', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
-      <span>{label}</span>
-      {input}
-    </label>
-  );
+function Field({ label, children }: { label: string; children: ReactElement<{ className?: string }> }) {
+  return <label className="remote-connection-form__field">
+    <span>{label}</span>
+    {cloneElement(children, { className: children.type === 'select' ? 'ui-select' : 'ui-input' })}
+  </label>;
 }

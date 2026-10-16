@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { connectRemoteDesktop } from '../services/api/backendConnections';
 import type { BackendConnectionSummary } from '../config/backendConnections';
 import { Button } from './ui/controls';
+import './RemoteConnection.css';
 
 export function RemoteDesktopConnect({ onConnected }: {
   onConnected: (connection: BackendConnectionSummary, home: string, warnings: string[]) => void;
@@ -15,6 +16,8 @@ export function RemoteDesktopConnect({ onConnected }: {
   const [warnings, setWarnings] = useState<string[]>([]);
   const request = useRef<AbortController | null>(null);
   const hostInputId = useId();
+  const hostHintId = useId();
+  const errorId = useId();
   useEffect(() => () => { request.current?.abort(); }, []);
 
   const connect = async (install: boolean) => {
@@ -37,24 +40,29 @@ export function RemoteDesktopConnect({ onConnected }: {
     } finally { if (!controller.signal.aborted) setBusy(false); }
   };
 
-  return <div style={{ padding: 14, border: '1px solid var(--term-line)', background: 'var(--term-surface)', fontSize: 'var(--fs-md)' }}>
-    <label style={{ display: 'block', marginBottom: 8 }} htmlFor={hostInputId}>Remote SSH host</label>
-    <div style={{ display: 'flex', gap: 8 }}>
-      <input id={hostInputId} placeholder="SSH alias or user@hostname" value={host} disabled={busy}
+  return <div className="remote-connect" aria-busy={busy}>
+    <label className="remote-connect__label" htmlFor={hostInputId}>Remote SSH host</label>
+    <div className="remote-connect__entry">
+      <input className="ui-input" id={hostInputId} placeholder="SSH alias or user@hostname" value={host} disabled={busy}
+        spellCheck={false} autoCapitalize="none" autoCorrect="off" aria-describedby={`${hostHintId}${error ? ` ${errorId}` : ''}`}
+        aria-invalid={error ? true : undefined}
         onChange={event => { setHost(event.target.value); setInstallHost(null); setMessage(''); setError(''); setWarnings([]); setRuntimes(null); }}
-        onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); void connect(false); } }}
-        style={{ minWidth: 0, flex: 1, padding: '8px 10px', border: '1px solid var(--term-line)', background: 'var(--term-alt)', color: 'var(--term-fg)' }} />
-      <Button disabled={busy || !host.trim()} onClick={() => { void connect(false); }}>Connect</Button>
+        onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); void connect(false); } }} />
+      <Button variant="primary" disabled={busy || !host.trim()} onClick={() => { void connect(false); }}>{busy ? 'Connecting…' : 'Connect'}</Button>
     </div>
-    {message && <p role="status" aria-live="polite">{message}</p>}
-    {installHost === host && <div>
-      <p style={{ color: 'var(--term-muted)', lineHeight: 1.5 }}>
-        Michi will fetch its source, build on this machine and start in the background. Node.js will be installed in your user directory if needed. The first build may take a few minutes.
-      </p>
+    <p id={hostHintId} className="remote-connect__hint">Use the same host you connect to in Terminal.</p>
+    {message && <p className="remote-connection-notice" role="status" aria-live="polite"
+      data-tone={runtimes ? 'success' : undefined}>{message}</p>}
+    {installHost === host && <div className="remote-connect__install">
+      <p>Michi will prepare Node.js if needed, fetch its source and build here. It runs in the background. First setup may take a few minutes.</p>
       <Button variant="primary" disabled={busy} onClick={() => { void connect(true); }}>Install and connect</Button>
     </div>}
-    {error && <p role="alert" style={{ color: 'var(--term-danger)' }}>{error}</p>}
-    {runtimes?.length === 0 && <p style={{ color: 'var(--term-muted)' }}>Connected. Set up an agent runtime on this machine before starting a chat.</p>}
-    {warnings.map(warning => <p key={warning} role="status" style={{ color: 'var(--term-muted)', lineHeight: 1.5 }}>{warning}</p>)}
+    {error && <p id={errorId} role="alert" className="remote-connection-notice" data-tone="error">{error}</p>}
+    {runtimes?.length === 0 && <p className="remote-connection-notice" role="status">Set up an agent on the remote machine before starting a chat.</p>}
+    {warnings.map(warning => <p key={warning} role="status" className="remote-connection-notice">{warning}</p>)}
+    <details className="remote-connect__help">
+      <summary>First time connecting?</summary>
+      <p>Run <code>ssh {host.trim().replace(/^ssh\s+/, '') || 'your-host'}</code> in Terminal to complete SSH sign-in and confirm the host. Sign in to your agent on that machine too.</p>
+    </details>
   </div>;
 }
