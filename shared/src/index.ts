@@ -12,5 +12,5 @@ export * from './chatPermissions';
 export * from './crew';
 export * from './composerDrafts';
 export * from './sessionState';
-
+export * from './threadMessage';
 export * from './remoteDiagnostics';
