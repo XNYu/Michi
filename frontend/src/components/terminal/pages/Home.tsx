@@ -20,6 +20,10 @@ const MAX_RECENTS = 6;
  *  windows both columns shrink to the available width and converge. */
 const HOME_COMPOSER_WIDTH = 920;
 const HOME_LIST_WIDTH = 680;
+/** Where Home's larger chips stop fitting on one toolbar row, with a typical
+ *  workspace name and model: first the chips drop their text, then the agent
+ *  chip goes. Measured on the toolbar's border box. */
+const HOME_TOOLBAR_COMPACTION = { glyphsBelow: 640, hideAgentBelow: 480 };
 
 export default function TerminalHome({ onSubmitted }: HomeProps) {
   const {
@@ -77,7 +81,10 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         // count changed the cluster's height and shifted the composer up/down
         // between workspaces — recents now flow downward as a sibling block
         // and never push the composer.
-        paddingTop: 'max(120px, 22vh)',
+        // 22vh whenever the page is at least 636px tall. Shorter pages (a
+        // small window, or a large page zoom) lose the gap twice as fast, down
+        // to 16px, so the composer stays on screen instead of under the fold.
+        paddingTop: 'clamp(16px, calc(44vh - 140px), 22vh)',
         paddingBottom: 40,
         paddingLeft: 24,
         paddingRight: 24,
@@ -139,6 +146,7 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
           <ManageComposer
             onSubmitted={onSubmitted}
             enableAgentSelect
+            toolbarCompaction={HOME_TOOLBAR_COMPACTION}
             toolbarLeftPrefix={
               <HomeWorkspaceChip
                 active={activeProject ?? null}
@@ -199,7 +207,9 @@ function ContinueRow({ item, onClick }: { item: ContinueItem; onClick: () => voi
       style={{
         display: 'grid',
         // status dot · title · workspace · branches · age
-        gridTemplateColumns: '8px minmax(0, 1fr) minmax(0, 150px) 34px 30px',
+        // The workspace column is capped at 30% of the row, so a narrow row
+        // still leaves the title most of the space instead of none.
+        gridTemplateColumns: '8px minmax(0, 1fr) minmax(0, min(150px, 30%)) 34px 30px',
         alignItems: 'center',
         columnGap: 10,
         width: '100%',

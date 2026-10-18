@@ -42,7 +42,10 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
   const choices = PERMISSION_CHOICES.filter((choice) => supportsYolo || choice.mode !== 'yolo');
   const label = PERMISSION_CHOICES.find((choice) => choice.mode === displayedMode)?.label ?? 'Ask';
   return <>
-    <button type="button" className="t-toolbar-chip" data-icononly={compact || undefined}
+    {/* Every label here is a short word, and "A…" says less than the shield
+        alone, so this chip keeps its width and a crowded toolbar takes the
+        space from the model name instead. Callers switch it to icon-only. */}
+    <button type="button" className="t-toolbar-chip" data-icononly={compact || undefined} style={{ flexShrink: 0 }}
       aria-label={`Permissions: ${label}`} title={`Permissions: ${label} · ${scope === 'global' ? 'all chats' : 'this chat'}`}
       aria-haspopup="menu" aria-expanded={!!anchor} disabled={disabled || saving}
       onClick={(event) => {

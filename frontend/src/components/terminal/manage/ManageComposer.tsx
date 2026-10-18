@@ -111,7 +111,44 @@ interface Props {
    * (Home or digest follow-ups) can enable it.
    */
   enableAgentSelect?: boolean;
+  /**
+   * Toolbar widths (border box, px) below which the toolbar compacts the way
+   * a pane composer's does: the agent, permission and model chips drop their
+   * text (the model chip keeps its name and drops the effort), then the agent
+   * chip is hidden. They depend on the caller's chip scale and extra chips,
+   * so there is no default; without them the toolbar never compacts.
+   */
+  toolbarCompaction?: { glyphsBelow: number; hideAgentBelow: number };
   onSubmitted: () => void;
+}
+
+type ToolbarTier = 0 | 1 | 2;
+
+/** Pick the toolbar tier from its measured width, following the toolbar as
+ *  the window (or the page zoom) changes. */
+function useToolbarTier(
+  toolbarRef: React.RefObject<HTMLDivElement | null>,
+  compaction: Props['toolbarCompaction'],
+): ToolbarTier {
+  const [tier, setTier] = useState<ToolbarTier>(0);
+  const glyphsBelow = compaction?.glyphsBelow;
+  const hideAgentBelow = compaction?.hideAgentBelow;
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (glyphsBelow === undefined || hideAgentBelow === undefined) { setTier(0); return; }
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const apply = (width: number) => {
+      const next: ToolbarTier = width < hideAgentBelow ? 2 : width < glyphsBelow ? 1 : 0;
+      setTier((prev) => (prev === next ? prev : next));
+    };
+    apply(el.offsetWidth);
+    const observer = new ResizeObserver((entries) => {
+      apply(entries[0]?.borderBoxSize?.[0]?.inlineSize ?? el.offsetWidth);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [toolbarRef, glyphsBelow, hideAgentBelow]);
+  return tier;
 }
 
 /** Build a thumbnail src for a pending image attachment in ManageComposer. */
@@ -142,8 +179,11 @@ function ScopedManageComposer({
   workspaceId: fixedWorkspaceId,
   toolbarLeftPrefix,
   enableAgentSelect = false,
+  toolbarCompaction,
   onSubmitted,
 }: Props) {
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const toolbarTier = useToolbarTier(toolbarRef, toolbarCompaction);
   const {
     activeProject,
     selectProject,
@@ -727,6 +767,7 @@ function ScopedManageComposer({
     <div style={{ marginBottom: parentNodeId ? 0 : 18, flexShrink: 0, minWidth: 0 }}>
       <ComposerShell
         position="static"
+        toolbarRef={toolbarRef}
         dragHover={dragHover}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -802,7 +843,7 @@ function ScopedManageComposer({
           {toolbarLeftPrefix}
           <PaneComposerToolbarLeft
             canAttach={canAttach}
-            toolbarTier={0}
+            toolbarTier={toolbarTier}
             enableAgentChip={enableAgentSelect}
             currentMode={displayedMode}
             currentModeId={displayedModeId}
@@ -817,10 +858,10 @@ function ScopedManageComposer({
         toolbarRight={
           <>
           {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(workspaceId)} mode={permissionMode}
-            runtimeIds={[permissionRuntime]}
+            runtimeIds={[permissionRuntime]} compact={toolbarTier > 0}
             disabled={submitting || permissionPreferences.loading} onChange={setPermissionMode} />}
           <ComposerModelTrigger
-            toolbarTier={0}
+            toolbarTier={toolbarTier}
             agentStatus={agentStatus}
             resolvedBinding={manageResolvedBinding}
             catalogCapabilities={null}
