@@ -13,9 +13,13 @@ interface HomeProps {
 }
 
 const MAX_RECENTS = 6;
-/** The composer and the list under it share one column, so a row's title, its
- *  workspace and its timestamp all sit inside the width the eye already has. */
-const HOME_COLUMN_WIDTH = 760;
+/** The composer is the page's one action, so it runs clearly wider than the
+ *  list under it and the two read as primary and secondary rather than as one
+ *  block. The list stays narrow enough that a row's title, its workspace and
+ *  its timestamp all sit inside the width the eye already has. On narrow
+ *  windows both columns shrink to the available width and converge. */
+const HOME_COMPOSER_WIDTH = 920;
+const HOME_LIST_WIDTH = 680;
 
 export default function TerminalHome({ onSubmitted }: HomeProps) {
   const {
@@ -87,7 +91,7 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
       <div
         style={{
           width: '100%',
-          maxWidth: HOME_COLUMN_WIDTH,
+          maxWidth: HOME_COMPOSER_WIDTH,
           display: 'flex',
           flexDirection: 'column',
           gap: 28,
@@ -153,7 +157,7 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         <div
           style={{
             width: '100%',
-            maxWidth: HOME_COLUMN_WIDTH,
+            maxWidth: HOME_LIST_WIDTH,
             marginTop: 44,
             display: 'flex',
             flexDirection: 'column',
