@@ -53,6 +53,25 @@ function makeActions(over: Partial<TreeMenuActions> = {}): TreeMenuActions {
 const itemIds = (sections: ReturnType<typeof buildTreeContextMenu>) =>
   sections.flatMap((s) => s.items.map((i) => i.id));
 
+describe('extract node menu', () => {
+  it('offers extraction for a live child and calls the action', () => {
+    const extractNodeTree = vi.fn(async () => {});
+    const sections = buildTreeContextMenu({ targetId: 'b1', project: makeProject(),
+      nodes: { b1: makeNode('b1') }, selection: new Set(), actions: makeActions({ extractNodeTree }) });
+    sections.flatMap(s => s.items).find(item => item.id === 'extract-tree')!.run();
+    expect(extractNodeTree).toHaveBeenCalledWith('b1');
+  });
+  it('hides extraction for roots in other trees and for archived trees', () => {
+    const project = makeProject();
+    project.trees.push({ id: 'other', rootNodeId: 'r2', createdAt: 1, lastActiveAt: 1 });
+    const build = (targetId: string) => buildTreeContextMenu({ targetId, project,
+      nodes: { r2: makeNode('r2'), b1: makeNode('b1') }, selection: new Set(), actions: makeActions({ extractNodeTree: vi.fn() }) });
+    expect(itemIds(build('r2'))).not.toContain('extract-tree');
+    project.trees[0].archivedAt = 1;
+    expect(itemIds(build('b1'))).not.toContain('extract-tree');
+  });
+});
+
 describe('buildTreeContextMenu — node pin', () => {
   it('offers Pin on an unpinned branch node and dispatches pinNode', () => {
     const pinNode = vi.fn();

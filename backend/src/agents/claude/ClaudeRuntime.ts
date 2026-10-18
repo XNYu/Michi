@@ -32,6 +32,7 @@ import { chatHub } from '../chatHub';
 import type { CapabilityDescriptor } from 'michi-shared';
 import { describeRuntimeCapabilities } from '../capabilityDescriptors';
 import { nativeResumeId, NativeResumeUnavailableError } from '../../services/nativeResume';
+import { renderBranchContext } from '../../services/branchBoundary';
 
 // ---- Errors ------------------------------------------------------------------
 
@@ -164,6 +165,12 @@ export class ClaudeRuntime implements AgentRuntime {
   }
 
   async forkSession(opts: ForkAgentSessionOptions): Promise<AgentSession> {
+    // Claude can only fork the parent's latest native state. A historical
+    // anchor must fall back to the exact text prefix instead of inheriting
+    // turns the user cut away.
+    if (opts.anchorMessageId) {
+      throw new NativeResumeUnavailableError('Claude native fork cannot stop at a historical branch anchor');
+    }
     const file = getClaudeJsonlPath(opts.cwd, opts.sourceNativeSessionId, opts.ownerUserId);
     if (!fs.existsSync(file)) throw new NativeResumeUnavailableError('Claude parent session file is unavailable');
     return this.createSession(opts, opts.sourceNativeSessionId);
@@ -180,9 +187,10 @@ export class ClaudeRuntime implements AgentRuntime {
     const cwd = opts.cwd;
 
     // Ancestor chain is needed by the per-chat preamble regardless of warm
-    // hit vs cold spawn.
+    // hit vs cold spawn — except when the server resolved an exact branch
+    // prefix, which must replace the live chain rather than duplicate it.
     const ancestorChain: AgentSession[] = [];
-    if (!forkFrom && owner.kind === 'chat_node' && opts.parentChatId) {
+    if (!forkFrom && !opts.branchContext && owner.kind === 'chat_node' && opts.parentChatId) {
       sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
@@ -197,12 +205,18 @@ export class ClaudeRuntime implements AgentRuntime {
       ? getWorkspaceInstructions(opts.workspaceId)
       : null;
 
+    const branchContextText = opts.branchContext
+      ? renderBranchContext(opts.branchContext)
+      : null;
     const firstTurnPrefix = buildFirstTurnPrefix({
       cwd,
       contextManifest: opts.contextManifest,
       extraContexts: opts.extraContexts,
       ancestors: ancestorChain,
-      mergeContexts: opts.mergeContexts,
+      mergeContexts: [
+        ...(branchContextText ? [branchContextText] : []),
+        ...(opts.mergeContexts ?? []),
+      ],
       workspaceInstructions,
     });
     const effectiveFirstTurnPrefix = [firstTurnPrefix, opts.bootstrapInstructions].filter(Boolean).join('\n\n');

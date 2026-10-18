@@ -216,6 +216,8 @@ export interface EnsureSessionResult {
   lastUsedUpdated?: boolean;
   resumeStrategy: ResumeStrategy;
   resumeReason?: string;
+  /** How a branch child was seeded when this call created one. */
+  forkKind?: 'native' | 'text';
 }
 
 /**
@@ -311,7 +313,10 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
       );
     }
     startupMark('ensure_session_failed', { nodeId: opts.nodeId, status: res.status, durMs: Date.now() - startedAt });
-    throw new Error(payload?.error || `ensureSession failed: ${res.status} ${raw}`);
+    const message = payload?.error || `ensureSession failed: ${res.status} ${raw}`;
+    const error = new Error(message) as Error & { code?: string };
+    if (typeof payload?.code === 'string') error.code = payload.code;
+    throw error;
   }
   const json = await res.json();
   if (pendingPrimary) pendingPrimaryAgents.delete(opts.nodeId);
@@ -332,6 +337,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
     lastUsedUpdated: json.lastUsedUpdated === true,
     resumeStrategy: (json.resumeStrategy ?? 'compatible') as ResumeStrategy,
     resumeReason: typeof json.resumeReason === 'string' ? json.resumeReason : undefined,
+    forkKind: json.forkKind === 'native' || json.forkKind === 'text' ? json.forkKind : undefined,
   };
 }
 

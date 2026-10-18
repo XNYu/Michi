@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getDb, runInTransaction } from '../services/db';
 import {
   loadFullWorkspace, loadAllWorkspaces, saveWorkspace, saveTree,
-  saveNode, saveEdge, saveMessage, saveContext,
+  saveNode, saveEdge, saveMessage, saveContext, setNodeForkProvenance,
   WorkspaceRow, TreeRow, NodeRow, EdgeRow, MessageRow, ContextRow,
 } from '../services/dbRepository';
 import { normalizeIncomingMessageRow } from '../services/messageSerialization';
@@ -219,7 +219,7 @@ function treeRowForSave(source: TreeRow, id: string, workspaceId: string, rootNo
 }
 
 function edgeRowForSave(source: EdgeRow, id: string, workspaceId: string, sourceNodeId: string,
-  targetNodeId: string, anchorMessageId: string | null): EdgeRow {
+  targetNodeId: string, anchorMessageId: string | null, forkBoundaryMessageId: string | null): EdgeRow {
   return {
     id,
     workspace_id: workspaceId,
@@ -227,6 +227,8 @@ function edgeRowForSave(source: EdgeRow, id: string, workspaceId: string, source
     target_node_id: targetNodeId,
     kind: source.kind,
     anchor_message_id: anchorMessageId,
+    fork_boundary_message_id: forkBoundaryMessageId,
+    fork_kind: source.fork_kind ?? null,
     created_at: source.created_at ?? null,
     rev: null,
   };
@@ -456,8 +458,9 @@ export function setupBackupRoutes(): express.Router {
             const sanitizedNode = sanitizeAgentNodeForBackup(
               n as unknown as Record<string, unknown>,
             ) as unknown as NodeRow;
+            const restoredNodeId = requiredMapped(nodeIdMap, n.id, 'Node');
             saveNode(nodeRowForSave(sanitizedNode, {
-              id: requiredMapped(nodeIdMap, n.id, 'Node'),
+              id: restoredNodeId,
               workspace_id: workspaceId,
               tree_id: mapped(treeIdMap, n.tree_id),
               parent_node_id: mapped(nodeIdMap, n.parent_node_id),
@@ -468,12 +471,20 @@ export function setupBackupRoutes(): express.Router {
               last_applied_turn_id: null,
               last_applied_seq: null,
             }), userId);
+            // saveNode deliberately omits server-owned provenance columns;
+            // write the remapped values after the graph row exists.
+            setNodeForkProvenance(restoredNodeId, {
+              forkedFromNodeId: mapped(nodeIdMap, n.forked_from_node_id),
+              forkBoundaryMessageId: mapped(messageIdMap, n.fork_boundary_message_id),
+              inheritedMessageCount: n.inherited_message_count ?? 0,
+            });
           }
           for (const e of ws.edges) {
             saveEdge(edgeRowForSave(e, requiredMapped(edgeIdMap, e.id, 'Edge'), workspaceId,
               requiredMapped(nodeIdMap, e.source_node_id, 'Edge source Node'),
               requiredMapped(nodeIdMap, e.target_node_id, 'Edge target Node'),
-              mapped(messageIdMap, e.anchor_message_id)), userId);
+              mapped(messageIdMap, e.anchor_message_id),
+              mapped(messageIdMap, e.fork_boundary_message_id)), userId);
           }
           for (const c of ws.contexts) {
             saveContext(contextRowForSave(c, requiredMapped(contextIdMap, c.id, 'Context'), workspaceId,

@@ -18,6 +18,7 @@ import { PiSession } from "./PiSession";
 import { createPiSession, shouldNavigatePiTreeOnMichiBranch } from "./PiSdkSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble, buildFormatReminder } from "../preamble";
+import { renderBranchContext } from "../../services/branchBoundary";
 import {
     listPiModels,
     listProviderInfos,
@@ -92,7 +93,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // cold path where the user branches from a parent that hasn't been
         // re-opened since backend restart.
         const ancestorChain: AgentSession[] = [];
-        if (owner.kind === "chat_node" && opts.parentChatId) {
+        if (!opts.branchContext && owner.kind === "chat_node" && opts.parentChatId) {
             await this.ensureChainLoaded(opts.parentChatId, opts.cwd);
             const parent = sessionRegistry.getSession(opts.parentChatId);
             if (parent) {
@@ -100,13 +101,19 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             }
         }
 
+        const branchContextText = opts.branchContext
+            ? renderBranchContext(opts.branchContext)
+            : null;
         const preamble = buildPreamble({
             enableFollowUps,
             cwd: opts.cwd,
             contextManifest: opts.contextManifest,
             extraContexts: opts.extraContexts,
             ancestors: ancestorChain,
-            mergeContexts: opts.mergeContexts,
+            mergeContexts: [
+                ...(branchContextText ? [branchContextText] : []),
+                ...(opts.mergeContexts ?? []),
+            ],
         });
         const effectivePreamble = [preamble, opts.bootstrapInstructions].filter(Boolean).join("\n\n");
         const initialMessages = opts.replayHistory

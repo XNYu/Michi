@@ -304,6 +304,11 @@ export interface ChatNodeState {
   parentNodeId?: string;
   /** For merge nodes: additional source node ids whose context seeds the first message. parentNodeId is the first one; mergeSources holds the rest. */
   mergeSources?: string[];
+  /** Set when this node was materialized from a branch (Extract as new thread).
+   *  Server-owned; messages with seq < inheritedMessageCount are copied history. */
+  forkedFromNodeId?: string;
+  forkBoundaryMessageId?: string;
+  inheritedMessageCount?: number;
   messages: ChatMessage[];
   /**
    * Lazy-load marker (in-memory only, NEVER persisted or sent in any write-back
@@ -982,6 +987,8 @@ export interface ChatContextValue {
    * via the trimSnapshot stamped on the node.
    */
   trimNode: (nodeId: string) => void;
+  /** Move this chat and its descendants into a new tree, materializing parent history. */
+  extractNodeTree: (nodeId: string) => Promise<string | undefined>;
   /**
    * Archive a single node. Same mechanics as {@link trimNode} (children
    * reparent up, restorable via the trimSnapshot) but routed to the Archived
@@ -1268,6 +1275,7 @@ export type ChatActionsValue = Pick<
   | 'cancelStream'
   | 'deleteNode'
   | 'trimNode'
+  | 'extractNodeTree'
   | 'archiveNode'
   | 'setMinimized'
   | 'setPaneWidth'

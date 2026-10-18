@@ -39,9 +39,28 @@ export async function tryForkChatSession(
   const live = getSessionForOwner(parent.id, { kind: 'chat_node', nodeId: parent.id }, opts.ownerUserId ?? null);
   if (live?.getPendingAssistant() !== undefined) return null;
   // A never-sent session has no stored history for the runtime to fork.
-  if (!listMessages(parent.id).some((message) => message.role === 'assistant')) return null;
+  const parentMessages = listMessages(parent.id);
+  if (!parentMessages.some((message) => message.role === 'assistant')) return null;
+  // A branch cut before the parent's tail must not silently inherit later
+  // turns. Ask the runtime for an anchored fork; runtimes that can only fork
+  // their latest state reject it and the caller falls back to the exact text
+  // prefix. A tail cut is equivalent to a latest-state fork.
+  const boundaryMessageId = opts.branchContext?.boundaryMessageId;
+  // An empty prefix with a non-empty parent is a real cut (the branch was
+  // created before the parent had any messages); a latest-state fork would
+  // wrongly inherit everything, so decline and use the text path.
+  if (opts.branchContext && boundaryMessageId === undefined && parentMessages.length > 0) return null;
+  const anchorMessageId = boundaryMessageId !== undefined
+    && parentMessages.at(-1)?.id !== boundaryMessageId
+    ? boundaryMessageId
+    : undefined;
   try {
-    const session = await runtime.forkSession({ ...opts, parentChatId: parent.id, sourceNativeSessionId: nativeId });
+    const session = await runtime.forkSession({
+      ...opts,
+      parentChatId: parent.id,
+      sourceNativeSessionId: nativeId,
+      ...(anchorMessageId === undefined ? {} : { anchorMessageId }),
+    });
     if (session.id !== child.id || !session.nativeSessionId || session.nativeSessionId === nativeId) {
       if (session.id === child.id) await runtime.releaseSession(session.id);
       throw new Error('Native fork did not create an independent child session');

@@ -28,6 +28,7 @@ import { resolveModel, resolveReasoning } from '../../services/agentConfig';
 import { resolveChatPolicy } from '../permissionPolicy';
 import { findCodexBinary, preflightCodexAuth } from './codexBinary';
 import { NativeResumeUnavailableError, nativeResumeId } from '../../services/nativeResume';
+import { renderBranchContext } from '../../services/branchBoundary';
 import type { RuntimeModelCache } from '../runtimeModelCache';
 import { titleModelConfig } from '../../services/titleGeneration';
 import {
@@ -291,6 +292,11 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   async forkSession(opts: ForkAgentSessionOptions): Promise<AgentSession> {
+    // Codex thread/fork always copies the parent's latest rollout; an anchor
+    // older than the tail must use the exact text prefix instead.
+    if (opts.anchorMessageId) {
+      throw new NativeResumeUnavailableError('Codex native fork cannot stop at a historical branch anchor');
+    }
     return this.acquireSession(opts, () => this.createSession(opts, opts.sourceNativeSessionId));
   }
 
@@ -316,9 +322,10 @@ export class CodexRuntime implements AgentRuntime {
       modelId = def?.id ?? '';
     }
 
-    // Ancestor chain for preamble (chat sessions only)
+    // Ancestor chain for preamble (chat sessions only). A server-resolved
+    // branch prefix replaces the live chain so the cut is honored.
     const ancestorChain: AgentSession[] = [];
-    if (!forkFrom && owner.kind === 'chat_node' && opts.parentChatId) {
+    if (!forkFrom && !opts.branchContext && owner.kind === 'chat_node' && opts.parentChatId) {
       sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
       const parent = sessionRegistry.getSession(opts.parentChatId);
       if (parent) {
@@ -330,6 +337,9 @@ export class CodexRuntime implements AgentRuntime {
       ? getWorkspaceInstructions(opts.workspaceId)
       : null;
 
+    const branchContextText = opts.branchContext
+      ? renderBranchContext(opts.branchContext)
+      : null;
     // For agent_run, bootstrapInstructions come from the Executor; for chat,
     // build from ancestor chain and context.
     const firstTurnPrefix = owner.kind === 'agent_run'
@@ -339,7 +349,10 @@ export class CodexRuntime implements AgentRuntime {
           contextManifest: opts.contextManifest,
           extraContexts: opts.extraContexts,
           ancestors: ancestorChain,
-          mergeContexts: opts.mergeContexts,
+          mergeContexts: [
+            ...(branchContextText ? [branchContextText] : []),
+            ...(opts.mergeContexts ?? []),
+          ],
           workspaceInstructions,
         });
 

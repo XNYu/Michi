@@ -61,7 +61,7 @@ Settings → Model shows these switches for runtimes that expose them. They are 
 
 Native Resume restores provider-side state when available. Disabling it changes cold-session reconstruction and does not interrupt live sessions. Text reconstruction uses persisted conversation material; hidden native state and every original tool result may not be restored.
 
-Native Fork creates a child from compatible native history. Parents generally must be idle and match runtime/workspace/owner constraints. Missing or unsupported history uses textual context; ambiguous runtime failures can surface instead of silently starting over.
+Native Fork creates a child from compatible native history. Parents generally must be idle and match runtime/workspace/owner constraints. A fork cut at an earlier message is exact when the runtime supports that anchor (for example Kiro rewind); otherwise Michi falls back to a textual transcript that stops at the selected branch point, not at the parent's latest state. Missing or unsupported history uses textual context; ambiguous runtime failures can surface instead of silently starting over.
 
 Crew forks copy Gateway transcripts into independent sessions and inherit Memory identity/mode; they are not Kiro CLI checkpoint clones. Pi uses context-based branching.
 

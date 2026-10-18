@@ -1,5 +1,5 @@
 import { clearRemoteRecoveryIssue, markRemoteRecoveryRetrying, reportRemoteRecoveryFailure, REMOTE_WORKSPACE_RETRY_EVENT } from './remoteRecovery';
-import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
   fetchAllWorkspacesMeta,
   fetchTreeMessages,
@@ -1102,6 +1102,38 @@ export function useWorkspacePersistence({
     dirtyDraftNodeIdsRef?.current.clear();
   };
 
+  // Structural mutations must see new branches and must not race an older
+  // queued graph write. The callback installs the server result before sync resumes.
+  const runWorkspaceMutation = useCallback(async (projectId: string, mutation: () => Promise<void>) => {
+    if (!hydratedRef.current) throw new Error('Workspace is still loading');
+    if (!syncPausedRef || syncPausedRef.current) throw new Error('Another workspace operation is in progress');
+    syncPausedRef.current = true;
+    try {
+      await workspaceSyncQueueRef.current!.whenIdle(projectId);
+      const project = projectsRef.current.find(p => p.id === projectId);
+      if (!project) throw new Error('Workspace not found');
+      const pendingDelta = pendingCommandDeltaByProjectRef.current.get(projectId);
+      const dirtyDelta = dirtyDeltaByProjectRef.current.get(projectId);
+      let delta = mergeWorkspaceDirtyDelta(
+        pendingDelta ?? emptyWorkspaceDirtyDelta(),
+        dirtyDelta ?? emptyWorkspaceDirtyDelta(),
+      );
+      delta = accumulateWorkspaceDirtyDelta(prevProjectsRef.current.find(p => p.id === projectId), project,
+        prevNodesRef.current, nodesRef.current, delta);
+      const batch = buildExplicitWorkspaceCommands(project, nodesRef.current, delta, nodeCommandProjectionRef.current, windowId);
+      await applyWorkspaceCommands(projectId, `cmd-${crypto.randomUUID()}`, batch.commands);
+      for (const [nodeId, projection] of batch.nodeProjectionUpdates) nodeCommandProjectionRef.current.set(nodeId, projection);
+      if (pendingCommandDeltaByProjectRef.current.get(projectId) === pendingDelta) pendingCommandDeltaByProjectRef.current.delete(projectId);
+      if (dirtyDeltaByProjectRef.current.get(projectId) === dirtyDelta) {
+        dirtyDeltaByProjectRef.current.delete(projectId);
+        dirtyProjectIdsRef.current.delete(projectId);
+      }
+      await mutation();
+    } finally {
+      syncPausedRef.current = false;
+    }
+  }, [nodesRef, syncPausedRef, windowId]);
+
   // Periodically turn structural state and explicit draft edits into v2 commands.
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1140,6 +1172,7 @@ export function useWorkspacePersistence({
           const projectId = project.id;
           const queue = workspaceSyncQueueRef.current!;
           queue.enqueue(projectId, async () => {
+            if (syncPausedRef?.current) return;
             const latestProject = projectsRef.current.find((candidate) => candidate.id === projectId);
             const pending = pendingCommandDeltaByProjectRef.current.get(projectId);
             if (!latestProject || !pending) return;
@@ -1615,4 +1648,5 @@ export function useWorkspacePersistence({
       window.removeEventListener('michi:backend-connections-changed', onConnectionsChanged);
     };
   }, [nodesRef, setActiveProjectId, setHydrated, setNodes, setProjects, userId]);
+  return { runWorkspaceMutation };
 }

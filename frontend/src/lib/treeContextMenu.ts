@@ -1,6 +1,7 @@
 import type { MenuSection } from '../components/ContextMenu';
 import type { ChatNodeState, Project } from '../state/chatStore';
 import { activeTreeRootNodeId } from '../state/chatStore';
+import { findTreeIdForNode } from '../state/tree';
 
 import { requestDigest } from '../lib/digestPrompt';
 
@@ -13,6 +14,7 @@ export interface TreeMenuActions {
   /** Trim a single node out of the conversation, reparenting its children up.
    *  See chatStore for semantics; restore reverses via the trimSnapshot. */
   trimNode: (id: string) => void;
+  extractNodeTree?: (id: string) => Promise<unknown>;
   /** Archive a single node (same mechanics as trim, routed to the Archived
    *  surface instead of Trash). */
   archiveNode: (id: string) => void;
@@ -177,6 +179,10 @@ export function buildTreeContextMenu({
   // Single target
   const isRoot = targetId === rootId;
   const isChat = nodes[targetId]?.kind === 'chat';
+  const owningTree = project.trees.find(t => t.id === findTreeIdForNode(targetId, project));
+  const canExtract = isChat && !!actions.extractNodeTree && !!owningTree
+    && owningTree.rootNodeId !== targetId && !owningTree.archivedAt
+    && !project.archivedAt && !project.deletedAt && !nodes[targetId]?.deletedAt;
   const canPin = !isRoot && !!actions.pinNode && !!actions.unpinNode;
   const pinned = !!nodes[targetId]?.pinnedAt;
 
@@ -211,6 +217,11 @@ export function buildTreeContextMenu({
             void Promise.resolve(actions.createBlankChild(targetId)).catch(() => {});
           },
         },
+        ...(canExtract ? [{
+          id: 'extract-tree', label: 'Extract as new thread',
+          disabled: nodes[targetId]?.status === 'streaming',
+          run: () => { void actions.extractNodeTree!(targetId); },
+        }] : []),
       ],
     },
     {

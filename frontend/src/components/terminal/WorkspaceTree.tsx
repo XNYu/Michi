@@ -104,6 +104,7 @@ export default function WorkspaceTree({
     clearTreeSelection,
     deleteNode,
     trimNode,
+    extractNodeTree,
     archiveNode,
     createBlankChild,
     createMergedChat,
@@ -589,6 +590,9 @@ export default function WorkspaceTree({
           clearSelection,
           deleteNode,
           trimNode,
+          extractNodeTree: async (id) => {
+            if (await extractNodeTree(id)) onActivate?.();
+          },
           archiveNode,
           createMergedChat,
           createDigest,

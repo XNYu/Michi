@@ -38,7 +38,7 @@ Artifact favorites/pins affect UI ordering. The send path injects explicit `@` r
 
 ## What does a branch inherit?
 
-A branch starts a separate direction using selected conversation context. Compatible idle parents can use native fork where supported; other paths use textual context. Later parent messages do not automatically synchronize into an existing child.
+A branch starts a separate direction using selected conversation context. Compatible idle parents can use native fork where supported; otherwise Michi reconstructs the parent transcript only through the selected branch point as textual context. Later parent messages do not automatically synchronize into an existing child.
 
 Inherited context does not guarantee identical hidden provider state. Native Resume and Native Fork are independent. See `sessions-and-recovery` and `runtime-capabilities`.
 

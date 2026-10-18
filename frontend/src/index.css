@@ -329,6 +329,29 @@
   contain-intrinsic-size: auto;
 }
 
+/* Boundary between copied parent history and an extracted thread's own turns. */
+.t-inherited-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 10px;
+  color: var(--term-muted, var(--fg-muted));
+  font-size: var(--fs-xs);
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+  user-select: none;
+}
+.t-inherited-divider::before,
+.t-inherited-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--term-line, var(--line));
+}
+.t-inherited-divider > span {
+  white-space: nowrap;
+}
+
 :is(.terminal-message-assistant, .terminal-message-user) .prose .michi-code-block,
 .prose .michi-code-block {
   margin-top: var(--message-paragraph-spacing, 1em);

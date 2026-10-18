@@ -24,9 +24,56 @@ import { requireWorkspaceOwner, requireNodeOwner } from './middleware/ownership'
 import { ensureDurableGraphNode } from '../services/graphCommands';
 import { applyWorkspaceCommands } from '../services/domainCommands';
 import { loadProfileActivity } from '../services/profileActivity';
+import { extractNodeTree, planNodeExtraction } from '../services/extractNodeTree';
+import { acquireSessionRestoreLock } from '../services/nativeResume';
+import { chatHub } from '../agents/chatHub';
+import { dropSessionForOwner, getSessionForOwner } from '../agents/sessionRegistry';
+import { getRuntime } from '../agents/registry';
 
 export function setupPersistenceRoutes(): express.Router {
   const router = express.Router();
+
+  router.post('/workspaces/:id/nodes/:nodeId/extract-tree', requireWorkspaceOwner, async (req, res) => {
+    const { id: workspaceId, nodeId } = req.params;
+    const treeId = req.body?.treeId;
+    if (typeof treeId !== 'string' || !treeId.trim() || treeId.length > 128) {
+      return res.status(400).json({ error: 'treeId is required (up to 128 characters)' });
+    }
+    const releases: Array<() => void> = [];
+    try {
+      const userId = req.user?.id;
+      // The caller retains treeId across an uncertain response. A retry reads
+      // the committed result without copying history or resetting a session again.
+      if (listTrees(workspaceId, userId).some(tree => tree.id === treeId && tree.root_node_id === nodeId)) {
+        return res.json(extractNodeTree(workspaceId, nodeId, treeId, userId));
+      }
+      const plan = planNodeExtraction(workspaceId, nodeId, userId);
+      for (const id of [...plan.affected].sort()) releases.push(await acquireSessionRestoreLock(id));
+      const current = planNodeExtraction(workspaceId, nodeId, userId);
+      if (current.affected.some(id => !plan.affected.includes(id))) throw new Error('Branch changed; try extracting again');
+      const assertIdle = () => {
+        for (const id of current.affected) {
+          if (chatHub.isActive(id) || chatHub.isOwnerTurnActive(id) || chatHub.hasPendingSelfTurn(id)) {
+            throw new Error('Wait for replies to finish before extracting this branch');
+          }
+        }
+      };
+      assertIdle();
+      // Rebuild this root from its new durable transcript on the next send.
+      // Reusing its old runtime would retain the old parent-chain pointer.
+      const owner = { kind: 'chat_node' as const, nodeId };
+      const session = getSessionForOwner(nodeId, owner, userId ?? null);
+      if (session) await getRuntime(session.runtimeId)?.releaseSession(nodeId, owner);
+      dropSessionForOwner(nodeId, owner);
+      assertIdle();
+      res.json(extractNodeTree(workspaceId, nodeId, treeId, userId));
+    } catch (error) {
+      const message = (error as Error).message;
+      res.status(/not found/i.test(message) ? 404 : 409).json({ error: message });
+    } finally {
+      releases.reverse().forEach(release => release());
+    }
+  });
 
   router.post('/workspaces/:id/open-url/claim', requireWorkspaceOwner, (req, res) => {
     if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });

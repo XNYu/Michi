@@ -44,11 +44,12 @@ function useHarness() {
   const nodeReads = useRef(0);
   const nodesRef = useRef(nodes);
   const dirtyDraftNodeIdsRef = useRef(new Set<string>());
+  const syncPausedRef = useRef(false);
   nodesRef.current = nodes;
-  useWorkspacePersistence({
+  const { runWorkspaceMutation } = useWorkspacePersistence({
     projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
-    dirtyDraftNodeIdsRef, windowId: 'window-a',
+    dirtyDraftNodeIdsRef, syncPausedRef, windowId: 'window-a',
   });
   const trackedNodes = (nextNode: ChatNodeState): Record<string, ChatNodeState> => new Proxy({
     n1: nextNode,
@@ -59,6 +60,8 @@ function useHarness() {
     },
   });
   return {
+    runWorkspaceMutation,
+    rename(name: string) { setProjects(prev => prev.map(p => ({ ...p, name }))); },
     editDraft(value: string) {
       setNodes({ n1: { ...node, composerDraft: value ? { value, mentions: [] } : undefined } });
       dirtyDraftNodeIdsRef.current.add('n1');
@@ -97,6 +100,37 @@ describe('v2 authoritative workspace persistence', () => {
   });
 
   afterEach(() => vi.useRealTimers());
+
+  it('flushes structural prerequisites before a mutation and pauses periodic writes until it finishes', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.rename('Before extraction'));
+    let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { finish = resolve; });
+    const mutate = vi.fn(() => waiting);
+    let pending!: Promise<void>;
+    await act(async () => { pending = result.current.runWorkspaceMutation('ws-1', mutate); await Promise.resolve(); });
+    expect(apiMocks.applyWorkspaceCommands.mock.calls[0][2][0].payload.name).toBe('Before extraction');
+    expect(mutate).toHaveBeenCalledOnce();
+    act(() => result.current.rename('During extraction'));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(); await pending; });
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands.mock.calls[1][2][0].payload.name).toBe('During extraction');
+  });
+
+  it('does not run a mutation when prerequisite persistence fails, and releases the pause for retry', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.rename('Unsaved'));
+    apiMocks.applyWorkspaceCommands.mockRejectedValueOnce(new Error('Offline'));
+    const mutate = vi.fn(async () => {});
+    await act(async () => { await expect(result.current.runWorkspaceMutation('ws-1', mutate)).rejects.toThrow('Offline'); });
+    expect(mutate).not.toHaveBeenCalled();
+    await act(async () => { await result.current.runWorkspaceMutation('ws-1', mutate); });
+    expect(mutate).toHaveBeenCalledOnce();
+  });
 
   it('uses explicit commands and never writes /sync or the durable localStorage mirror', async () => {
     const { result } = renderHook(() => useHarness());

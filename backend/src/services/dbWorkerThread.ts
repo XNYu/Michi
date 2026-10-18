@@ -201,9 +201,12 @@ function saveEdge(edge: Record<string, SQLInputValue>, _userId?: string): void {
   const wsId = edge.workspace_id as string;
   if (isWorkspaceTombstoned(wsId)) return;
   runNamed(`
-    INSERT INTO edges (id, workspace_id, source_node_id, target_node_id, kind, anchor_message_id, created_at)
-    VALUES (@id, @workspace_id, @source_node_id, @target_node_id, @kind, @anchor_message_id, @created_at)
-    ON CONFLICT(id) DO NOTHING
+    INSERT INTO edges (id, workspace_id, source_node_id, target_node_id, kind, anchor_message_id,
+      fork_boundary_message_id, fork_kind, created_at)
+    VALUES (@id, @workspace_id, @source_node_id, @target_node_id, @kind, @anchor_message_id,
+      @fork_boundary_message_id, @fork_kind, @created_at)
+    ON CONFLICT(id) DO UPDATE SET
+      fork_boundary_message_id=COALESCE(edges.fork_boundary_message_id, excluded.fork_boundary_message_id)
   `, edge);
 }
 
@@ -363,6 +366,9 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
         target_node_id: asValue(edge.targetNodeId),
         kind: asValue(edge.kind),
         anchor_message_id: asValue((edge.anchorMessageId as string) ?? null),
+        fork_boundary_message_id: edge.kind === 'branch'
+          ? asValue((edge.anchorMessageId as string) ?? null) : null,
+        fork_kind: null,
         created_at: asValue((edge.createdAt as number) ?? null),
       });
     }

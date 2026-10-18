@@ -164,10 +164,32 @@ export interface RuntimeSessionBootstrapOptions {
   profileHash?: string | null;
 }
 
+/** One parent message included in an inherited branch transcript. */
+export interface BranchContextMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * Server-resolved branch prefix. When present, the runtime must use this
+ * transcript instead of walking `parentChatId`'s live ancestor chain, so the
+ * visible context stops at the user's chosen branch point.
+ */
+export interface BranchContext {
+  parentNodeId: string;
+  kind: 'exact' | 'approx' | 'legacy';
+  boundaryMessageId?: string;
+  messages: BranchContextMessage[];
+  /** Caveat about an unfinished parent tail or an approximate cut. */
+  note?: string;
+}
+
 export interface NewAgentSessionOptions extends RuntimeSessionBootstrapOptions {
   crewMemoryMode?: import("michi-shared").CrewMemoryMode;
   cwd: string;
   parentChatId?: string;
+  /** Exact inherited prefix; suppresses the runtime's live ancestor-chain preamble. */
+  branchContext?: BranchContext;
   mergeContexts?: string[];
   extraContexts?: ExtraContext[];
   contextManifest?: ExtraContext[];
@@ -227,6 +249,12 @@ export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions 
 export interface ForkAgentSessionOptions extends NewAgentSessionOptions {
   /** Backend-validated parent token. The new session must have a different native identity. */
   sourceNativeSessionId: string;
+  /**
+   * Set only when the child must stop at a historical anchor. Runtimes that
+   * can only fork their latest native state reject this so the caller can use
+   * the exact text fallback instead of silently inheriting later turns.
+   */
+  anchorMessageId?: string;
 }
 
 export interface AgentStatus {

@@ -138,6 +138,8 @@ function PaneMessageListInner({
   // Placeholder state: node has messages in the DB but they haven't loaded yet.
   // Show a subtle loading indicator instead of bare follow-ups.
   const isPlaceholder = node.messagesLoaded === false && (node.messageCount ?? 0) > 0;
+  // Messages before this cut were copied from the parent chain by extraction.
+  const inheritedCount = Math.min(node.inheritedMessageCount ?? 0, node.messages.length);
 
   const userInputCtx = React.useMemo(
     () => ({ userInput: node.pendingUserInput, nodeId: node.nodeId }),
@@ -189,6 +191,19 @@ function PaneMessageListInner({
 
         return (
           <React.Fragment key={m.id}>
+            {i === inheritedCount && inheritedCount > 0 && (
+              <div
+                className="t-inherited-divider"
+                role="separator"
+                aria-label={`Inherited history: ${inheritedCount} messages`}
+                data-inherited-count={inheritedCount}
+                title={node.forkedFromNodeId
+                  ? `Copied from ${node.forkedFromNodeId} when this thread was extracted.`
+                  : 'Copied from the parent conversation when this thread was extracted.'}
+              >
+                <span>Inherited history · {inheritedCount} messages</span>
+              </div>
+            )}
             <div
               data-msg-id={m.id}
               data-streaming-tail={isStreamingTail ? 'true' : undefined}
@@ -306,6 +321,20 @@ function PaneMessageListInner({
           </React.Fragment>
         );
       })}
+
+      {inheritedCount > 0 && inheritedCount === node.messages.length && (
+        <div
+          className="t-inherited-divider"
+          role="separator"
+          aria-label={`Inherited history: ${inheritedCount} messages`}
+          data-inherited-count={inheritedCount}
+          title={node.forkedFromNodeId
+            ? `Copied from ${node.forkedFromNodeId} when this thread was extracted.`
+            : 'Copied from the parent conversation when this thread was extracted.'}
+        >
+          <span>Inherited history · {inheritedCount} messages</span>
+        </div>
+      )}
 
       <StreamActivityIndicator node={node} showThoughts={prefs.showThoughts} />
       <McpServerError node={node} />

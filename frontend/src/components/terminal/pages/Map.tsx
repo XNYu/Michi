@@ -136,6 +136,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     createBlankChild,
     deleteNode,
     trimNode,
+    extractNodeTree,
     archiveNode,
     createMergedChat,
     createDigest,
@@ -637,6 +638,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                   clearSelection,
                   deleteNode,
                   trimNode,
+                  extractNodeTree: async (id) => {
+                    if (await extractNodeTree(id)) onNav?.('dashboard');
+                  },
                   archiveNode,
                   createMergedChat,
                   createDigest,
@@ -1008,6 +1012,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               clearSelection,
               deleteNode,
               trimNode,
+              extractNodeTree: async (id) => {
+                if (await extractNodeTree(id)) onNav?.('dashboard');
+              },
               archiveNode,
               createMergedChat,
               createDigest,

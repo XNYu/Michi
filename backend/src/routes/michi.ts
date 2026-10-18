@@ -40,8 +40,15 @@ import {
     revokePermission,
     saveWorkspace,
     updateNodeResumeBinding,
+    setEdgeForkProvenance,
 } from "../services/dbRepository";
 import type { WorkspaceRow } from "../services/dbRepository";
+import {
+    BranchBoundaryError,
+    resolveBranchBoundary,
+    toBranchContext,
+    type BranchBoundary,
+} from "../services/branchBoundary";
 import { ensureDurableGraphNode } from "../services/graphCommands";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from '../services/nativeResume';
@@ -214,6 +221,10 @@ function isConcurrencyError(err: unknown): boolean {
 }
 
 function sendAgentRouteError(res: express.Response, err: unknown): void {
+    if (err instanceof BranchBoundaryError) {
+        res.status(409).json({ code: err.code, error: err.message });
+        return;
+    }
     if (err instanceof NativeResumeFailedError) {
         res.status(503).json({ code: 'NATIVE_RESUME_FAILED', error: err.message });
         return;
@@ -1243,6 +1254,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         try {
             const michiUserId: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
             const cfg = getAgentConfig(michiUserId);
+            // Resolved only when this call actually creates a session: a live
+            // or exact resume must not fail because the original anchor message
+            // was trimmed after the branch was created.
+            let branchBoundary: BranchBoundary | undefined;
+            let branchContext: ReturnType<typeof toBranchContext> | undefined;
+            let effectiveParentChatId = parentChatId;
             const row = getNode(nodeId);
             const boundSignature = row?.acp_session_id || row?.external_session_id
                 ? normalizeResumeSignature({
@@ -1377,8 +1394,23 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             // and exact continuations already retain the runtime's conversation.
             const transcript = session ? [] : readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
             if (!session && !hasResumeBinding && transcript.length === 0) {
+                try {
+                    branchBoundary = resolveBranchBoundary({
+                        childNodeId: nodeId,
+                        parentNodeId: parentChatId,
+                        userId: michiUserId,
+                    });
+                } catch (error) {
+                    if (error instanceof BranchBoundaryError) {
+                        return res.status(409).json({ code: error.code, error: error.message });
+                    }
+                    throw error;
+                }
+                branchContext = branchBoundary ? toBranchContext(branchBoundary) : undefined;
+                effectiveParentChatId = parentChatId ?? branchBoundary?.parentNodeId;
                 session = await tryForkChatSession(runtime, {
-                    cwd, parentChatId, mergeContexts, extraContexts, contextManifest, enableFollowUps,
+                    cwd, parentChatId: effectiveParentChatId, branchContext,
+                    mergeContexts, extraContexts, contextManifest, enableFollowUps,
                     model: targetSignature.modelId, provider: targetSignature.providerId,
                     reasoning: targetSignature.reasoning, sessionId: nodeId, workspaceId,
                     ownerUserId: req.user?.id ?? null, ...primaryAgentSessionOptions(primaryAgent),
@@ -1404,15 +1436,17 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 // the parent's transcript from SQLite and inject it as a merge
                 // context so the child still gets ancestor history.
                 let parentTranscriptContext: string | null = null;
-                const resolvedParentNodeId: string | null = (() => {
-                    if (parentChatId) {
-                        if (sessionRegistry.getSession(parentChatId)) return null; // live — runtime handles it
-                        const binding = getNodeSessionBinding(parentChatId, michiUserId);
-                        return binding?.nodeId ?? parentChatId;
-                    }
-                    // parentChatId absent (nulled on hydration) — look up via DB edge
-                    return row?.parent_node_id ?? null;
-                })();
+                const resolvedParentNodeId: string | null = branchContext
+                    ? null
+                    : (() => {
+                        if (effectiveParentChatId) {
+                            if (sessionRegistry.getSession(effectiveParentChatId)) return null; // live — runtime handles it
+                            const binding = getNodeSessionBinding(effectiveParentChatId, michiUserId);
+                            return binding?.nodeId ?? effectiveParentChatId;
+                        }
+                        // parentChatId absent (nulled on hydration) — look up via DB edge
+                        return row?.parent_node_id ?? null;
+                    })();
                 if (resolvedParentNodeId) {
                     const parentRow = getNode(resolvedParentNodeId);
                     if (parentRow) {
@@ -1439,7 +1473,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 session = await runtime.newSession({
                     ...(isCrewMemoryMode(body.crewMemoryMode) ? { crewMemoryMode: body.crewMemoryMode } : {}),
                     cwd,
-                    parentChatId,
+                    parentChatId: effectiveParentChatId,
+                    ...(branchContext === undefined ? {} : { branchContext }),
                     ...(runtime.id === 'pi' ? { replayHistory: transcript } : {}),
                     mergeContexts: seededMergeContexts.length > 0 ? seededMergeContexts : undefined,
                     extraContexts,
@@ -1454,6 +1489,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     ...primaryAgentSessionOptions(primaryAgent),
                 });
                 sessionRegistry.registerSession(session, req.user?.id ?? null);
+                if (branchContext) resumeReason = 'text_fallback';
 
                 // Apply the caller's explicit agent pick before the first
                 // prompt. This block only runs for a newly constructed runtime
@@ -1481,6 +1517,27 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 // Do not let a subsequent ensure reuse an uncommitted replacement.
                 if (session !== liveSession) await retireLiveSession(session);
                 throw error;
+            }
+            const forkKind = branchBoundary
+                && (resumeReason === 'native_fork' || resumeReason === 'text_fallback')
+                ? resumeReason === 'native_fork' ? 'native' as const : 'text' as const
+                : undefined;
+            if (branchBoundary && forkKind) {
+                try {
+                    setEdgeForkProvenance(branchBoundary.edgeId, {
+                        forkKind,
+                        ...(branchBoundary.boundaryMessageId === undefined
+                            ? {}
+                            : { forkBoundaryMessageId: branchBoundary.boundaryMessageId }),
+                    });
+                } catch (error) {
+                    // Provenance is diagnostic; never fail a session that is already live.
+                    log.warn('chat', 'failed to persist branch provenance', {
+                        nodeId,
+                        edgeId: branchBoundary.edgeId,
+                        error: (error as Error).message,
+                    });
+                }
             }
             // Pane-level provider/model picks never touch /agent/options, so
             // remember what this conversation actually ran with. A new pane
@@ -1522,6 +1579,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 resumeFingerprint: null,
                 resumeStrategy,
                 resumeReason,
+                ...(forkKind === undefined ? {} : { forkKind }),
             });
         } catch (err) {
             console.error("Failed to ensure session:", err);

@@ -28,6 +28,7 @@ import type { RuntimeModelCache } from "../runtimeModelCache";
 import { getNode, getWorkspaceInstructions, listEdges } from "../../services/dbRepository";
 import { buildRunMcpSlotCallbacks } from "../runs/runMcpSlot";
 import { NativeResumeFailedError, NativeResumeUnavailableError } from '../../services/nativeResume';
+import { renderBranchContext } from '../../services/branchBoundary';
 import { classifyAcpError, isNativeSessionUnavailable } from './acpErrors';
 import { ACPNotRunningError, ACPProcessExitedError, probeKiroCli } from '../../services/acpClient';
 import { KiroTitleGenerator } from './kiroTitleGenerator';
@@ -1826,7 +1827,7 @@ export class KiroRuntime implements AgentRuntime {
             // The new sid is not yet in sessionRegistry — caller registers it on
             // return — so we explicitly resolve from opts.parentChatId.
             const ancestorChain: AgentSession[] = [];
-            if (opts.parentChatId) {
+            if (!opts.branchContext && opts.parentChatId) {
                 sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
                 const parent = sessionRegistry.getSession(opts.parentChatId);
                 if (parent) {
@@ -1838,13 +1839,19 @@ export class KiroRuntime implements AgentRuntime {
                 ? getWorkspaceInstructions(opts.workspaceId)
                 : null;
 
+            const branchContextText = opts.branchContext
+                ? renderBranchContext(opts.branchContext)
+                : null;
             const preamble = (this.id === 'crew' ? buildFirstTurnPrefix : buildPreamble)({
                 enableFollowUps,
                 cwd: opts.cwd,
                 contextManifest: opts.contextManifest,
                 extraContexts: opts.extraContexts,
                 ancestors: ancestorChain,
-                mergeContexts: opts.mergeContexts,
+                mergeContexts: [
+                    ...(branchContextText ? [branchContextText] : []),
+                    ...(opts.mergeContexts ?? []),
+                ],
                 workspaceInstructions,
             });
             session.primeFirstMessage(preamble);
@@ -1878,9 +1885,10 @@ export class KiroRuntime implements AgentRuntime {
         if (parent && (parent.runtime_engine ?? 'v2') !== this.engine) throw new NativeResumeUnavailableError('Kiro engines differ');
         const edge = opts.workspaceId ? listEdges(opts.workspaceId).find((edge) => edge.kind === 'branch'
             && edge.source_node_id === opts.parentChatId && edge.target_node_id === opts.sessionId) : undefined;
-        const point = edge?.anchor_message_id && opts.parentChatId
-            ? readKiroForkAnchor(opts.parentChatId, opts.sourceNativeSessionId, this.engine, edge.anchor_message_id) : undefined;
-        if (edge?.anchor_message_id && !point) throw new NativeResumeUnavailableError('No native Kiro anchor for the selected historical message');
+        const anchorMessageId = opts.anchorMessageId ?? edge?.anchor_message_id;
+        const point = anchorMessageId && opts.parentChatId
+            ? readKiroForkAnchor(opts.parentChatId, opts.sourceNativeSessionId, this.engine, anchorMessageId) : undefined;
+        if (anchorMessageId && !point) throw new NativeResumeUnavailableError('No native Kiro anchor for the selected historical message');
         const c = await this.ensureClient(opts.cwd);
         // A fresh V3 child worker negotiates capabilities only after initialize.
         // Explicit unavailability lets tryForkChatSession use its normal fallback.

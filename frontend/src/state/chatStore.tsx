@@ -44,6 +44,7 @@ import {
 import { useLazyTreeMessages } from './useLazyTreeMessages';
 import { useContextActions } from './contextActions';
 import { useProjectActions, useTreeActions } from './projectTreeActions';
+import { useExtractNodeTree } from './extractNodeTree';
 import { useTrashActions } from './trashActions';
 import { notify } from '../services/notifications';
 import {
@@ -745,7 +746,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     }
   }, [nodes, notifyChangedNodeSubscribers]);
 
-  useWorkspacePersistence({
+  const { runWorkspaceMutation } = useWorkspacePersistence({
     projects,
     activeProjectId,
     nodes,
@@ -1544,13 +1545,19 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           delete assistantTextBufs.current[assistantId];
           return;
         }
+        const branchCode = (err as { code?: string }).code;
+        const branchMessage = branchCode === 'BRANCH_ANCHOR_UNAVAILABLE'
+          ? 'The message this branch was cut from no longer exists. Choose a different message to branch from.'
+          : branchCode === 'BRANCH_PARENT_UNAVAILABLE'
+            ? 'The parent conversation is no longer available, so this branch cannot be created.'
+            : undefined;
         dispatch({
           type: 'error',
           nodeId,
           assistantId,
-          message: (err as Error).name === 'TimeoutError'
+          message: branchMessage ?? ((err as Error).name === 'TimeoutError'
             ? 'Session connection timed out. The original session binding is retained; please retry.'
-            : (err as Error).message || 'failed to ensure chat session',
+            : (err as Error).message || 'failed to ensure chat session'),
         });
         delete assistantTextBufs.current[assistantId];
         pendingCancels.current.delete(nodeId);
@@ -2570,6 +2577,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     [setPref],
   );
 
+  const extractNodeTree = useExtractNodeTree({
+    projectsRef, activeProjectIdRef, nodesRef, commandsInFlightRef, boundSessionsRef,
+    setProjects, setNodes, runWorkspaceMutation, prunePaneIds, setPaneSlot, selectProject,
+    setFocusedNodeId: setFocusedNodeIdState, setSelection: setSelectionState,
+    bumpStructureVersion: useCallback(() => { structureVersionRef.current += 1; }, []),
+  });
+
   const {
     createThread,
     archiveTree,
@@ -2934,6 +2948,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       switchAgent,
       deleteNode,
       trimNode,
+      extractNodeTree,
       archiveNode,
       restoreLastDeletion,
       restoreDeletion,
@@ -3069,6 +3084,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       switchAgent,
       deleteNode,
       trimNode,
+      extractNodeTree,
       archiveNode,
       restoreLastDeletion,
       restoreDeletion,
@@ -3188,6 +3204,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelStream,
       deleteNode,
       trimNode,
+      extractNodeTree,
       archiveNode,
       setMinimized,
       setPaneWidth,
@@ -3270,6 +3287,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelStream,
       deleteNode,
       trimNode,
+      extractNodeTree,
       archiveNode,
       setMinimized,
       setPaneWidth,

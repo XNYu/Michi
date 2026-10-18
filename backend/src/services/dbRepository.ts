@@ -122,6 +122,12 @@ export interface NodeRow {
    *  another tab cannot resurrect them. GC'd by `runTombstoneGc()` after
    *  TOMBSTONE_TTL_MS. See migration v16. */
   purged_at?: number | null;
+  /** Fork provenance for an extracted thread (migration 0030). Server-owned:
+   *  graph snapshots must not overwrite these; see setNodeForkProvenance. */
+  forked_from_node_id?: string | null;
+  fork_boundary_message_id?: string | null;
+  /** Exact inherited prefix length; messages with seq < this are copied history. */
+  inherited_message_count?: number;
   created_at: number;
   /** Per-row sync version (sync L2, migration 0006). NULL = predates versioning
    *  / no claim. Stamped by leaf save* via COALESCE; guard reads it in L2.2. */
@@ -157,6 +163,10 @@ export interface EdgeRow {
   target_node_id: string;
   kind: string;
   anchor_message_id?: string | null;
+  /** Immutable fork cut (migration 0030), unlike the UI-owned anchor. */
+  fork_boundary_message_id?: string | null;
+  /** How the child session was seeded: native | text | extracted. */
+  fork_kind?: string | null;
   created_at?: number | null;
   /** Per-row sync version (sync L2, migration 0006). NULL = predates versioning
    *  / no claim. Stamped by leaf save* via COALESCE; guard reads it in L2.2. */
@@ -1071,17 +1081,64 @@ export function saveEdge(edge: EdgeRow, userId?: string): void {
     || isNodeTombstoned(edge.source_node_id)
     || isNodeTombstoned(edge.target_node_id)
   ) return;
+  const forkBoundaryMessageId = edge.fork_boundary_message_id
+    ?? (edge.kind === 'branch' ? edge.anchor_message_id ?? null : null);
+  const { fork_boundary_message_id: _ignoredBoundary, fork_kind: forkKind, ...edgeRest } = edge;
   getDb().prepare(`
-    INSERT INTO edges (id, workspace_id, source_node_id, target_node_id, kind, anchor_message_id, created_at, rev)
-    VALUES (@id, @workspace_id, @source_node_id, @target_node_id, @kind, @anchor_message_id, @created_at, @rev)
+    INSERT INTO edges (id, workspace_id, source_node_id, target_node_id, kind, anchor_message_id,
+      fork_boundary_message_id, fork_kind, created_at, rev)
+    VALUES (@id, @workspace_id, @source_node_id, @target_node_id, @kind, @anchor_message_id,
+      @fork_boundary_message_id, @fork_kind, @created_at, @rev)
     ON CONFLICT(id) DO UPDATE SET
       source_node_id=excluded.source_node_id,
       target_node_id=excluded.target_node_id,
       kind=excluded.kind,
       anchor_message_id=excluded.anchor_message_id,
+      -- Immutable fork provenance survives both UI anchor cleanup and stale
+      -- graph snapshots that do not know the column.
+      fork_boundary_message_id=COALESCE(edges.fork_boundary_message_id, excluded.fork_boundary_message_id),
+      fork_kind=COALESCE(excluded.fork_kind, edges.fork_kind),
       created_at=excluded.created_at,
       rev=COALESCE(excluded.rev, edges.rev)
-  `).run({ anchor_message_id: null, created_at: null, rev: null, ...edge });
+  `).run({
+    anchor_message_id: null,
+    created_at: null,
+    rev: null,
+    ...edgeRest,
+    fork_kind: forkKind ?? null,
+    fork_boundary_message_id: forkBoundaryMessageId,
+  });
+}
+
+/** Write the server-owned provenance for a materialized branch thread. */
+export function setNodeForkProvenance(nodeId: string, provenance: {
+  forkedFromNodeId?: string | null;
+  forkBoundaryMessageId?: string | null;
+  inheritedMessageCount: number;
+}): void {
+  getDb().prepare(`
+    UPDATE nodes
+    SET forked_from_node_id = ?, fork_boundary_message_id = ?, inherited_message_count = ?
+    WHERE id = ?
+  `).run(
+    provenance.forkedFromNodeId ?? null,
+    provenance.forkBoundaryMessageId ?? null,
+    provenance.inheritedMessageCount,
+    nodeId,
+  );
+}
+
+/** Record how a branch session was actually seeded and persist its immutable cut. */
+export function setEdgeForkProvenance(edgeId: string, input: {
+  forkKind?: 'native' | 'text' | 'extracted' | null;
+  forkBoundaryMessageId?: string | null;
+}): void {
+  getDb().prepare(`
+    UPDATE edges
+    SET fork_kind = COALESCE(?, fork_kind),
+        fork_boundary_message_id = COALESCE(fork_boundary_message_id, ?)
+    WHERE id = ?
+  `).run(input.forkKind ?? null, input.forkBoundaryMessageId ?? null, edgeId);
 }
 
 export function deleteEdge(id: string, userId?: string): void {

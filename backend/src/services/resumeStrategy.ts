@@ -147,23 +147,34 @@ export function chooseResumeStrategy(input: ResumeDecisionInput): ResumeDecision
   return { strategy: "compatible", reason: "native_resume_unavailable" };
 }
 
+export interface CompatibleContextOptions {
+  /** Override the heading used for a non-resume (for example branch) context. */
+  heading?: string;
+  /** Override the model-facing introduction for this context block. */
+  intro?: string;
+  /** Extra caveat about an incomplete or approximate transcript. */
+  note?: string;
+}
+
 export function buildCompatibleResumeContext(
   messages: readonly TranscriptMessage[],
   opts: { nodeId: string; title?: string | null },
+  extra?: CompatibleContextOptions,
 ): string | null {
   const nonEmpty = messages.filter((m) => m.content.trim().length > 0);
-  if (nonEmpty.length === 0) return null;
+  if (nonEmpty.length === 0 && !extra?.note) return null;
   const label = opts.title?.trim() || opts.nodeId;
   const transcript = nonEmpty
     .map((m) => `${m.role === "user" ? "User" : "Assistant"}:\n${m.content}`)
     .join("\n\n---\n\n");
   const body = truncateMiddle(transcript, MAX_COMPAT_TRANSCRIPT_CHARS);
-  return [
-    `=== Compatible resume transcript: ${label} ===`,
-    "The following is the visible transcript from this node. It may come from a different runtime, provider, or model. Treat it as prior conversation context and continue naturally; do not mention the restore mode unless the user asks.",
-    "",
-    body,
-  ].join("\n");
+  const parts = [
+    `=== ${extra?.heading ?? "Compatible resume transcript"}: ${label} ===`,
+    extra?.intro ?? "The following is the visible transcript from this node. It may come from a different runtime, provider, or model. Treat it as prior conversation context and continue naturally; do not mention the restore mode unless the user asks.",
+  ];
+  if (body.length > 0) parts.push("", body);
+  if (extra?.note) parts.push("", `Note: ${extra.note}`);
+  return parts.join("\n");
 }
 
 function truncateMiddle(text: string, limit: number): string {

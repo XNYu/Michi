@@ -9,7 +9,7 @@ import { setupMichiRoutes } from '../src/routes/michi';
 import { setupAgentRoutes } from '../src/routes/agent';
 import { ChatManager } from '../src/services/chatManager';
 import { closeDb, getDb, initDb } from '../src/services/db';
-import { getNode, updateNodeResumeBinding } from '../src/services/dbRepository';
+import { getNode, saveEdge, updateNodeResumeBinding } from '../src/services/dbRepository';
 import { getAgentConfig, loadAgentConfig, updateAgentConfig } from '../src/services/agentConfig';
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions, getSession, dropSession } from '../src/agents/sessionRegistry';
@@ -144,6 +144,25 @@ test('unsupported native fork falls back to a fresh session with parent context'
   assert.equal(fresh.length, 1);
   assert.match(fresh[0].mergeContexts!.join('\n'), /Parent answer/);
   assert.equal(getNode('parent')?.external_session_id, 'native-parent');
+});
+
+test('an anchor before the parent tail forces the exact text fallback', async () => {
+  getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('parent-question','parent','user','Parent question',0,0)").run();
+  getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('later-answer','parent','assistant','Later answer',2,2)").run();
+  saveEdge({ id: 'parent-child', workspace_id: 'ws', source_node_id: 'parent', target_node_id: 'child',
+    kind: 'branch', anchor_message_id: 'parent-answer', created_at: 1 });
+  // Claude/Codex reject an anchored fork; the route must fall back to the
+  // exact prefix instead of inheriting "Later answer".
+  forkFailure = new NativeResumeUnavailableError('anchored fork unavailable');
+  const result = await ensure();
+  assert.equal(result.resumeReason, 'text_fallback');
+  assert.equal(forks.length, 1);
+  assert.equal(forks[0].anchorMessageId, 'parent-answer');
+  assert.equal(fresh.length, 1);
+  assert.equal(fresh[0].branchContext?.boundaryMessageId, 'parent-answer');
+  assert.deepEqual(fresh[0].branchContext?.messages.map(message => message.content),
+    ['Parent question', 'Parent answer']);
+  assert.equal(getDb().prepare("SELECT fork_kind FROM edges WHERE id='parent-child'").get()!['fork_kind'], 'text');
 });
 
 test('ambiguous fork errors do not silently downgrade or publish a child binding', async () => {

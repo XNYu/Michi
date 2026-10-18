@@ -240,3 +240,24 @@ export async function moveTreeToWorkspace(
     droppedEdges: body.droppedEdges ?? 0,
   };
 }
+
+export interface ExtractNodeTreeResult {
+  tree: { id: string; workspace_id: string; root_node_id: string; name?: string | null; created_at: number; last_active_at: number };
+  nodeIds: string[];
+  messages: unknown[];
+  /** Fork provenance written by the backend (migration 0030). */
+  forkedFromNodeId?: string | null;
+  forkBoundaryMessageId?: string | null;
+  inheritedMessageCount?: number;
+}
+
+export async function extractNodeTree(workspaceId: string, nodeId: string, treeId: string): Promise<ExtractNodeTreeResult> {
+  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/nodes/${encodeURIComponent(nodeId)}/extract-tree`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ treeId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Extraction failed: ${res.status}`);
+  }
+  return res.json();
+}
