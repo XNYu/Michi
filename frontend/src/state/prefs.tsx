@@ -201,7 +201,7 @@ export const DEFAULT_PREFS: Prefs = {
   linkOpenTarget: 'internal',
   fontFamily: 'sans',
   showThoughts: true,
-  terminalPalette: 'bone',
+  terminalPalette: 'slate',
   terminalAccentOverrides: {},
   uiFont: 'Geist',
   messageFont: 'Geist',

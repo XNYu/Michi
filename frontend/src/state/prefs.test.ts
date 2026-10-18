@@ -7,8 +7,8 @@ import {
 } from './prefs';
 
 describe('DEFAULT_PREFS', () => {
-  it('has bone as default terminal palette', () => {
-    expect(DEFAULT_PREFS.terminalPalette).toBe('bone');
+  it('has slate as default terminal palette', () => {
+    expect(DEFAULT_PREFS.terminalPalette).toBe('slate');
   });
 
   it('defaults singlePaneContentWidth to 800', () => {
