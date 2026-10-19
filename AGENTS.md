@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Project-specific guidance for Michi. Use current source and package scripts to
-resolve discrepancies. README.md documents architecture and setup; read relevant
-sections when needed, not the whole document before every edit.
+resolve discrepancies. README.md documents features and setup; docs/development.md
+documents architecture, commands and the test workflow. Read relevant sections
+when needed, not the whole document before every edit.
 Keep this file in version control so new checkouts and worktrees receive the same
 project guidance. Keep personal preferences and machine-specific notes separate.
 
@@ -230,6 +231,7 @@ npm test -w backend
 
 ## Docs
 
-README.md describes current architecture, runtime setup, persistence and packaging.
+README.md describes current features, runtime setup and packaging.
+docs/development.md describes architecture, persistence and development workflows.
 The removed canvas is on archive/canvas-view-2026-04-29, not in the live frontend.
 Read historical documents only when relevant to the task.
