@@ -18,8 +18,8 @@ const MAX_RECENTS = 6;
  *  block. The list stays narrow enough that a row's title, its workspace and
  *  its timestamp all sit inside the width the eye already has. On narrow
  *  windows both columns shrink to the available width and converge. */
-const HOME_COMPOSER_WIDTH = 920;
-const HOME_LIST_WIDTH = 680;
+const HOME_COMPOSER_WIDTH = 850;
+const HOME_LIST_WIDTH = 700;
 /** Where Home's larger chips stop fitting on one toolbar row, with a typical
  *  workspace name and model: first the chips drop their text, then the agent
  *  chip goes. Measured on the toolbar's border box. */
