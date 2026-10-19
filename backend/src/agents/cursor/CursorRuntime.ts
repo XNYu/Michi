@@ -10,7 +10,8 @@ import { AcpAgentRuntime, CURSOR_GROK_ACP_CAPABILITIES } from "../acp/AcpRuntime
  * protocolVersion 1, authenticate cursor_login. Official ACP modes are
  * agent/plan/ask. HTTP MCP is attached always — live probe (2026-08-17)
  * confirmed session/new with mcpServers connects. Does not write
- * .cursor/mcp.json.
+ * .cursor/mcp.json. The interactive CLI has /fork, but `agent acp` does
+ * not implement session/fork, so branches stay on Michi's own session.
  */
 export class CursorRuntime extends AcpAgentRuntime {
     constructor(

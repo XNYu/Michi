@@ -22,6 +22,8 @@ describe('capabilityDescriptor', () => {
     assert.equal(KIRO_DESCRIPTOR.steer.availability, 'native');
     assert.equal(shouldSteerInsteadOfQueue(KIRO_DESCRIPTOR), true);
     assert.equal(describeRuntimeCapabilities('pi').sessionFork.availability, 'michi_simulated');
+    assert.equal(describeRuntimeCapabilities('grok').sessionFork.availability, 'native');
+    assert.equal(CURSOR_DESCRIPTOR.sessionFork.availability, 'michi_simulated');
   });
   test('every advertised runtime has all capability slots', () => {
     for (const id of RUNTIMES) {

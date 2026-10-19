@@ -128,6 +128,9 @@ export const CREW_DESCRIPTOR: CapabilityDescriptor = {
 
 export const GROK_DESCRIPTOR: CapabilityDescriptor = {
   ...CURSOR_DESCRIPTOR,
+  // Live on grok 1.0.62: standard session/fork is absent. `_x.ai/session/fork`
+  // copies the latest conversation into a new session id.
+  sessionFork: slot("native", "native", "_x.ai/session/fork for the latest conversation; historical anchors fall back"),
 };
 
 export const ANTIGRAVITY_DESCRIPTOR: CapabilityDescriptor = {

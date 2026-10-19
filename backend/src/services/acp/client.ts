@@ -669,6 +669,11 @@ export class AcpClient {
         await this.send("session/set_model", { sessionId, modelId });
     }
 
+    /** Vendor JSON-RPC request. ACP custom methods use an underscored name. */
+    async extensionRequest(method: string, params: Record<string, unknown>): Promise<any> {
+        return this.send(method, params);
+    }
+
     /** Inject an out-of-band synthetic session/update into the session queue.
      *  Used by ChatManager to surface events (like spawn_branches) that
      *  originate outside the ACP transport. No-op if the session doesn't exist. */
