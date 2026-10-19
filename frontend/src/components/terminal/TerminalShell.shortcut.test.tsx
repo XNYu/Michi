@@ -315,6 +315,22 @@ describe('TerminalShell shortcuts', () => {
     expect(container.querySelector<HTMLElement>('.terminal-topbar')?.dataset.page).toBe('home');
   });
 
+  // Digits are page slots, matching Settings → Shortcuts. ⌘2–⌘9 stay
+  // unclaimed so the browser build keeps its tab switching; Ctrl+Tab cycles
+  // panes instead.
+  it('Cmd+0 and Cmd+1 switch pages and leave Cmd+2 through Cmd+9 unclaimed', () => {
+    const { container } = renderShell();
+    const page = () => container.querySelector<HTMLElement>('.terminal-topbar')?.dataset.page;
+    expect(fireEvent.keyDown(window, { key: '1', metaKey: true })).toBe(false);
+    expect(page()).toBe('dashboard');
+    for (const key of ['2', '3', '4', '5', '6', '7', '8', '9']) {
+      expect(fireEvent.keyDown(window, { key, metaKey: true })).toBe(true);
+    }
+    expect(page()).toBe('dashboard');
+    expect(fireEvent.keyDown(window, { key: '0', metaKey: true })).toBe(false);
+    expect(page()).toBe('home');
+  });
+
   it('Escape clears node and tree selection together', () => {
     storeState.selection = new Set(['node-1']);
     storeState.treeSelection = new Set(['tree-1']);
