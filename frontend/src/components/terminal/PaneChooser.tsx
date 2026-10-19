@@ -9,18 +9,17 @@ const CHOICES: Array<{
   glyph: string;
   label: string;
   description: string;
-  shortcut?: string;
 }> = [
-  { id: 'review', glyph: '±', label: 'Review', description: 'Inspect workspace changes', shortcut: '⇧⌘G' },
-  { id: 'terminal', glyph: '>_', label: 'Terminal', description: 'Start in this workspace', shortcut: '^`' },
-  { id: 'files', glyph: '▱', label: 'Files', description: 'Browse workspace and artifacts', shortcut: '⌘P' },
-  { id: 'side-chat', glyph: '⊕', label: 'Side chat', description: 'Create a blank branch', shortcut: '⌥⌘S' },
+  { id: 'review', glyph: '±', label: 'Review', description: 'Inspect workspace changes' },
+  { id: 'terminal', glyph: '>_', label: 'Terminal', description: 'Start in this workspace' },
+  { id: 'files', glyph: '▱', label: 'Files', description: 'Browse workspace and artifacts' },
+  { id: 'side-chat', glyph: '⊕', label: 'Side chat', description: 'Create a blank branch' },
 ];
 
 const buttonStyle: React.CSSProperties = {
   minHeight: 52,
   display: 'grid',
-  gridTemplateColumns: '30px minmax(0, 1fr) auto',
+  gridTemplateColumns: '30px minmax(0, 1fr)',
   alignItems: 'center',
   gap: 10,
   padding: '7px 10px',
@@ -170,11 +169,6 @@ export default function PaneChooser({ item }: { item: LauncherPaneItem }) {
                 <span style={{ display: 'block', fontSize: 'var(--fs-lg)', fontWeight: 500, lineHeight: 1.3 }}>{choice.label}</span>
                 <span style={{ display: 'block', marginTop: 2, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', lineHeight: 1.3 }}>{choice.description}</span>
               </span>
-              {choice.shortcut ? (
-                <kbd style={{ color: 'var(--term-muted)', background: 'var(--term-alt)', border: '1px solid var(--term-line)', borderRadius: 'var(--ui-radius)', padding: '1px 5px', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', whiteSpace: 'nowrap' }}>
-                  {choice.shortcut}
-                </kbd>
-              ) : null}
             </button>
           );
         })}
