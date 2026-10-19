@@ -4,7 +4,10 @@ import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector } 
 import { useTerminalColors } from './useTerminalColors';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
-import { RemoteRecoveryBanner } from '../RemoteRecoveryBanner';
+import { RemoteRecoveryBanner, RemoteRecoveryDrawer, RemoteRecoveryIndicator } from '../RemoteRecoveryBanner';
+import { RemoteAuthenticationDialog } from '../RemoteAuthenticationDialog';
+import { RemoteServiceRecoveryMonitor } from '../RemoteServiceRecoveryMonitor';
+import { useRemoteAuthentication } from '../../state/remoteAuthentication';
 import WarmFailedBanner from './WarmFailedBanner';
 import AskUserAlertBar from './AskUserAlertBar';
 import TerminalDashboard from './pages/Dashboard';
@@ -86,6 +89,11 @@ export default function TerminalShell() {
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [settingsPresent, setSettingsPresent] = useState(false);
   const [artifactsPresent, setArtifactsPresent] = useState(false);
+  const remoteAuthenticationOpen = !!useRemoteAuthentication();
+  const [remoteRecoveryOpen, setRemoteRecoveryOpen] = useState(false);
+  const [remoteRecoveryPresent, setRemoteRecoveryPresent] = useState(false);
+  const openRemoteRecovery = React.useCallback(() => setRemoteRecoveryOpen(true), []);
+  const closeRemoteRecovery = React.useCallback(() => setRemoteRecoveryOpen(false), []);
   // Branches/Map/Digest are thread-scoped views (and Workspaces a picker): a
   // second click on the same nav target — or a second ⌘M/⌘D/⌘O — drops back to
   // the conversation. Fixed destination on purpose: "back" means "back to the
@@ -98,10 +106,10 @@ export default function TerminalShell() {
   const [newWsOpen, setNewWsOpen] = useState(false);
 
   useEffect(() => {
-    const visible = page === 'dashboard' && !paletteOpen && !settingsOpen && !settingsPresent && !artifactsOpen && !artifactsPresent && !newWsOpen;
+    const visible = page === 'dashboard' && !paletteOpen && !settingsOpen && !settingsPresent && !artifactsOpen && !artifactsPresent && !newWsOpen && !remoteAuthenticationOpen && !remoteRecoveryOpen && !remoteRecoveryPresent;
     document.documentElement.dataset.nativeSurfacesVisible = String(visible);
     window.dispatchEvent(new CustomEvent('michi:native-surfaces-visible', { detail: { visible } }));
-  }, [page, paletteOpen, settingsOpen, settingsPresent, artifactsOpen, artifactsPresent, newWsOpen]);
+  }, [page, paletteOpen, settingsOpen, settingsPresent, artifactsOpen, artifactsPresent, newWsOpen, remoteAuthenticationOpen, remoteRecoveryOpen, remoteRecoveryPresent]);
   const {
     activeProject, selection,
     treeSelection,
@@ -153,7 +161,7 @@ export default function TerminalShell() {
       const nodeId = createThread();
       if (!nodeId) throw new Error('Could not create a local diagnostic conversation.');
       sendMessage(nodeId, request.prompt, request.binding);
-      setSettingsOpen(false); setNewWsOpen(false); setPage('dashboard');
+      setSettingsOpen(false); setNewWsOpen(false); setRemoteRecoveryOpen(false); setPage('dashboard');
       request.resolve();
     } catch (error) { request.reject(error instanceof Error ? error : new Error(String(error))); }
   }, [diagnosticRequest, activeProject, createThread, sendMessage]);
@@ -217,6 +225,9 @@ export default function TerminalShell() {
       return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || el.isContentEditable;
     };
     const onKey = (e: KeyboardEvent) => {
+      if (remoteAuthenticationOpen) return;
+      // The recovery drawer owns keyboard interaction, including Escape.
+      if (remoteRecoveryOpen) return;
       const meta = e.metaKey || e.ctrlKey;
       // Shell preferences are safe before hydration; workspace commands are not.
       if (!hydrated) {
@@ -431,7 +442,7 @@ export default function TerminalShell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hydrated, page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav, navBack, navForward, canNavBack, canNavForward]);
+  }, [hydrated, page, openPanes, focusedPane, focusedLastMessageId, reopenCandidate, focusPane, closePane, openPane, createBlankChild, restoreLastDeletion, selection, clearSelection, treeSelection, clearTreeSelection, selectAllTrees, prefs.sidebarCollapsed, setPref, handleNav, navBack, navForward, canNavBack, canNavForward, remoteAuthenticationOpen, remoteRecoveryOpen]);
 
   useEffect(() => {
     const onEvt = () => { if (hydrated) setNewWsOpen(true); };
@@ -498,7 +509,7 @@ export default function TerminalShell() {
   }, [page, narrowOverlayOpen]);
   // Esc closes the overlay too.
   useEffect(() => {
-    if (!narrowOverlayOpen) return;
+    if (!narrowOverlayOpen || remoteAuthenticationOpen || remoteRecoveryOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -507,7 +518,7 @@ export default function TerminalShell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [narrowOverlayOpen]);
+  }, [narrowOverlayOpen, remoteAuthenticationOpen, remoteRecoveryOpen]);
 
   // Profile owns its own navigation rail, so the application sidebar stays
   // out of the layout without overwriting the user's persisted preference.
@@ -558,8 +569,11 @@ export default function TerminalShell() {
         onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
         onOpenPalette={() => { if (hydrated) setPaletteOpen(true); }}
         artifactsOpen={artifactsOpen}
+        remoteRecoveryControl={<RemoteRecoveryIndicator onOpenDetails={openRemoteRecovery} />}
       />
-      <RemoteRecoveryBanner />
+      <RemoteRecoveryBanner onOpenDetails={openRemoteRecovery} />
+      <RemoteServiceRecoveryMonitor />
+      <RemoteAuthenticationDialog />
       {hydrated && <WarmFailedBanner />}
       {hydrated && <AskUserAlertBar onNav={handleNav} />}
       <div style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>
@@ -625,6 +639,7 @@ export default function TerminalShell() {
           setPage('home');
         }}
       />}
+      <RemoteRecoveryDrawer open={remoteRecoveryOpen} onClose={closeRemoteRecovery} motion={drawerMotion} onPresenceChange={setRemoteRecoveryPresent} />
       <SettingsDrawer
         workspaceReady={hydrated}
         open={settingsOpen}

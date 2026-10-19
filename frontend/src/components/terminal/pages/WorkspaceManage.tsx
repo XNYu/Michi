@@ -277,6 +277,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
         <ManageHeader
           name={project.name}
           cwd={project.cwd}
+          backendConnectionId={project.backendConnectionId}
           chatsCount={counts.chats}
           contextsCount={counts.artifacts}
           branchesCount={counts.branches}

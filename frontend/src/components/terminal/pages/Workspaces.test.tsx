@@ -1,18 +1,18 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import TerminalWorkspaces from './Workspaces';
 import { _resetForTest, getManageWorkspaceId } from '../../../state/manageRoute';
+import { setKnownBackendConnections } from '../../../config/backendConnections';
 
 const base = { chatIds: [], edges: [], activeTreeId: null, artifacts: [] };
 const tree = (id: string, lastActiveAt: number) => ({ id, rootNodeId: `${id}-root`, createdAt: 0, lastActiveAt });
 
 // Newest activity: web-platform (300) › atlas (200) › zeta (100) › shared (0).
-// Thread count:    atlas (3) › zeta (2) › web-platform (1) › shared (0).
 const projects = [
   { ...base, id: 'ws-x', name: 'web-platform', cwd: '/Users/someone/code/web', createdAt: 0, trees: [tree('x1', 300)] },
   { ...base, id: 'ws-a', name: 'atlas', createdAt: 0, trees: [tree('a1', 200), tree('a2', 50), tree('a3', 40)] },
-  { ...base, id: 'ws-z', name: 'zeta', cwd: '/srv/zeta', createdAt: 0, trees: [tree('z1', 100), tree('z2', 10)] },
+  { ...base, id: 'ws-z', name: 'zeta', cwd: '/srv/zeta', backendConnectionId: 'remote-z', createdAt: 0, trees: [tree('z1', 100), tree('z2', 10)] },
   { ...base, id: 'ws-s', name: 'shared', cwd: '/Users/Shared/proj', createdAt: 0, trees: [] },
 ];
 
@@ -45,6 +45,27 @@ function rowOrder(): string[] {
 }
 
 const cellsOf = (id: string) => within(screen.getByTestId(`workspace-table-row-${id}`)).getAllByRole('cell');
+
+it('shows workspace machines, filters by host or remote, and updates renamed connection labels', () => {
+  const connection = { id: 'remote-z', name: 'Build box', transport: 'ssh' as const, sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 };
+  setKnownBackendConnections([connection]);
+  const view = render(<TerminalWorkspaces onNav={vi.fn()} />);
+  try {
+    expect(within(cellsOf('ws-z')[2]).getByText('Remote - Build box')).toBeTruthy();
+    expect(within(cellsOf('ws-x')[2]).getByText('Local')).toBeTruthy();
+    const filter = screen.getByRole('searchbox', { name: 'Filter workspaces' });
+    for (const value of ['build+', 'Remote', 'Build box', 'Remote - Build box']) {
+      fireEvent.change(filter, { target: { value } }); expect(rowOrder()).toEqual(['ws-z']);
+    }
+    act(() => setKnownBackendConnections([{ ...connection, name: 'Build machine' }]));
+    expect(screen.getByText(/No workspaces match/)).toBeTruthy();
+    fireEvent.change(filter, { target: { value: 'Build machine' } });
+    expect(within(cellsOf('ws-z')[2]).getByText('Remote - Build machine')).toBeTruthy();
+    act(() => setKnownBackendConnections([]));
+    fireEvent.change(filter, { target: { value: 'Remote' } });
+    expect(within(cellsOf('ws-z')[2]).getByText('Remote - Unavailable connection')).toBeTruthy();
+  } finally { view.unmount(); setKnownBackendConnections([]); }
+});
 
 describe('TerminalWorkspaces — header controls', () => {
   beforeEach(() => _resetForTest());
@@ -117,13 +138,19 @@ describe('TerminalWorkspaces — table', () => {
     expect(screen.getByRole('columnheader', { name: /last/i }).getAttribute('aria-sort')).toBe('descending');
   });
 
-  it('puts thread and node counts in their own columns', () => {
+  it('shows a dedicated Connection column without count or activity columns', () => {
     render(<TerminalWorkspaces onNav={vi.fn()} />);
+    expect(screen.getAllByRole('columnheader').map(header => header.textContent?.replace(/[↑↓]/g, '').trim())).toEqual([
+      'Name', 'Path', 'Connection', 'Latest thread', 'Last', 'Actions',
+    ]);
     const cells = cellsOf('ws-a');
-    // name · path · threads · nodes · latest thread · 14 days · last · actions
-    expect(cells).toHaveLength(8);
-    expect(cells[2].textContent).toBe('3');
-    expect(cells[3].textContent).toBe('0');
+    expect(cells).toHaveLength(6);
+    expect(within(cells[0]).getByRole('button', { name: 'atlas' })).toBeTruthy();
+    expect(within(cells[0]).queryByText('Local')).toBeNull();
+    expect(cells[2].textContent).toBe('Local');
+    expect(screen.queryByText('nodes', { exact: true })).toBeNull();
+    expect(screen.queryByText('threads', { exact: true })).toBeNull();
+    expect(screen.queryByRole('img', { name: /last 14 days/ })).toBeNull();
   });
 
   it('shortens the home prefix of a path and keeps the full path as a tooltip', () => {
@@ -149,9 +176,8 @@ describe('TerminalWorkspaces — table', () => {
     fireEvent.click(screen.getByRole('button', { name: /^name/i }));
     expect(rowOrder()).toEqual(['ws-z', 'ws-x', 'ws-s', 'ws-a']);
 
-    // Counts start largest-first.
-    fireEvent.click(screen.getByRole('button', { name: /^threads/i }));
-    expect(rowOrder()).toEqual(['ws-a', 'ws-z', 'ws-x', 'ws-s']);
+    fireEvent.click(screen.getByRole('button', { name: /^last/i }));
+    expect(rowOrder()).toEqual(['ws-x', 'ws-a', 'ws-z', 'ws-s']);
   });
 
   it('marks the active workspace row', () => {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, supportsPaneInspection } from './persistence';
+import { RemoteServiceRecoveryError } from './remoteRecovery';
 
 /**
  * P2-5 capability discovery. The defensive predicate must return true ONLY
@@ -82,5 +83,19 @@ it('preserves the remote gateway error and HTTP status while redacting credentia
     await expect(fetchAllWorkspacesMeta('remote-c')).rejects.toThrow('HTTP 502');
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'SSH authentication failed. Authorization: Bearer hidden-value' }), { status: 502 }));
     await expect(fetchAllWorkspacesMeta('remote-c')).rejects.toThrow('SSH authentication failed. Authorization: Bearer [redacted]');
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('retains gateway recovery state for workspace retries and ignores a different machine’s status', async () => {
+  const recovery = { connectionId: 'remote-c', phase: 'starting', message: 'Checking SSH…', diagnostic: { stage: 'ssh', log: 'Proxy waiting' } };
+  const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ error: 'Starting remote Michi…', recovery }), { status: 502 }));
+  vi.stubGlobal('fetch', fetchMock);
+  try {
+    const error = await fetchAllWorkspacesMeta('remote-c').catch(error => error);
+    expect(error).toBeInstanceOf(RemoteServiceRecoveryError);
+    expect(error.recovery).toEqual(recovery);
+    expect(error.message).toContain('HTTP 502');
+    const unrelated = await fetchAllWorkspacesMeta('other-machine').catch(error => error);
+    expect(unrelated).not.toBeInstanceOf(RemoteServiceRecoveryError);
   } finally { vi.unstubAllGlobals(); }
 });

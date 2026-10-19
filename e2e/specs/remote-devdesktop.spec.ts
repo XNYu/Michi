@@ -54,7 +54,7 @@ for (const runtimes of [['codex', 'claude'], []]) {
     const dialog = page.getByRole('dialog', { name: /New workspace/i });
     await expect(dialog).toBeVisible();
     await dialog.getByLabel('Backend connection').selectOption('__add_remote__');
-    await dialog.getByLabel('Remote SSH host').fill('build+');
+    await dialog.getByLabel(/\S+ SSH host$/).fill('build+');
     await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(dialog.getByRole('button', { name: 'Install and connect' })).toBeVisible();
     expect(calls).toEqual([{ host: 'build+', install: false }]);
@@ -103,7 +103,7 @@ for (const palette of ['bone', 'gruvbox']) {
       if (url.pathname === '/api/backend-connections') {
         await route.fulfill({ json: { connections } }); return true;
       }
-      if (url.pathname.endsWith('/proxy/workspaces/all')) {
+      if (url.pathname.endsWith('/proxy/workspaces/all') || url.pathname.endsWith('/proxy/workspaces')) {
         await route.fulfill({ json: { workspaces: [] } }); return true;
       }
       return false;
@@ -112,8 +112,7 @@ for (const palette of ['bone', 'gruvbox']) {
     await page.getByText('Settings', { exact: true }).last().click();
     const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
     await settings.getByRole('button', { name: 'Connections', exact: true }).click();
-    await expect(settings.getByText('SSH connected', { exact: true })).toBeVisible();
-    await expect(settings.getByText('Connects when needed')).toBeVisible();
+    await expect(settings.getByText('SSH connected', { exact: true })).toHaveCount(2);
     const add = settings.getByRole('button', { name: 'Connect remote', exact: true });
     await expect(add).toBeVisible();
     await expect(settings.getByText('SSH launch:', { exact: false })).toHaveCount(0);
@@ -123,7 +122,7 @@ for (const palette of ['bone', 'gruvbox']) {
     expect(await add.evaluate(el => getComputedStyle(el).fontFamily)).toBe(font);
     await page.screenshot({ path: testInfo.outputPath(`settings-${palette}.png`) });
     await add.click();
-    const host = settings.getByLabel('Remote SSH host');
+    const host = settings.getByLabel(/\S+ SSH host$/);
     await host.fill('build+');
     expect(await host.evaluate(el => getComputedStyle(el).fontFamily)).toBe(font);
     await expect(settings.getByText(/Run.*in Terminal/)).toBeHidden();
@@ -156,6 +155,9 @@ for (const hasLocalRuntime of [true, false]) {
       if (url.pathname === '/api/backend-connections/remote-existing/proxy/workspaces/all') {
         await route.fulfill({ json: { workspaces: [remoteWorkspace] } }); return true;
       }
+      if (url.pathname === '/api/backend-connections/remote-existing/proxy/workspaces') {
+        await route.fulfill({ json: { workspaces: [remoteWorkspace.workspace] } }); return true;
+      }
       if (url.pathname.endsWith('/proxy/agent/status')) {
         await route.fulfill({ json: { runtime: 'remote-mock', label: 'Remote only', hasRequiredKey: true, availableRuntimes: [{ id: 'remote-mock', label: 'Remote only', available: true }], capabilities: {} } }); return true;
       }
@@ -179,7 +181,7 @@ for (const hasLocalRuntime of [true, false]) {
     const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
     await settings.getByRole('button', { name: 'Connections', exact: true }).click();
     await settings.getByRole('button', { name: 'Connect remote', exact: true }).click();
-    await settings.getByLabel('Remote SSH host').fill('build+');
+    await settings.getByLabel(/\S+ SSH host$/).fill('build+');
     await settings.getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(settings.getByRole('alert')).toContainText('Address already in use');
     await settings.getByRole('button', { name: 'View logs' }).click();

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { formatRemoteDiagnostic, type RemoteConnectionDiagnostic } from 'michi-shared';
+import { formatRemoteDiagnostic, remoteSignInLabel, type RemoteConnectionDiagnostic } from 'michi-shared';
 import { fetchAgentStatus } from '../services/api/agentRuntime';
 import { askLocalDiagnosticAgent, localDiagnosticRuntime } from '../services/remoteDiagnosticAgent';
 import { Button } from './ui/controls';
 import './RemoteConnection.css';
+import { requestRemoteAuthentication } from '../state/remoteAuthentication';
+import { getKnownBackendConnections } from '../config/backendConnections';
 
 const STAGE_LABELS: Record<string, string> = { request: 'starting the request', ssh: 'SSH connection', node: 'Node.js setup', source: 'fetching source', build: 'remote build', start: 'service startup', tunnel: 'SSH forwarding', verify: 'connection verification', runtime: 'runtime detection', workspace: 'restoring remote workspaces' };
 
@@ -42,10 +44,18 @@ export function RemoteDiagnostics({ report, onBusyChange }: {
     } catch (error) { if (!controller.signal.aborted) setFeedback(error instanceof Error ? error.message : String(error)); }
     finally { if (!controller.signal.aborted) { setSending(false); onBusyChange?.(false); } }
   };
+  const refreshAuthentication = () => {
+    const target = report.authentication;
+    if (!target) return;
+    const connection = getKnownBackendConnections().find(item => item.transport === 'ssh' && item.sshHost === target.host
+      && item.sshUser === target.user && (item.sshPort ?? 22) === (target.port ?? 22));
+    requestRemoteAuthentication({ key: connection ? `service:${connection.id}` : `diagnostic:${report.id}`, target, connectionId: connection?.id }, true);
+  };
 
   return <section className="remote-diagnostic" aria-label="Connection diagnostics">
-    <p className="remote-connect__hint">{report.severity === 'warning' ? 'Needs attention at' : 'Failed at'} <strong>{STAGE_LABELS[report.stage] ?? report.stage}</strong> · {report.code ?? 'connection_failed'}</p>
+    <p className="remote-connect__hint">{report.severity === 'info' ? 'In progress at' : report.severity === 'warning' ? 'Needs attention at' : 'Failed at'} <strong>{STAGE_LABELS[report.stage] ?? report.stage}</strong>{report.severity !== 'info' && <> · {report.code ?? 'connection_failed'}</>}</p>
     <div className="remote-diagnostic__actions">
+      {report.authentication && <Button onClick={refreshAuthentication}>{remoteSignInLabel()}</Button>}
       <Button variant="secondary" onClick={() => setShowLogs(value => !value)} aria-expanded={showLogs}>{showLogs ? 'Hide logs' : 'View logs'}</Button>
       <Button variant="secondary" onClick={() => { void copy(); }}>Copy diagnostics</Button>
       {localAgent && <Button variant="primary" disabled={sending} onClick={() => { void askAgent(); }}>{sending ? 'Opening chat…' : 'Ask local agent'}</Button>}

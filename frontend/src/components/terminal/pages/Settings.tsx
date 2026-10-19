@@ -11,6 +11,7 @@ import { ShortcutsPane } from './settings/ShortcutsPane';
 import { AccountPane } from './settings/AccountPane';
 import { ConnectionsPane } from './settings/ConnectionsPane';
 import './Settings.css';
+import { setManageWorkspaceId } from '../../../state/manageRoute';
 
 // No Custom Agents section: that feature is switched on by the backend's
 // environment (MICHI_CUSTOM_AGENTS=1), never from the app.
@@ -122,7 +123,9 @@ export default function TerminalSettings({
           {section === 'appearance' && <AppearancePane />}
           {section === 'browser' && <BrowserSettingsPane />}
           {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
-          {section === 'connections' && <ConnectionsPane projects={projects} />}
+          {section === 'connections' && <ConnectionsPane projects={projects} onOpenWorkspace={onNav ? id => {
+            setManageWorkspaceId(id); onClose?.(); onNav('workspace-manage');
+          } : undefined} />}
           {section === 'notifications' && <NotificationsPane />}
           {section === 'shortcuts' && <ShortcutsPane />}
           {section === 'account' && signedIn && <AccountPane user={session!.user} />}

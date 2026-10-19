@@ -64,6 +64,7 @@ export default function TerminalTopbar({
   onOpenPalette,
   artifactsOpen = false,
   workspaceReady = true,
+  remoteRecoveryControl,
 }: {
   page: PageId;
   onNav: (p: PageId) => void;
@@ -73,6 +74,7 @@ export default function TerminalTopbar({
   onOpenPalette?: () => void;
   artifactsOpen?: boolean;
   workspaceReady?: boolean;
+  remoteRecoveryControl?: React.ReactNode;
 }) {
   const {
     activeProject,
@@ -857,6 +859,7 @@ export default function TerminalTopbar({
             +{newPaneIds.size}
           </button>
         )}
+        {remoteRecoveryControl}
         {updateAvailable && !updateDismissed && (
             <span
               style={{

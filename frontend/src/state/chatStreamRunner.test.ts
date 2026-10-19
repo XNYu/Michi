@@ -11,8 +11,38 @@ import { runChatStream } from './chatStreamRunner';
 import { reduceNodes } from './chatReducers';
 import { assistantAnswerRawText } from './assistantBlocks';
 import type { ChatAction, ChatNodeState } from './chatTypes';
+import { indexBackendProjects, setKnownBackendConnections } from '../config/backendConnections';
+import { closeRemoteAuthentication, completeRemoteAuthentication, getRemoteAuthentication, reportRemoteCredentialError } from './remoteAuthentication';
+vi.mock('../../../shared/src/remoteCredentials', () => ({ REMOTE_CREDENTIALS: {
+  name: 'Example SSO', localAction: 'Refresh Example SSO on this computer', localCommand: ['example-login'],
+  remoteCommand: ['example-login', '--remote'], remoteCookie: null,
+  remoteCredentialError: /example-login|example sso.*expired/i, localCredentialError: null,
+} }));
 
 const mockStream = api.streamMessage as ReturnType<typeof vi.fn>;
+
+it('clears an old remote sign-in incident only after a successful turn without credential errors', () => {
+  setKnownBackendConnections([{ id: 'sso-remote', name: 'Remote', transport: 'ssh', sshHost: 'box', hasToken: true, createdAt: 1, updatedAt: 1 }]);
+  indexBackendProjects([{ id: 'p1', backendConnectionId: 'sso-remote', chatIds: ['n1'] }]);
+  const start = () => {
+    mockStream.mockClear();
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1', dispatch: vi.fn(), assistantTextBufs: { current: {} }, cancelFns: { current: {} } });
+    return mockStream.mock.calls[0][2];
+  };
+  try {
+    reportRemoteCredentialError('n1', 'Run example-login --remote'); closeRemoteAuthentication();
+    const failed = start();
+    failed.onMcpServerError({ serverName: 'aws', error: 'Run example-login --remote' }); failed.onDone('end_turn');
+    reportRemoteCredentialError('n1', 'Run example-login --remote'); expect(getRemoteAuthentication()).toBeNull();
+    start().onDone('cancel');
+    reportRemoteCredentialError('n1', 'Run example-login --remote'); expect(getRemoteAuthentication()).toBeNull();
+    start().onDone('end_turn');
+    reportRemoteCredentialError('n1', 'Run example-login --remote'); expect(getRemoteAuthentication()?.key).toBe('runtime:sso-remote');
+  } finally {
+    closeRemoteAuthentication(); completeRemoteAuthentication('runtime:sso-remote');
+    setKnownBackendConnections([]); indexBackendProjects([]); mockStream.mockClear();
+  }
+});
 
 function makeNode(): ChatNodeState {
   return {

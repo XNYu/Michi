@@ -117,6 +117,7 @@ export interface ElectronBridge {
   /** Resolve absolute path of a File from drag-drop. Returns null if unavailable. Optional — absent in older builds. */
   getPathForFile?(file: File): string | null;
   terminalCreate?(surfaceId: string, cwd: string, cols: number, rows: number): Promise<TerminalSurfaceSnapshot>;
+  remoteAuthCreate?(surfaceId: string, target: import('michi-shared').RemoteAuthenticationTarget, cols: number, rows: number): Promise<TerminalSurfaceSnapshot>;
   terminalWrite?(surfaceId: string, data: string): void;
   terminalResize?(surfaceId: string, cols: number, rows: number): void;
   terminalDestroy?(surfaceId: string): void;

@@ -1,7 +1,6 @@
 import {
   cloneElement,
   useEffect,
-  useMemo,
   useState,
   type ReactElement,
 } from 'react';
@@ -12,7 +11,7 @@ import {
   testBackendConnection,
 } from '../../../../services/api';
 import {
-  getKnownBackendConnections,
+  LOCAL_BACKEND_CONNECTION,
   setKnownBackendConnections,
   type BackendConnectionSummary,
 } from '../../../../config/backendConnections';
@@ -21,6 +20,7 @@ import { Button } from '../../../ui/controls';
 import '../../../RemoteConnection.css';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
 import { RemoteDesktopConnect } from '../../../RemoteDesktopConnect';
+import { useRemoteWorkspaces, type RemoteWorkspacesState } from './useRemoteWorkspaces';
 
 type ConnectionDraft = {
   id?: string;
@@ -65,7 +65,7 @@ function draftInput(draft: ConnectionDraft) {
   };
 }
 
-export function ConnectionsPane({ projects }: { projects: Project[] }) {
+export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Project[]; onOpenWorkspace?: (projectId: string) => void }) {
   const [connections, setConnections] = useState<BackendConnectionSummary[]>([]);
   const [draft, setDraft] = useState<ConnectionDraft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,15 +81,6 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
   useEffect(() => {
     void refresh().catch((err) => setMessage({ kind: 'error', text: (err as Error).message }));
   }, []);
-
-  const usage = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const project of projects) {
-      if (!project.backendConnectionId) continue;
-      counts.set(project.backendConnectionId, (counts.get(project.backendConnectionId) ?? 0) + 1);
-    }
-    return counts;
-  }, [projects]);
 
   const runTest = async () => {
     if (!draft) return;
@@ -130,8 +121,8 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
     }
   };
 
-  const remove = async (connection: BackendConnectionSummary) => {
-    const inUse = usage.get(connection.id) ?? 0;
+  const remove = async (connection: BackendConnectionSummary, inUse: number) => {
+    // The fresh remote count includes Trash, which still needs its connection for restoration.
     if (inUse > 0) {
       setMessage({ kind: 'error', text: `${inUse} workspace${inUse === 1 ? '' : 's'} still use this connection.` });
       return;
@@ -159,12 +150,16 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
       </p>
 
       <ul className="remote-connections__list" aria-label="Machines">
-        <ConnectionRow connection={getKnownBackendConnections()[0]} local />
+        <ConnectionRow connection={LOCAL_BACKEND_CONNECTION} local />
         {connections.map(connection => (
-          <ConnectionRow
-            key={connection.id}
+          <RemoteConnectionRow
+            key={JSON.stringify([connection.id, connection.updatedAt, connection.transport, connection.apiUrl,
+              connection.sshHost, connection.sshUser, connection.sshPort, connection.remotePort, connection.hasToken])}
             connection={connection}
-            workspaceCount={usage.get(connection.id) ?? 0}
+            // Local hydration determines only whether navigation is safe, never remote membership.
+            canOpenWorkspace={id => projects.some(project => project.id === id
+              && project.backendConnectionId === connection.id && !project.deletedAt && !project.archivedAt)}
+            onOpenWorkspace={onOpenWorkspace}
             onEdit={() => {
               setQuickConnect(false);
               setDraft({
@@ -176,7 +171,7 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
               });
               setMessage(null);
             }}
-            onRemove={() => { void remove(connection); }}
+            onRemove={count => remove(connection, count)}
           />
         ))}
       </ul>
@@ -273,29 +268,51 @@ export function ConnectionsPane({ projects }: { projects: Project[] }) {
   );
 }
 
+interface ConnectionRowProps {
+  connection: BackendConnectionSummary;
+  local?: boolean;
+  workspaceState?: RemoteWorkspacesState;
+  canOpenWorkspace?: (id: string) => boolean;
+  onOpenWorkspace?: (projectId: string) => void;
+  onRefresh?: () => void;
+  onEdit?: () => void;
+  onRemove?: () => void;
+}
+
+function RemoteConnectionRow({ onRemove, ...props }: Omit<ConnectionRowProps, 'local' | 'workspaceState' | 'onRefresh' | 'onRemove'> & {
+  onRemove: (workspaceCount: number) => Promise<void>;
+}) {
+  const { state, refresh } = useRemoteWorkspaces(props.connection.id);
+  return <ConnectionRow {...props} workspaceState={state} onRefresh={() => { void refresh(); }} onRemove={() => {
+    // Recheck on removal too: membership may have changed since the pane opened.
+    void refresh().then(workspaces => { if (workspaces) return onRemove(workspaces.length); });
+  }} />;
+}
+
 function ConnectionRow({
   connection,
   local = false,
-  workspaceCount = 0,
+  workspaceState,
+  canOpenWorkspace,
+  onOpenWorkspace,
+  onRefresh,
   onEdit,
   onRemove,
-}: {
-  connection: BackendConnectionSummary;
-  local?: boolean;
-  workspaceCount?: number;
-  onEdit?: () => void;
-  onRemove?: () => void;
-}) {
+}: ConnectionRowProps) {
+  const workspaces = workspaceState?.status === 'ready' ? workspaceState.workspaces.filter(workspace => !workspace.deletedAt) : [];
+  const loading = workspaceState?.status === 'loading';
   const address = local ? 'Workspaces on this computer'
     : connection.transport === 'ssh'
       ? `SSH · ${connection.sshUser ? `${connection.sshUser}@` : ''}${connection.sshHost}${connection.sshPort ? `:${connection.sshPort}` : ''}`
       : connection.apiUrl;
-  const tunnelState = connection.tunnelStatus ?? 'disconnected';
+  const tunnelState = workspaceState?.status === 'ready' ? 'connected'
+    : workspaceState?.status === 'loading' ? 'connecting'
+      : workspaceState?.status === 'error' ? 'error' : connection.tunnelStatus ?? 'disconnected';
   const status = local ? 'Built in'
     : connection.transport === 'direct' ? 'Direct URL'
       : { connected: 'SSH connected', connecting: 'Connecting…', error: 'Connection issue', disconnected: 'Connects when needed' }[tunnelState];
   return (
-    <li className="remote-machine">
+    <li className="remote-machine" aria-label={connection.name}>
       <svg className="remote-machine__icon" width="18" height="18" viewBox="0 0 18 18" fill="none"
         stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         {local ? <><rect x="2" y="3" width="14" height="10" rx="1.5" /><path d="M6 16h6M9 13v3" /></>
@@ -311,15 +328,31 @@ function ConnectionRow({
         </div>
         <div className="remote-machine__address" title={address}>{address}</div>
         {!local && <div className="remote-machine__footer">
-          <span className="remote-machine__count">{workspaceCount} {workspaceCount === 1 ? 'workspace' : 'workspaces'}</span>
           <div className="remote-machine__actions">
+            {onRefresh && <Button variant="ghost" size="sm" disabled={loading} onClick={onRefresh}>
+              {workspaceState?.status === 'error' ? 'Retry workspaces' : 'Refresh workspaces'}
+            </Button>}
             {onEdit && <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>}
-            {onRemove && <Button variant="ghost" size="sm" danger onClick={onRemove}>Remove</Button>}
+            {onRemove && <Button variant="ghost" size="sm" danger disabled={loading} onClick={onRemove}>Remove</Button>}
           </div>
         </div>}
-        {!local && connection.tunnelError && <p role="status" className="remote-connection-notice" data-tone="error">
-          {connection.tunnelError}
-        </p>}
+        {!local && <details className="remote-machine__workspaces" open aria-busy={loading}>
+          <summary>{loading ? 'Reading remote workspaces…' : workspaceState?.status === 'error' ? 'Workspaces unavailable'
+            : `${workspaces.length} ${workspaces.length === 1 ? 'workspace' : 'workspaces'}`}</summary>
+          {loading && <p role="status">Connecting to this machine and reading its current workspaces…</p>}
+          {workspaceState?.status === 'error' && <p role="alert" className="remote-connection-notice" data-tone="error">{workspaceState.message}</p>}
+          {workspaceState?.status === 'ready' && (workspaces.length === 0 ? <p>No workspaces on this machine.</p> : <ul aria-label={`Workspaces on ${connection.name}`}>
+            {workspaces.map(workspace => <li key={workspace.id} className="remote-machine__workspace">
+              <div className="remote-machine__workspace-heading">
+                {onOpenWorkspace && !workspace.archivedAt && canOpenWorkspace?.(workspace.id)
+                  ? <Button variant="ghost" size="sm" className="remote-machine__workspace-link" onClick={() => onOpenWorkspace(workspace.id)}>{workspace.name}</Button>
+                  : <span className="remote-machine__workspace-name">{workspace.name}</span>}
+                {!!workspace.archivedAt && <span className="remote-machine__workspace-archived">Archived</span>}
+              </div>
+              <span className="remote-machine__workspace-path" title={workspace.cwd ?? undefined}>{workspace.cwd || 'No folder'}</span>
+            </li>)}
+          </ul>)}
+        </details>}
       </div>
     </li>
   );

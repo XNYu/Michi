@@ -13,8 +13,10 @@ export { redactRemoteLog } from 'michi-shared';
 export class RemoteDiagnosticLog {
   readonly report: RemoteConnectionDiagnostic;
   private secrets: string[] = [];
+  private saveTimer?: ReturnType<typeof setTimeout>;
+  private finished = false;
   constructor(host: string) {
-    this.report = { id: randomUUID(), host: redactRemoteLog(host), startedAt: new Date().toISOString(), stage: 'ssh', log: '', truncated: false };
+    this.report = { id: randomUUID(), host: redactRemoteLog(host), startedAt: new Date().toISOString(), stage: 'ssh', severity: 'info', message: 'Connecting over SSH…', log: '', truncated: false };
     this.report.localLogPath = path.join(directory(), this.report.id + '.json');
     active.set(this.report.id, this);
     try {
@@ -34,13 +36,23 @@ export class RemoteDiagnosticLog {
   }
   protect(secret?: string): void { if (secret) this.secrets.push(secret); }
   append(source: string, value: string): void {
+    if (this.finished) return;
     const entry = new Date().toISOString() + ' [' + source + '] ' + this.clean(value) + '\n';
     const remaining = LIMIT - this.report.log.length;
     if (entry.length > remaining) this.report.truncated = true;
     this.report.log += entry.slice(0, Math.max(0, remaining));
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => { this.saveTimer = undefined; this.save(); }, 250);
+      this.saveTimer.unref();
+    }
   }
-  stage(stage: string, message: string): void { this.report.stage = stage; this.append(stage, message); this.save(); }
+  stage(stage: string, message: string): void {
+    if (this.finished) return;
+    this.report.stage = stage; this.report.message = this.clean(message);
+    this.append(stage, message); this.save();
+  }
   fail(error: unknown, code: string): void {
+    if (this.finished) return;
     this.report.severity = 'error';
     this.report.code = code;
     this.report.message = this.clean(error instanceof Error ? error.message : String(error));
@@ -49,6 +61,7 @@ export class RemoteDiagnosticLog {
   }
   warn(messages: string[]): string[] {
     const warnings = messages.map(message => this.clean(message));
+    if (this.finished) return warnings;
     this.report.stage = 'runtime';
     this.report.severity = 'warning';
     this.report.code = 'runtime_warning';
@@ -60,7 +73,7 @@ export class RemoteDiagnosticLog {
     try { fs.writeFileSync(path.join(directory(), this.report.id + '.json'), JSON.stringify(this.report), { mode: 0o600 }); }
     catch { this.report.storageError = 'Local log could not be saved. Keep a copy of this diagnostic.'; }
   }
-  finish(): void { this.save(); active.delete(this.report.id); }
+  finish(): void { clearTimeout(this.saveTimer); this.saveTimer = undefined; this.save(); this.finished = true; active.delete(this.report.id); }
 }
 
 export function readRemoteDiagnostic(id: string): RemoteConnectionDiagnostic | null {

@@ -136,19 +136,31 @@ Connect remote SSH**. Existing manual SSH and Direct URL settings remain
 available under the advanced connection form.
 
 If Michi is already healthy, the local gateway retrieves its connection token
-over SSH, verifies the forwarded API and saves the connection. Otherwise,
+over SSH, verifies the forwarded API and saves the connection. A stopped existing
+installation is started using its saved data directory, token and port. If no
+usable build is found,
 **Install and connect** fetches source from the public Michi GitHub repository's
 `main` branch, installs only backend/shared dependencies, builds on the remote
 machine and starts the existing background launcher. It prepares Node.js 22
 when needed, with a checksum verified against the official Node distribution.
 Repeated connections reuse the installation; connecting does not upgrade it.
 
-The managed checkout and private setup log are in
-`~/.local/share/michi/devdesktop/`; its data and token are in `~/.michi-remote/`.
-The service listens on loopback and chooses an unused port on first launch.
-The renderer receives progress and redacted connection metadata only, never
-the SSH response containing the token. Existing healthy installations using
-`~/.michi/remote.env` are also detected.
+The managed checkout, downloaded Node.js and private setup logs are in
+`~/.local/share/michi/devdesktop/`. New installations keep their database,
+configuration, token (`remote.env`) and service logs in `~/.michi/`, matching
+the manual `npm run remote:launch` default. Existing installations using
+`~/.michi-remote/` continue using that directory, including when preparing a
+missing managed build. Connecting never moves, merges or deletes either
+directory's data.
+
+Recovery of a saved connection matches its port and token before checking
+health, so a stopped installation cannot be replaced by another installation's
+configuration. For a new connection by host, discovery prefers a healthy
+installation; when both are stopped, it prefers the existing `~/.michi-remote/`
+installation. Startup verification and service-log collection stay with the
+selected directory. The service listens on loopback and chooses an unused port
+on first launch. The renderer receives progress and redacted connection
+metadata only, never the SSH response containing the token.
 
 After connecting, Michi shows the number and names of detected runtimes, such
 as **Detected 2 runtimes: Codex, Claude Code**. There is no runtime selection
@@ -174,20 +186,68 @@ create the workspace. Paths are resolved on the remote machine, including
 symlinks and `~`. Existing remote workspaces are imported without reloading the
 app; late imports preserve newly created workspaces and current focus.
 
+**Settings → Connections** reads each machine's current workspace list from its
+remote backend whenever the pane opens. **Refresh workspaces** reads it again;
+the list and count are not inferred from locally hydrated workspaces or saved as
+a local inventory. While reading, the pane shows progress. A failed or timed-out
+read shows an error and **Retry workspaces**, without displaying a stale list or
+claiming the machine has zero workspaces. Each connection loads independently.
+This list refresh does not replace open conversations or drafts. Newly discovered
+workspaces are listed immediately; workspace links are available once that
+workspace has been loaded from the matching remote connection.
+
 This prototype uses Linux, Bash, Python 3, git, curl, tar and working
 noninteractive SSH. It retains strict host-key checks: first-login/host-key or
-expired SSH authentication still requires a terminal login. On older Linux
+expired SSH authentication requires user interaction. The desktop app now opens
+a dedicated sign-in terminal when SSH authentication fails. On older Linux
 machines with `/opt/vsc-sysroot`, a private Node wrapper uses that
 existing loader and a preload to preserve Node subprocess startup. It does not
 replace system libraries or export a library path to agent CLIs. Without a
 compatible Node/sysroot, setup reports a compatibility error.
 
 The launcher uses detached background mode here. Automatic systemd supervision,
-interactive authentication in the app, host discovery, runtime installation
+host discovery, runtime installation
 and automatic updates are not part of this experiment. Agent runtime readiness
 and authentication must still be configured on the remote machine. Setup checks
 Kiro's login status separately and reports a warning when its CLI is installed
 but not signed in. A successful connection is not a successful model-response test.
+
+### Sign-in and service recovery
+
+The sign-in commands and credential checks come from the build's remote
+credential provider (`shared/src/remoteCredentials.ts`, mirrored for the native
+terminal in `electron/remoteCredentials.ts`). When SSH authentication fails,
+Michi opens a small native terminal running the provider's local sign-in command,
+then checks SSH again. SSH key/configuration errors can require additional
+correction; refreshing sign-in does not prove the SSH identity is valid. When the
+provider defines a remote sign-in command, an expired remote credential cookie at
+connection time, or a matching credential error from a remote runtime, makes the
+terminal run that command on the remote machine over interactive SSH instead.
+The dialog states which machine is being authenticated. Host-key verification stays strict;
+an unknown or changed host must be verified separately.
+
+The user enters credentials directly in the terminal and completes any browser,
+OTP or security-key steps. Authentication terminal output is ephemeral, is not
+saved in diagnostic logs, and is not sent to agents. Cancel/close destroys that
+terminal process. A cancelled prompt can be reopened from the sign-in notice.
+Browsers and older desktop builds show a selectable/copyable command and a
+reconnect button. The desired agent runtime must still be installed and signed in.
+
+If a request through a saved SSH connection fails because the remote service is
+unavailable, the local gateway checks the installation over SSH and starts its
+existing build when needed. Concurrent requests share one recovery attempt,
+with a 45-second timeout and a 30-second automatic retry cooldown. Recovery
+reuses the saved data directory, port and token; it does not download source,
+install dependencies, upgrade, or silently adopt changed credentials. A missing
+installation requires the normal **Install and connect** flow. Direct URL
+connections cannot be started through SSH.
+
+Startup and verification failures appear in connection diagnostics, including
+sanitized SSH output and the saved local report path. Remote launch failures
+include the last 32,000 characters of `remote-recovery.log`. Once the service
+recovers, workspace loading resumes without replacing active drafts. Requests
+and chat messages are never automatically resent after an ambiguous failure;
+the user can retry a failed chat after the connection is ready.
 
 Failed connections show the failing stage and an expandable diagnostic. **Copy
 diagnostics** copies the attempt ID, host, timestamps, error code, actual exception,

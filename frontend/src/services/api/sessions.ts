@@ -8,6 +8,7 @@ import {
 import { parseSessionState, type AgentSessionState, parseAgentDefinitionDtoV1, type AgentDefinitionDtoV1 } from 'michi-shared';
 import { startupMark } from '../startupTrace';
 import type { RuntimeId, AgentReasoning } from './agentRuntime';
+import { reportRemoteCredentialError } from '../../state/remoteAuthentication';
 
 export interface ModelInfo {
   model_id: string;
@@ -314,6 +315,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
     }
     startupMark('ensure_session_failed', { nodeId: opts.nodeId, status: res.status, durMs: Date.now() - startedAt });
     const message = payload?.error || `ensureSession failed: ${res.status} ${raw}`;
+    reportRemoteCredentialError(opts.nodeId, message);
     const error = new Error(message) as Error & { code?: string };
     if (typeof payload?.code === 'string') error.code = payload.code;
     throw error;

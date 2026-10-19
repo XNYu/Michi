@@ -158,6 +158,9 @@ contextBridge.exposeInMainWorld('electron', {
   terminalWrite(surfaceId: string, data: string): void {
     ipcRenderer.send('terminal:write', surfaceId, data);
   },
+  remoteAuthCreate(surfaceId: string, target: unknown, cols: number, rows: number) {
+    return ipcRenderer.invoke('remote-auth:create', surfaceId, target, cols, rows);
+  },
   terminalResize(surfaceId: string, cols: number, rows: number): void {
     ipcRenderer.send('terminal:resize', surfaceId, cols, rows);
   },

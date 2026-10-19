@@ -149,6 +149,40 @@ test('SSH failure preserves stderr, process exit and spawn errors without creden
   } finally { diagnostic.finish(); if (old === undefined) delete process.env.MICHI_SSH_BIN; else process.env.MICHI_SSH_BIN = old; }
 });
 
+test('aborting SSH settles promptly, retains output and redacts split protocol and private-key lines', async () => {
+  const old = process.env.MICHI_SSH_BIN;
+  const file = path.join(dataDir, 'stuck-ssh');
+  fs.writeFileSync(file, '#!/bin/sh\ntrap "" TERM\nprintf "Waiting for proxy\\n" >&2\nprintf "MICHI_SETUP_"\nsleep 0.1\nprintf \'JSON:{"token":"private-protocol"}\\n\'\nprintf "%s\\n" "-----BEGIN OPENSSH PRIVATE KEY-----" "private-key-body" "-----END OPENSSH PRIVATE KEY-----"\nsleep 60\n', { mode: 0o700 });
+  const diagnostic = new RemoteDiagnosticLog('build+');
+  const controller = new AbortController();
+  try {
+    process.env.MICHI_SSH_BIN = file;
+    const operation = runRemoteSsh({ sshHost: 'build+' }, '', controller.signal, undefined, diagnostic);
+    const rejected = assert.rejects(operation, /Connection cancelled/);
+    for (let i = 0; i < 50 && !diagnostic.report.log.includes('private key omitted'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.match(diagnostic.report.log, /Waiting for proxy/);
+    assert.match(diagnostic.report.log, /private setup response omitted/);
+    assert.doesNotMatch(diagnostic.report.log, /private-protocol|private-key-body/);
+    controller.abort(); await rejected;
+    assert.match(diagnostic.report.log, /ssh exit.*Connection cancelled/);
+  } finally {
+    controller.abort(); diagnostic.finish();
+    if (old === undefined) delete process.env.MICHI_SSH_BIN; else process.env.MICHI_SSH_BIN = old;
+  }
+});
+
+test('SSH exit settles even when a proxy descendant holds its output pipes open', async () => {
+  const old = process.env.MICHI_SSH_BIN;
+  const file = path.join(dataDir, 'orphan-pipes-ssh');
+  fs.writeFileSync(file, '#!/bin/sh\nsleep 60 &\nprintf "Permission denied (publickey).\\n" >&2\nexit 255\n', { mode: 0o700 });
+  const diagnostic = new RemoteDiagnosticLog('build+');
+  try {
+    process.env.MICHI_SSH_BIN = file;
+    await assert.rejects(runRemoteSsh({ sshHost: 'build+' }, '', undefined, undefined, diagnostic), /SSH authentication/);
+    assert.match(diagnostic.report.log, /code=255/);
+  } finally { diagnostic.finish(); if (old === undefined) delete process.env.MICHI_SSH_BIN; else process.env.MICHI_SSH_BIN = old; }
+});
+
 test('collects only this attempt setup log on remote build failure and preserves the original stage', async () => {
   let calls = 0;
   const diagnostic = new RemoteDiagnosticLog('build+');

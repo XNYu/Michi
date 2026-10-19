@@ -14,6 +14,8 @@ import { getElectron } from '../../../lib/electronBridge';
 import { toast } from 'sonner';
 import { Search, X } from 'lucide-react';
 import { Button } from '../../ui/controls';
+import { WorkspaceLocation, workspaceMachineLabel } from '../../WorkspaceLocation';
+import { useBackendConnections } from '../../../state/useBackendConnections';
 
 function formatRelative(ts: number): string {
   if (!ts) return '—';
@@ -34,6 +36,7 @@ interface WorkspaceCardData {
   id: string;
   name: string;
   cwd?: string;
+  backendConnectionId?: string;
   active: boolean;
   liveCount: number;
   branches: number;
@@ -47,7 +50,6 @@ interface WorkspaceCardData {
    * active. */
   nodes: NodeMeta[];
   models: string[];
-  spark: number[];
 }
 
 function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamingIds: Set<string>, activeProjectId: string | null): WorkspaceCardData {
@@ -84,7 +86,6 @@ function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamin
     if (m) modelSet.add(shortModelLabel(m));
   }
 
-  const spark = fourteenDaySpark(liveIds, snapshot);
   const branchesTotal = Math.max(0, liveCount - liveTrees.length);
   // "Last conversation time": the most recent message timestamp across this
   // workspace. Falls back to tree.lastActiveAt, then to project.createdAt for
@@ -123,6 +124,7 @@ function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamin
     id: p.id,
     name: p.name,
     cwd: p.cwd,
+    backendConnectionId: p.backendConnectionId,
     active: p.id === activeProjectId,
     liveCount,
     branches: branchesTotal,
@@ -133,7 +135,6 @@ function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamin
     threads,
     nodes,
     models: Array.from(modelSet).slice(0, 3),
-    spark,
   };
 }
 
@@ -149,23 +150,6 @@ function treeContains(p: Project, snapshot: Record<string, ChatNodeState>, rootI
   return false;
 }
 
-function fourteenDaySpark(nodeIds: string[], snapshot: Record<string, ChatNodeState>): number[] {
-  const out = new Array(14).fill(0);
-  const now = Date.now();
-  const dayMs = 86_400_000;
-  for (const id of nodeIds) {
-    const n = snapshot[id];
-    if (!n) continue;
-    for (const msg of n.messages || []) {
-      const t = msg.createdAt;
-      if (!t) continue;
-      const daysAgo = Math.floor((now - t) / dayMs);
-      if (daysAgo >= 0 && daysAgo < 14) out[13 - daysAgo]++;
-    }
-  }
-  return out;
-}
-
 function shortModelLabel(modelId: string): string {
   // claude-fable-5 -> fable, claude-opus-4-5 -> opus, claude-sonnet-4-5 -> sonnet, gpt-5 -> gpt-5
   const m = modelId.toLowerCase();
@@ -174,36 +158,6 @@ function shortModelLabel(modelId: string): string {
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return 'haiku';
   return modelId.split('/').pop()!.split(':')[0];
-}
-
-const ACTIVITY_BAR_HEIGHT = 16;
-
-/** Fourteen days of message counts as one bar per day. A day with nothing is a
- *  short stub, so an idle workspace shows a flat floor instead of a drawn line
- *  that looks like data. */
-function ActivityBars({ values }: { values: number[] }) {
-  const max = Math.max(1, ...values);
-  const total = values.reduce((sum, v) => sum + v, 0);
-  return (
-    <span
-      role="img"
-      aria-label={`${total} message${total === 1 ? '' : 's'} in the last 14 days`}
-      title={`${total} message${total === 1 ? '' : 's'} in the last 14 days`}
-      style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2, height: ACTIVITY_BAR_HEIGHT, verticalAlign: 'middle' }}
-    >
-      {values.map((v, i) => (
-        <span
-          key={i}
-          aria-hidden
-          style={{
-            width: 3,
-            height: v > 0 ? Math.max(4, Math.round((v / max) * ACTIVITY_BAR_HEIGHT)) : 2,
-            background: v > 0 ? 'var(--term-mid)' : 'var(--term-line)',
-          }}
-        />
-      ))}
-    </span>
-  );
 }
 
 /** `/Users/<name>/…` and `/home/<name>/…` read as `~/…` — the home prefix is
@@ -224,15 +178,12 @@ function pathForQuery(cwd: string, query: string): string {
   return cwd.toLowerCase().includes(q) ? cwd : short;
 }
 
-type SortKey = 'name' | 'threads' | 'nodes' | 'last';
+type SortKey = 'name' | 'last';
 type SortDir = 'asc' | 'desc';
 
-/** Direction a column starts in when it becomes the sort key: names A→Z,
- *  counts and recency largest/newest first. */
+/** Names start A→Z; recency starts newest first. */
 const INITIAL_SORT_DIR: Record<SortKey, SortDir> = {
   name: 'asc',
-  threads: 'desc',
-  nodes: 'desc',
   last: 'desc',
 };
 
@@ -240,10 +191,6 @@ function compareBy(key: SortKey, a: WorkspaceCardData, b: WorkspaceCardData): nu
   switch (key) {
     case 'name':
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-    case 'threads':
-      return a.threadCount - b.threadCount;
-    case 'nodes':
-      return a.liveCount - b.liveCount;
     case 'last':
     default:
       return a.lastTs - b.lastTs;
@@ -387,6 +334,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   }, [menu, projects, archiveProject, unarchiveProject, pinProject, unpinProject, deleteProject, changeFolder, onNav]);
 
   const [query, setQuery] = React.useState('');
+  const connections = useBackendConnections();
   const searchRef = React.useRef<HTMLInputElement>(null);
 
   const allCards = React.useMemo(() => {
@@ -402,6 +350,8 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
       ? allCards
       : allCards.filter((c) =>
           c.name.toLowerCase().includes(q)
+          || workspaceMachineLabel(c.backendConnectionId, connections, ' - ').toLowerCase().includes(q)
+          || (connections.find(connection => connection.id === c.backendConnectionId)?.sshHost?.toLowerCase().includes(q) ?? false)
           || (c.cwd?.toLowerCase().includes(q) ?? false)
           // …and the path as the row displays it, so typing `~/code` finds it.
           || (c.cwd ? displayPath(c.cwd).toLowerCase().includes(q) : false)
@@ -412,7 +362,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
     // the chosen column keep that recency order.
     const sign = sort.dir === 'asc' ? 1 : -1;
     return [...matching].sort((a, b) => sign * compareBy(sort.key, a, b));
-  }, [allCards, query, sort]);
+  }, [allCards, query, sort, connections]);
 
   const toggleSort = (key: SortKey) => {
     setSort((cur) =>
@@ -423,16 +373,13 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   };
 
   const totals = React.useMemo(() => {
-    let nodes = 0, threads = 0, streaming = 0, digests = 0;
+    let streaming = 0;
     let lastTs = 0;
     for (const c of allCards) {
-      nodes += c.liveCount;
-      threads += c.threadCount;
       streaming += c.streaming;
-      digests += c.digests;
       if (c.lastTs > lastTs) lastTs = c.lastTs;
     }
-    return { nodes, threads, streaming, digests, lastTs };
+    return { streaming, lastTs };
   }, [allCards]);
 
   const openNew = () => window.dispatchEvent(new CustomEvent('michi:open-new-workspace'));
@@ -493,7 +440,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
                 aria-label="Filter workspaces"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="filter workspaces, threads, paths…"
+                placeholder="filter workspaces, machines, paths…"
               />
               {query && (
                 <button
@@ -525,10 +472,6 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             letterSpacing: 'var(--ls-wide)',
           }}
         >
-          <Metric label="nodes" value={totals.nodes} />
-          <MetricSep />
-          <Metric label="threads" value={totals.threads} />
-          <MetricSep />
           <Metric
             label="streaming"
             value={totals.streaming}
@@ -579,11 +522,9 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
           >
             <colgroup>
               <col style={{ width: '22%' }} />
-              <col style={{ width: '20%' }} />
-              <col style={{ width: 82 }} />
-              <col style={{ width: 70 }} />
+              <col style={{ width: '23%' }} />
+              <col style={{ width: '25%' }} />
               <col />
-              <col style={{ width: 88 }} />
               {/* Wide enough for "just now" at the mono caption size. */}
               <col style={{ width: 78 }} />
               <col style={{ width: 34 }} />
@@ -592,10 +533,8 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               <tr>
                 <SortHeader label="Name" sortKey="name" sort={sort} onSort={toggleSort} first />
                 <th scope="col" style={TH_STYLE}>Path</th>
-                <SortHeader label="Threads" sortKey="threads" sort={sort} onSort={toggleSort} numeric />
-                <SortHeader label="Nodes" sortKey="nodes" sort={sort} onSort={toggleSort} numeric />
+                <th scope="col" style={TH_STYLE}>Connection</th>
                 <th scope="col" style={TH_STYLE}>{query.trim() ? 'Match' : 'Latest thread'}</th>
-                <th scope="col" style={TH_STYLE}>14 days</th>
                 <SortHeader label="Last" sortKey="last" sort={sort} onSort={toggleSort} numeric />
                 <th scope="col" style={{ ...TH_STYLE, padding: 0 }}><span style={VISUALLY_HIDDEN}>Actions</span></th>
               </tr>
@@ -876,8 +815,9 @@ function WorkspaceTableRow({
           : 'quick chat · no folder'}
       </td>
 
-      <td style={TD_NUMERIC}>{w.threadCount}</td>
-      <td style={TD_NUMERIC}>{w.liveCount}</td>
+      <td style={TD_STYLE}>
+        <WorkspaceLocation connectionId={w.backendConnectionId} separator=" - " />
+      </td>
 
       <td style={{ ...TD_STYLE, color: 'var(--term-mid)' }}>
         {topMatch ? (
@@ -897,10 +837,6 @@ function WorkspaceTableRow({
         ) : (
           <span style={{ color: 'var(--term-muted)' }}>—</span>
         )}
-      </td>
-
-      <td style={{ ...TD_STYLE, textOverflow: 'clip' }}>
-        <ActivityBars values={w.spark} />
       </td>
 
       <td style={{ ...TD_NUMERIC, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>
@@ -968,10 +904,6 @@ function Metric({ label, value, color, pulse }: { label: string; value: number; 
       <span style={{ textTransform: 'uppercase', letterSpacing: 'var(--ls-caps)', fontSize: 'var(--fs-2xs)' }}>{label}</span>
     </span>
   );
-}
-
-function MetricSep() {
-  return <span style={{ color: 'var(--term-line)', fontSize: 'var(--fs-xl)' }} aria-hidden>│</span>;
 }
 
 function Highlight({ text, q }: { text: string; q: string }) {

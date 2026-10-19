@@ -32,10 +32,27 @@ test('persists sanitized stage and actual exception for lookup with private perm
     assert.doesNotMatch(JSON.stringify(report), /private-remote-credential/);
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     assert.equal(readRemoteDiagnostic('../backend.log'), null);
+    const savedLog = diagnostic.report.log;
+    diagnostic.append('late', 'must not change a finished attempt');
+    assert.equal(diagnostic.report.log, savedLog);
+  } finally { fs.rmSync(file, { force: true }); }
+});
+
+test('saves live redacted output before an attempt finishes and bounds capture', async () => {
+  const diagnostic = new RemoteDiagnosticLog('build+');
+  try {
+    diagnostic.stage('ssh', 'Checking remote installation…');
+    diagnostic.append('ssh stderr', 'Proxy waiting. Authorization: Bearer private-value');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const disk = JSON.parse(fs.readFileSync(diagnostic.report.localLogPath!, 'utf8'));
+    assert.equal(disk.severity, 'info');
+    assert.equal(disk.message, 'Checking remote installation…');
+    assert.match(disk.log, /Proxy waiting/);
+    assert.doesNotMatch(disk.log, /private-value/);
     diagnostic.append('large', 'x'.repeat(5 * 1024 * 1024));
     assert.equal(diagnostic.report.truncated, true);
     assert.ok(diagnostic.report.log.length <= 4 * 1024 * 1024);
-  } finally { fs.rmSync(file, { force: true }); }
+  } finally { diagnostic.finish(); fs.rmSync(diagnostic.report.localLogPath!, { force: true }); }
 });
 
 test('successful connection warnings retain sanitized logs without calling the connection failed', () => {

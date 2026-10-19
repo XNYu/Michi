@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
+import { isRemoteCredentialWarning } from 'michi-shared';
 import {
   type BackendConnectionInput,
   deleteBackendConnection,
@@ -12,8 +13,9 @@ import {
 } from '../services/backendConnections';
 import { sshTunnelManager, type SshTunnelManager } from '../services/sshTunnelManager';
 import { requireLocalControlRequest } from './middleware/localControl';
-import { RemoteDesktopError, RemoteDesktopSetup } from '../services/remoteDesktopSetup';
+import { RemoteDesktopError, RemoteDesktopSetup, parseRemoteHost } from '../services/remoteDesktopSetup';
 import { RemoteDiagnosticLog, readRemoteDiagnostic } from '../services/remoteDiagnostics';
+import { RemoteServiceRecovery } from '../services/remoteServiceRecovery';
 
 const FORWARDED_REQUEST_HEADERS = ['accept', 'content-type', 'range', 'last-event-id'] as const;
 const SKIPPED_RESPONSE_HEADERS = new Set([
@@ -53,6 +55,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   const router = express.Router();
   const tunnelManager = options.tunnelManager ?? sshTunnelManager;
   const remoteSetup = options.remoteSetup ?? new RemoteDesktopSetup({ tunnelManager });
+  const recovery = new RemoteServiceRecovery(remoteSetup);
 
   // These routes can replay a stored remote credential. Apply the same strict
   // local-control boundary used by the Custom Agents backend toggle.
@@ -73,14 +76,23 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
     try {
       const result = await remoteSetup.connect(req.body.host, req.body.install === true,
         (stage, message) => { diagnostic.stage(stage, message); emit({ type: 'progress', stage, message }); }, controller.signal, diagnostic);
+      if (result.kind === 'connected') recovery.stop(result.connection.id);
       diagnostic.append('result', result.kind);
       if (result.kind === 'connected' && result.runtimeWarnings.length > 0) {
         const runtimeWarnings = diagnostic.warn(result.runtimeWarnings);
+        if (result.runtimeWarnings.some(warning => isRemoteCredentialWarning(warning))) {
+          const target = parseRemoteHost(req.body.host);
+          diagnostic.report.authentication = { scope: 'remote', host: target.sshHost, user: target.sshUser };
+        }
         diagnostic.save();
         emit({ type: 'result', result: { ...result, runtimeWarnings, diagnostic: diagnostic.report } });
       } else emit({ type: 'result', result });
     } catch (error) {
       diagnostic.fail(error, error instanceof RemoteDesktopError ? error.code : 'setup_failed');
+      if (error instanceof RemoteDesktopError && error.code === 'ssh_auth') {
+        const target = parseRemoteHost(req.body.host);
+        diagnostic.report.authentication = { scope: 'local', host: target.sshHost, user: target.sshUser };
+      }
       diagnostic.save();
       emit({ type: 'error', code: diagnostic.report.code, message: diagnostic.report.message, diagnostic: diagnostic.report });
     } finally { diagnostic.finish(); res.end(); }
@@ -91,6 +103,16 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
     const diagnostic = readRemoteDiagnostic(req.params.attemptId);
     if (!diagnostic) return res.status(404).json({ error: 'Diagnostic not found or expired.' });
     res.json(diagnostic);
+  });
+
+  router.get('/backend-connections/recovery', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ recoveries: recovery.statuses() });
+  });
+
+  router.post('/backend-connections/:id/recover', (req, res) => {
+    const status = recovery.start(req.params.id, true);
+    res.status(status ? 202 : 404).json(status ?? { error: 'Saved SSH connection not found.' });
   });
 
   router.get('/backend-connections/:id/directories', async (req, res) => {
@@ -149,6 +171,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       const connection = saveBackendConnection({
         ...connectionInput(req.body, ''),
       });
+      recovery.stop(connection.id);
       tunnelManager.stop(connection.id);
       res.json({ connection });
     } catch (err) {
@@ -158,6 +181,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   });
 
   router.delete('/backend-connections/:id', (req, res) => {
+    recovery.stop(req.params.id);
     const deleted = deleteBackendConnection(req.params.id);
     if (deleted) tunnelManager.stop(req.params.id);
     res.status(deleted ? 200 : 404).json(deleted ? { ok: true } : { error: 'Connection not found' });
@@ -206,13 +230,19 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       // not as a turn cancellation, so the remote agent keeps running.
       res.on('close', () => upstreamStream.destroy());
       upstreamStream.on('error', () => {
+        if (!controller.signal.aborted) recovery.start(connection.id);
         if (!res.writableEnded && !res.destroyed) res.end();
       });
       upstreamStream.pipe(res);
     } catch (err) {
       if (controller.signal.aborted) return;
       if (!res.headersSent) {
-        res.status(502).json({ error: `Remote backend unavailable: ${(err as Error).message}` });
+        // Recover the service independently of this renderer's request. Never
+        // replay a request: a failed write may already have reached the server.
+        const status = recovery.start(connection.id);
+        res.status(502).json({ error: status && status.phase !== 'ready' ? status.message : `Remote backend unavailable: ${(err as Error).message}`,
+          ...(status ? { recovery: status, code: status.phase === 'starting' ? 'remote_starting' : status.diagnostic?.code } : {}),
+        });
       } else if (!res.writableEnded) {
         res.end();
       }

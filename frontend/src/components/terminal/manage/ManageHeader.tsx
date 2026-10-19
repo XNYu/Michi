@@ -1,8 +1,10 @@
 import React from 'react';
+import { WorkspaceLocation } from '../../WorkspaceLocation';
 
 interface Props {
   name: string;
   cwd?: string;
+  backendConnectionId?: string;
   chatsCount: number;
   contextsCount: number;
   branchesCount: number;
@@ -35,6 +37,7 @@ const dot = (
 export default function ManageHeader({
   name,
   cwd,
+  backendConnectionId,
   chatsCount,
   contextsCount,
   branchesCount: _branchesCount,
@@ -74,6 +77,8 @@ export default function ManageHeader({
           alignItems: 'baseline',
         }}
       >
+        <WorkspaceLocation connectionId={backendConnectionId} />
+        {dot}
         {cwd && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <FolderGlyph />

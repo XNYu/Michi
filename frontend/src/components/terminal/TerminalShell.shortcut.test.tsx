@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
 import { PrefsProvider } from '../../state/prefs';
 import { AgentDomainProvider } from '../../state/agentDomain';
+import { clearRemoteRecoveryIssue, getRemoteRecoveryIssues, reportRemoteRecoveryFailure } from '../../state/remoteRecovery';
+import { closeRemoteAuthentication, completeRemoteAuthentication, requestRemoteAuthentication } from '../../state/remoteAuthentication';
+import { remoteSignInLabel } from 'michi-shared';
 
 function renderShell() {
   return render(<PrefsProvider><AgentDomainProvider><TerminalShell /></AgentDomainProvider></PrefsProvider>);
 }
 
+vi.mock('../RemoteAuthenticationTerminal', () => ({ default: () => <div>Authentication terminal</div> }));
 
 const closePaneSpy = vi.hoisted(() => vi.fn());
 const createBlankChildSpy = vi.hoisted(() => vi.fn());
@@ -125,9 +129,52 @@ beforeEach(() => {
   storeState.selection = new Set();
   storeState.treeSelection = new Set();
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  act(() => { for (const issue of getRemoteRecoveryIssues()) clearRemoteRecoveryIssue(issue.connectionId); });
+  vi.useRealTimers();
+});
 
 describe('TerminalShell shortcuts', () => {
+  it('hides native browser surfaces and blocks workspace shortcuts while remote sign-in is open', async () => {
+    storeState.focusedPane = 'L';
+    storeState.selection = new Set(['node-1']);
+    const view = renderShell();
+    try {
+      fireEvent.keyDown(window, { key: '1', metaKey: true });
+      expect(document.documentElement.dataset.nativeSurfacesVisible).toBe('true');
+      act(() => requestRemoteAuthentication({ key: 'shell-auth', target: { scope: 'local', host: 'box' } }, true));
+      await screen.findByRole('dialog', { name: remoteSignInLabel() });
+      expect(document.documentElement.dataset.nativeSurfacesVisible).toBe('false');
+      fireEvent.keyDown(window, { key: 'w', metaKey: true });
+      expect(closePaneSpy).not.toHaveBeenCalled();
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByRole('dialog', { name: remoteSignInLabel() })).toBeNull();
+      expect(document.documentElement.dataset.nativeSurfacesVisible).toBe('true');
+      expect(clearSelectionSpy).not.toHaveBeenCalled();
+      fireEvent.keyDown(window, { key: 'w', metaKey: true });
+      expect(closePaneSpy).toHaveBeenCalledWith('L');
+    } finally { view.unmount(); closeRemoteAuthentication(); completeRemoteAuthentication('shell-auth'); }
+  });
+
+  it('keeps pane shortcuts and Escape from changing the workspace behind remote connection details', () => {
+    storeState.focusedPane = 'L';
+    storeState.selection = new Set(['node-1']);
+    storeState.treeSelection = new Set(['tree-1']);
+    reportRemoteRecoveryFailure({ id: 'remote-c', name: 'build+', sshHost: 'build+', transport: 'ssh', hasToken: true, createdAt: 1, updatedAt: 1 }, new Error('offline'));
+    renderShell();
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByRole('dialog', { name: 'Remote connections' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'w', metaKey: true });
+    expect(closePaneSpy).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Remote connections' })).toBeNull();
+    expect(clearSelectionSpy).not.toHaveBeenCalled();
+    expect(clearTreeSelectionSpy).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(clearSelectionSpy).toHaveBeenCalledOnce();
+    expect(clearTreeSelectionSpy).toHaveBeenCalledOnce();
+  });
+
   it('Cmd+; dispatches michi:toggle-artifacts (legacy Contexts shortcut)', () => {
     renderShell();
     const spy = vi.fn();

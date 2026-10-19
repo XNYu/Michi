@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import WorkspaceManage from './WorkspaceManage';
+import { setKnownBackendConnections } from '../../../config/backendConnections';
 
 const baseStoreShape: any = {
   projects: [],
@@ -110,6 +111,14 @@ describe('WorkspaceManage', () => {
     expect(chatsEls.length).toBeGreaterThan(0);
     const artifactEls = screen.getAllByText((_t, el) => (el?.textContent ?? '').includes('1 artifacts'));
     expect(artifactEls.length).toBeGreaterThan(0);
+  });
+
+  it('identifies a managed remote workspace independently of its directory', () => {
+    seedWorkspace(); baseStoreShape.projects[0].backendConnectionId = 'remote-1';
+    setKnownBackendConnections([{ id: 'remote-1', name: 'Build box', transport: 'ssh', sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 }]);
+    const view = render(<WorkspaceManage workspaceId="ws1" onNav={vi.fn()} />);
+    try { expect(screen.getByText('Remote · Build box')).toBeTruthy(); }
+    finally { view.unmount(); setKnownBackendConnections([]); }
   });
 
   it('navigates to the generated thread after submitting from the manage composer', () => {

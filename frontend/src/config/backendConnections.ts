@@ -30,17 +30,24 @@ export const LOCAL_BACKEND_CONNECTION: BackendConnectionSummary = {
   updatedAt: 0,
 };
 
-let remoteConnections: BackendConnectionSummary[] = [];
+let knownConnections: BackendConnectionSummary[] = [LOCAL_BACKEND_CONNECTION];
+const connectionListeners = new Set<() => void>();
 let activeConnectionId = LOCAL_BACKEND_CONNECTION_ID;
 const workspaceConnections = new Map<string, string>();
 const nodeConnections = new Map<string, string>();
 
 export function setKnownBackendConnections(connections: BackendConnectionSummary[]): void {
-  remoteConnections = connections.filter((connection) => connection.id !== LOCAL_BACKEND_CONNECTION_ID);
+  knownConnections = [LOCAL_BACKEND_CONNECTION, ...connections.filter((connection) => connection.id !== LOCAL_BACKEND_CONNECTION_ID)];
+  connectionListeners.forEach(listener => listener());
 }
 
 export function getKnownBackendConnections(): BackendConnectionSummary[] {
-  return [LOCAL_BACKEND_CONNECTION, ...remoteConnections];
+  return knownConnections;
+}
+
+export function subscribeBackendConnections(listener: () => void): () => void {
+  connectionListeners.add(listener);
+  return () => { connectionListeners.delete(listener); };
 }
 
 export function setActiveBackendConnectionId(connectionId: string | undefined): void {

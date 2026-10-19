@@ -20,6 +20,8 @@ import { isClosePaneShortcut } from './paneShortcuts';
 import { listWorkspaceDirectory, resolveAllowedDirectory } from './workspaceFiles';
 import { applyBrowserTheme, normalizeBrowserTheme, type BrowserTheme } from './browserTheme';
 import { toSurfaceBounds } from './browserBounds';
+import { remoteAuthenticationProcess } from './remoteAuthentication';
+import { SIGN_IN_COMMANDS } from './remoteCredentials';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -231,7 +233,7 @@ function destroyOwnedSurfaces(ownerId: number): void {
   }
 }
 
-ipcMain.handle('terminal:create', (event, surfaceId: unknown, cwd: unknown, cols: unknown, rows: unknown) => {
+function createTerminalSurface(event: Electron.IpcMainInvokeEvent, surfaceId: unknown, cwd: unknown, cols: unknown, rows: unknown, authentication?: unknown) {
   if (!validSurfaceId(surfaceId)) throw new Error('Invalid terminal surface id');
   const key = surfaceKey(event.sender.id, surfaceId);
   const existing = terminalSurfaces.get(key);
@@ -245,7 +247,8 @@ ipcMain.handle('terminal:create', (event, surfaceId: unknown, cwd: unknown, cols
   })();
   const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
-  const processHandle = pty.spawn(shellPath, process.platform === 'win32' ? [] : ['-l'], {
+  const auth = authentication === undefined ? undefined : remoteAuthenticationProcess(authentication, SIGN_IN_COMMANDS);
+  const processHandle = pty.spawn(auth?.binary ?? shellPath, auth?.args ?? (process.platform === 'win32' ? [] : ['-l']), {
     name: 'xterm-256color',
     cols: typeof cols === 'number' ? Math.max(2, Math.floor(cols)) : 80,
     rows: typeof rows === 'number' ? Math.max(1, Math.floor(rows)) : 24,
@@ -262,7 +265,8 @@ ipcMain.handle('terminal:create', (event, surfaceId: unknown, cwd: unknown, cols
   };
   terminalSurfaces.set(key, surface);
   processHandle.onData((data) => {
-    surface.replay = (surface.replay + data).slice(-MAX_TERMINAL_REPLAY_CHARS);
+    // Authentication output is ephemeral and never enters terminal replay/logs.
+    if (!auth) surface.replay = (surface.replay + data).slice(-MAX_TERMINAL_REPLAY_CHARS);
     surface.pending += data;
     if (surface.flushTimer) return;
     surface.flushTimer = setTimeout(() => {
@@ -273,11 +277,20 @@ ipcMain.handle('terminal:create', (event, surfaceId: unknown, cwd: unknown, cols
     }, 8);
   });
   processHandle.onExit(({ exitCode }) => {
+    if (surface.flushTimer) { clearTimeout(surface.flushTimer); surface.flushTimer = null; }
+    if (!event.sender.isDestroyed() && surface.pending) event.sender.send('terminal:data', surfaceId, surface.pending);
+    surface.pending = '';
     surface.exited = true;
     surface.exitCode = exitCode;
     if (!event.sender.isDestroyed()) event.sender.send('terminal:exit', surfaceId, exitCode);
   });
   return { surfaceId, data: '', exited: false };
+}
+
+ipcMain.handle('terminal:create', (event, surfaceId, cwd, cols, rows) => createTerminalSurface(event, surfaceId, cwd, cols, rows));
+ipcMain.handle('remote-auth:create', (event, surfaceId, target, cols, rows) => {
+  remoteAuthenticationProcess(target, SIGN_IN_COMMANDS);
+  return createTerminalSurface(event, surfaceId, os.homedir(), cols, rows, target);
 });
 
 ipcMain.on('terminal:write', (event, surfaceId: unknown, data: unknown) => {

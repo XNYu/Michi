@@ -6,6 +6,7 @@ import {
 } from '../../config/backendConnections';
 import { configureStreamTransport } from './streamTransport';
 import { STREAM_TRANSPORT_PROTOCOL } from 'michi-shared';
+import { RemoteServiceRecoveryError } from './remoteRecovery';
 
 // ── Persistence API ──
 
@@ -96,7 +97,12 @@ export async function fetchAllWorkspacesMeta(connectionId?: string, signal?: Abo
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const detail = typeof body?.error === 'string' ? ': ' + redactRemoteLog(body.error).slice(0, 2000) : '';
-    throw new Error(`Could not load workspaces (HTTP ${res.status})${detail}`);
+    const message = `Could not load workspaces (HTTP ${res.status})${detail}`;
+    const recovery = body?.recovery;
+    if (recovery?.connectionId === connectionId && ['starting', 'error'].includes(recovery.phase) && typeof recovery.message === 'string') {
+      throw new RemoteServiceRecoveryError(message, recovery);
+    }
+    throw new Error(message);
   }
   const body = await res.json();
   return body.workspaces ?? [];

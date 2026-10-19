@@ -6,6 +6,7 @@ import { RemoteDiagnostics } from './RemoteDiagnostics';
 import { RemoteRuntimeSummary } from './RemoteRuntimeSummary';
 import { Button } from './ui/controls';
 import './RemoteConnection.css';
+import { authenticationTargetForHost, requestRemoteAuthentication } from '../state/remoteAuthentication';
 
 export function RemoteDesktopConnect({ onConnected }: {
   onConnected: (connection: BackendConnectionSummary, home: string, warnings: string[], runtimes: string[], diagnostic?: RemoteConnectionDiagnostic) => void;
@@ -21,13 +22,14 @@ export function RemoteDesktopConnect({ onConnected }: {
   const [runtimes, setRuntimes] = useState<string[] | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const request = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
   const hostInputId = useId();
   const hostHintId = useId();
   const errorId = useId();
-  useEffect(() => () => { request.current?.abort(); }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); }; }, []);
 
   const connect = async (install: boolean) => {
-    if (!host.trim() || busy || sendingDiagnostic) return;
+    if (!mounted.current || !host.trim() || busy || sendingDiagnostic) return;
     const controller = new AbortController(); request.current = controller;
     setBusy(true); setError(''); setDiagnostic(null); stage.current = 'ssh'; setWarnings([]); setRuntimes(null); setMessage('Connecting to the remote machine…');
     try {
@@ -46,6 +48,7 @@ export function RemoteDesktopConnect({ onConnected }: {
           log: redactRemoteLog('Machine connected. Runtime warnings:\n' + warnings.join('\n')), truncated: false,
         } : undefined;
         setDiagnostic(report ?? null);
+        if (report?.authentication) requestRemoteAuthentication({ key: `connect:${host}:${report.authentication.scope}`, target: report.authentication, connectionId: result.connection.id });
         onConnected(result.connection, result.home, warnings, result.runtimes, report);
       }
     } catch (failure) {
@@ -53,6 +56,7 @@ export function RemoteDesktopConnect({ onConnected }: {
         const message = failure instanceof Error ? failure.message : String(failure);
         setError(message); setMessage('');
         const report = (failure as { diagnostic?: RemoteConnectionDiagnostic })?.diagnostic;
+        if (report?.code === 'ssh_auth') requestRemoteAuthentication({ key: `connect:${host}:local`, target: report.authentication ?? authenticationTargetForHost(host), onComplete: () => { void connect(install); } });
         setDiagnostic(report ?? { id: 'client-' + crypto.randomUUID(), host, startedAt: new Date().toISOString(), stage: stage.current, code: 'connection_failed', message, log: message, truncated: false });
       }
     } finally { if (!controller.signal.aborted) setBusy(false); }

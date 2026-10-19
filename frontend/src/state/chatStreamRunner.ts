@@ -5,6 +5,7 @@ import {
   parseInlineFollowUpsSentinel,
 } from './assistantParsing';
 import type { ChatAction } from './chatTypes';
+import { reportRemoteCredentialError, reportRemoteRuntimeReady } from './remoteAuthentication';
 
 type Ref<T> = { current: T };
 
@@ -88,6 +89,7 @@ export function runChatStream({
   let lastAcceptedTurnId = '';
   let lastAcceptedSeq = -1;
   let streamCancel: (() => void) | null = null;
+  let credentialFailed = false;
   const streamedFollowUps: string[] = [];
   const MAX_BRACKET_HOLD = 4096; // safety cap for malformed / unclosed brackets
 
@@ -300,8 +302,10 @@ export function runChatStream({
       dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId, detail: data.detail ?? 'Reconnecting' });
     },
     onRetryEnd: () => dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId }),
-    onMcpServerError: (data) =>
-      dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
+    onMcpServerError: (data) => {
+      dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error });
+      credentialFailed = reportRemoteCredentialError(nodeId, data.error) || credentialFailed;
+    },
     onDone: (stopReason, _assistantId, turnId, persisted, completedAt) => {
       if (turnId) currentTurnId = turnId;
       if (persisted === false) {
@@ -328,6 +332,7 @@ export function runChatStream({
       }
       // Reducer extracts metadata from assistant answer blocks.
       const aborted = stopReason === 'cancel' || stopReason === 'cancelled' || undefined;
+      if (!aborted && !credentialFailed) reportRemoteRuntimeReady(nodeId);
       dispatch({ type: 'done', nodeId, assistantId: currentAssistantId, completedAt, aborted });
       cleanup();
       onTurnEnd?.('done', nodeId);
@@ -343,6 +348,7 @@ export function runChatStream({
       type: 'cancel-recovery', nodeId, assistantId: currentAssistantId, ...status,
     }),
     onError: (message, _assistantId, turnId, code) => {
+      credentialFailed = reportRemoteCredentialError(nodeId, message) || credentialFailed;
       if (turnId) currentTurnId = turnId;
       dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message, errorKind: code });
       if (code === 'turn_active' && rejectedDraft) {

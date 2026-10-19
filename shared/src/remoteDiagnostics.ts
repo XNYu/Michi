@@ -3,13 +3,29 @@ export interface RemoteConnectionDiagnostic {
   host: string;
   startedAt: string;
   stage: string;
-  severity?: 'error' | 'warning';
+  severity?: 'error' | 'warning' | 'info';
   code?: string;
   message?: string;
   log: string;
   truncated: boolean;
   storageError?: string;
   localLogPath?: string;
+  authentication?: RemoteAuthenticationTarget;
+}
+
+export interface RemoteAuthenticationTarget {
+  host: string;
+  user?: string;
+  port?: number;
+  scope: 'local' | 'remote';
+}
+
+export interface RemoteServiceRecoveryStatus {
+  connectionId: string;
+  phase: 'starting' | 'ready' | 'error';
+  message: string;
+  diagnostic?: RemoteConnectionDiagnostic;
+  authentication?: RemoteAuthenticationTarget;
 }
 
 export function formatRemoteDiagnostic(report: RemoteConnectionDiagnostic): string {
@@ -20,7 +36,9 @@ export function formatRemoteDiagnostic(report: RemoteConnectionDiagnostic): stri
     'Started: ' + report.startedAt,
     'Stage: ' + report.stage,
     report.localLogPath ? 'Saved log: ' + report.localLogPath : '',
-    (report.severity === 'warning' ? 'Warning: ' : 'Error: ') + (report.code ?? 'unknown') + ': ' + (report.message ?? 'Connection interrupted'),
+    report.severity === 'info'
+      ? 'Status: ' + (report.message ?? 'Connection in progress')
+      : (report.severity === 'warning' ? 'Warning: ' : 'Error: ') + (report.code ?? 'unknown') + ': ' + (report.message ?? 'Connection interrupted'),
     report.truncated ? report.stage === 'workspace'
       ? 'Recovery history limit reached. Only the most recent client-side attempts are included.'
       : 'Capture limit reached. Some output was omitted; see the report for available remote log paths.' : '',
