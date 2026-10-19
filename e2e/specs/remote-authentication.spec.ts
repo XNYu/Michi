@@ -20,7 +20,7 @@ test('expired SSH authentication opens the native sign-in terminal and retries c
   let attempts = 0;
   await installMockApi(page, { custom: async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [] } }); return true; }
+    if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections: [] } }); return true; }
     if (path === '/api/backend-connections/connect-ssh') {
       attempts++;
       const result = attempts === 1
@@ -54,7 +54,7 @@ test('gateway recovery restores a saved remote workspace without restarting the 
   let checks = 0, online = false;
   await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [connection] } }); return true; }
+    if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections: [connection] } }); return true; }
     if (path === '/api/backend-connections/recovery') {
       checks++;
       if (checks > 1) online = true;
@@ -77,7 +77,7 @@ test('remote sign-in prompt can be cancelled, reopened and completed without sen
   let fixed = false, sends = 0, recoveries = 0;
   await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [connection] } }); return true; }
+    if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections: [connection] } }); return true; }
     if (path === '/api/backend-connections/recovery') {
       await route.fulfill({ json: { recoveries: [{ connectionId: connection.id, phase: fixed ? 'ready' : 'error', message: 'Remote sign-in expired', authentication: fixed ? undefined : { scope: 'remote', host: 'test-host' } }] } }); return true;
     }

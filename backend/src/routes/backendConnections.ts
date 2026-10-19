@@ -16,6 +16,7 @@ import { requireLocalControlRequest } from './middleware/localControl';
 import { RemoteDesktopError, RemoteDesktopSetup, parseRemoteHost } from '../services/remoteDesktopSetup';
 import { RemoteDiagnosticLog, readRemoteDiagnostic } from '../services/remoteDiagnostics';
 import { RemoteServiceRecovery } from '../services/remoteServiceRecovery';
+import { REMOTE_CONNECT_BY_HOST_ENV, isRemoteConnectByHostEnabled } from '../services/remoteConnectFeatureGate';
 
 const FORWARDED_REQUEST_HEADERS = ['accept', 'content-type', 'range', 'last-event-id'] as const;
 const SKIPPED_RESPONSE_HEADERS = new Set([
@@ -51,17 +52,25 @@ function connectionInput(body: Record<string, unknown> | undefined, fallbackName
   };
 }
 
-export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunnelManager; remoteSetup?: RemoteDesktopSetup } = {}): express.Router {
+export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunnelManager; remoteSetup?: RemoteDesktopSetup; connectByHost?: boolean } = {}): express.Router {
   const router = express.Router();
   const tunnelManager = options.tunnelManager ?? sshTunnelManager;
   const remoteSetup = options.remoteSetup ?? new RemoteDesktopSetup({ tunnelManager });
   const recovery = new RemoteServiceRecovery(remoteSetup);
+  const connectByHost = options.connectByHost ?? isRemoteConnectByHostEnabled();
+  const connectByHostDisabled = (res: express.Response) => res.status(404).json({
+    error: `Connect by host is disabled. Set ${REMOTE_CONNECT_BY_HOST_ENV}=1 and restart Michi to enable it.`,
+    code: 'feature_disabled',
+  });
+  // Without Connect by host, a failed proxy request never runs commands over SSH.
+  const startRecovery = (id: string) => connectByHost ? recovery.start(id) : undefined;
 
   // These routes can replay a stored remote credential. Apply the same strict
   // local-control boundary used by the Custom Agents backend toggle.
   router.use('/backend-connections', requireLocalControlRequest);
 
   router.post('/backend-connections/connect-ssh', async (req, res) => {
+    if (!connectByHost) return connectByHostDisabled(res);
     if (typeof req.body?.host !== 'string') return res.status(400).json({ error: 'SSH host is required' });
     const controller = new AbortController();
     res.on('close', () => controller.abort());
@@ -111,6 +120,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   });
 
   router.post('/backend-connections/:id/recover', (req, res) => {
+    if (!connectByHost) return connectByHostDisabled(res);
     const status = recovery.start(req.params.id, true);
     res.status(status ? 202 : 404).json(status ?? { error: 'Saved SSH connection not found.' });
   });
@@ -129,6 +139,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
 
   router.get('/backend-connections', (_req, res) => {
     res.json({
+      connectByHost,
       connections: listBackendConnections().map((connection) => {
         if (connection.transport !== 'ssh') return connection;
         const status = tunnelManager.status(connection.id);
@@ -230,7 +241,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       // not as a turn cancellation, so the remote agent keeps running.
       res.on('close', () => upstreamStream.destroy());
       upstreamStream.on('error', () => {
-        if (!controller.signal.aborted) recovery.start(connection.id);
+        if (!controller.signal.aborted) startRecovery(connection.id);
         if (!res.writableEnded && !res.destroyed) res.end();
       });
       upstreamStream.pipe(res);
@@ -239,7 +250,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       if (!res.headersSent) {
         // Recover the service independently of this renderer's request. Never
         // replay a request: a failed write may already have reached the server.
-        const status = recovery.start(connection.id);
+        const status = startRecovery(connection.id);
         res.status(502).json({ error: status && status.phase !== 'ready' ? status.message : `Remote backend unavailable: ${(err as Error).message}`,
           ...(status ? { recovery: status, code: status.phase === 'starting' ? 'remote_starting' : status.diagnostic?.code } : {}),
         });

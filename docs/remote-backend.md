@@ -129,6 +129,14 @@ WantedBy=multi-user.target
 
 ### Connect by host (experimental)
 
+Connect by host is off by default and has not been verified end to end in a
+public build. To enable it, set `MICHI_REMOTE_CONNECT_BY_HOST=1` in the
+environment of the local backend (for the packaged app, `~/.michi/.env`) and
+restart Michi. The same switch enables the automatic service recovery described
+under [Sign-in and service recovery](#sign-in-and-service-recovery). Without it,
+the connect entries below are hidden; manual **SSH tunnel** and **Direct URL**
+connections, the proxy and the remote folder browser work as usual.
+
 In **New workspace → machine → Connect remote SSH…**, enter an SSH alias
 such as `build+`, a hostname, or `user@hostname`, then choose **Connect**. Pasting
 `ssh build+` works too. The same flow is available in **Settings → Connections →
@@ -233,9 +241,12 @@ terminal process. A cancelled prompt can be reopened from the sign-in notice.
 Browsers and older desktop builds show a selectable/copyable command and a
 reconnect button. The desired agent runtime must still be installed and signed in.
 
-If a request through a saved SSH connection fails because the remote service is
-unavailable, the local gateway checks the installation over SSH and starts its
-existing build when needed. Concurrent requests share one recovery attempt,
+With `MICHI_REMOTE_CONNECT_BY_HOST=1`, if a request through a saved SSH
+connection fails because the remote service is unavailable, the local gateway
+checks the installation over SSH and starts its existing build when needed.
+Without the switch, the request fails with the gateway error and nothing runs
+over SSH; restart the remote service with `npm run remote:restart` or its
+supervisor. Concurrent requests share one recovery attempt,
 with a 45-second timeout and a 30-second automatic retry cooldown. Recovery
 reuses the saved data directory, port and token; it does not download source,
 install dependencies, upgrade, or silently adopt changed credentials. A missing

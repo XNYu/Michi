@@ -6,7 +6,7 @@ import {
 } from 'react';
 import {
   deleteBackendConnection,
-  listBackendConnections,
+  listBackendConnectionState,
   saveBackendConnection,
   testBackendConnection,
 } from '../../../../services/api';
@@ -70,12 +70,14 @@ export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Proje
   const [draft, setDraft] = useState<ConnectionDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [quickConnect, setQuickConnect] = useState(false);
+  const [connectByHost, setConnectByHost] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const refresh = async () => {
-    const remote = await listBackendConnections();
-    setKnownBackendConnections(remote);
-    setConnections(remote);
+    const state = await listBackendConnectionState();
+    setKnownBackendConnections(state.connections);
+    setConnections(state.connections);
+    setConnectByHost(state.connectByHost);
   };
 
   useEffect(() => {
@@ -178,14 +180,14 @@ export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Proje
 
       {!quickConnect && !draft && <>
         <div className="remote-connections__actions">
-          <Button variant="primary" onClick={() => { setQuickConnect(true); setMessage(null); }}>
+          {connectByHost && <Button variant="primary" onClick={() => { setQuickConnect(true); setMessage(null); }}>
             Connect remote
-          </Button>
-          <Button variant="ghost" onClick={() => { setDraft({ ...EMPTY_DRAFT }); setMessage(null); }}>
+          </Button>}
+          <Button variant={connectByHost ? 'ghost' : 'primary'} onClick={() => { setDraft({ ...EMPTY_DRAFT }); setMessage(null); }}>
             Manual setup…
           </Button>
         </div>
-        <p className="remote-connections__hint">Connect a Linux machine over SSH.</p>
+        {connectByHost && <p className="remote-connections__hint">Connect a Linux machine over SSH.</p>}
       </>}
 
       {quickConnect && <section className="remote-connection-panel" aria-label="Connect remote">

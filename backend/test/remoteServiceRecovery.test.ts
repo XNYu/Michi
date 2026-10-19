@@ -12,6 +12,7 @@ import { RemoteServiceRecovery } from '../src/services/remoteServiceRecovery';
 import { getBackendConnection, saveBackendConnection } from '../src/services/backendConnections';
 import { SshTunnelManager } from '../src/services/sshTunnelManager';
 import { setupBackendConnectionRoutes } from '../src/routes/backendConnections';
+import { isRemoteConnectByHostEnabled } from '../src/services/remoteConnectFeatureGate';
 import type { RemoteDiagnosticLog } from '../src/services/remoteDiagnostics';
 
 let directory = '', oldDir: string | undefined;
@@ -178,7 +179,7 @@ test('proxy starts recovery after transport failure, never replays a write and e
   let calls = 0;
   class Setup extends RemoteDesktopSetup { override async recover() { calls++; } }
   class Tunnel extends SshTunnelManager { override async apiUrl() { return 'http://127.0.0.1:1/api'; } }
-  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new Setup(), tunnelManager: new Tunnel() }));
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new Setup(), tunnelManager: new Tunnel(), connectByHost: true }));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}/api/backend-connections`;
@@ -192,4 +193,38 @@ test('proxy starts recovery after transport failure, never replays a write and e
     assert.equal((await fetch(`${base}/${direct.id}/proxy/health`)).status, 502); assert.equal(calls, 1);
     assert.equal((await fetch(`${base}/${id}/recover`, { method: 'POST', headers: { Origin: 'https://untrusted.example' } })).status, 403);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('without Connect by host, setup and recovery are refused and a failed proxy request runs nothing over SSH', async () => {
+  let calls = 0;
+  class Setup extends RemoteDesktopSetup {
+    override async recover() { calls++; }
+    override async connect(): Promise<never> { calls++; throw new Error('connect must not run'); }
+  }
+  class Tunnel extends SshTunnelManager { override async apiUrl() { return 'http://127.0.0.1:1/api'; } }
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new Setup(), tunnelManager: new Tunnel(), connectByHost: false }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}/api/backend-connections`;
+  try {
+    const id = saved().id;
+    const listed = await fetch(base).then(response => response.json()) as { connectByHost: boolean; connections: unknown[] };
+    assert.equal(listed.connectByHost, false); assert.equal(listed.connections.length, 1);
+    const connect = await fetch(`${base}/connect-ssh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host: 'test-host' }) });
+    assert.equal(connect.status, 404); assert.equal((await connect.json() as { code: string }).code, 'feature_disabled');
+    const recover = await fetch(`${base}/${id}/recover`, { method: 'POST' });
+    assert.equal(recover.status, 404);
+    const failed = await fetch(`${base}/${id}/proxy/health`);
+    assert.equal(failed.status, 502);
+    const body = await failed.json() as { error: string; recovery?: unknown };
+    assert.match(body.error, /Remote backend unavailable/); assert.equal(body.recovery, undefined);
+    const statuses = await fetch(base + '/recovery').then(response => response.json()) as { recoveries: unknown[] };
+    assert.deepEqual(statuses.recoveries, []); assert.equal(calls, 0);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('Connect by host is enabled only by MICHI_REMOTE_CONNECT_BY_HOST=1', () => {
+  assert.equal(isRemoteConnectByHostEnabled({}), false);
+  assert.equal(isRemoteConnectByHostEnabled({ MICHI_REMOTE_CONNECT_BY_HOST: 'true' }), false);
+  assert.equal(isRemoteConnectByHostEnabled({ MICHI_REMOTE_CONNECT_BY_HOST: '1' }), true);
 });

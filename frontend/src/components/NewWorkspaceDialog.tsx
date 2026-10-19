@@ -8,7 +8,7 @@ import { Button } from './ui/controls';
 import { RemoteRuntimeSummary } from './RemoteRuntimeSummary';
 import { RemoteDesktopConnect } from './RemoteDesktopConnect';
 import { RemoteFolderPicker } from './RemoteFolderPicker';
-import { listBackendConnections } from '../services/api';
+import { listBackendConnectionState } from '../services/api';
 import {
   getKnownBackendConnections,
   LOCAL_BACKEND_CONNECTION_ID,
@@ -89,6 +89,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [connectionId, setConnectionId] = useState(LOCAL_BACKEND_CONNECTION_ID);
   const [remoteCwd, setRemoteCwd] = useState('');
   const [addingRemote, setAddingRemote] = useState(false);
+  const [connectByHost, setConnectByHost] = useState(false);
   const [browsingRemote, setBrowsingRemote] = useState(false);
   const [remoteDiagnostic, setRemoteDiagnostic] = useState<RemoteConnectionDiagnostic | undefined>();
   const [remoteRuntimes, setRemoteRuntimes] = useState<string[] | null>(null);
@@ -107,9 +108,10 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       setBrowsingRemote(false);
       setRemoteWarnings([]); setRemoteRuntimes(null); setRemoteDiagnostic(undefined);
     } else {
-      void listBackendConnections().then((remote) => {
-        setKnownBackendConnections(remote);
+      void listBackendConnectionState().then((state) => {
+        setKnownBackendConnections(state.connections);
         setConnections(getKnownBackendConnections());
+        setConnectByHost(state.connectByHost);
       }).catch(() => {});
     }
   }, [open]);
@@ -310,7 +312,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
                 : connection.name}
             </option>
           ))}
-          <option value="__add_remote__">Connect remote SSH…</option>
+          {connectByHost && <option value="__add_remote__">Connect remote SSH…</option>}
         </select>
       </div>
 

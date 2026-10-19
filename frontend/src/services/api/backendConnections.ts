@@ -17,11 +17,24 @@ export interface BackendConnectionInput {
   token?: string;
 }
 
-export async function listBackendConnections(): Promise<BackendConnectionSummary[]> {
+export interface BackendConnectionState {
+  connections: BackendConnectionSummary[];
+  /** Connect by host (MICHI_REMOTE_CONNECT_BY_HOST=1 on the local backend). Off when unreported. */
+  connectByHost: boolean;
+}
+
+export async function listBackendConnectionState(): Promise<BackendConnectionState> {
   const res = await fetch(`${API_BASE_URL}/backend-connections`);
   if (!res.ok) throw new Error(`listBackendConnections failed: ${res.status}`);
   const body = await res.json();
-  return Array.isArray(body.connections) ? body.connections : [];
+  return {
+    connections: Array.isArray(body.connections) ? body.connections : [],
+    connectByHost: body.connectByHost === true,
+  };
+}
+
+export async function listBackendConnections(): Promise<BackendConnectionSummary[]> {
+  return (await listBackendConnectionState()).connections;
 }
 
 export async function testBackendConnection(

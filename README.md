@@ -346,6 +346,15 @@ same sidebar. Closing the app stops the bundled local backend and local SSH
 tunnel processes only; the supervised remote backend and already-started
 remote turns keep running.
 
+**Connect by host** (experimental, off by default) sets up a remote machine from
+an SSH alias alone. It finds or starts an existing installation, or installs and
+builds one from this repository, then detects the machine's runtimes and lets
+you browse its folders. The same switch lets the desktop app restart a stopped
+remote service for saved SSH connections. It has not been verified end to end
+in a public build. To try it, set `MICHI_REMOTE_CONNECT_BY_HOST=1` in the local
+backend's environment (`~/.michi/.env` for the packaged app) and restart Michi;
+see [Connect by host](docs/remote-backend.md#connect-by-host-experimental).
+
 See [docs/remote-backend.md](docs/remote-backend.md) for deployment and
 security details.
 
@@ -374,6 +383,9 @@ people touch:
   `temporary` (Off).
 - `MICHI_CUSTOM_AGENTS=1` — enable the experimental Custom Agents and Agent Runs
   on this backend. Restart the backend after changing it.
+- `MICHI_REMOTE_CONNECT_BY_HOST=1` — enable the experimental
+  [Connect by host](#remote-backend) setup and automatic remote service recovery
+  on the local backend. Restart Michi after changing it.
 - Cursor CLI — `CURSOR_CLI_BIN` (defaults to `~/.local/bin/agent`; never Grok's `~/.grok/bin/agent`), `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`.
 - Grok CLI — `GROK_CLI_BIN` (official xAI binary). Auth: `grok login` cache, optional `XAI_API_KEY`. Default model `grok-4.6`. Do not implement `grok -p`.
 

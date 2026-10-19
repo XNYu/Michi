@@ -17,7 +17,7 @@ for (const entry of ['settings', 'workspace']) {
     const diagnostic = { id: 'runtime-warning', host: 'build+', startedAt: '2026-10-16T12:00:00Z', severity: 'warning', stage: 'runtime', code: 'runtime_warning', message: 'Claude Code needs sign-in.', log: '[runtime] Claude authentication file missing', truncated: false };
     await installMockApi(page, { custom: async route => {
       const req = route.request(); const path = new URL(req.url()).pathname;
-      if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [] } }); return true; }
+      if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections: [] } }); return true; }
       if (path === '/api/agent/status') { await route.fulfill({ json: localStatus(entry === 'workspace') }); return true; }
       if (path === '/api/backend-connections/connect-ssh') {
         await route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ type: 'result', result: { kind: 'connected', connection, home: '/home/u', runtimes: ['claude'], runtimeWarnings: ['Claude Code needs sign-in.'], diagnostic } }) + '\n' }); return true;
@@ -70,7 +70,7 @@ for (const hasLocalRuntime of [true, false]) {
     const remoteWorkspace = { ...localWorkspace, workspace: { id: 'remote-ws', name: 'Remote recovered', cwd: '/home/u/project', created_at: 2 } };
     await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
       const req = route.request(); const path = new URL(req.url()).pathname;
-      if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [connection] } }); return true; }
+      if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections: [connection] } }); return true; }
       if (path === '/api/agent/status') { await route.fulfill({ json: localStatus(hasLocalRuntime) }); return true; }
       if (path.endsWith('/proxy/workspaces/all')) {
         attempts++;
@@ -127,7 +127,7 @@ test('multiple outages stay compact, dismiss without stopping retries, and reope
   const localWorkspace = { workspace: { id: 'local-ws', name: 'Local project', created_at: 1 }, nodes: [], trees: [], edges: [], messages: [], artifacts: [] };
   await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/api/backend-connections') { await route.fulfill({ json: { connections } }); return true; }
+    if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections } }); return true; }
     if (path === '/api/agent/status') { await route.fulfill({ json: localStatus(true) }); return true; }
     const id = connections.find(item => path === `/api/backend-connections/${item.id}/proxy/workspaces/all`)?.id;
     if (id) {
@@ -183,7 +183,7 @@ test('long remote names and diagnostics fit a narrow dark window, with both clos
   await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/prefs') { await route.fulfill({ json: { prefs: { onboardingCompletedAt: 1, terminalPalette: 'gruvbox' } } }); return true; }
-    if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [{ ...connection, name }] } }); return true; }
+    if (path === '/api/backend-connections') { await route.fulfill({ json: { connectByHost: true, connections: [{ ...connection, name }] } }); return true; }
     if (path.endsWith('/proxy/workspaces/all')) { await route.fulfill({ status: 502, json: { error: 'Remote backend unavailable: ' + 'unbroken-error-'.repeat(30) } }); return true; }
     return false;
   } });

@@ -16,7 +16,7 @@ for (const runtimes of [['codex', 'claude'], []]) {
     await installMockApi(page, { custom: async route => {
       const request = route.request(); const url = new URL(request.url());
       if (url.pathname === '/api/backend-connections') {
-        await route.fulfill({ json: { connections: connected ? [connection] : [] } }); return true;
+        await route.fulfill({ json: { connectByHost: true, connections: connected ? [connection] : [] } }); return true;
       }
       if (url.pathname === '/api/backend-connections/connect-ssh') {
         const body = request.postDataJSON(); calls.push(body); connected = body.install;
@@ -101,7 +101,7 @@ for (const palette of ['bone', 'gruvbox']) {
     await installMockApi(page, { custom: async route => {
       const url = new URL(route.request().url());
       if (url.pathname === '/api/backend-connections') {
-        await route.fulfill({ json: { connections } }); return true;
+        await route.fulfill({ json: { connectByHost: true, connections } }); return true;
       }
       if (url.pathname.endsWith('/proxy/workspaces/all') || url.pathname.endsWith('/proxy/workspaces')) {
         await route.fulfill({ json: { workspaces: [] } }); return true;
@@ -150,7 +150,7 @@ for (const hasLocalRuntime of [true, false]) {
     await installMockApi(page, { custom: async route => {
       const request = route.request(); const url = new URL(request.url());
       if (url.pathname === '/api/backend-connections') {
-        await route.fulfill({ json: { connections: [{ id: 'remote-existing', name: 'Existing remote', transport: 'ssh', sshHost: 'existing', remotePort: 4444, hasToken: true }] } }); return true;
+        await route.fulfill({ json: { connectByHost: true, connections: [{ id: 'remote-existing', name: 'Existing remote', transport: 'ssh', sshHost: 'existing', remotePort: 4444, hasToken: true }] } }); return true;
       }
       if (url.pathname === '/api/backend-connections/remote-existing/proxy/workspaces/all') {
         await route.fulfill({ json: { workspaces: [remoteWorkspace] } }); return true;

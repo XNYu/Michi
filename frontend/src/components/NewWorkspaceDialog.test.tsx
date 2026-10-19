@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import NewWorkspaceDialog from './NewWorkspaceDialog';
 import { setKnownBackendConnections } from '../config/backendConnections';
 
@@ -12,9 +12,17 @@ vi.mock('../lib/electronBridge', () => ({
   getElectron: () => mockElectron,
 }));
 
-vi.mock('../services/api', () => ({
-  listBackendConnections: vi.fn().mockResolvedValue([]),
+const apiMocks = vi.hoisted(() => ({
+  listState: vi.fn(),
 }));
+
+vi.mock('../services/api', () => ({
+  listBackendConnectionState: apiMocks.listState,
+}));
+
+beforeEach(() => {
+  apiMocks.listState.mockReset().mockResolvedValue({ connections: [], connectByHost: false });
+});
 
 function renderDialog(overrides: Partial<React.ComponentProps<typeof NewWorkspaceDialog>> = {}) {
   const props: React.ComponentProps<typeof NewWorkspaceDialog> = {
@@ -219,5 +227,18 @@ describe('NewWorkspaceDialog multi-folder', () => {
     });
 
     expect(screen.getByRole('status').textContent).toContain('cannot link absolute local folders');
+  });
+
+  it('hides Connect remote SSH unless the backend enables Connect by host', async () => {
+    renderDialog();
+    await vi.waitFor(() => expect(apiMocks.listState).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByRole('option', { name: /Connect remote SSH/i })).toBeNull();
+  });
+
+  it('offers Connect remote SSH when the backend enables Connect by host', async () => {
+    apiMocks.listState.mockResolvedValue({ connections: [], connectByHost: true });
+    renderDialog();
+    expect(await screen.findByRole('option', { name: /Connect remote SSH/i })).toBeTruthy();
   });
 });

@@ -116,7 +116,7 @@ test('setup route streams progress and sanitized result under the local-control 
       return { kind: 'install_required' as const, host: 'build+' };
     }
   }
-  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new FakeSetup() }));
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new FakeSetup(), connectByHost: true }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -212,7 +212,7 @@ test('unknown errors include real cause, stage and retrievable diagnostics under
       throw new Error('listen EADDRINUSE: port already in use');
     }
   }
-  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new FailingSetup() }));
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new FailingSetup(), connectByHost: true }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');
@@ -240,7 +240,7 @@ test('connected runtime warnings return a saved diagnostic and preserve a succes
       };
     }
   }
-  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new WarningSetup() }));
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new WarningSetup(), connectByHost: true }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address !== 'string');

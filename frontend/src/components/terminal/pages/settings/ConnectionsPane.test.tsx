@@ -11,10 +11,11 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   remove: vi.fn(),
   workspaces: vi.fn(),
+  connectByHost: true,
 }));
 
 vi.mock('../../../../services/api', () => ({
-  listBackendConnections: mocks.list,
+  listBackendConnectionState: async () => ({ connections: await mocks.list(), connectByHost: mocks.connectByHost }),
   testBackendConnection: mocks.test,
   saveBackendConnection: mocks.save,
   deleteBackendConnection: mocks.remove,
@@ -37,6 +38,7 @@ describe('ConnectionsPane', () => {
   afterEach(() => { act(() => setKnownBackendConnections([])); vi.restoreAllMocks(); });
   beforeEach(() => {
     mocks.list.mockReset().mockResolvedValue([]);
+    mocks.connectByHost = true;
     mocks.test.mockReset().mockResolvedValue({ ok: true, serverId: 'server-1' });
     mocks.save.mockReset().mockResolvedValue({
       id: 'remote-1', name: 'Build', transport: 'direct', apiUrl: 'https://build.example.com/api', hasToken: true, createdAt: 1, updatedAt: 1,
@@ -270,6 +272,17 @@ describe('ConnectionsPane', () => {
     expect(await screen.findByText(/Connected to Michi backend/)).toBeTruthy();
     expect(mocks.test).toHaveBeenCalledTimes(2);
     expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('offers only manual setup when Connect by host is disabled', async () => {
+    mocks.connectByHost = false;
+    render(<ConnectionsPane projects={[]} />);
+    await screen.findByText('Local');
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByRole('button', { name: 'Connect remote' })).toBeNull();
+    expect(screen.queryByText('Connect a Linux machine over SSH.')).toBeNull();
+    expect(screen.getByRole('button', { name: /Manual setup/ })).toBeTruthy();
   });
 
 });
