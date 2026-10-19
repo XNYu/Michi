@@ -9,7 +9,7 @@ Applies to: bundled product documentation served by the current backend. Source 
 | `getting-started` | Installing/launching and completing the first task |
 | `concepts-and-context` | Understanding trees, branches, references, instructions and Memory |
 | `common-workflows` | Researching alternatives, implementing, reviewing and handing off |
-| `runtimes` | Choosing/configuring Kiro CLI, Crew, Pi, Claude or Codex |
+| `runtimes` | Choosing/configuring Kiro CLI, Crew, Pi, Claude, Codex, Cursor, Grok or Antigravity |
 | `runtime-capabilities` | Comparing supported integration behavior and limits |
 | `permissions` | Choosing Ask/Trust/YOLO or understanding approval grants |
 | `sessions-and-recovery` | Queueing, steering, Stop, reconnection, resume and fork |

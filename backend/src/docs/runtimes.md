@@ -1,6 +1,6 @@
 # Choose and configure a runtime
 
-Applies to: registered ordinary-chat runtimes on the selected backend. Source checked: 2026-10-16. Prerequisites are source/documentation reviewed; successful provider authentication must be checked on your installation.
+Applies to: registered ordinary-chat runtimes on the selected backend. Source checked: 2026-10-16; Cursor, Grok and Antigravity sections 2026-10-19. Prerequisites are source/documentation reviewed; successful provider authentication must be checked on your installation.
 
 Open Settings → Model for the backend you are using. Select a runtime, model and supported reasoning level. A new chat's composer also exposes runtime-specific choices. A model's availability depends on installed software, authentication, provider access and that backend's configuration.
 
@@ -13,8 +13,11 @@ Open Settings → Model for the backend you are using. Select a runtime, model a
 | Direct multi-provider API use without an agent CLI | Pi |
 | Claude Code's native tools/session | Claude CLI integration |
 | Codex's app-server session/sandbox | Codex integration |
+| Cursor's agent with an existing Cursor login or API key | Cursor CLI integration |
+| xAI's official Grok CLI | Grok CLI integration |
+| Google's Antigravity CLI (`agy`) | Antigravity, a smaller integration without Michi tools |
 
-Use `runtime-capabilities` for the detailed comparison. Changing the Settings default Runtime affects new chats; existing chats keep their runtime. Native provider features may not all be exposed in Michi.
+Use `runtime-capabilities` for the detailed comparison; its matrix covers Kiro CLI, Crew, Pi, Claude and Codex, and the Cursor, Grok and Antigravity sections below summarize those integrations. Changing the Settings default Runtime affects new chats; existing chats keep their runtime. Native provider features may not all be exposed in Michi.
 
 ## Kiro CLI
 
@@ -49,6 +52,24 @@ Install `@openai/codex` and run `codex login`, or configure `CODEX_CLI_BIN` and 
 Codex supports Ask / Trust / YOLO. Ask uses a read-only sandbox with approvals; Trust permits workspace writes within the native sandbox; YOLO requests full native access.
 
 By default, Codex has no fixed session-count limit. `MICHI_CODEX_MAX_CONCURRENT` can impose a positive limit. Unset or zero means unlimited. Idle chat sessions are released after five minutes, checked once per minute, and resume their persisted native thread on the next message. Active turns and Executor-owned Agent Runs are preserved.
+
+## Cursor
+
+Install the Cursor CLI (`agent`, usually `~/.local/bin/agent`) or set `CURSOR_CLI_BIN`. Michi never uses Grok's `~/.grok/bin/agent`. Authenticate with `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`, or run `agent login` once in a terminal; Michi does not start an interactive login. Michi runs `agent acp` and attaches Michi tools over MCP.
+
+The composer offers Cursor's ACP modes (agent, plan, ask) and Ask / Trust / YOLO. In Ask, Cursor's permission requests appear as approval cards. Trust and YOLO approve them automatically; neither changes the CLI's own sandbox. Chats resume with native session load. Branches use Michi's text context, same-turn steer is unavailable (busy messages queue for the next turn) and manual compaction is not connected. `MICHI_CURSOR_MAX_CONCURRENT` limits live sessions (default 100).
+
+## Grok
+
+Install the official xAI Grok CLI (`grok`) on PATH or in `~/.local/bin`, or set `GROK_CLI_BIN`. Michi checks that the binary is the xAI CLI and rejects unrelated `grok` tools. Run `grok login` once: Michi uses that cached login first, then `XAI_API_KEY` if set (the key Pi's xAI provider also uses), then the CLI's grok.com method. Michi runs `grok --no-auto-update agent stdio`; the default model is `grok-4.6`.
+
+Grok offers Ask / Trust / YOLO with the same approval behavior as Cursor. Agent modes appear only when the CLI advertises them. Resume, branching, busy input and compaction behave as for Cursor. `MICHI_GROK_MAX_CONCURRENT` limits live sessions (default 100).
+
+## Antigravity
+
+Install the Antigravity CLI (`agy`), for example with `brew install --cask antigravity-cli`, and run `agy` once to sign in; or set `ANTIGRAVITY_CLI_BIN`. The minimum tested version is 1.1.1. Michi starts one `agy --print` process per turn and resumes the native conversation with `--conversation`.
+
+AGY has no public ACP or app-server protocol, so this integration is smaller: Michi tools (including `michi_docs`), approval cards and same-turn steer are unavailable, and Ask / Trust / YOLO do not change AGY's behavior. Choose an AGY mode instead: Request review (default), Accept edits, Plan (read-only) or Sandbox (terminal sandbox restrictions). Branches use Michi's text context. Michi passes its instructions through a runtime-owned AGY agent and does not modify your workspace. The former `gemini` runtime ID is still accepted in `MICHI_ENABLED_RUNTIMES` and maps to Antigravity.
 
 ## Local and remote requirements
 

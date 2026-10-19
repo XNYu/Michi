@@ -30,8 +30,8 @@
   {
     "id": "runtimes",
     "title": "Choose and configure a runtime",
-    "summary": "Kiro CLI, Crew, Pi, Claude and Codex prerequisites, authentication and model selection.",
-    "keywords": "runtime model provider credentials authentication login kiro crew pi claude codex 运行时 模型 配置 认证 登录",
+    "summary": "Kiro CLI, Crew, Pi, Claude, Codex, Cursor, Grok and Antigravity prerequisites, authentication and model selection.",
+    "keywords": "runtime model provider credentials authentication login kiro crew pi claude codex cursor grok xai antigravity agy 运行时 模型 配置 认证 登录",
     "source": "docs/runtimes.md"
   },
   {

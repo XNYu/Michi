@@ -35,6 +35,9 @@ Open Settings → Model for the backend you are using. Choose an available runti
 | Pi | Provider credentials configured; no separate agent CLI |
 | Claude | Claude CLI installed and authenticated/configured |
 | Codex | Codex CLI installed and authenticated/configured |
+| Cursor | Cursor CLI (`agent`) installed; `agent login` or `CURSOR_API_KEY` |
+| Grok | Official xAI Grok CLI installed; `grok login` or `XAI_API_KEY` |
+| Antigravity | Antigravity CLI (`agy`) installed and signed in; no Michi tools or approval cards |
 
 The desktop app does not bundle agent CLIs. A listed runtime may be unavailable, and opening Michi does not prove provider authentication works. See `runtimes` for prerequisites.
 
