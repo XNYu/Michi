@@ -78,14 +78,19 @@ interactive, so exploring an alternative never costs you the thread you were on.
 | **Send to thread** | With your approval for each message, an agent can message another chat in the same workspace. The message starts a turn there, labeled *From &lt;thread&gt;*, and the sender can wait for the reply. |
 | **Branch overview** | A living Markdown file that each node updates as its branch evolves. |
 | **Map** | A tree visualization of how a conversation has branched. |
-| **Multi-pane** | View one, two, or three chats side by side in a single view. |
+| **Multi-pane** | Keep chats side by side in a horizontally scrollable strip of resizable panes. The new-pane chooser also opens **Review** (workspace Git changes and diffs), **Files** (workspace files and artifacts), **Terminal** (desktop app only) and **Side chat** (a blank branch). The Browser pane opens links beside your chats. |
+| **Tree actions** | From the tree's context menu, pin or rename a node, trim it (remove one node and move its children up), archive it, or delete a subtree. Archive and Trash keep removed work restorable, and `Cmd+Z` restores the last deletion. The sidebar switches between Structure and Activity views. |
+| **Instructions & Memory** | Give a workspace standing guidance in its Manage page under **Instructions**. Kiro Crew chats also choose a Memory mode: Read & learn, Read only, or Off. |
 | **Artifacts** | Save files, links, code, and images; pin them to a workspace or mention them with `@`. |
 | **Steer or queue** | Send while an agent is working. Runtimes with same-turn steering, such as Kiro CLI, Pi and Codex, take the message into the running turn; others queue it for the next turn. Accepted steers stay in the transcript as *Steered* messages, placed before the reply they changed, and survive reload. |
 | **Multi-runtime** | Claude Code, Codex, Kiro-CLI, Kiro Crew, Cursor CLI, Grok CLI, Pi (multi-provider), and Antigravity, side by side in the same workspace. |
+| **Custom Agents** | Experimental and off by default (`MICHI_CUSTOM_AGENTS=1`). Define reusable workers in the Agent Library with their own instructions, runtime profile, tools and permission preset (Research, Build or Custom), then run them as durable Agent Runs with their own pane, attempts and results. See the [Custom Agents guide](backend/src/docs/custom-agents.md). |
 
 Attach files or images, add comments, quote earlier text, search messages, and
 export Markdown — all locally. Open the Browser pane beside your chats;
 **Settings → Browser** chooses whether links open there or in the system browser.
+For backups and moving to another machine, see
+[History, deletion, backups and migration](backend/src/docs/data-and-backups.md).
 
 **Settings → Model → Permissions** configures global or per-chat approval modes.
 Individual approval cards can trust one tool in the current chat or all tools for
@@ -112,6 +117,10 @@ curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
 
 The installer clones the repo into `~/Michi`, installs Node.js 22 locally if
 needed, builds the desktop app, and installs it to `~/Applications/michi.app`.
+
+The installer and the published DMG are macOS-only. On Windows,
+`npm run electron:build` targets an x64 NSIS installer, but no Windows build is
+published. On other platforms, run the web app as described below.
 
 For local web development, install Node.js 22 or newer, then run:
 
@@ -149,16 +158,36 @@ Michi is runtime-agnostic. Configure any of these from Settings:
 | Runtime | Notes |
 |---|---|
 | **Claude Code** | Anthropic's Claude CLI. |
-| **Kiro-CLI** | Kiro agent runtime. |
+| **Kiro-CLI** | Kiro agent runtime over ACP. Michi launches the v2 engine by default; `MICHI_KIRO_ENGINE=v3` opts in to v3. |
 | **Kiro Crew** | Local official Crew Gateway with required App/MCP setup. See the [setup guide](backend/src/agents/crew/GETTING_STARTED.md). |
 | **Codex** | Codex app-server runtime. |
-| **Pi** | Multi-provider — Anthropic, Gemini, DeepSeek via API keys. [Gemini 4 Argon](docs/features/pi-gemini-argon.md) supports streaming continuation. |
+| **Pi** | In-process runtime for the API providers listed [below](#pi-providers). [Gemini 4 Argon](docs/features/pi-gemini-argon.md) supports streaming continuation. Extra MCP servers can be attached with `piMcpServers` in `~/.michi/config.json` or `MICHI_PI_MCP_SERVERS`. |
 | **Antigravity** | Antigravity agent runtime. |
 | **Cursor** | Cursor CLI (`~/.local/bin/agent acp` — never Grok's `~/.grok/bin/agent`). Auth via `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` or an existing `agent login` cache. Official ACP modes: agent / plan / ask. |
 | **Grok** | Official xAI Grok CLI (`grok --no-auto-update agent stdio`). Prefers `grok login` cache, then `XAI_API_KEY` if set, then `grok.com`. Default model `grok-4.6`. |
 
-Provider keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
-`DEEPSEEK_API_KEY` are read from the environment or entered in Settings.
+### Pi providers
+
+| Provider | Credentials |
+|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google AI (Gemini) | `GEMINI_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Mistral | `MISTRAL_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Cerebras | `CEREBRAS_API_KEY` |
+| Moonshot AI | `MOONSHOT_API_KEY` |
+| Z.ai | `ZAI_API_KEY` |
+| Fireworks | `FIREWORKS_API_KEY` |
+| Hugging Face | `HF_TOKEN` |
+| Amazon Bedrock | AWS credential chain (for example `AWS_PROFILE` or `AWS_ACCESS_KEY_ID`) or `AWS_BEARER_TOKEN_BEDROCK`; configurable in Settings |
+| OpenRouter Free Trial | Fallback when no other provider has a key. Uses a locked model and an operator-supplied `OPENROUTER_FREE_API_KEY` (or `OPENROUTER_API_KEY`) on the backend. |
+
+Keys are read from the environment or entered in Settings. In hosted mode, each
+user's keys are stored encrypted on the server.
 
 ---
 
@@ -205,13 +234,44 @@ workspace grant or an explicit bypass mode applies.
 
 ## Shortcuts
 
+On Windows and Linux, use `Ctrl` for `Cmd` and `Alt` for `Option`.
+
+These work anywhere, including while typing in a composer:
+
 | Shortcut | Action |
 |---|---|
-| `Cmd+T` | Create a new thread |
-| `Cmd+Option+T` | Branch from the focused chat |
-| `Cmd+M` | Open the map |
-| `Ctrl+Tab` | Cycle between panes |
-| `Cmd+Enter` | Send as a branch from the current chat |
+| `Cmd+K` or `Shift+Cmd+F` | Open the command palette |
+| `Cmd+T` | New thread (opens Home; the thread is created on first send) |
+| `Cmd+Option+T` | New blank branch from the focused chat |
+| `Cmd+W` | Close the focused pane |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous pane |
+| `Cmd+[` / `Cmd+]` | Back / forward through focused-chat history |
+| `Cmd+F` | Find in the focused pane |
+| `Shift+Cmd+A` or `Cmd+;` | Toggle the Artifacts drawer |
+
+These work when focus is outside a text field:
+
+| Shortcut | Action |
+|---|---|
+| `Cmd+0` / `Cmd+1` | Home / Dashboard |
+| `Cmd+M` / `Cmd+D` / `Cmd+O` | Map / Digest / Workspaces |
+| `Cmd+,` | Settings |
+| `Cmd+\` | Reopen the most recent chat that is not in a pane |
+| `Cmd+B` | Toggle the sidebar |
+| `Option+Cmd+U` | Switch the sidebar between Activity and Structure |
+| `Cmd+Z` | Restore the last deletion |
+| `Esc` | Clear the selection, or leave Map, Digest and the branch overview |
+
+In the desktop app, `Cmd+N` opens a new window and `Shift+Cmd+W` closes it.
+
+In the composer:
+
+| Input | Action |
+|---|---|
+| `Enter` / `Shift+Enter` | Send / new line |
+| `Cmd+Enter`, `/branch` or `/btw` | Send as a new child branch |
+| `/fanout A; B; C` | Spawn one sibling branch per topic (aliases `/fan-out`, `/explore`) |
+| `/agent` | Switch the active Kiro agent for this chat |
 
 ---
 
@@ -230,6 +290,19 @@ right-click → **Open** the first time.
 Packaged builds load `~/.michi/.env` before the backend starts. Set
 `preventSleep: true` in `~/.michi/config.json` to prevent application
 suspension during long turns.
+
+### Updates
+
+The packaged app checks [GitHub Releases](https://github.com/XNYu/Michi/releases)
+shortly after launch and every four hours. When a newer release exists, the top
+bar offers to download and install it.
+
+A source installation from `install.sh` updates with `~/Michi/bin/michi update`,
+or by running the installer again. `michi update` resets the checkout to the
+latest `origin/main`, reinstalls dependencies and rebuilds the app. It refuses
+to discard local commits or uncommitted tracked changes unless you pass
+`--force`, and it records the previous commit under `refs/michi/pre-update/`
+first.
 
 ### Remote backend
 
@@ -284,11 +357,23 @@ select a model, and add provider keys when needed.
 For local or server-style runs, these environment variables are the ones most
 people touch:
 
-- `MICHI_ENABLED_RUNTIMES` — limit the runtimes Michi starts.
+- `MICHI_ENABLED_RUNTIMES` — limit the runtimes Michi starts (comma-separated:
+  `kiro`, `crew`, `pi`, `claude`, `codex`, `antigravity`, `cursor`, `grok`).
+  Unset starts every runtime.
 - `MICHI_DEFAULT_RUNTIME` — choose the default runtime.
 - `MICHI_DATA_DIR` — choose where Michi stores its local data.
-- Provider keys — `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`,
-  `XAI_API_KEY` (Pi xai provider; also used by the Grok CLI runtime).
+- `MICHI_DEFAULT_CWD` — working directory for agent sessions that have no
+  workspace folder.
+- Provider keys — see [Pi providers](#pi-providers). `XAI_API_KEY` is also used
+  by the Grok CLI runtime.
+- `MICHI_PI_MCP_SERVERS` — extra MCP servers for Pi, as a JSON array or
+  comma-separated commands. `piMcpServers` in `~/.michi/config.json` adds more.
+- `MICHI_KIRO_ENGINE` — `v2` (default) or `v3` for Kiro CLI. Crew always uses v2.
+- `MICHI_CREW_MEMORY_MODE` — default Crew Memory mode for new chats when none is
+  saved: `persistent` (Read & learn, the default), `incognito` (Read only) or
+  `temporary` (Off).
+- `MICHI_CUSTOM_AGENTS=1` — enable the experimental Custom Agents and Agent Runs
+  on this backend. Restart the backend after changing it.
 - Cursor CLI — `CURSOR_CLI_BIN` (defaults to `~/.local/bin/agent`; never Grok's `~/.grok/bin/agent`), `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`.
 - Grok CLI — `GROK_CLI_BIN` (official xAI binary). Auth: `grok login` cache, optional `XAI_API_KEY`. Default model `grok-4.6`. Do not implement `grok -p`.
 
@@ -299,13 +384,17 @@ MICHI_REMOTE_TOKEN=
 MICHI_BIND_HOST=127.0.0.1
 
 # Runtime registry
-MICHI_ENABLED_RUNTIMES=kiro,pi,claude,cursor,grok,antigravity
+MICHI_ENABLED_RUNTIMES=kiro,crew,pi,claude,codex,antigravity,cursor,grok
 MICHI_DEFAULT_RUNTIME=kiro
 ```
 
-Pi provider keys can be saved through Settings or supplied as environment
-variables such as `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, and
-`GEMINI_API_KEY`.
+Desktop-only variables, read by the Electron shell:
+
+- `MICHI_PORT` — fixed port for the bundled backend. Otherwise Michi reuses the
+  port saved in `~/.michi/backend-port`.
+- `MICHI_UPDATE_REPO` — GitHub `owner/repo` checked for app updates (default
+  `XNYu/Michi`).
+- `MICHI_NO_VIBRANCY=1` — turn off macOS vibrancy, for debugging.
 
 Web search is deployment-gated and disabled by default. It is exposed only on
 Railway, detected from Railway's injected service identifiers. On Railway,
@@ -350,8 +439,12 @@ Packaged/local production defaults to `~/.michi`:
 - `config.json`: runtime/provider/model and user preference config.
 - `.env`: optional packaged Electron environment overrides.
 - `backend-port`: stable Electron backend port.
-- `logs/`: backend, Electron, startup, and runtime logs.
+- `logs/`: backend, Electron, startup, and runtime logs. `logs/remote-connections/`
+  keeps the 20 most recent remote connection reports.
 - `workspaces/`: scratch folders created by the desktop skip-folder flow.
+
+On a remote backend host, `npm run remote:launch` keeps the connection token and
+port in `~/.michi/remote.env`.
 
 Root development commands default `MICHI_DATA_DIR` to `~/.michi-dev`. Override
 `MICHI_DATA_DIR` and `MICHI_LOG_DIR` when you need isolated test or profiling

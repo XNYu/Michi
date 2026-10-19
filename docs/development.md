@@ -192,8 +192,10 @@ Express API + ChatHub
         |
         `-- runtime registry
               |-- Kiro         -> kiro-cli over ACP
+              |-- Kiro Crew    -> KiroRuntime + bundled ACP adapter -> Crew Gateway
               |-- Pi           -> provider APIs through pi-agent-core/pi-ai
               |-- Claude       -> Claude Code CLI warm pool
+              |-- Codex        -> codex app-server over JSON-RPC
               |-- Cursor/Grok  -> shared ACP client and runtime profiles
               |-- Antigravity  -> Antigravity runtime adapter
 ```
@@ -227,6 +229,14 @@ backend/src/agents/          runtime interfaces, ChatHub, tools, permissions
 backend/src/agents/kiro/     ACP-backed Kiro runtime
 backend/src/agents/pi/       in-process multi-provider runtime
 backend/src/agents/claude/   Claude CLI runtime and warm pool
+backend/src/agents/codex/    Codex app-server client and runtime
+backend/src/agents/crew/     Kiro Crew adapter, launch, MCP relay and Memory
+backend/src/agents/acp/      shared ACP runtime used by Cursor and Grok
+backend/src/agents/cursor/   Cursor runtime profile
+backend/src/agents/grok/     Grok runtime profile
+backend/src/agents/antigravity/  Antigravity runtime adapter
+backend/src/agents/runs/     Custom Agent Runs: coordinator, recovery, environments
+backend/src/docs/            bundled michi_docs sources and catalog
 backend/src/routes/          HTTP/SSE route layer
 backend/src/services/        SQLite, MCP, config, search, export, persistence
 backend/src/db/migrations/   application SQL migrations
@@ -274,10 +284,18 @@ Runtime-specific notes:
 
 - **Kiro** multiplexes sessions through cwd-keyed ACP clients and injects Michi
   tools through per-session MCP HTTP slots.
+- **Kiro Crew** reuses KiroRuntime with a bundled ACP adapter connected to the
+  official Kiro Crew Gateway. Its factory pins the v2 engine independently of
+  `MICHI_KIRO_ENGINE`, disables boot warm-up, and requires the Michi Crew App
+  (`crew-app/`) with Michi MCP and in-app session approval. See
+  [agents/crew/README.md](../backend/src/agents/crew/README.md).
 - **Pi** runs in-process against configured providers and exposes Michi plus
   sandboxed file tools directly.
 - **Claude** uses a warm CLI pool, native resume bindings, permissions, and live
   Task-subagent tracking.
+- **Codex** shares one `codex app-server` process speaking JSONL JSON-RPC over
+  stdio, with native resume, `thread/fork` for latest-state forks and native
+  `turn/steer`.
 - **Cursor and Grok** use the shared ACP client with runtime-specific handshake,
   authentication, model, and tool translation profiles.
 - **Antigravity** retains its dedicated runtime adapter and model discovery.
@@ -301,8 +319,8 @@ providers, then renders `TerminalShell`.
 The main UI lives under `frontend/src/components/terminal/`:
 
 - **Home**: large composer, first-run runtime/model setup, and recent threads.
-- **Dashboard**: a horizontally scrollable strip of resizable chat, digest, and
-  artifact panes.
+- **Dashboard**: a horizontally scrollable strip of resizable chat, digest,
+  artifact, file, review, terminal and Agent Run panes.
 - **Overview**: centered branch navigation backed by an append-only per-turn
   summary journal.
 - **Map**: active-thread DAG navigation and selection actions.
@@ -352,13 +370,24 @@ Disabling it reconstructs cold chat sessions from the persisted ancestor chain
 and transcript; already-live sessions are not interrupted. Preferences are
 stored independently per runtime and, in cloud mode, per user.
 
-New ordinary branches use Kiro native rewind/fork or Claude `--resume --fork-session`
-when the parent is idle, has native history, and belongs to the same runtime,
-workspace, tree, and owner. Each child has its own native identity. Unsupported
-or missing native history falls back to textual context; ambiguous runtime
-failures are surfaced rather than silently starting over. Pi, active
-parents, and custom-agent branches retain the existing context-based path.
-Native Fork is independent of the Native Resume preference.
+New ordinary branches use a native fork (Kiro/Crew rewind or `session/fork`,
+Claude `--resume --fork-session`, Codex `thread/fork`) when the parent is idle,
+has native history, and belongs to the same runtime, workspace, tree, and owner.
+Each child has its own native identity. Unsupported or missing native history
+falls back to textual context; ambiguous runtime failures are surfaced rather
+than silently starting over. Pi, active parents, and custom-agent branches
+retain the existing context-based path. Native Fork is independent of the
+Native Resume preference.
+
+A branch inherits exactly the parent history up to its fork boundary, resolved
+from immutable fork provenance (falling back to the legacy anchor or the branch
+time; see `backend/src/services/branchBoundary.ts`). Kiro and Crew fork natively
+at that anchor. Claude and Codex can only fork their latest state, so a branch
+cut before the parent's last message uses an exact text prefix instead of
+inheriting later turns. **Extract as new thread** moves a non-root chat and its
+subtree into a new thread, copies the ancestor history it was cut from, and
+records that prefix as inherited; the pane marks it with an *Inherited history*
+divider.
 
 #### Kiro ACP Engines
 
@@ -411,7 +440,10 @@ regression coverage, and remaining boundaries.
 - provides folder/file pickers, external-file artifact linking, file reads,
   path opening, markdown save, notifications, relaunch, and log helpers through
   the preload bridge;
-- opens external links in the system browser;
+- routes web links to the renderer, which applies the **Settings → Browser**
+  preference (Browser pane or system browser);
+- hosts the desktop Terminal pane through node-pty;
+- checks GitHub Releases for app updates (`electron/autoUpdate.ts`);
 - supports macOS native vibrancy and optional sleep prevention;
 - stops the backend cleanly when the app quits.
 
@@ -438,10 +470,13 @@ michi/
 |-- shared/                      # shared stream types and turn projection
 |-- electron/                    # Electron main, preload, startup metrics
 |-- e2e/                         # Playwright fixtures and specs
-|-- docs/                        # environment and deployment guides
+|-- tests/                       # standalone runtime harnesses and installer tests
+|-- benchmarks/                  # markdown streaming benchmark
+|-- crew-app/                    # portable Michi App source for Kiro Crew
+|-- docs/                        # user guide, remote backend, development guides
 |-- scripts/                     # dev, metrics, and performance helpers
-|-- bin/michi                    # macOS/Linux launcher and updater
-|-- install.sh                   # Desktop bootstrap installer (macOS/Linux)
+|-- bin/michi                    # macOS launcher and updater
+|-- install.sh                   # Desktop bootstrap installer (macOS)
 `-- package.json                 # npm workspaces root
 ```
 
