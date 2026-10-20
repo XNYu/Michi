@@ -14,6 +14,12 @@ conversation, run them side by side, and fold the good ones back together.
 
 [Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Shortcuts](#shortcuts) · [Configuration](#configuration)
 
+
+https://github.com/user-attachments/assets/9f4cd982-0371-4921-9776-79ab58295346
+
+
+
+
 </div>
 
 See the [user guide](docs/user-guide.md) for first tasks, context and branching,
