@@ -22,3 +22,4 @@ export * from './api/artifacts';
 export * from './api/backendConnections';
 export * from './api/agents';
 export * from './api/agentRuns';
+export * from './api/desk';

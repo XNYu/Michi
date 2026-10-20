@@ -7,7 +7,7 @@ export type CommandGroup = 'nav' | 'action' | 'workspace' | 'chat' | 'search-res
  *  components/terminal/icons.tsx (see commandIcons.tsx); this module stays
  *  JSX-free. */
 export type CommandIcon =
-  | 'agent' | 'home' | 'branches' | 'map' | 'digest' | 'workspace' | 'trash'
+  | 'agent' | 'home' | 'desk' | 'branches' | 'map' | 'digest' | 'workspace' | 'trash'
   | 'archive' | 'settings' | 'profile' | 'plus' | 'shield' | 'shield-off'
   | 'thread' | 'weave' | 'export' | 'close' | 'chat';
 
@@ -23,6 +23,9 @@ export interface Command {
 
 export type PageId =
   | 'home'
+  | 'desk'
+  | 'desk-threads'
+  | 'desk-project'
   | 'dashboard'
   | 'branches'
   | 'map'
@@ -74,6 +77,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
   if (ctx.customAgentsEnabled) {
     out.push({ id: 'agents.open', group: 'action', icon: 'agent', label: 'Open Agent Library', run: () => ctx.setPage('agents') });
   }
+  out.push({ id: 'nav.desk', group: 'nav', icon: 'desk', label: 'Open Desk', run: () => ctx.setPage('desk') });
   if (ctx.hasActiveProject) {
     out.push(
       { id: 'nav.home',       group: 'nav', icon: 'home', label: 'Go to home',            keys: kbd('mod', '0'), run: () => ctx.setPage('home') },

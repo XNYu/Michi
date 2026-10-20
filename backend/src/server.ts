@@ -16,6 +16,7 @@ import { configurePaneInspectionEventBus } from './services/paneInspectionSubscr
 import { setupBackupRoutes } from './routes/backup';
 import { setupSearchRoutes } from './routes/search';
 import { setupVersionRoutes } from './routes/version';
+import { setupDeskRoutes } from './routes/desk';
 import { setupAdminRoutes } from './routes/admin';
 import { setupAgentRoutes } from './routes/agent';
 import { setupCustomAgentRoutes } from './routes/customAgents';
@@ -699,6 +700,7 @@ app.use('/api', setupPaneInspectionRoutes({ agentRunEvents: agentRunAssembly.ena
 app.use('/api', setupBackupRoutes());
 app.use('/api', setupSearchRoutes());
 app.use('/api', setupVersionRoutes());
+app.use('/api', setupDeskRoutes());
 
 const frontendBuild = path.join(__dirname, '../../frontend/build');
 const indexHtml = path.join(frontendBuild, 'index.html');

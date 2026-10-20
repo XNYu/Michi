@@ -18,6 +18,16 @@ const base = (size: number): React.SVGProps<SVGSVGElement> => ({
   'aria-hidden': true,
 });
 
+export function DeskIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2.5 6.5h11v6.5h-11z" />
+      <path d="M2.5 6.5L4.5 3h7l2 3.5" />
+      <path d="M6.5 9.5h3" />
+    </svg>
+  );
+}
+
 export function HomeIcon({ size = 14, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>
