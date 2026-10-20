@@ -45,6 +45,9 @@ const TerminalWorkspaceManage = React.lazy(() => import('./pages/WorkspaceManage
 const TerminalTrash = React.lazy(() => import('./pages/Trash'));
 const TerminalArchived = React.lazy(() => import('./pages/Archived'));
 const TerminalProfile = React.lazy(() => import('./pages/Profile'));
+const DeskNowPage = React.lazy(() => import('./pages/desk/DeskNowPage'));
+const DeskThreadsPage = React.lazy(() => import('./pages/desk/DeskThreadsPage'));
+const DeskProjectPage = React.lazy(() => import('./pages/desk/DeskProjectPage'));
 const AgentLibraryPage = React.lazy(() => import('./agents/AgentLibraryPage'));
 const AgentEditorPage = React.lazy(() => import('./agents/AgentEditorPage'));
 const CommandPalette = React.lazy(() => import('./CommandPalette'));
@@ -598,6 +601,9 @@ export default function TerminalShell() {
             </div>
           ) : <>
           {page === 'home' && <TerminalHome onSubmitted={() => setPage('dashboard')} />}
+          {page === 'desk' && <LazyPage><DeskNowPage onNav={handleNav} /></LazyPage>}
+          {page === 'desk-threads' && <LazyPage><DeskThreadsPage onNav={handleNav} /></LazyPage>}
+          {page === 'desk-project' && <LazyPage><DeskProjectPage onNav={handleNav} /></LazyPage>}
           {page === 'dashboard' && <TerminalDashboard />}
           {page === 'branches' && <LazyPage><TerminalBranches onNav={handleNav} /></LazyPage>}
           {page === 'map' && <LazyPage><TerminalMap onNav={handleNav} /></LazyPage>}

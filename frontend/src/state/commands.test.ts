@@ -35,7 +35,7 @@ describe('buildCommands', () => {
     const cmds = buildCommands(baseCtx);
     const navIds = cmds.filter((c) => c.group === 'nav').map((c) => c.id);
     expect(navIds).toEqual([
-      'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
+      'nav.desk', 'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
     ]);
     expect(cmds.map((c) => c.label)).toContain('Open thread digest');
   });

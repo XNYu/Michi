@@ -12,6 +12,9 @@ export function pageBackground(page: PageId): string {
   switch (page) {
     // Canvas pages — cards float on the slightly warm bg layer.
     case 'home':
+    case 'desk':
+    case 'desk-threads':
+    case 'desk-project':
     case 'workspaces':
     case 'archived':
       return 'var(--term-bg)';

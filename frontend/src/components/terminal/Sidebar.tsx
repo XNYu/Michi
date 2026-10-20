@@ -9,13 +9,14 @@ import ResizeHandle from '../ResizeHandle';
 import { rowGeom, rowPadding, type RowGeom } from './sidebarRowStyle';
 import {
   AgentIcon,
+  DeskIcon,
   HomeIcon,
   WorkspacesIcon,
   SettingsIcon,
   UserIcon,
-
 } from './icons';
 import type { PageId } from '../../state/commands';
+import { useDeskWaitingCount } from '../../state/useDeskWaitingCount';
 
 // Min must cover the Topbar Zone 1 button cluster so drag-resizing can't
 // push the sidebar narrower than its header icons.  ZONE1_WIDTH (topbar.tsx)
@@ -263,21 +264,24 @@ function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNa
       <WorkspaceTree onActivate={onActivate} chatViewActive={activePage === 'dashboard'} />
     )}
     </>}
-    <BottomNav activePage={activePage} customAgentsEnabled={customAgentsEnabled} onNav={onNav} geom={geom} />
+    <BottomNav activePage={activePage} workspaceReady={workspaceReady} customAgentsEnabled={customAgentsEnabled} onNav={onNav} geom={geom} />
   </>;
 }
 
 function BottomNav({
   activePage,
+  workspaceReady,
   customAgentsEnabled,
   onNav,
   geom,
 }: {
   activePage: PageId;
+  workspaceReady: boolean;
   customAgentsEnabled: boolean;
   onNav: (p: PageId) => void;
   geom: RowGeom;
 }) {
+  const waiting = useDeskWaitingCount(workspaceReady);
   const Item = ({
     id,
     glyph,
@@ -295,7 +299,9 @@ function BottomNav({
     /** Overrides page-nav; used by drawer toggles (e.g. Artifacts). */
     onClick?: () => void;
   }) => {
-    const active = id !== undefined && activePage === id;
+    const active = id === 'desk'
+      ? activePage === 'desk' || activePage === 'desk-threads' || activePage === 'desk-project'
+      : id !== undefined && activePage === id;
     return (
       <Row
         onClick={() => (onClick ? onClick() : id !== undefined && onNav(id))}
@@ -377,6 +383,7 @@ function BottomNav({
         <Item id="agents" glyph={<AgentIcon size={15} />} label="Agents" />
       )}
       <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
+      <Item id="desk" glyph={<DeskIcon size={15} />} label="Desk" badge={waiting} />
       <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />
       {PROFILE_PAGE_ENABLED && (
         <Item id="profile" glyph={<UserIcon size={15} />} label="Profile" />

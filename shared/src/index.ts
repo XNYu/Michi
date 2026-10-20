@@ -16,3 +16,4 @@ export * from './threadMessage';
 export * from './remoteDiagnostics';
 export * from './remoteCredentials';
 export * from './remoteSignIn';
+export * from './desk';

@@ -32,6 +32,7 @@ import { kbd } from '../../lib/platform';
 import { pageBackground } from '../../lib/pageBackground';
 import { ArtifactsIcon, BranchesIcon, DigestIcon, MapIcon } from './icons';
 import { selectArchivedGroupCountForPage } from '../../state/topbarSelectors';
+import { useDeskProject } from '../../state/deskRoute';
 
 const TOPBAR_HEIGHT = 44;
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
@@ -266,6 +267,8 @@ export default function TerminalTopbar({
   // with the active thread (not just the workspace) and offers a ‹ back crumb
   // to the conversation, so the fullscreen page can't read as global.
   const threadPage = page === 'branches' || page === 'map' || page === 'digest';
+  const deskProject = useDeskProject();
+  const deskPage = page === 'desk' || page === 'desk-threads' || page === 'desk-project';
   const activeTree =
     activeProject?.trees.find((t) => t.id === activeProject.activeTreeId) ?? null;
   const threadRootId = activeTreeRootNodeId(activeProject);
@@ -296,6 +299,7 @@ export default function TerminalTopbar({
   const showWorkspaceTitle =
     page === 'workspaces' || page === 'trash' || page === 'archived' ||
     page === 'workspace-manage' || page === 'agents' || page === 'agent-manage' ||
+    deskPage ||
     (!!activeProject && threadPage);
   // Each page paints its own body background. The topbar must match so
   // there is no visible seam between the two. pageBackground() is the
@@ -313,6 +317,8 @@ export default function TerminalTopbar({
     : page === 'map' ? 'MAP'
     : page === 'digest' ? 'DIGEST'
     : page === 'workspaces' ? 'WORKSPACES'
+    : page === 'desk' || page === 'desk-project' ? 'DESK'
+    : page === 'desk-threads' ? 'ALL THREADS'
     : page === 'trash' ? 'HISTORY'
     : page === 'archived' ? 'ARCHIVED'
     : page === 'agents' ? 'AGENTS'
@@ -713,7 +719,7 @@ export default function TerminalTopbar({
                 {pageLabel}
               </span>
             )}
-            {page !== 'workspace-manage' && page !== 'agent-manage' && page !== 'workspaces' && (
+            {page !== 'workspace-manage' && page !== 'agent-manage' && page !== 'workspaces' && page !== 'desk-threads' && (
               <span style={{ color: 'var(--term-faint)', fontSize: 'var(--fs-sm)' }}>·</span>
             )}
             {page === 'agent-manage' ? (
@@ -724,7 +730,29 @@ export default function TerminalTopbar({
               <BreadcrumbBackButton onClick={() => _onNav('workspaces')}>
                 ‹ all workspaces
               </BreadcrumbBackButton>
-            ) : page === 'workspaces' ? null : page === 'agents' ? (
+            ) : page === 'workspaces' || page === 'desk-threads' ? null : page === 'desk' ? (
+              <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', whiteSpace: 'nowrap' }}>
+                Now
+              </span>
+            ) : page === 'desk-project' ? (
+              <>
+                <BreadcrumbBackButton onClick={() => _onNav('desk')}>‹ Now</BreadcrumbBackButton>
+                <span
+                  style={{
+                    fontSize: 'var(--fs-lg)',
+                    fontWeight: 600,
+                    color: 'var(--term-fg)',
+                    letterSpacing: 'var(--ls-tight)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
+                  {deskProject?.title || 'Workspace'}
+                </span>
+              </>
+            ) : page === 'agents' ? (
               <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)', whiteSpace: 'nowrap' }}>
                 control plane · {agentBackendName}
               </span>

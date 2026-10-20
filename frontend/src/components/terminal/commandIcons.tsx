@@ -7,6 +7,7 @@ import {
   ChatIcon,
   DigestIcon,
   ExportIcon,
+  DeskIcon,
   HomeIcon,
   MapIcon,
   PlusIcon,
@@ -24,6 +25,7 @@ import {
 const COMMAND_ICONS: Record<CommandIcon, (props: { size?: number }) => React.ReactElement> = {
   agent: AgentIcon,
   home: HomeIcon,
+  desk: DeskIcon,
   branches: BranchesIcon,
   map: MapIcon,
   digest: DigestIcon,
